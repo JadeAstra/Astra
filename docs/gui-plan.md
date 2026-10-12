@@ -1,7 +1,8 @@
 # Plan: jade, Astra's GUI library, based on JadeUI
 
-Status: agreed plan, every decision settled (section 8). Nothing here is built yet. Work
-proceeds one milestone at a time (section 7), starting with M0.
+Status: agreed plan, every decision settled (section 8). Work proceeds one milestone at a
+time (section 7). M0, the two spikes, is done and accepted; what it found is in
+[m0-findings.md](m0-findings.md) and is folded in below. M1 is next.
 
 ## 1. Goal and ground rules
 
@@ -220,7 +221,8 @@ rendering. It is a complete engine from the start, not a subset to be extended l
 8. A glyph's width is its width in the font scaled to the size and rounded to a whole pixel,
    and a run's width is the sum of its glyphs' widths after shaping. Each glyph is placed by
    adding up those widths, so measuring and drawing use the same numbers and a caret cannot
-   drift from its text.
+   drift from its text. On a scaled display the rounding has to happen in device pixels, or
+   spacing comes out loose (found in M0); the exact clause is settled at the start of M4.
 9. Shaping applies what a script requires and leaves optional typography off: no kerning
    and no discretionary ligatures. For Latin, Cyrillic, Greek, Chinese, Japanese and Korean
    a string's width is therefore still the sum of its characters' widths, which is what
@@ -286,9 +288,10 @@ leaves app code looking the same.
 | Singletons | 29 `object` | 6 | none | `object Jade { ... }`: a class and its one instance, bound to the name, with fields, properties with setters, and methods. |
 | Static members | 34 `companion object` | 7 | `static fun` only; static fields only by assigning after the class | A `static { ... }` block in a class, and static fields (`Font.BOLD`, `Color.BLACK`). Described below the table. |
 | Nested classes | throughout | 16 inner | compile error | `Event.Click(x, y)`, `x is Event.Click`, `DrawOp.Text`, `Grid.Cell`. Several nested names repeat (`Text`, `Wheel`, `Hover`), so they must be scoped, not flattened. |
-| Lambda literals | 491 with parameters, 1,588 uses of `it` | 212 / 901 | `fun(x) { ... }` only | `{ a, b -> ... }` and `{ ... it ... }`, with the last expression as the result. A literal with no parameter list accepts no argument or one (`it`), since Kotlin writes the same `{ ... }` for both. `{}` is the lambda that does nothing, the usual default of a callback parameter. Told apart from a map literal by what follows the brace: an expression and `:` is a map, `{:}` the empty map, anything else a lambda. |
-| Trailing lambdas | 153 | 77 | none | `button("OK") { ... }`, `grid { ... }`. |
-| Lambdas with a receiver | 3 declared, but they are the layout DSL | every screen | none | Inside `grid { ... }` and `row { ... }`, `insets = ...`, `row { }` and `cell(...)` resolve to the receiver. |
+| Lambda literals | 491 with parameters, 1,588 uses of `it` | 212 / 901 | `fun(x) { ... }` only | `{ a, b -> ... }` and `{ ... it ... }`, with the last expression as the result. A literal with no parameter list accepts no argument or one (`it`), since Kotlin writes the same `{ ... }` for both. `{}` is the lambda that does nothing, the usual default of a callback parameter. The parameter list may run over several lines, as in Kotlin. Told apart from a map literal by what follows the brace: an expression and `:` is a map, `{:}` the empty map, anything else a lambda. |
+| Trailing lambdas | 153 | 77 | none | `button("OK") { ... }`, `grid { ... }`. The lambda goes to the function's last parameter, whatever came before it, named arguments included: `spinner(3, min = 0, max = 20) { ... }`. In the condition of `if`, `while` and `for` a `{` opens the body instead, and parentheses allow a lambda again: `if (items.any { it > 1 }) { ... }`. |
+| A default before a required parameter | `grid(id = null, build)`, `block(source, label, onEdit = {}, view)` | – | an error: defaults must come last | Allowed. The parameter after the defaults is given as a trailing lambda or by name, and a call that leaves it without a value is an error. |
+| Lambdas with a receiver | 3 declared, but they are the layout DSL | every screen | none | Inside `grid { ... }` and `row { ... }`, `insets = ...`, `row { }` and `cell(...)` resolve to the receiver. A variable of the block or of the function around it wins over the receiver's member, as in Kotlin; a global does not, so a Kotlin `fun main()` stays a function when ported. A block inside another reaches the outer one's object too. |
 | Scope functions, and `return` in a lambda | `.let {` 529; a bare `return` in a one-line lambda 52; `return@label` 33 | 263 / 109 / 352 | none | `let`, `also`, `apply`, `run` and `takeIf` work on every value, and written with a lambda literal (`x.let { ... }`) are expanded in place by the compiler, so they cost no call. Described below the table. |
 | Varargs | 4 | 1 | none | `tabs("A" to a, "B" to b)`, `lineChart(s1, s2)`, and `listOf(...)`. |
 | Implicit `this` | every method | every method | `fun get() => x` fails with "undefined variable" | A bare name inside a class is looked up as a local, then a member of the object, then a static of the class, then a global. Writing `this.` stays valid. |
@@ -376,10 +379,13 @@ What it gives the port: JadeUI's 17 packages become 17 folders with their `priva
 15 folders, which also resolves the four names it declares twice (`Tok`, `Expr`, `Stmt`,
 `Closure`). A Kotlin file's list of imports becomes one line per package it uses.
 
-Two details are left for the M0 parser spike, because they concern how existing Astra
-programs load files rather than how names resolve: whether importing a folder loads every
-file in it or the files it names, and how a single-file script with helpers beside it
-(`import "helpers"`) is treated, which today shares everything.
+How files are loaded:
+
+- **Importing a folder loads every `.astra` file directly in it**, once, as one unit, so its
+  files see each other whatever order they are in. This is what `import "jade"` does.
+- **Importing a file loads that file only**, into the namespace of the folder it is in. A
+  script with `import "helpers"` beside it shares names with `helpers.astra` exactly as
+  today, and the other scripts in that folder are not touched.
 
 **Static members.** Kotlin has no `static`; what belongs to a class rather than to one object
 goes in a `companion object { ... }` inside it. JadeUI and the three apps have 111 of them.
@@ -783,7 +789,8 @@ committed to.
 Later milestones are described in less detail on purpose. Each is planned properly when it
 is reached, with what the earlier ones taught.
 
-**M0. Two spikes.** Spike 1: lambda literals, trailing
+**M0. Two spikes.** *Done and accepted. What they found is in
+[m0-findings.md](m0-findings.md); the code is on the branch `m0-spikes`.* Spike 1: lambda literals, trailing
 lambdas and receiver blocks in the parser, to find the grammar conflicts before committing
 (a `{` after a call in an `if` header, and telling a map literal from a lambda by its first
 tokens), and the two loading questions left open under namespaces in 5.1. Spike 2: an OpenGL window
@@ -797,6 +804,13 @@ changes to what current programs mean go in first, each on its own with the exis
 examples and README updated in the same change: the new meaning of `..`, `{}` becoming the
 empty lambda with `{:}` for the empty map, and `==` comparing lists and maps by content.
 Each feature lands with golden tests, as the language has so far.
+
+The M0 spike already has lambda literals, trailing lambdas, receiver blocks, the `{}` change
+and the type syntax working in the real parser, compiler and VM, as prototypes. M1 turns
+those into finished features and adds what the spike left out: the rule for `return` in a
+lambda, the scope functions expanded in place, a lambda's parameter list wrapping over
+several lines, destructuring parameters, an instruction of its own for calling a receiver's
+method by its bare name, a direct path for trailing lambdas, and proper errors.
 
 **M2. Standard library.** 5.4: character-indexed strings, the `bytes` type, the Kotlin
 collection and string names, sets, `Pair`, number helpers, `File` objects. The string change
@@ -895,14 +909,18 @@ font metrics will need new numbers: no other font engine measures text exactly a
 | D15 | The value of an element of `bytes`. | 0 to 255, not Kotlin's -128 to 127. Code that tests a byte's sign is rewritten by hand (5.3). |
 | D16 | Where text comes from. | An engine of jade's own, with no third-party code, complete from the start: both outline formats, variable fonts, shaping for every script, text direction and colour emoji, measuring by one rule on every system (section 4). |
 | D17 | Where the window and its input come from. | Written by us, directly against Windows (a Win32 window with a WGL context), with no third-party code. It sits behind a small interface so that another system needs one new file and no change to the toolkit (section 4). |
+| | How files are loaded under namespaces. | Importing a folder loads every `.astra` file directly in it, as one unit. Importing a file loads that file only, into its folder's namespace (5.1). |
+| | A lambda's parameter list over several lines. | Allowed, as in Kotlin (5.1). |
 
 ### Open
 
 None. Two questions are deliberately left for the milestone that raises them:
 
+- **The measuring rule on scaled displays** (M4). M0 found that giving every character a
+  whole number of logical pixels leaves spacing a little loose at 2x. The rule needs a
+  clause: round each width in device pixels and report the total in logical ones.
 - **How JadeMem's real sampling is done** (M8): on sample data, or through a way for Astra
   to call Windows system functions, which this plan does not size.
-- **The two loading questions under namespaces** (5.1), for the M0 parser spike.
 
 ## 9. Risks
 
@@ -928,10 +946,11 @@ None. Two questions are deliberately left for the milestone that raises them:
   package. It is also work that none of the three apps needs in order to run: their text is
   Latin. It is in the plan because the engine is meant to be complete, and it is ordered
   (M4, part two) so that it cannot delay the first window.
-- **Small text may not look good enough.** Without running the fonts' own hinting programs,
-  12-pixel text on a 100% screen will be softer than Windows draws it. The M0 spike exists to
-  see this before committing; if it falls short, the fallback is to let Windows rasterise
-  the glyphs while jade keeps doing the measuring and positioning.
+- **Small text looking good enough** was the question the M0 spike was built to answer, and
+  it does: our rasteriser draws Segoe UI at 11 to 28 pixels more evenly than Windows'
+  greyscale rendering and close to ClearType, a little lighter at 11 and 12 pixels. What is
+  left is tuning (a slight darkening of thin strokes) and the rule for scaled displays. The
+  fallback of letting Windows rasterise the glyphs is unlikely to be needed.
 - **OpenGL is weakest where desktop apps often run.** Over Remote Desktop, in virtual
   machines and on old integrated graphics, OpenGL 3.3 can be missing or slow, and there is
   no automatic software fallback as there is for Windows' own drawing. If that turns out to
