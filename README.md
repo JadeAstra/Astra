@@ -42,7 +42,7 @@ works too (`cmake -S . -B build && cmake --build build`); GCC and Clang flags ar
 astra                                 start the interactive prompt
 astra <file> [args...]                run a source (.astra) or bytecode (.astc) file
 astra build <file> [-o <out.astc>]    compile a source file to a bytecode file
-astra build <file> --exe [-o <app.exe>] [--windowed]
+astra build <file> --exe [-o <app.exe>] [--windowed] [--icon <file.ico>]
                                       compile it into a program of its own
 astra dis <file>                      list the bytecode of a source or bytecode file
 ```
@@ -58,6 +58,7 @@ error, or whatever the script passes to `exit()`.
 ```
 astra build examples\bank.astra --exe                        makes examples\bank.exe
 astra build examples\gui_todo.astra --windowed -o Todo.exe   a GUI app with no console window
+astra build app.astra --windowed --icon app.ico              app.exe, with an icon of its own
 ```
 
 The result is one file holding the Astra runtime and the compiled script with everything it
@@ -75,7 +76,11 @@ told apart by name. Rename the file and the process name follows.
   instead of being printed.
 - Without `--windowed` the program is a console program, with `print`, `input()` and exit
   codes working as they do under `astra`.
-- Asking for a name ending in `.exe` with `-o` implies `--exe`.
+- `--icon app.ico` gives the program an icon: Explorer, the taskbar and Task Manager show it
+  for the file, and the program's windows carry it in their title bars. It takes an `.ico`
+  file, which can hold the picture in several sizes (16, 32, 48 and 256 pixels cover what
+  Windows asks for). Without it the program has the plain default icon.
+- Asking for a name ending in `.exe` with `-o`, or for an icon, implies `--exe`.
 
 ## The language
 
@@ -579,7 +584,8 @@ A standalone program is a copy of `astra.exe` with the compiled bytecode attache
 of the file, followed by its size and a marker. On startup astra looks at the last bytes of
 its own file; when the marker is there it runs the attached program instead of reading the
 command line. `astra.exe` is linked with the static C++ runtime so that such a copy has no
-DLLs to bring along.
+DLLs to bring along. An icon is written into the copy's resources before the bytecode is
+attached.
 
 ## Tests
 
@@ -589,7 +595,8 @@ powershell -ExecutionPolicy Bypass -File tests\run.ps1
 
 Each `tests\*.astra` file states its expected output in `// expect:` comments. The runner
 executes every test three ways (from source, from a compiled `.astc`, and built into an
-`.exe`) and expects the same result from each.
+`.exe`) and expects the same result from each. A last check builds a program with `--icon`
+and looks for the icon in the result.
 
 Setting the environment variable `ASTRA_GC_STRESS=1` makes the VM collect garbage at every
 opportunity, which is slow but useful for finding memory bugs when changing the VM.
@@ -609,7 +616,9 @@ opportunity, which is slow but useful for finding memory bugs when changing the 
 - Integer arithmetic wraps on overflow.
 - Bytecode files are verified when loaded, but that is a consistency check rather than a
   security sandbox. Run only `.astc` files you trust.
-- Standalone programs are about 0.9 MB each and have only been tried on Windows. They have
-  the default program icon and no version information, and since they are unsigned Windows
-  may ask for confirmation the first time one downloaded from the internet is run. The script
-  inside is stored as bytecode, not encrypted.
+- Standalone programs are about 0.9 MB each and have only been tried on Windows. They carry
+  no version information, and since they are unsigned Windows may ask for confirmation the
+  first time one downloaded from the internet is run. The script inside is stored as
+  bytecode, not encrypted.
+- `--icon` takes `.ico` files only, not PNG or other pictures. Explorer remembers icons, so a
+  program rebuilt with a different icon can show its old one there for a while.

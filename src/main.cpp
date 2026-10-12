@@ -40,9 +40,10 @@ const char* const kUsage =
     "  astra <file> [args...]                run a source (.astra) or bytecode (.astc) file\n"
     "  astra run <file> [args...]            same as above\n"
     "  astra build <file> [-o <out.astc>]    compile a source file to a bytecode file\n"
-    "  astra build <file> --exe [-o <app.exe>] [--windowed]\n"
+    "  astra build <file> --exe [-o <app.exe>] [--windowed] [--icon <file.ico>]\n"
     "                                        compile it into a program of its own;\n"
-    "                                        --windowed gives it no console window\n"
+    "                                        --windowed gives it no console window,\n"
+    "                                        --icon gives it an icon\n"
     "  astra dis <file>                      list the bytecode of a source or bytecode file\n"
     "  astra --version\n"
     "  astra --help\n";
@@ -207,6 +208,64 @@ bool makeWindowed(std::string& image) {
     image[subsystemAt + 1] = 0;
     return true;
 }
+
+// The pictures of an .ico file in the form an executable stores them: each picture as a
+// resource of its own, and a directory that lists them.
+struct IconResources {
+    std::string directory;
+    std::vector<std::string> pictures;
+};
+
+// Takes an .ico file apart; false if `ico` is not one.
+bool readIcon(const std::string& ico, IconResources& out) {
+    auto u16 = [&](size_t at) {
+        return static_cast<uint32_t>(static_cast<unsigned char>(ico[at])) |
+               static_cast<uint32_t>(static_cast<unsigned char>(ico[at + 1])) << 8;
+    };
+    auto u32 = [&](size_t at) { return u16(at) | u16(at + 2) << 16; };
+
+    // The file starts with a reserved zero, the type (1 for icons, 2 for cursors) and the
+    // number of pictures, followed by a 16-byte entry for each picture.
+    const size_t kHeader = 6, kEntry = 16;
+    if (ico.size() < kHeader || u16(0) != 0 || u16(2) != 1) return false;
+    const size_t count = u16(4);
+    if (count == 0 || ico.size() < kHeader + count * kEntry) return false;
+
+    out.directory.assign(ico, 0, kHeader);
+    for (size_t i = 0; i < count; i++) {
+        const size_t entry = kHeader + i * kEntry;
+        const uint64_t size = u32(entry + 8), offset = u32(entry + 12);
+        if (size == 0 || offset + size > ico.size()) return false;
+        out.pictures.push_back(ico.substr(static_cast<size_t>(offset), static_cast<size_t>(size)));
+
+        // An entry in an executable is the one from the file with the picture's position in
+        // the file replaced by the number of its resource.
+        const size_t id = i + 1;
+        out.directory.append(ico, entry, 12);
+        out.directory.push_back(static_cast<char>(id & 0xFF));
+        out.directory.push_back(static_cast<char>(id >> 8));
+    }
+    return true;
+}
+
+// Stores the icon in the executable at `exe`, as the icon Windows shows for the file. This
+// rewrites the file, so it has to happen before the compiled program is attached.
+bool storeIcon(const std::filesystem::path& exe, const IconResources& icon) {
+    HANDLE update = BeginUpdateResourceW(exe.c_str(), FALSE);
+    if (update == nullptr) return false;
+
+    const WORD language = MAKELANGID(LANG_ENGLISH, SUBLANG_ENGLISH_US);
+    auto store = [&](const wchar_t* type, size_t id, const std::string& data) {
+        return UpdateResourceW(update, type, MAKEINTRESOURCEW(id), language, const_cast<char*>(data.data()),
+                               static_cast<DWORD>(data.size())) != 0;
+    };
+    const wchar_t* const pictureType = MAKEINTRESOURCEW(3);     // RT_ICON
+    const wchar_t* const directoryType = MAKEINTRESOURCEW(14);  // RT_GROUP_ICON
+    bool stored = store(directoryType, 1, icon.directory);
+    for (size_t i = 0; stored && i < icon.pictures.size(); i++) stored = store(pictureType, i + 1, icon.pictures[i]);
+
+    return EndUpdateResourceW(update, stored ? FALSE : TRUE) != 0 && stored;
+}
 #endif
 
 // Loads `path` into `program`, compiling it unless it is already bytecode.
@@ -264,7 +323,8 @@ int runFile(const std::string& path, std::vector<std::string> scriptArgs) {
     return 0;
 }
 
-int buildFile(const std::string& path, std::string outPath, bool asExecutable, bool windowed) {
+int buildFile(const std::string& path, std::string outPath, bool asExecutable, bool windowed,
+              const std::string& iconPath) {
     std::string data;
     if (!readFile(path, data)) {
         std::cerr << "astra: cannot read '" << path << "'\n";
@@ -274,6 +334,26 @@ int buildFile(const std::string& path, std::string outPath, bool asExecutable, b
         std::cerr << "astra: '" << path << "' is already a bytecode file\n";
         return kExitUsage;
     }
+
+#ifdef _WIN32
+    IconResources icon;
+    if (!iconPath.empty()) {
+        std::string ico;
+        if (!readBytes(iconPath, ico)) {
+            std::cerr << "astra: cannot read '" << iconPath << "'\n";
+            return kExitNoInput;
+        }
+        if (!readIcon(ico, icon)) {
+            std::cerr << "astra: '" << iconPath << "' is not an icon file; --icon takes an .ico file\n";
+            return kExitUsage;
+        }
+    }
+#else
+    if (!iconPath.empty()) {
+        std::cerr << "astra: --icon is only available on Windows\n";
+        return kExitUsage;
+    }
+#endif
 
 #ifdef _WIN32
     const char* executableExtension = ".exe";
@@ -330,14 +410,44 @@ int buildFile(const std::string& path, std::string outPath, bool asExecutable, b
     char sizeBytes[8];
     for (int i = 0; i < 8; i++) sizeBytes[i] = static_cast<char>((static_cast<uint64_t>(bytecode.size()) >> (8 * i)) & 0xFF);
 
-    std::ofstream out(outPath, std::ios::binary | std::ios::trunc);
-    out.write(image.data(), static_cast<std::streamsize>(image.size()));
+    auto writeRuntime = [&] {
+        std::ofstream out(outPath, std::ios::binary | std::ios::trunc);
+        out.write(image.data(), static_cast<std::streamsize>(image.size()));
+        out.flush();
+        return static_cast<bool>(out);
+    };
+    if (!writeRuntime()) {
+        std::cerr << "astra: cannot write '" << outPath << "' (is that program still running?)\n";
+        return kExitCannotWrite;
+    }
+
+#ifdef _WIN32
+    if (!iconPath.empty()) {
+        // A virus scanner looking at the file just written can make this fail for a moment,
+        // so it is tried a few times, each time on a fresh copy.
+        bool stored = storeIcon(outPath, icon);
+        for (int attempt = 0; !stored && attempt < 5; attempt++) {
+            Sleep(200);
+            stored = writeRuntime() && storeIcon(outPath, icon);
+        }
+        if (!stored) {
+            std::error_code ignored;
+            std::filesystem::remove(outPath, ignored);
+            std::cerr << "astra: cannot put the icon into '" << outPath << "'\n";
+            return kExitCannotWrite;
+        }
+    }
+#endif
+
+    std::ofstream out(outPath, std::ios::binary | std::ios::app);
     out.write(bytecode.data(), static_cast<std::streamsize>(bytecode.size()));
     out.write(sizeBytes, sizeof sizeBytes);
     out.write(kBundleMarker, sizeof kBundleMarker);
     out.flush();
     if (!out) {
-        std::cerr << "astra: cannot write '" << outPath << "' (is that program still running?)\n";
+        std::error_code ignored;
+        std::filesystem::remove(outPath, ignored);
+        std::cerr << "astra: cannot write '" << outPath << "'\n";
         return kExitCannotWrite;
     }
     out.close();
@@ -437,11 +547,14 @@ int dispatch(const std::vector<std::string>& args) {
     }
 
     if (command == "build") {
-        std::string input, output;
+        std::string input, output, icon;
         bool asExecutable = false, windowed = false;
         for (size_t i = 1; i < args.size(); i++) {
             if (args[i] == "-o" && i + 1 < args.size()) {
                 output = args[++i];
+            } else if (args[i] == "--icon" && i + 1 < args.size()) {
+                icon = args[++i];
+                asExecutable = true;
             } else if (args[i] == "--exe") {
                 asExecutable = true;
             } else if (args[i] == "--windowed") {
@@ -449,7 +562,7 @@ int dispatch(const std::vector<std::string>& args) {
             } else if (input.empty() && !args[i].empty() && args[i][0] != '-') {
                 input = args[i];
             } else {
-                std::cerr << "astra: usage: astra build <file> [-o <out>] [--exe] [--windowed]\n";
+                std::cerr << "astra: usage: astra build <file> [-o <out>] [--exe] [--windowed] [--icon <file.ico>]\n";
                 return kExitUsage;
             }
         }
@@ -459,7 +572,7 @@ int dispatch(const std::vector<std::string>& args) {
         }
         // Asking for an .exe by name is asking for a program.
         if (std::filesystem::path(output).extension() == ".exe") asExecutable = true;
-        return buildFile(input, output, asExecutable, windowed);
+        return buildFile(input, output, asExecutable, windowed, icon);
     }
 
     if (command == "dis") {

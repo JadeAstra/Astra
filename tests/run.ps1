@@ -4,6 +4,8 @@
 #   // expect: <line>                  the next line of standard output
 #   // expect runtime error: <text>    the program fails (exit code 70) and reports <text>
 #   // expect compile error: <text>    compilation fails (exit code 65) and reports <text>
+#
+# One more check at the end covers the --icon option of `astra build`.
 
 param([string]$Astra = (Join-Path $PSScriptRoot '..\build\astra.exe'))
 
@@ -110,6 +112,40 @@ foreach ($test in Get-ChildItem (Join-Path $PSScriptRoot '*.astra') | Sort-Objec
         }
     }
 }
+
+# The --icon option of `astra build`: a program built with an icon runs as before, and
+# Windows finds the icon in the file. The icon is one 32 pixel picture in a single colour.
+$iconColor = 220, 30, 40
+$bytes = New-Object IO.MemoryStream
+$writer = New-Object IO.BinaryWriter $bytes
+$picture = 40 + 32 * 32 * 4 + 32 * 4
+foreach ($field in 0, 1, 1) { $writer.Write([int16]$field) }                       # an icon file with one picture
+$writer.Write([byte[]](32, 32, 0, 0)); $writer.Write([int16]1); $writer.Write([int16]32)
+$writer.Write([int]$picture); $writer.Write([int]22)                               # its size and where it starts
+$writer.Write([int]40); $writer.Write([int]32); $writer.Write([int]64); $writer.Write([int16]1); $writer.Write([int16]32)
+$writer.Write((New-Object byte[] 24))
+for ($i = 0; $i -lt 32 * 32; $i++) { $writer.Write([byte[]]($iconColor[2], $iconColor[1], $iconColor[0], 255)) }
+$writer.Write((New-Object byte[] (32 * 4)))                                        # nothing is transparent
+$iconFile = Join-Path $tmp 'test.ico'
+[IO.File]::WriteAllBytes($iconFile, $bytes.ToArray())
+
+$source = Join-Path $tmp 'icon.astra'
+[IO.File]::WriteAllText($source, 'print("has an icon")')
+$program = Join-Path $tmp 'icon.exe'
+$build = Invoke-Astra @('build', $source, '--icon', $iconFile, '-o', $program)
+$result = $null
+if ($build.Code -ne 0) {
+    $result = "build failed: $($build.Error.Trim())"
+} else {
+    $result = Compare-Run (Invoke-Astra @() -Program $program) @('has an icon') '' 0
+    if ($null -eq $result) {
+        Add-Type -AssemblyName System.Drawing
+        $pixel = [Drawing.Icon]::ExtractAssociatedIcon($program).ToBitmap().GetPixel(16, 16)
+        $found = $pixel.R, $pixel.G, $pixel.B
+        if ("$found" -ne "$iconColor") { $result = "the program's icon is coloured ($found), expected ($iconColor)" }
+    }
+}
+if ($null -eq $result) { $passed++ } else { $failures += "--icon option [program]`n    $result" }
 
 Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
 

@@ -380,7 +380,9 @@ void registerClass(const wchar_t* name, WNDPROC proc, HBRUSH background) {
     wc.lpfnWndProc = proc;
     wc.hInstance = GetModuleHandleW(nullptr);
     wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
-    wc.hIcon = LoadIconW(nullptr, IDI_APPLICATION);
+    // A program built with --icon carries its icon as resource 1, and its windows show it.
+    wc.hIcon = LoadIconW(wc.hInstance, MAKEINTRESOURCEW(1));
+    if (wc.hIcon == nullptr) wc.hIcon = LoadIconW(nullptr, IDI_APPLICATION);
     wc.hbrBackground = background;
     wc.lpszClassName = name;
     RegisterClassExW(&wc);
