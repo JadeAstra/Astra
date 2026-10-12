@@ -1,0 +1,16 @@
+// The smallest tour: variables, a function, a class.
+
+val who : string = "world"
+print("Hello, $who!")
+
+fun greet(name : string) : string => "Hello, $name!"
+print(greet("Astra"))
+
+class Greeter(val greeting : string) {
+  fun greet(name : string) : string => "${this.greeting}, $name!"
+}
+
+val formal = Greeter("Good evening")
+for name in ["Ada", "Grace", "Linus"] {
+  print(formal.greet(name))
+}

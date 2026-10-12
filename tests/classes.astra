@@ -1,0 +1,121 @@
+class Point {
+  fun init(x, y) {
+    this.x = x
+    this.y = y
+  }
+  fun lengthSquared() { return this.x * this.x + this.y * this.y }
+  fun toString() { return "Point(${this.x}, ${this.y})" }
+}
+var p = Point(3, 4)
+print(p, p.x, p.lengthSquared())        // expect: Point(3, 4) 3 25
+p.x = 10
+p.z = "new field"
+print(p.x, p.z)                         // expect: 10 new field
+print(type(p), p is Point, Point)       // expect: Point true <class Point>
+
+class Shape {
+  fun init(name) { this.name = name }
+  fun area() { return 0 }
+  fun describe() { return "${this.name} with area ${this.area()}" }
+}
+class Rect : Shape {
+  fun init(w, h) {
+    super.init("rect")
+    this.w = w
+    this.h = h
+  }
+  fun area() { return this.w * this.h }
+}
+class Square : Rect {
+  fun init(side) { super.init(side, side); this.name = "square" }
+  fun describe() { return "[" + super.describe() + "]" }
+}
+var shapes = [Shape("blob"), Rect(2, 3), Square(4)]
+for s in shapes { print(s.describe()) }
+// expect: blob with area 0
+// expect: rect with area 6
+// expect: [square with area 16]
+print(shapes[2] is Shape, shapes[2] is Rect, shapes[1] is Square, shapes[0] is Rect)   // expect: true true false false
+print(1 is Shape, null is Shape)        // expect: false false
+
+// an inherited initializer
+class Base { fun init(v) { this.v = v } }
+class Derived : Base { fun get() { return this.v } }
+print(Derived(7).get())                 // expect: 7
+
+// a class with no initializer
+class Empty { }
+var e = Empty()
+e.tag = 1
+print(e.tag, e)                         // expect: 1 <Empty instance>
+
+// static members
+class Counter {
+  static fun create() {
+    Counter.made += 1
+    return Counter()
+  }
+  static fun describe() { return "made ${Counter.made}" }
+}
+Counter.made = 0
+Counter.create(); Counter.create()
+print(Counter.describe(), Counter.name) // expect: made 2 Counter
+
+class Parent { static fun make() { return "parent-made" } }
+class Child : Parent { }
+print(Child.make())                     // expect: parent-made
+
+// bound methods remember their receiver
+var describe = shapes[1].describe
+print(describe())                       // expect: rect with area 6
+
+// functions stored in fields can be called like methods
+class Button {
+  fun init() { this.onClick = fun() => "clicked" }
+}
+print(Button().onClick())               // expect: clicked
+
+// an initializer returns the instance, even after a bare return
+class Early {
+  fun init(flag) {
+    this.flag = flag
+    if flag { return }
+    this.extra = true
+  }
+}
+print(Early(true).flag, Early(false).extra)   // expect: true true
+
+// this and super inside a closure
+class A { fun hello() { return "A.hello" } }
+class B : A {
+  fun hello() {
+    var f = fun() => super.hello() + " via " + type(this)
+    return f()
+  }
+}
+print(B().hello())                      // expect: A.hello via B
+
+// classes are values and can be local
+fun makeClass() {
+  class Local {
+    fun value() { return 42 }
+  }
+  return Local
+}
+print(makeClass()().value())            // expect: 42
+
+// polymorphism through a shared interface
+class Stack {
+  fun init() { this.items = [] }
+  fun add(x) { this.items.push(x); return this }
+  fun take() { return this.items.pop() }
+}
+class Queue : Stack {
+  fun take() { return this.items.removeAt(0) }
+}
+fun drain(box) {
+  var seen = []
+  seen.push(box.take()); seen.push(box.take())
+  return seen
+}
+print(drain(Stack().add(1).add(2).add(3)), drain(Queue().add(1).add(2).add(3)))   // expect: [3, 2] [1, 2]

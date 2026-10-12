@@ -1,0 +1,46 @@
+// Function parameters can have default values, which makes those arguments optional.
+fun greet(name : string, greeting : string = "Hello", mark : string = "!") : string => "$greeting, $name$mark"
+print(greet("Ann"))                              // expect: Hello, Ann!
+print(greet("Ann", "Hi"))                        // expect: Hi, Ann!
+print(greet("Ann", "Hi", "?"))                   // expect: Hi, Ann?
+print(greet("Ann", mark = "..."))                // expect: Hello, Ann...
+print(greet(mark = ".", name = "Bo"))            // expect: Hello, Bo.
+
+fun attempt(f) {
+  try { return f() } catch (e) { return e.message }
+}
+print(attempt(fun() => greet()))                 // expect: greet() expects 1 to 3 argument(s) but got 0
+print(attempt(fun() => greet("a", "b", "c", "d")))   // expect: greet() expects 1 to 3 argument(s) but got 4
+print(attempt(fun() => greet(greeting = "Yo")))  // expect: greet() is missing argument 'name'
+print(attempt(fun() => greet("Ann", 5)))         // expect: argument 'greeting' of greet() must be string, got int
+
+// a default is computed on each call that needs it, and can use the parameters before it
+var calls = 0
+fun next() { calls += 1; return calls }
+fun stamp(label : string, id : int = next(), tag : string = "$label-$id") => tag
+print(stamp("a"), stamp("b"), stamp("c", 10), stamp("d", tag = "custom"), calls)   // expect: a-1 b-2 c-10 custom 3
+fun collect(item, into : list = []) : list { into.push(item); return into }
+print(collect(1), collect(2), collect(3, [0]))   // expect: [1] [2] [0, 3]
+
+// lambdas, methods, static methods and initializers
+val scale = fun(x : number, by : number = 2) : number => x * by
+print(scale(4), scale(4, 3), scale(by = 10, x = 1))   // expect: 8 12 10
+class Timer {
+  var ticks : int = 0
+  fun init(start : int = 0) { this.ticks = start }
+  fun advance(by : int = 1) : Timer { this.ticks += by; return this }
+  static fun starting(at : int = 100) : Timer => Timer(at)
+}
+print(Timer().advance().advance(5).ticks, Timer(10).ticks, Timer.starting().ticks, Timer.starting(at = 7).ticks)   // expect: 6 10 100 7
+
+// a built-in that calls back passes what it passes; defaults fill in the rest
+print([1, 2, 3].map(fun(x, plus = 10) => x + plus))   // expect: [11, 12, 13]
+
+// null is an ordinary argument: only a missing argument gets the default
+fun orDefault(x = "default") => x
+print(orDefault(), orDefault(null))              // expect: default null
+
+// a default whose type is only known when the program runs is still checked
+var fallback = "many"
+fun repeat(text : string, times : int = fallback) : string => text.repeat(times)
+print(attempt(fun() => repeat("ab")), repeat("ab", 2))   // expect: argument 'times' of repeat() must be int, got string abab

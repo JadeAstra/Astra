@@ -1,0 +1,7 @@
+// A variable still cannot be used directly in its own initial value; only a function written
+// there may refer to it.
+print("never runs")
+fun f() {
+  val total = total + 1
+}
+// expect compile error: error_selfuse.astra:5:15: error: cannot use 'total' here: it does not have a value yet

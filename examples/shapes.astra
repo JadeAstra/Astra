@@ -1,0 +1,44 @@
+// Inheritance, super, polymorphism, static methods and toString().
+
+class Shape(var name : string) {
+  fun area() : number { return 0.0 }
+  fun perimeter() : number { return 0.0 }
+
+  fun toString() : string {
+    return "${this.name}: area ${Shape.round2(this.area())}, perimeter ${Shape.round2(this.perimeter())}"
+  }
+
+  static fun round2(x : number) : float => Math.round(x * 100) / 100.0
+}
+
+class Circle(val radius : number) : Shape("circle") {
+  fun area() : number => Math.PI * this.radius * this.radius
+  fun perimeter() : number => 2 * Math.PI * this.radius
+}
+
+class Rect(val width : number, val height : number) : Shape("rectangle") {
+  fun area() : number => this.width * this.height
+  fun perimeter() : number => 2 * (this.width + this.height)
+}
+
+// A square needs more than the header can say, so it writes its own init.
+class Square : Rect {
+  fun init(side : number) {
+    super.init(side, side)
+    this.name = "square"
+  }
+}
+
+val shapes : list = [Circle(1.5), Rect(3, 4.5), Square(2)]
+for shape in shapes {
+  print(shape)
+}
+
+fun larger(a : Shape, b : Shape) : Shape => b.area() > a.area() ? b : a
+
+val largest : Shape = shapes.reduce(larger, shapes[0])
+print("largest is the ${largest.name}")
+print("squares are rectangles:", shapes[2] is Rect, "- circles are not:", shapes[0] is Rect)
+
+shapes.sort(fun(a : Shape, b : Shape) : number => a.area() - b.area())
+print("by area:", shapes.map(fun(s : Shape) : string => s.name).join(" < "))

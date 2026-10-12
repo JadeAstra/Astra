@@ -1,0 +1,66 @@
+// Lists
+var xs = [1, 2, 3]
+xs.push(4, 5)
+print(xs, xs.length, len(xs))           // expect: [1, 2, 3, 4, 5] 5 5
+print(xs[0], xs[-1], xs.pop())          // expect: 1 5 5
+xs.insert(0, 0)
+xs[2] = 20
+print(xs)                               // expect: [0, 1, 20, 3, 4]
+print(xs.removeAt(1), xs.remove(20), xs.remove(99))   // expect: 1 true false
+print(xs)                               // expect: [0, 3, 4]
+print(xs.contains(3), xs.indexOf(4), xs.indexOf(7))   // expect: true 2 -1
+print([1, 2] + [3], [1, 2, 3, 4, 5].slice(1, 3), [1, 2, 3].slice(-2), [1, 2, 3].slice())   // expect: [1, 2, 3] [2, 3] [2, 3] [1, 2, 3]
+print([3, 1, 2].sort(), ["b", "a", "c"].sort(), [3, 1, 2].sort(fun(a, b) => b - a))   // expect: [1, 2, 3] ["a", "b", "c"] [3, 2, 1]
+print([1, 2, 3].reverse(), [1, "b", 2.5].join("-"))   // expect: [3, 2, 1] 1-b-2.5
+
+var nums = [1, 2, 3, 4, 5, 6]
+print(nums.map(fun(n) => n * n))                  // expect: [1, 4, 9, 16, 25, 36]
+print(nums.filter(fun(n) => n % 2 == 0))          // expect: [2, 4, 6]
+print(nums.reduce(fun(acc, n) => acc + n, 0))     // expect: 21
+print(nums.find(fun(n) => n > 4), nums.find(fun(n) => n > 10))   // expect: 5 null
+var seen = []
+nums.each(fun(n) { seen.push(n * 10) })
+print(seen)                                      // expect: [10, 20, 30, 40, 50, 60]
+
+// sort is stable
+var people = [{name: "Ann", age: 30}, {name: "Bob", age: 25}, {name: "Cy", age: 30}]
+people.sort(fun(a, b) => a["age"] - b["age"])
+print(people.map(fun(p) => p["name"]))            // expect: ["Bob", "Ann", "Cy"]
+
+var grid = [[1, 2], [3, 4]]
+grid[1][0] += 10
+print(grid, grid[-1][-1])                        // expect: [[1, 2], [13, 4]] 4
+
+// Maps
+var m = {a: 1, "b c": 2, 3: "three", [1 + 1]: "two"}
+print(m)                                         // expect: {"a": 1, "b c": 2, 3: "three", 2: "two"}
+print(m["a"], m["missing"], m[3], m[3.0], m.length)   // expect: 1 null three three 4
+m["a"] += 41
+m["new"] = true
+print(m.has("a"), m.has("zzz"), m.get("zzz", "fallback"), m["a"])   // expect: true false fallback 42
+print(m.remove("b c"), m.remove("b c"), m.keys())    // expect: true false ["a", 3, 2, "new"]
+print(m.values(), m.entries())                   // expect: [42, "three", "two", true] [["a", 42], [3, "three"], [2, "two"], ["new", true]]
+m.clear()
+print(m, len(m))                                 // expect: {} 0
+
+// a map keeps insertion order through heavy churn
+var churn = {}
+for i in 0..200 { churn[i] = i }
+for i in 0..200 { if i % 10 != 0 { churn.remove(i) } }
+churn["last"] = true
+print(churn.keys().slice(0, 4), churn.keys().slice(-2), len(churn))   // expect: [0, 10, 20, 30] [190, "last"] 21
+
+// Strings
+var s = "  Hello, World  "
+print(s.trim(), s.trim().upper(), s.trim().lower())   // expect: Hello, World HELLO, WORLD hello, world
+print("a,b,,c".split(","), "one two  three".split(), "abc".split(""))   // expect: ["a", "b", "", "c"] ["one", "two", "three"] ["a", "b", "c"]
+print("hello".contains("ell"), "hello".startsWith("he"), "hello".endsWith("lo"), "hello".indexOf("l"), "hello".indexOf("z"))   // expect: true true true 2 -1
+print("hello".slice(1, 3), "hello".slice(-3), "hello".replace("l", "L"), "ab".repeat(3))   // expect: el llo heLLo ababab
+print(chr(65), ord("a"), len("hello"))           // expect: A 97 5
+
+// Errors
+try { print([1][5]) } catch (e) { print(e.message) }     // expect: list index 5 is out of range (length 1)
+try { [].pop() } catch (e) { print(e.message) }          // expect: pop() from an empty list
+try { [1, "a"].sort() } catch (e) { print(e.message) }   // expect: cannot compare string and int while sorting
+try { xs.nope() } catch (e) { print(e.message) }         // expect: undefined method 'nope' on a value of type list
+try { xs.push() } catch (e) { print(e.message) }         // expect: push() expects at least 1 argument(s) but got 0

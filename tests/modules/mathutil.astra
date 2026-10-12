@@ -1,0 +1,14 @@
+import "strutil"
+
+val TAU = 6.28
+
+fun double(x) => x * 2
+
+class Pile {
+  fun init() { this.items = [] }
+  fun add(x) { this.items.push(x); return this }
+  fun take() { return this.items.pop() }
+  fun size() => this.items.length
+}
+
+loadLog.push("mathutil")

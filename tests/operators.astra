@@ -1,0 +1,40 @@
+class Vec {
+  fun init(x, y) { this.x = x; this.y = y }
+  op +(o) { return Vec(this.x + o.x, this.y + o.y) }
+  op -(o) { return Vec(this.x - o.x, this.y - o.y) }
+  op *(k) { return Vec(this.x * k, this.y * k) }
+  op /(k) { return Vec(this.x / k, this.y / k) }
+  op %(k) { return Vec(this.x % k, this.y % k) }
+  op -() { return Vec(-this.x, -this.y) }
+  op ==(o) { return o is Vec && this.x == o.x && this.y == o.y }
+  op <(o) { return this.len2() < o.len2() }
+  op <=(o) { return this.len2() <= o.len2() }
+  op >(o) { return this.len2() > o.len2() }
+  op >=(o) { return this.len2() >= o.len2() }
+  op [](i) { return i == 0 ? this.x : this.y }
+  op []=(i, v) { if i == 0 { this.x = v } else { this.y = v } }
+  fun len2() { return this.x * this.x + this.y * this.y }
+  fun toString() { return "(${this.x}, ${this.y})" }
+}
+var a = Vec(1, 2)
+var b = Vec(3, 5)
+print(a + b, b - a, a * 3, b / 2, b % 2, -a)    // expect: (4, 7) (2, 3) (3, 6) (1, 2) (1, 1) (-1, -2)
+print(a == Vec(1, 2), a != Vec(1, 2), a == b, a == 5, a != null)   // expect: true false false false true
+print(a < b, a <= b, a > b, a >= a)             // expect: true true false true
+print(a[0], a[1])                               // expect: 1 2
+a[0] = 10
+a[1] += 5
+print(a)                                        // expect: (10, 7)
+var c = a
+c += b
+print(c, a)                                     // expect: (13, 12) (10, 7)
+
+// without operator ==, instances compare by identity
+class Plain { }
+var p1 = Plain()
+var p2 = p1
+print(p1 == p2, p1 == Plain())                  // expect: true false
+
+try { print(Plain() + 1) } catch (e) { print(e.message) }   // expect: Plain does not define operator '+'
+try { print(-Plain()) } catch (e) { print(e.message) }      // expect: Plain does not define operator '-'
+try { print(1 + Plain()) } catch (e) { print(e.message) }   // expect: unsupported operand types for '+': int and Plain

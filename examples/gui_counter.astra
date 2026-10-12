@@ -1,0 +1,19 @@
+// The smallest GUI program: a label and two buttons.
+import "gui"
+
+val window = Window("Counter")
+var count = 0
+
+val label = window.label("Count: 0", width = 240)
+val buttons = window.row()
+buttons.button("Add one", fun() {
+  count += 1
+  label.text = "Count: $count"
+})
+buttons.button("Reset", fun() {
+  count = 0
+  label.text = "Count: 0"
+})
+
+window.show()
+App.run()

@@ -1,0 +1,124 @@
+// Parameters and return values can be typed, with the same types as variables.
+fun add(a : int, b : int) : int { return a + b }
+fun half(x : number) : float => x / 2.0
+fun greet(name : string, punctuation : string?) : string {
+  return "Hello, " + name + (punctuation == null ? "" : punctuation)
+}
+print(add(2, 3), half(5), greet("Astra", null), greet("Astra", "!"))   // expect: 5 2.5 Hello, Astra Hello, Astra!
+
+fun attempt(f) {
+  try { return f() } catch (e) { return e.message }
+}
+print(attempt(fun() => add(1, "2")))      // expect: argument 'b' of add() must be int, got string
+print(attempt(fun() => add(1.5, 2)))      // expect: argument 'a' of add() must be int, got float
+print(attempt(fun() => greet(null, "!"))) // expect: argument 'name' of greet() must be string, got null
+print(attempt(fun() => half("x")))        // expect: argument 'x' of half() must be number, got string
+
+// return types
+fun parse(text : string) : int => int(text)
+fun broken(flag : bool) : int {
+  if flag { return "not a number" + "" }
+  return 1
+}
+fun forgetful(n : int) : int {
+  if n > 0 { return n }
+}
+fun maybe(n : int) : int? {
+  if n > 0 { return n }
+}
+print(parse("42"), broken(false), forgetful(3), maybe(3), maybe(-1))   // expect: 42 1 3 3 null
+print(attempt(fun() => broken(true)))     // expect: broken() must return int, but returned string
+print(attempt(fun() => forgetful(-1)))    // expect: forgetful() must return int, but returned null
+
+// untyped and partly typed functions work as before
+fun mixed(a, b : int, c) => [a, b, c]
+print(mixed("x", 2, null))               // expect: ["x", 2, null]
+print(attempt(fun() => mixed(1, 2.0, 3))) // expect: argument 'b' of mixed() must be int, got float
+
+// lambdas
+val triple = fun(n : int) : int => n * 3
+val describe = fun(x : any) : string { return "value " + x }
+print(triple(4), describe(1.5))          // expect: 12 value 1.5
+print(attempt(fun() => triple("4")))      // expect: argument 'n' of <lambda>() must be int, got string
+print([1, 2, 3].map(fun(n : int) : string => "#" + n))   // expect: ["#1", "#2", "#3"]
+print(attempt(fun() => ["a"].map(triple)))    // expect: argument 'n' of <lambda>() must be int, got string
+print(true ? fun() : int => 1 : 2)        // expect: <fun <lambda>>
+
+// functions as typed parameters and return values
+fun apply(f : function, x : int) : int => f(x)
+fun adder(by : int) : function => fun(n : int) : int => n + by
+print(apply(triple, 5), adder(10)(5))    // expect: 15 15
+print(attempt(fun() => apply(3, 5)))      // expect: argument 'f' of apply() must be function, got int
+
+// a typed parameter keeps its type inside the function
+fun countdown(n : int) : list {
+  val seen = []
+  while n > 0 {
+    seen.push(n)
+    n -= 1
+  }
+  return seen
+}
+fun spoil(n : int) {
+  n = "text"
+}
+print(countdown(3))                      // expect: [3, 2, 1]
+print(attempt(fun() => spoil(1)))         // expect: cannot assign a value of type string to 'n', which is declared as int
+
+// classes: typed methods, initializers, static methods and class-typed parameters
+class Animal {
+  fun init(name : string, legs : int) {
+    this.name = name
+    this.legs = legs
+  }
+  fun speak() : string => "${this.name} makes a sound"
+  static fun create(name : string) : Animal => Animal(name, 4)
+}
+class Dog : Animal {
+  fun init(name : string) { super.init(name, 4) }
+  fun speak() : string => "${this.name} says woof"
+  fun befriend(other : Animal) : string => "${this.name} likes ${other.name}"
+  fun offspring(mate : Dog?) : Dog? {
+    if mate == null { return null }
+    return Dog(this.name + "-" + mate.name)
+  }
+}
+class Rock { }
+fun introduce(pet : Animal) : string => pet.speak()
+fun adopt(name : string, dog : bool) : Animal {
+  if dog { return Dog(name) }
+  return Animal.create(name)
+}
+val rex = Dog("Rex")
+val cat = Animal("Tom", 4)
+print(introduce(rex), "/", introduce(cat))       // expect: Rex says woof / Tom makes a sound
+print(rex.befriend(cat), "/", adopt("Ace", true).speak(), "/", adopt("Bo", false).speak())
+// expect: Rex likes Tom / Ace says woof / Bo makes a sound
+print(rex.offspring(null), rex.offspring(Dog("Fay")).name)   // expect: null Rex-Fay
+print(attempt(fun() => introduce(Rock())))        // expect: argument 'pet' of introduce() must be Animal, got Rock
+print(attempt(fun() => introduce(null)))          // expect: argument 'pet' of introduce() must be Animal, got null
+print(attempt(fun() => rex.befriend("Tom")))      // expect: argument 'other' of Dog.befriend() must be Animal, got string
+print(attempt(fun() => rex.offspring(cat)))       // expect: argument 'mate' of Dog.offspring() must be Dog?, got Animal
+print(attempt(fun() => Animal(42, 4)))            // expect: argument 'name' of Animal.init() must be string, got int
+print(attempt(fun() => Animal.create(null)))      // expect: argument 'name' of Animal.create() must be string, got null
+
+// operators
+class Money {
+  fun init(cents : int) { this.cents = cents }
+  op +(other : Money) : Money => Money(this.cents + other.cents)
+  op ==(other : any) : bool => other is Money && this.cents == other.cents
+  fun toString() : string => "$" + this.cents / 100 + "." + this.cents % 100
+}
+print(Money(150) + Money(200), Money(5) == Money(5), Money(5) == 5)   // expect: $3.50 true false
+print(attempt(fun() => Money(1) + 2))             // expect: argument 'other' of Money.+() must be Money, got int
+
+// a method that returns the wrong thing
+class Liar {
+  fun age() : int => "old" + ""
+}
+print(attempt(fun() => Liar().age()))             // expect: Liar.age() must return int, but returned string
+
+// a class declared after the function that names it as a type
+fun wrap(x : int) : Box => Box(x)
+class Box { fun init(v : int) { this.v = v } }
+print(wrap(7).v)                                 // expect: 7

@@ -1,0 +1,44 @@
+// Drawing with the mouse on a canvas. Drag to draw; the buttons pick a colour.
+import "gui"
+
+val window = Window("Paint", 560, 420)
+
+val tools = window.row()
+var color = Color.black
+var thickness = 3
+for choice in [["Black", Color.black], ["Red", Color.red], ["Green", Color.green], ["Blue", Color.blue]] {
+  tools.button(choice[0], fun() { color = choice[1] }, width = 70)
+}
+val thick = tools.checkBox("Thick", onChange = fun(on) { thickness = on ? 9 : 3 })
+tools.spacer()
+tools.button("Clear", fun() { canvas.clear() })
+
+val canvas = window.canvas(fill = true)
+val hint = window.label("Drag on the white area to draw.")
+
+// The last point of the stroke being drawn, or null between strokes.
+var lastX = null
+var lastY = null
+
+canvas.onMouseDown = fun(x, y, button) {
+  lastX = x
+  lastY = y
+  canvas.fillCircle(x, y, thickness / 2.0, color)
+}
+
+canvas.onMouseMove = fun(x, y, button) {
+  if button == 1 && lastX != null {
+    canvas.line(lastX, lastY, x, y, color, thickness)
+    lastX = x
+    lastY = y
+  }
+  hint.text = "$x, $y"
+}
+
+canvas.onMouseUp = fun(x, y, button) {
+  lastX = null
+  lastY = null
+}
+
+window.show()
+App.run()

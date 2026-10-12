@@ -1,0 +1,229 @@
+// Fields can be declared in the class body with val or var, a type and an initial value.
+class Counter {
+  var count : int = 0
+  var label : string = "counter"
+  var history : list = []
+  var note                              // untyped, starts as null
+  var owner : string?                   // nullable, starts as null
+
+  fun bump() : Counter {
+    this.count += 1
+    this.history.push(this.count)
+    return this
+  }
+}
+val c = Counter()
+c.bump().bump()
+print(c.count, c.label, c.history, c.note, c.owner)   // expect: 2 counter [1, 2] null null
+
+// every instance gets its own initial values
+val other = Counter()
+other.bump()
+print(c.history, other.history)         // expect: [1, 2] [1]
+
+fun attempt(f) {
+  try { return f() } catch (e) { return e.message }
+}
+
+// typed fields are checked on every assignment, from inside or outside the class
+print(attempt(fun() { c.count = "three" }))   // expect: cannot assign a value of type string to field 'count' of Counter, which is declared as int
+print(attempt(fun() { c.count += 0.5 }))      // expect: cannot assign a value of type float to field 'count' of Counter, which is declared as int
+print(attempt(fun() { c.label = null }))      // expect: cannot assign a value of type null to field 'label' of Counter, which is declared as string
+print(attempt(fun() { c.owner = 7 }))         // expect: cannot assign a value of type int to field 'owner' of Counter, which is declared as string?
+c.owner = "ada"
+c.owner = null
+c.note = [1, "anything"]
+print(c.count, c.owner, c.note)               // expect: 2 null [1, "anything"]
+
+// a class that declares fields has only those fields
+print(attempt(fun() { c.extra = 1 }))         // expect: Counter has no field 'extra'; fields must be declared in the class with val or var
+print(attempt(fun() { c.cuont += 1 }))        // expect: undefined property 'cuont' on Counter
+
+// fields without an initial value are set by init; a val can be set only once
+class Point {
+  val x : number
+  val y : number
+  var tag : string = "point"
+
+  fun init(x : number, y : number) {
+    this.x = x
+    this.y = y
+  }
+  fun moved(dx : number, dy : number) : Point => Point(this.x + dx, this.y + dy)
+  fun toString() : string => "${this.tag}(${this.x}, ${this.y})"
+}
+val p = Point(1, 2.5)
+p.tag = "pt"
+print(p, p.moved(1, 1))                 // expect: pt(1, 2.5) point(2, 3.5)
+print(attempt(fun() { p.x = 10 }))      // expect: cannot assign to val field 'x' of Point
+print(attempt(fun() { p.x += 1 }))      // expect: cannot assign to val field 'x' of Point
+print(attempt(fun() => Point("a", 2)))  // expect: argument 'x' of Point.init() must be number, got string
+print(p.x)                              // expect: 1
+
+// a val with an initial value is fixed from the start
+class Config {
+  val version : int = 3
+  val tags = ["a"]
+  fun init() { }
+  fun tryChange() { this.version = 4 }
+}
+val config = Config()
+config.tags.push("b")
+print(config.version, config.tags)      // expect: 3 ["a", "b"]
+print(attempt(fun() { config.tryChange() }))   // expect: cannot assign to val field 'version' of Config
+
+// an init that forgets a required field
+class Sloppy {
+  val id : int
+  var name : string
+  fun init(setName : bool) {
+    this.id = 1
+    if setName { this.name = "ok" }
+  }
+}
+print(Sloppy(true).name)                // expect: ok
+print(attempt(fun() => Sloppy(false)))  // expect: Sloppy.init() must set field 'name'
+
+// an init that assigns the wrong type
+class Wrong {
+  var size : int
+  fun init(size) { this.size = size }
+}
+print(Wrong(3).size)                    // expect: 3
+print(attempt(fun() => Wrong("big")))   // expect: cannot assign a value of type string to field 'size' of Wrong, which is declared as int
+
+// initial values can use earlier fields, this, and anything in scope
+val base = 10
+class Derived {
+  var a : int = base * 2
+  var b : int = this.a + 1
+  var c : string = "${this.a}/${this.b}"
+  var made : list = [this.describe()]
+  fun describe() : string => "a=${this.a}"
+}
+val d = Derived()
+print(d.a, d.b, d.c, d.made)            // expect: 20 21 20/21 ["a=20"]
+
+// an initial value of the wrong type that is only known at run time
+fun pick(kind) => kind == "n" ? 1 : "one"
+class Lazy {
+  var n : int = pick(mode)
+}
+var mode = "n"
+print(Lazy().n)                         // expect: 1
+mode = "s"
+print(attempt(fun() => Lazy()))         // expect: cannot assign a value of type string to field 'n' of Lazy, which is declared as int
+
+// inheritance: superclass fields come first, and their declarations still apply
+class Animal {
+  val name : string
+  var legs : int = 4
+  var sound : string = "..."
+  fun init(name : string) { this.name = name }
+  fun speak() : string => "${this.name} says ${this.sound}"
+}
+class Dog : Animal {
+  var tricks : list = []
+  var sound2 : string = this.sound + "!"
+  fun init(name : string) {
+    super.init(name)
+    this.sound = "woof"
+  }
+}
+class Puppy : Dog {
+  var age : int = 0
+}
+val pup = Puppy("Bit")
+pup.tricks.push("sit")
+print(pup.speak(), pup.legs, pup.tricks, pup.sound2, pup.age)   // expect: Bit says woof 4 ["sit"] ...! 0
+print(attempt(fun() { pup.legs = "many" }))   // expect: cannot assign a value of type string to field 'legs' of Puppy, which is declared as int
+print(attempt(fun() { pup.name = "Rex" }))    // expect: cannot assign to val field 'name' of Puppy
+print(attempt(fun() { pup.age = null }))      // expect: cannot assign a value of type null to field 'age' of Puppy, which is declared as int
+
+// class-typed fields, including classes that refer to each other and to themselves
+class Node {
+  val value : int
+  var next : Node? = null
+  var owner : Chain? = null
+  fun init(value : int) { this.value = value }
+}
+class Chain {
+  var head : Node? = null
+  var size : int = 0
+  fun add(value : int) : Chain {
+    val node : Node = Node(value)
+    node.next = this.head
+    node.owner = this
+    this.head = node
+    this.size += 1
+    return this
+  }
+}
+val chain = Chain().add(1).add(2).add(3)
+print(chain.size, chain.head.value, chain.head.next.value, chain.head.owner == chain)   // expect: 3 3 2 true
+print(attempt(fun() { chain.head = chain }))       // expect: cannot assign a value of type Chain to field 'head' of Chain, which is declared as Node?
+print(attempt(fun() { chain.head.next = 5 }))      // expect: cannot assign a value of type int to field 'next' of Node, which is declared as Node?
+print(attempt(fun() { chain.head.owner = Node(0) }))   // expect: cannot assign a value of type Node to field 'owner' of Node, which is declared as Chain?
+
+// a class with declared fields but no init
+class Plain {
+  var on : bool = false
+  val created : string = "now"
+}
+val plain = Plain()
+plain.on = true
+print(plain.on, plain.created)          // expect: true now
+print(attempt(fun() => Plain(1)))       // expect: Plain() takes no arguments but got 1
+
+// declaring a field that a superclass already has
+print(attempt(fun() {
+  class Clash : Animal {
+    var legs : int = 2
+  }
+}))                                     // expect: field 'legs' of class Clash is already declared by a superclass
+
+// subclasses inherit the restriction, even if they declare nothing themselves
+class Kitten : Animal {
+  fun init(name : string) {
+    super.init(name)
+    this.sound = "mew"
+  }
+  fun nickname(n : string) { this.nick = n }
+}
+val kit = Kitten("Tib")
+print(kit.speak())                      // expect: Tib says mew
+print(attempt(fun() { kit.nickname("T") }))   // expect: Kitten has no field 'nick'; fields must be declared in the class with val or var
+
+// a class with no declarations anywhere in its ancestry stays open
+class Bag { }
+val bag = Bag()
+bag.anything = 1
+bag.more = [2]
+print(bag.anything, bag.more)           // expect: 1 [2]
+
+// Error declares `message`, so error classes declare their extra fields too
+class HttpError : Error {
+  val status : int
+  fun init(status : int, message : string) {
+    super.init(message)
+    this.status = status
+  }
+}
+class Careless : Error {
+  fun init() {
+    super.init("careless")
+    this.code = 7
+  }
+}
+val http = HttpError(404, "not found")
+print(http.status, http.message, http)  // expect: 404 not found HttpError: not found
+print(attempt(fun() => Careless()))     // expect: Careless has no field 'code'; fields must be declared in the class with val or var
+
+// lots of instances: field initializers and the collector work together
+var total = 0
+for i in 0..20000 {
+  val n = Counter()
+  n.bump()
+  total += n.count + n.history.length
+}
+print(total)                            // expect: 40000

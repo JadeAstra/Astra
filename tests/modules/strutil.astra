@@ -1,0 +1,6 @@
+// A circular import: mathutil is already being loaded, so this does nothing.
+import "mathutil"
+
+fun shout(s) => s.upper() + "!"
+
+loadLog.push("strutil")

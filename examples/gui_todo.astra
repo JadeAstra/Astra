@@ -1,0 +1,64 @@
+// A to-do list: a text box, a list, and buttons that act on the selection.
+import "gui"
+
+class Task(val title : string, var done : bool = false) {
+  fun toString() : string => (this.done ? "[x] " : "[  ] ") + this.title
+}
+
+val tasks : list = [Task("Write an Astra program"), Task("Give it a window", true), Task("Show it to someone")]
+
+val window = Window("To do", 380, 340)
+
+val entry = window.row()
+val input = entry.textBox("", fill = true)
+val addButton = entry.button("Add")
+
+val list = window.listBox(fill = true)
+
+val actions = window.row()
+val toggleButton = actions.button("Mark done")
+val removeButton = actions.button("Remove")
+actions.spacer()
+val summary = actions.label("")
+
+// Shows `tasks` in the list, keeping the selection where it was.
+fun refresh() {
+  val selected = list.selectedIndex
+  list.setItems(tasks)
+  if selected >= 0 && selected < tasks.length { list.selectedIndex = selected }
+
+  val remaining = tasks.filter(fun(task) => !task.done).length
+  summary.text = "$remaining of ${tasks.length} left"
+  val hasSelection = list.selectedIndex >= 0
+  toggleButton.enable(hasSelection)
+  removeButton.enable(hasSelection)
+}
+
+addButton.onClick = fun() {
+  val title = input.text.trim()
+  if title != "" {
+    tasks.push(Task(title))
+    input.text = ""
+    refresh()
+  }
+  input.focus()
+}
+addButton.makeDefault()     // Enter adds the task
+
+toggleButton.onClick = fun() {
+  val task = tasks[list.selectedIndex]
+  task.done = !task.done
+  refresh()
+}
+
+removeButton.onClick = fun() {
+  tasks.removeAt(list.selectedIndex)
+  refresh()
+}
+
+list.onSelect = fun(index, item) { refresh() }
+
+refresh()
+window.show()
+input.focus()
+App.run()

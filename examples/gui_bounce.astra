@@ -1,0 +1,50 @@
+// Animation: balls bouncing around a canvas, redrawn sixty times a second.
+// Click the canvas to add a ball; Space pauses.
+import "gui"
+
+class Ball(var x : number, var y : number, var dx : number, var dy : number, val radius : number, val color : int) {
+  fun move(width : number, height : number) {
+    this.x += this.dx
+    this.y += this.dy
+    if this.x < this.radius || this.x > width - this.radius { this.dx = -this.dx }
+    if this.y < this.radius || this.y > height - this.radius { this.dy = -this.dy }
+    this.x = Math.max(this.radius, Math.min(this.x, width - this.radius))
+    this.y = Math.max(this.radius, Math.min(this.y, height - this.radius))
+  }
+}
+
+val palette = [Color.red, Color.blue, Color.green, Color.orange, Color.purple, Color.cyan, Color.pink]
+val balls : list = []
+
+fun addBall(x : number, y : number) {
+  val speed = 2 + Math.random() * 4
+  val angle = Math.random() * 2 * Math.PI
+  balls.push(Ball(x, y, Math.cos(angle) * speed, Math.sin(angle) * speed,
+                  10 + Math.randomInt(0, 14), palette[balls.length % palette.length]))
+}
+
+val window = Window("Bounce", 520, 400, padding = 0, spacing = 0)
+val canvas = window.canvas(fill = true)
+val status = window.label("  Click to add a ball. Space pauses.")
+
+var paused = false
+canvas.onMouseDown = fun(x, y, button) { addBall(x, y) }
+canvas.onKeyDown = fun(key) {
+  if key == "Space" { paused = !paused }
+}
+
+fun frame() {
+  val size = canvas.size()
+  if !paused {
+    for ball in balls { ball.move(size[0], size[1]) }
+  }
+  canvas.clear(0x202830)
+  for ball in balls { canvas.fillCircle(ball.x, ball.y, ball.radius, ball.color) }
+  status.text = "  ${balls.length} balls" + (paused ? " (paused)" : "") + ". Click to add one; Space pauses."
+}
+
+for i in 0..6 { addBall(100 + i * 60, 80 + i * 40) }
+window.show()
+canvas.focus()
+App.every(16, frame)
+App.run()

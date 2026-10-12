@@ -1,0 +1,73 @@
+fun add(a, b) { return a + b }
+fun square(x) => x * x
+print(add(2, 3), square(7))             // expect: 5 49
+
+fun noReturn() { }
+print(noReturn())                       // expect: null
+
+fun fact(n) { return n <= 1 ? 1 : n * fact(n - 1) }
+print(fact(10))                         // expect: 3628800
+
+fun isEven(n) { return n == 0 ? true : isOdd(n - 1) }
+fun isOdd(n) { return n == 0 ? false : isEven(n - 1) }
+print(isEven(10), isOdd(7))             // expect: true true
+
+fun makeCounter() {
+  var count = 0
+  return {
+    inc: fun() { count += 1; return count },
+    get: fun() => count
+  }
+}
+var c = makeCounter()
+c["inc"](); c["inc"]()
+print(c["get"]())                       // expect: 2
+var c2 = makeCounter()
+print(c2["inc"](), c["get"]())          // expect: 1 2
+
+fun compose(f, g) => fun(x) => f(g(x))
+var incThenDouble = compose(fun(x) => x * 2, fun(x) => x + 1)
+print(incThenDouble(5))                 // expect: 12
+
+fun outer() {
+  var x = "outer"
+  fun middle() {
+    fun inner() { return x }
+    return inner
+  }
+  return middle()
+}
+print(outer()())                        // expect: outer
+
+// functions are values
+var ops = [add, fun(a, b) => a - b]
+print(ops[0](1, 2), ops[1](1, 2))       // expect: 3 -1
+print(add)                              // expect: <fun add>
+print(fun(x) => x)                       // expect: <fun <lambda>>
+print(print, [].push)                   // expect: <native fun print> <native fun push>
+
+// a local function can call itself
+fun run() {
+  fun loop(n, acc) { return n == 0 ? acc : loop(n - 1, acc + n) }
+  return loop(100, 0)
+}
+print(run())                            // expect: 5050
+
+fun depth(n) => n == 0 ? 0 : 1 + depth(n - 1)
+print(depth(5000))                      // expect: 5000
+
+// two closures share one captured variable
+fun shared() {
+  var value = 0
+  var set = fun(v) { value = v }
+  var get = fun() => value
+  set(42)
+  return get()
+}
+print(shared())                         // expect: 42
+
+// bound native methods are values too
+var items = []
+var push = items.push
+push(1); push(2, 3)
+print(items)                            // expect: [1, 2, 3]

@@ -1,0 +1,63 @@
+// a line break ends a statement...
+var a = 1
+var b = 2
+print(a + b)                            // expect: 3
+
+// ...but not inside parentheses or brackets
+var total = (a
+  + b
+  + 3)
+print(total)                            // expect: 6
+var list = [
+  1,
+  2,
+  3,
+]
+print(list)                             // expect: [1, 2, 3]
+print(
+  "spread",
+  "args"
+)
+// expect: spread args
+
+// an operator at the end of a line continues it
+var long = 1 +
+  2 +
+  3
+print(long)                             // expect: 6
+
+// operators that cannot start a statement may also lead the next line
+var cond = true
+  && false
+print(cond)                             // expect: false
+var pick = cond
+  ? "yes"
+  : "no"
+print(pick)                             // expect: no
+var chained = [3, 1, 2]
+  .sort()
+  .map(fun(x) => x * 2)
+print(chained)                          // expect: [2, 4, 6]
+
+// a leading '-', '(' or '[' starts a new statement instead
+var x = 5
+-x
+var f = fun() => "called"
+var g = f
+(1 + 2)
+[1, 2]
+print(x, g == f)                        // expect: 5 true
+
+// semicolons separate statements on one line
+var p = 1; var q = 2; print(p + q)      // expect: 3
+
+// blocks inside a call are back to line-based statements
+var result = [1, 2, 3].map(fun(n) {
+  var doubled = n * 2
+  return doubled + 1
+})
+print(result)                           // expect: [3, 5, 7]
+
+/* block comments
+   can span lines */
+print("done") /* and sit inline */      // expect: done

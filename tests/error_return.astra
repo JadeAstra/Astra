@@ -1,0 +1,6 @@
+// A return value that can never fit the declared type is rejected before the program runs.
+print("never runs")
+fun count() : int {
+  return "three"
+}
+// expect compile error: error_return.astra:4:10: error: count() is declared to return int and cannot return a value of type string

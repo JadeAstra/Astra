@@ -1,0 +1,6 @@
+// With a generated initializer, a field outside the header needs an initial value.
+print("never runs")
+class Account(val owner : string) {
+  val id : int
+}
+// expect compile error: error_header.astra:4:7: error: field 'id' has no initial value and is not in the class header, so nothing would set it; give it a value, move it into the header, or write an init

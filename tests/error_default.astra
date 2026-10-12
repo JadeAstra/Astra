@@ -1,0 +1,4 @@
+// In a class header, entries with default values have to come after the ones without.
+print("never runs")
+class Point(val x : int = 0, val y : int)
+// expect compile error: error_default.astra:3:34: error: 'y' has no default value but follows an entry that has one; entries with defaults must come last

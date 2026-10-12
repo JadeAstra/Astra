@@ -1,0 +1,143 @@
+// The GUI library, driven without a person: the windows here are never shown, and the
+// buttons are clicked from code.
+import "gui"
+
+// a window is a column; widgets come from its methods
+val window = Window("Counter", 320, 200)
+val label = window.label("Clicks: 0")
+var clicks = 0
+val button = window.button("Click me", fun() {
+  clicks += 1
+  label.text = "Clicks: $clicks"
+})
+button.click()
+button.click()
+print(label.text, "/", button.text, "/", window.title)   // expect: Clicks: 2 / Click me / Counter
+print(label is Label, button is Button, button is Widget, window is Box)   // expect: true true true true
+
+// a disabled button does nothing
+button.disable()
+button.click()
+button.enable()
+button.click()
+print(clicks)                                    // expect: 3
+
+// text boxes: setting the text from code does not count as the user editing it
+var edits = []
+val input = window.textBox("start", fun(text) { edits.push(text) })
+input.text = "changed from code"
+print(input.text, edits)                       // expect: changed from code []
+__guiDispatch(input.id, "change", null, null, null)
+print(edits)                                     // expect: ["changed from code"]
+
+// check boxes
+var seen = []
+val box = window.checkBox("Enabled", true, fun(on) { seen.push(on) })
+print(box.checked)                             // expect: true
+box.click()
+box.click()
+box.checked = false
+print(box.checked, seen)                       // expect: false [false, true]
+
+// list boxes
+var picked = []
+val list = window.listBox(["apple", "banana", "cherry"], fun(index, item) { picked.push("$index:$item") })
+print(list.count, list.selectedIndex, list.selected)   // expect: 3 -1 null
+list.selectedIndex = 1
+print(list.selectedIndex, list.selected)     // expect: 1 banana
+__guiDispatch(list.id, "select", null, null, null)
+list.add("date")
+list.remove(0)
+print(list.items, list.selected, picked)       // expect: ["banana", "cherry", "date"] banana ["1:banana"]
+list.clear()
+print(list.count, list.selected)             // expect: 0 null
+
+// text areas keep their line breaks
+val notes = window.textArea("line one\nline two")
+print(notes.text.split("\n"))                  // expect: ["line one", "line two"]
+
+// layout: rows and columns measure their contents
+val form = Window("Form", 400, 300, padding = 10, spacing = 5)
+val row = form.row()
+val name = row.label("Name", width = 60)
+val field = row.textBox("", width = 200)
+val ok = row.button("OK", width = 90)
+print(row.measure()[0])                          // expect: 366
+print(form.measure()[0], form.children.length, row.children.length)   // expect: 386 1 3
+val wide = form.row(padding = 4)
+wide.label("left", width = 50)
+wide.spacer()
+wide.button("right", width = 100)
+print(wide.measure()[0], wide.children[1].fill)  // expect: 174 true
+
+// a window sized by its content
+val fitted = Window("Fitted")
+fitted.label("x", width = 500)
+print(fitted.fitContent, fitted.measure()[0])    // expect: true 524
+
+// canvases can be drawn on before anything is shown, and report mouse and key events
+val stage = Window("Stage", 300, 200)
+val canvas = stage.canvas(200, 100)
+canvas.clear(Color.white)
+canvas.line(0, 0, 200, 100, Color.red, 2)
+canvas.fillRect(10, 10, 50, 30, Color.blue)
+canvas.rect(70, 10, 50, 30)
+canvas.fillCircle(150, 50, 20, Color.green)
+canvas.circle(150, 50, 30, Color.rgb(10, 20, 30))
+canvas.drawText(10, 60, "hello", Color.black, 14)
+print(canvas.size(), Color.rgb(255, 128, 0) == 0xFF8000)   // expect: [200, 100] true
+var events = []
+canvas.onMouseDown = fun(x, y, button) { events.push("down $x,$y b$button") }
+canvas.onMouseMove = fun(x, y, button) { events.push("move $x,$y") }
+canvas.onKeyDown = fun(key) { events.push("key $key") }
+__guiDispatch(canvas.id, "mouseDown", 5, 6, 1)
+__guiDispatch(canvas.id, "mouseMove", 7, 8, 1)
+__guiDispatch(canvas.id, "keyDown", "Left", null, null)
+__guiDispatch(canvas.id, "mouseUp", 7, 8, 1)
+print(events)                                    // expect: ["down 5,6 b1", "move 7,8", "key Left"]
+
+// Enter clicks the default button; closing can be refused
+var submitted = 0
+val dialog = Window("Dialog", 200, 100)
+dialog.button("Submit", fun() { submitted += 1 }).makeDefault()
+__guiDispatch(dialog.id, "enter", null, null, null)
+var allowClose = false
+dialog.onClose = fun() => allowClose
+print(submitted, __guiDispatch(dialog.id, "close", null, null, null))   // expect: 1 false
+
+// an error in a handler surfaces where the event was triggered
+val faulty = window.button("Faulty", fun() { throw Error("handler failed") })
+try {
+  faulty.click()
+} catch (e) {
+  print(e.message)                               // expect: handler failed
+}
+
+// timers and the event loop: after() runs once, every() repeats, quit() ends run()
+var ticks = 0
+var order = []
+App.after(1, fun() {
+  order.push("once")
+  val repeating = App.every(10, fun() {
+    ticks += 1
+    if ticks == 3 {
+      App.cancel(repeating)
+      order.push("three ticks")
+      App.after(20, fun() {
+        order.push("quit")
+        App.quit()
+      })
+    }
+  })
+})
+App.run()
+print(order, ticks)                              // expect: ["once", "three ticks", "quit"] 3
+
+// every window is gone now, and widgets of a closed window say so
+try {
+  label.text = "too late"
+} catch (e) {
+  print(e.message)                               // expect: this window or widget no longer exists
+}
+App.run()
+print("done")                                    // expect: done

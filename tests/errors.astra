@@ -1,0 +1,121 @@
+try {
+  throw "plain value"
+} catch (e) {
+  print("caught", e)                    // expect: caught plain value
+}
+
+try {
+  throw Error("custom message")
+} catch (e) {
+  print(e.message, e is Error, e)       // expect: custom message true Error: custom message
+}
+
+class ValidationError : Error {
+  val field
+  fun init(field, message) {
+    super.init(message)
+    this.field = field
+  }
+}
+fun validate(age) {
+  if age < 0 { throw ValidationError("age", "must not be negative") }
+  return age
+}
+try {
+  validate(-1)
+} catch (e) {
+  print(e is ValidationError, e is Error, e.field, e)   // expect: true true age ValidationError: must not be negative
+}
+
+// runtime errors are Error instances
+fun attempt(f) {
+  try {
+    return f()
+  } catch (e) {
+    return "error: " + e.message
+  }
+}
+print(attempt(fun() => 1 / 0))                // expect: error: division by zero
+print(attempt(fun() => nope))                 // expect: error: undefined variable 'nope'
+print(attempt(fun() => null.x))               // expect: error: undefined property 'x' on a value of type null
+print(attempt(fun() => 5()))                  // expect: error: cannot call a value of type int
+print(attempt(fun() => "a" - 1))              // expect: error: unsupported operand types for '-': string and int
+print(attempt(fun() => [] < 1))               // expect: error: cannot compare list and int with '<'
+print(attempt(fun(a) => a))                   // expect: error: <lambda>() expects 1 argument(s) but got 0
+print(attempt(fun() => Error("x").missing())) // expect: error: undefined method 'missing' on Error
+print(attempt(fun() => assert(1 == 2, "math is broken")))   // expect: error: math is broken
+print(attempt(fun() => int("abc")))           // expect: error: cannot convert "abc" to an int
+print(attempt(fun() => 1 is 2))               // expect: error: right operand of 'is' must be a class
+print(attempt(fun() => 42))                   // expect: 42
+
+// nested try and rethrow
+fun nested() {
+  try {
+    try {
+      throw Error("inner")
+    } catch (e) {
+      throw Error("outer from " + e.message)
+    }
+  } catch (e) {
+    return e.message
+  }
+}
+print(nested())                              // expect: outer from inner
+
+// errors unwind through calls and through native callbacks
+fun deep(n) {
+  if n == 0 { throw Error("bottom") }
+  return deep(n - 1)
+}
+try { deep(50) } catch (e) { print(e.message) }        // expect: bottom
+try {
+  [1, 2, 3].map(fun(x) { if x == 2 { throw Error("in callback") } return x })
+} catch (e) { print(e.message) }                        // expect: in callback
+
+// a toString() that throws, called from string interpolation
+class Grumpy { fun toString() { throw Error("no comment") } }
+try { print("value: ${Grumpy()}") } catch (e) { print(e.message) }   // expect: no comment
+
+// break, continue and return inside try
+fun search() {
+  var log = []
+  for i in 0..10 {
+    try {
+      if i == 1 { continue }
+      if i == 4 { break }
+      if i == 2 { throw Error("two") }
+      log.push(i)
+    } catch (e) {
+      log.push(e.message)
+    }
+  }
+  try {
+    return log
+  } catch (e) {
+    return null
+  }
+}
+print(search())                              // expect: [0, "two", 3]
+// after those exits no stale handler may be left behind
+try { throw Error("still works") } catch (e) { print(e.message) }   // expect: still works
+
+// stack overflow is an ordinary, catchable error
+fun forever() { return forever() }
+try { forever() } catch (e) { print(e.message) }        // expect: stack overflow
+class Loopy { fun toString() { return "${this}" } }
+try { print(Loopy()) } catch (e) { print(e.message) }   // expect: stack overflow
+
+// catch without a variable
+try { throw 1 } catch { print("ignored") }              // expect: ignored
+
+// a closure created before the throw keeps its variable
+fun capture() {
+  var saved = null
+  try {
+    var local = "kept"
+    saved = fun() => local
+    throw Error("x")
+  } catch (e) { }
+  return saved()
+}
+print(capture())                             // expect: kept

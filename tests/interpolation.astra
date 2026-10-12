@@ -1,0 +1,70 @@
+// "$name" inserts a variable; "${...}" inserts any expression.
+class User {
+  val name : string
+  fun init(name : string) { this.name = name }
+  fun greeting() : string => "I am $this and my name is ${this.name}"
+  fun toString() : string => "User(${this.name})"
+}
+class Car {
+  val name : string = "Beetle"
+  val owner : User = User("Ada")
+}
+class Session {
+  val user : User = User("Grace")
+  fun getUser() : User => this.user
+}
+
+val name = "world"
+val car = Car()
+val session = Session()
+
+print("hello $name")                            // expect: hello world
+print("hello ${car.name}")                      // expect: hello Beetle
+print("hello ${session.getUser().name}")        // expect: hello Grace
+
+// position in the string
+print("$name")                                  // expect: world
+print("$name!")                                 // expect: world!
+print("<$name>")                                // expect: <world>
+print("$name$name")                             // expect: worldworld
+print("$name and ${car.name} and $name")        // expect: world and Beetle and world
+print('single quotes: $name')                   // expect: single quotes: world
+
+// only the variable name belongs to "$name"; longer expressions need braces
+print("$car.name")                              // expect: <Car instance>.name
+print("${car.name}")                            // expect: Beetle
+print("$name[0] vs ${name[0]}")                 // expect: world[0] vs w
+val name_x = "a longer name wins"
+print("$name_x")                                // expect: a longer name wins
+
+// any value prints the way print() shows it
+val count = 3
+val ratio = 0.5
+val items = [1, "two"]
+val nothing = null
+print("$count $ratio $items $nothing $true $false $null")   // expect: 3 0.5 [1, "two"] null true false null
+print("${count + 1} ${count > 2 ? "many" : "few"} ${items.length} ${items.map(fun(x) => "<$x>")}")
+// expect: 4 many 2 ["<1>", "<two>"]
+print(session.getUser().greeting())             // expect: I am User(Grace) and my name is Grace
+print("owner: ${car.owner}, nested: ${"inner $name ${car.owner.name}"}")   // expect: owner: User(Ada), nested: inner world Ada
+
+// a dollar sign that is not followed by a name or a brace is just a dollar sign
+print("price: $5, total $ 10, end $")           // expect: price: $5, total $ 10, end $
+print("escaped: \$name and \${name}")           // expect: escaped: $name and ${name}
+print("keywords stay text: $if $class $for")    // expect: keywords stay text: $if $class $for
+
+// local variables, parameters and loop variables
+fun describe(label : string, values : list) : string {
+  val size = values.length
+  var out = "$label has $size:"
+  for v in values { out += " $v" }
+  return out
+}
+print(describe("list", [7, 8, 9]))              // expect: list has 3: 7 8 9
+
+// an unknown name is reported when the string is built
+try {
+  print("hello $nobody")
+} catch (e) {
+  print(e.message)                              // expect: undefined variable 'nobody'
+}

@@ -1,0 +1,103 @@
+// A function written inside a variable's own initial value may refer to that variable.
+fun attempt(f) {
+  try { return f() } catch (e) { return e.message }
+}
+
+// a lambda that calls itself
+fun factorialOf(n : int) : int {
+  val fact = fun(k) => k <= 1 ? 1 : k * fact(k - 1)
+  return fact(n)
+}
+print(factorialOf(10))                           // expect: 3628800
+
+// a callback that refers to the thing it was registered as
+class Timers {
+  val pending : list = []
+  fun every(action : function) : int {
+    this.pending.push(action)
+    return this.pending.length
+  }
+  fun fire() { for action in this.pending { action() } }
+}
+fun schedule() {
+  val timers = Timers()
+  val log = []
+  val id : int = timers.every(fun() { log.push("timer $id fired") })
+  timers.fire()
+  return log
+}
+print(schedule())                                // expect: ["timer 1 fired"]
+
+// typed or not, in blocks and loops, and with each loop turn getting its own variable
+fun counters() {
+  val results = []
+  for i in 0..3 {
+    val countdown : function = fun(n) => n == 0 ? "done $i" : countdown(n - 1)
+    results.push(countdown(i))
+  }
+  return results
+}
+print(counters())                                // expect: ["done 0", "done 1", "done 2"]
+
+// using the variable too early is reported when it happens
+fun tooEarly() {
+  val x = [1, 2].map(fun(n) => n + x)
+  return x
+}
+print(attempt(tooEarly))                         // expect: 'x' is used before it has a value
+fun callsItselfAtOnce() {
+  val value : int = (fun() => value + 1)()
+  return value
+}
+print(attempt(callsItselfAtOnce))                // expect: 'value' is used before it has a value
+
+// the function may keep the variable for later, or pass it on through further functions
+fun deferred() {
+  val box = {get: fun() => box["label"], label: "kept"}
+  val nested = fun() => fun() => nested
+  return [box["get"](), nested()() == nested]
+}
+print(deferred())                                // expect: ["kept", true]
+
+// a var can be reassigned from inside such a function
+fun stepper() {
+  var step = fun() {
+    step = fun() => "second"
+    return "first"
+  }
+  return [step(), step()]
+}
+print(stepper())                                 // expect: ["first", "second"]
+
+// a typed variable is still checked once its value is known
+fun typed() {
+  val name : string = [fun() => name].length
+  return name
+}
+print(attempt(typed))                            // expect: cannot assign a value of type int to 'name', which is declared as string
+
+// an error while the value is being computed is an ordinary error
+fun failing() {
+  try {
+    val broken = [fun() => broken, null.missing]
+    return broken
+  } catch (e) {
+    return e.message
+  }
+}
+print(failing())                                 // expect: undefined property 'missing' on a value of type null
+
+// at the top level of a file this always worked, since globals are found by name
+val topLevel = fun(n) => n == 0 ? "bottom" : topLevel(n - 1)
+print(topLevel(5))                               // expect: bottom
+
+// many of them, to see that nothing is left behind on the stack
+fun many() {
+  var sum = 0
+  for i in 0..20000 {
+    val self = fun(n) => n == 0 ? i : self(n - 1)
+    sum += self(2)
+  }
+  return sum
+}
+print(many())                                    // expect: 199990000

@@ -1,0 +1,126 @@
+// Properties: `get name()` computes a value when it is read, `set name(value)` runs when it
+// is assigned. They are used like fields.
+class Temperature(var celsius : number) {
+  get fahrenheit() : number => this.celsius * 9 / 5 + 32
+  set fahrenheit(value : number) { this.celsius = (value - 32) * 5 / 9 }
+
+  get description() : string => "${this.celsius} C"
+}
+val t = Temperature(100)
+print(t.fahrenheit, t.description)               // expect: 212 100 C
+t.fahrenheit = 32
+print(t.celsius)                                 // expect: 0
+t.fahrenheit += 18
+print(t.celsius, t.fahrenheit)                   // expect: 10 50
+print((t.fahrenheit = 212), t.celsius)           // expect: 212 100
+
+fun attempt(f) {
+  try { return f() } catch (e) { return e.message }
+}
+
+// a property with only a getter cannot be assigned, and its types are checked like a function's
+print(attempt(fun() { t.description = "x" }))    // expect: property 'description' of Temperature cannot be assigned: it has no setter
+print(attempt(fun() { t.description += "x" }))   // expect: property 'description' of Temperature cannot be assigned: it has no setter
+print(attempt(fun() { t.fahrenheit = "hot" }))   // expect: argument 'value' of Temperature.fahrenheit() must be number, got string
+
+// a setter can check and react before storing the value somewhere
+class Account {
+  var stored : number = 0
+  val history : list = []
+
+  get balance() : number => this.stored
+  set balance(amount : number) {
+    if amount < 0 { throw Error("balance cannot be negative") }
+    if amount == this.stored { return }
+    this.history.push(amount)
+    this.stored = amount
+  }
+
+  fun deposit(amount : number) { this.balance += amount }
+}
+val account = Account()
+account.balance = 50
+account.balance = 50
+account.deposit(25)
+print(account.balance, account.history)          // expect: 75 [50, 75]
+print(attempt(fun() { account.balance = -1 }), account.balance)   // expect: balance cannot be negative 75
+
+// only a setter: the property can be assigned but not read
+class Logger {
+  val lines : list = []
+  set message(text) { this.lines.push("log: $text") }
+}
+val logger = Logger()
+logger.message = "started"
+logger.message = 42
+print(logger.lines)                              // expect: ["log: started", "log: 42"]
+print(attempt(fun() => logger.message))          // expect: property 'message' of Logger cannot be read: it has no getter
+
+// inheritance: properties are inherited, and a subclass can replace just one half
+class Base {
+  var raw = ""
+  get text() => this.raw
+  set text(value) { this.raw = str(value) }
+}
+class Loud : Base {
+  set text(value) { this.raw = str(value).upper() + "!" }
+}
+class Quiet : Base {
+  get text() => "(" + this.raw + ")"
+}
+val loud = Loud()
+val quiet = Quiet()
+loud.text = "hello"
+quiet.text = "hello"
+print(loud.text, quiet.text)                     // expect: HELLO! (hello)
+
+// a property works on classes that declare no fields, and alongside undeclared ones
+class Open {
+  fun init() { this.items = [] }
+  get count() => this.items.length
+  get last() => this.items.length == 0 ? null : this.items[-1]
+  set last(value) { this.items.push(value) }
+}
+val open = Open()
+open.last = "a"
+open.last = "b"
+open.extra = true
+print(open.count, open.last, open.extra)         // expect: 2 b true
+
+// a property that holds a function can be called directly
+class Handlers {
+  var count = 0
+  get increment() => fun(by) { this.count += by; return this.count }
+}
+val handlers = Handlers()
+print(handlers.increment(5), handlers.increment(2))   // expect: 5 7
+
+// `get` and `set` are only special at the start of a class member
+class Store {
+  val data : map = {}
+  fun get(key) => this.data.get(key, "missing")
+  fun set(key, value) { this.data[key] = value }
+  get size() : int => this.data.length
+}
+val store = Store()
+store.set("a", 1)
+val get = store.get("a")
+val set = store.get("b")
+print(get, set, store.size)                      // expect: 1 missing 1
+
+// string interpolation and methods see properties as values
+class Circle(val radius : number) {
+  get area() : number => Math.PI * this.radius * this.radius
+  get diameter() : number => this.radius * 2
+  fun describe() : string => "circle of diameter ${this.diameter}"
+}
+val c = Circle(2)
+print(c.describe(), "${c.diameter}", [Circle(1), Circle(3)].map(fun(x) => x.diameter))   // expect: circle of diameter 4 4 [2, 6]
+
+// errors inside a getter or setter show up where the property is used
+class Fragile {
+  get value() { throw Error("cannot read") }
+  set value(v) { throw Error("cannot write $v") }
+}
+print(attempt(fun() => Fragile().value))         // expect: cannot read
+print(attempt(fun() { Fragile().value = 7 }))    // expect: cannot write 7

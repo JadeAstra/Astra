@@ -1,0 +1,48 @@
+// Two text boxes that stay in step: type in either one.
+import "gui"
+
+val window = Window("Temperature")
+
+val celsiusRow = window.row()
+celsiusRow.label("Celsius", width = 80)
+val celsius = celsiusRow.textBox("20", width = 120)
+
+val fahrenheitRow = window.row()
+fahrenheitRow.label("Fahrenheit", width = 80)
+val fahrenheit = fahrenheitRow.textBox("68.0", width = 120)
+
+val status = window.label("Type a temperature in either box.")
+
+// The number in `text`, or null if it is not one.
+fun parse(text : string) {
+  try {
+    return float(text)
+  } catch (e) {
+    return null
+  }
+}
+
+fun rounded(value : number) : string => str(Math.round(value * 10) / 10.0)
+
+celsius.onChange = fun(text) {
+  val degrees = parse(text)
+  if degrees == null {
+    status.text = "\"$text\" is not a number."
+  } else {
+    fahrenheit.text = rounded(degrees * 9 / 5 + 32)
+    status.text = ""
+  }
+}
+
+fahrenheit.onChange = fun(text) {
+  val degrees = parse(text)
+  if degrees == null {
+    status.text = "\"$text\" is not a number."
+  } else {
+    celsius.text = rounded((degrees - 32) * 5 / 9)
+    status.text = ""
+  }
+}
+
+window.show()
+App.run()

@@ -1,0 +1,41 @@
+// Operator overloading: a class that behaves like a built-in numeric type.
+
+class Vec2(val x : number, val y : number) {
+  op +(other : Vec2) : Vec2 => Vec2(this.x + other.x, this.y + other.y)
+  op -(other : Vec2) : Vec2 => Vec2(this.x - other.x, this.y - other.y)
+  op *(scale : number) : Vec2 => Vec2(this.x * scale, this.y * scale)
+  op -() : Vec2 => Vec2(-this.x, -this.y)
+  op ==(other) : bool => other is Vec2 && this.x == other.x && this.y == other.y
+  op <(other : Vec2) : bool => this.length() < other.length()
+  op [](i : int) : number => i == 0 ? this.x : this.y
+
+  fun length() : float => Math.sqrt(this.x * this.x + this.y * this.y)
+  fun toString() : string => "(${this.x}, ${this.y})"
+}
+
+val a = Vec2(3, 4)
+val b = Vec2(1, 2)
+
+print("a + b  =", a + b)
+print("a - b  =", a - b)
+print("a * 2  =", a * 2)
+print("-a     =", -a)
+print("|a|    =", a.length())
+print("a == b :", a == b, "  a == (3, 4):", a == Vec2(3, 4))
+print("b < a  :", b < a)
+print("a[0], a[1] =", a[0], a[1])
+
+// Compound assignment works through the same operators.
+var position : Vec2 = Vec2(0, 0)
+val velocity : Vec2 = Vec2(1.5, -0.5)
+for step in 0..4 {
+  position += velocity
+}
+print("after 4 steps:", position)
+
+// Types are enforced: a vector cannot be added to a plain number.
+try {
+  print(a + 1)
+} catch (e) {
+  print("error:", e.message)
+}

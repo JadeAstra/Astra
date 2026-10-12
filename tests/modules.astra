@@ -1,0 +1,9 @@
+// Imported files share the global namespace and run once, in import order.
+var loadLog = []
+import "modules/mathutil"
+import "modules/strutil.astra"
+import "modules/mathutil.astra"
+print(loadLog)                          // expect: ["strutil", "mathutil"]
+print(double(21), shout("hi"), TAU)     // expect: 42 HI! 6.28
+var s = Pile().add(1).add(2)
+print(s.take(), s.size())               // expect: 2 1

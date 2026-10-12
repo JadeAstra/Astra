@@ -1,0 +1,6 @@
+// Methods are declared with the fun keyword, like functions.
+print("never runs")
+class Greeter {
+  greet(name) { return "hi" }
+}
+// expect compile error: error_method.astra:4:3: error: methods are declared with 'fun' (fun greet(...))

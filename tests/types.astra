@@ -1,0 +1,99 @@
+// val is immutable, var is mutable; the type after ':' is optional
+val greeting = "hi"
+var counter = 0
+counter += 2
+print(greeting, counter)                // expect: hi 2
+
+val limit : int = 10
+var ratio : float = 0.5
+var label : string = "a"
+var flag : bool = true
+var items : list = [1, 2]
+var table : map = {k: 1}
+var span : range = 0..3
+var action : function = fun(x) => x + 1
+var amount : number = 1
+var anything : any = 1
+amount = 2.5
+anything = "now a string"
+ratio = ratio * 2
+label += "b"
+print(limit, ratio, label, flag, items, table, span, action(1), amount, anything)
+// expect: 10 1.0 ab true [1, 2] {"k": 1} 0..3 2 2.5 now a string
+
+// a typed var keeps its type for life; an untyped one takes anything
+fun attempt(f) {
+  try { f(); return "ok" } catch (e) { return e.message }
+}
+print(attempt(fun() { counter = "text" }))     // expect: ok
+print(attempt(fun() { ratio = 1 }))            // expect: cannot assign a value of type int to 'ratio', which is declared as float
+print(attempt(fun() { label = null }))         // expect: cannot assign a value of type null to 'label', which is declared as string
+print(attempt(fun() { flag = 0 }))             // expect: cannot assign a value of type int to 'flag', which is declared as bool
+print(attempt(fun() { amount = "7" }))         // expect: cannot assign a value of type string to 'amount', which is declared as number
+print(attempt(fun() { items = {} }))           // expect: cannot assign a value of type map to 'items', which is declared as list
+print(attempt(fun() { action = print }))       // expect: ok
+print(ratio, label, flag, amount)             // expect: 1.0 ab true 2.5
+
+// a function compiled before the variable it assigns to is still checked
+fun setLater() { later = "wrong" }
+var later : int = 1
+print(attempt(setLater), later)               // expect: cannot assign a value of type string to 'later', which is declared as int 1
+
+// nullable types
+var maybe : int? = null
+maybe = 5
+maybe = null
+var unset : string?
+print(maybe, unset)                     // expect: null null
+
+// a class type accepts instances of the class and of its subclasses
+class Animal { fun init(name) { this.name = name } }
+class Dog : Animal { }
+class Rock { }
+var pet : Animal = Dog("Rex")
+pet = Animal("Generic")
+print(pet.name)                         // expect: Generic
+print(attempt(fun() { pet = Rock() }))   // expect: cannot assign a value of type Rock to 'pet', which is declared as Animal
+print(attempt(fun() { pet = null }))     // expect: cannot assign a value of type null to 'pet', which is declared as Animal
+var next : Dog? = null
+next = Dog("Fido")
+print(attempt(fun() { next = Animal("x") }))   // expect: cannot assign a value of type Animal to 'next', which is declared as Dog?
+print(next.name)                        // expect: Fido
+
+// the same rules hold for local variables and for variables captured by closures
+fun locals() {
+  val base : int = 10
+  var total : int = base
+  var owner : Animal? = null
+  val bump = fun(by) { total += by }
+  bump(5)
+  owner = Dog("Local")
+  val results = [total, owner.name]
+  results.push(attempt(fun() { total = total / 2.0 }))
+  results.push(attempt(fun() { owner = "nobody" }))
+  results.push(attempt(fun() { var bad : string = base }))
+  results.push(total)
+  return results
+}
+for line in locals() { print(line) }
+// expect: 15
+// expect: Local
+// expect: cannot assign a value of type float to 'total', which is declared as int
+// expect: cannot assign a value of type string to 'owner', which is declared as Animal?
+// expect: cannot assign a value of type int to 'bad', which is declared as string
+// expect: 15
+
+// an initializer whose type is only known at run time is checked then
+fun make(kind) => kind == "n" ? 1 : "one"
+var parsed : int = make("n")
+print(parsed)                           // expect: 1
+print(attempt(fun() { var wrong : int = make("s") }))   // expect: cannot assign a value of type string to 'wrong', which is declared as int
+
+// a val fixes the variable, not the object it refers to
+val bag = []
+bag.push(1)
+print(bag)                              // expect: [1]
+
+// a type has to be a built-in type or a class
+val notAType = 5
+print(attempt(fun() { var x : notAType = make("n") }))   // expect: a type must be a class or a built-in type, not a value of type int

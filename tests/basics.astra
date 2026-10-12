@@ -1,0 +1,50 @@
+// Numbers
+print(1 + 2 * 3)                        // expect: 7
+print((1 + 2) * 3)                      // expect: 9
+print(7 / 2, -7 / 2, 7 % 3, -7 % 3)     // expect: 3 -3 1 -1
+print(7 / 2.0, 1.5 + 1.5, 2 * 0.5)      // expect: 3.5 3.0 1.0
+print(0x10 + 0b101, 1_000_000)          // expect: 21 1000000
+print(1e3, 2.5e-3, 0.1 + 0.2)           // expect: 1000.0 0.0025 0.30000000000000004
+print(1 == 1.0, 1 != 2, 1 == "1")       // expect: true true false
+print(10 > 9, 2 >= 2, 1 < 1, 3 <= 2)    // expect: true true false false
+print(-(-3), !true, !null, !0)          // expect: 3 false true false
+print(9223372036854775807 + 1)          // expect: -9223372036854775808
+print(Math.pow(2, 10), Math.sqrt(16), Math.floor(-1.5), Math.round(2.5))   // expect: 1024 4.0 -2 3
+print(Math.max(1, 7, 3), Math.min(2.5, 2), Math.abs(-4))   // expect: 7 2 4
+
+// Strings
+var name = "Astra"
+print("Hello, ${name}!")                 // expect: Hello, Astra!
+print('single ${1 + 1} quotes')          // expect: single 2 quotes
+print("nested ${"in${1}ner"} done")      // expect: nested in1ner done
+print("a" + "b" + 1 + 2.5 + true + null) // expect: ab12.5truenull
+print("back\\slash", "q\"uote", "dollar \${x}")   // expect: back\slash q"uote dollar ${x}
+print("abc".length, "abc"[0], "abc"[-1]) // expect: 3 a c
+print("abc" < "abd", "b" > "a", "a" == "a")  // expect: true true true
+print("multi
+line")
+// expect: multi
+// expect: line
+print("${[1, "two"]} ${{k: "v"}} ${null}")   // expect: [1, "two"] {"k": "v"} null
+
+// Truthiness and logic
+print(null || "default")                 // expect: default
+print(0 || "x")                          // expect: 0
+print(false && boom())                   // expect: false
+print(1 && 2, null && 2)                 // expect: 2 null
+print(true ? "yes" : "no", false ? 1 : 2)    // expect: yes 2
+
+// Variables
+var a = 1
+var b
+print(a, b)                              // expect: 1 null
+a += 4; a *= 2; a -= 1; a /= 3; a %= 2
+print(a)                                 // expect: 1
+{
+  var a = "shadow"
+  print(a)                               // expect: shadow
+}
+print(a)                                 // expect: 1
+print(type(1), type(1.0), type("s"), type(null), type(true), type([]), type({}), type(print), type(0..1))
+// expect: int float string null bool list map function range
+print(int("42") + 1, float("1.5") * 2, int(3.9), int(-3.9), str(12) + "!")   // expect: 43 3.0 3 -3 12!

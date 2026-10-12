@@ -1,0 +1,5 @@
+// Assigning to a val is caught at compile time, even before its declaration.
+fun bump() { LIMIT += 1 }
+val LIMIT = 10
+print("never runs")
+// expect compile error: error_val.astra:2:14: error: cannot assign to val 'LIMIT'

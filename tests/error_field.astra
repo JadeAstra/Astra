@@ -1,0 +1,6 @@
+// A field's initial value that can never fit its type is rejected before the program runs.
+print("never runs")
+class Player {
+  var score : int = "zero"
+}
+// expect compile error: error_field.astra:4:21: error: cannot initialize field 'score' of type int with a value of type string

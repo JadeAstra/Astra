@@ -1,0 +1,77 @@
+// Arguments can be passed by name: f(name = value).
+class Config(val host : string = "localhost", var port : int = 8080)
+
+fun show(c : Config) : string => "${c.host}:${c.port}"
+
+print(show(Config()))                            // expect: localhost:8080
+print(show(Config("example.org")))               // expect: example.org:8080
+print(show(Config("example.org", 443)))          // expect: example.org:443
+print(show(Config(port = 21)))                   // expect: localhost:21
+print(show(Config(host = "ftp.example.org", port = 21)))    // expect: ftp.example.org:21
+print(show(Config(port = 21, host = "ftp.example.org")))    // expect: ftp.example.org:21
+print(show(Config("mixed.example.org", port = 22)))         // expect: mixed.example.org:22
+
+fun attempt(f) {
+  try { return f() } catch (e) { return e.message }
+}
+
+// what can go wrong
+print(attempt(fun() => Config(prot = 21)))       // expect: Config() has no parameter named 'prot'
+print(attempt(fun() => Config("a", host = "b"))) // expect: argument 'host' of Config() is given more than once
+print(attempt(fun() => Config("a", 1, port = 2)))    // expect: argument 'port' of Config() is given more than once
+print(attempt(fun() => Config(port = "21")))     // expect: cannot assign a value of type string to field 'port' of Config, which is declared as int
+
+// functions and lambdas: any order, but every parameter needs a value
+fun describe(name : string, age : int, city : string) : string => "$name, $age, $city"
+print(describe("Ann", 30, "Oslo"))               // expect: Ann, 30, Oslo
+print(describe(city = "Oslo", name = "Ann", age = 30))      // expect: Ann, 30, Oslo
+print(describe("Ann", city = "Oslo", age = 30))  // expect: Ann, 30, Oslo
+print(attempt(fun() => describe("Ann", city = "Oslo")))     // expect: describe() is missing argument 'age'
+print(attempt(fun() => describe(name = "Ann", age = "x", city = "Oslo")))   // expect: argument 'age' of describe() must be int, got string
+print(attempt(fun() => describe("a", 1, "b", "c", name = "d")))             // expect: describe() expects 3 argument(s) but got 5
+val scale = fun(value : number, by : number) : number => value * by
+print(scale(by = 3, value = 2))                  // expect: 6
+
+// arguments are evaluated in the order they are written
+var order = []
+fun note(tag, value) { order.push(tag); return value }
+describe(city = note("city", "x"), name = note("name", "y"), age = note("age", 1))
+print(order)                                     // expect: ["city", "name", "age"]
+
+// methods, static methods, initializers and super calls
+class Shape(val name : string, val sides : int = 4) {
+  fun scaled(factor : number, label : string) : string => "${this.name} x$factor ($label)"
+  static fun make(name : string, sides : int) : Shape => Shape(sides = sides, name = name)
+}
+class Triangle : Shape {
+  fun init(label : string) { super.init(sides = 3, name = label) }
+}
+val square = Shape(name = "square")
+print(square.scaled(label = "big", factor = 2), square.sides)   // expect: square x2 (big) 4
+print(Shape.make(sides = 5, name = "pentagon").sides)           // expect: 5
+print(Triangle(label = "tri").sides, Triangle("tri").name)      // expect: 3 tri
+val bound = square.scaled
+print(bound(label = "bound", factor = 3))        // expect: square x3 (bound)
+print(attempt(fun() => square.scaled(label = "x")))             // expect: Shape.scaled() is missing argument 'factor'
+
+// header parameters that are not fields, and subclasses
+class Animal(val name : string, var legs : int = 4)
+class Bird(name : string, val canFly : bool = true) : Animal(name, 2)
+val penguin = Bird(canFly = false, name = "penguin")
+print(penguin.name, penguin.legs, penguin.canFly, Bird(name = "robin").canFly)   // expect: penguin 2 false true
+print(attempt(fun() => Bird(canFly = false)))    // expect: Bird() is missing argument 'name'
+
+// defaults that depend on earlier entries still work when those are passed by name
+class Box(val width : number, val height : number = width, val label : string = "${width}x$height")
+print(Box(width = 2).label, Box(label = "L", width = 3).height, Box(2, label = "named").label)   // expect: 2x2 3 named
+
+// built-in functions and classes without an init have no names to match
+class Empty
+print(attempt(fun() => print(x = 1)))            // expect: built-in function print() does not take named arguments
+print(attempt(fun() => [1].push(item = 2)))      // expect: built-in method push() does not take named arguments
+print(attempt(fun() => Empty(x = 1)))            // expect: Empty() takes no arguments
+print(attempt(fun() => 5(x = 1)))                // expect: cannot call a value of type int
+
+// an assignment as an argument now needs parentheses
+var assigned = 0
+print((assigned = 7), assigned)                  // expect: 7 7

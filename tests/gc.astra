@@ -1,0 +1,68 @@
+// Allocation-heavy code: every result here has to survive many garbage collections.
+class Node {
+  fun init(value, next) { this.value = value; this.next = next }
+}
+
+// lots of short-lived garbage
+var total = 0
+for i in 0..300000 {
+  var n = Node(i, null)
+  var pair = [i, "s" + i, {k: i}]
+  total += pair[0] - n.value + pair[2]["k"] - i
+}
+print(total)                            // expect: 0
+
+// a long-lived structure built while garbage is being produced
+var head = null
+for i in 0..200000 {
+  head = Node(i, head)
+  var junk = "junk" + i
+}
+var count = 0
+var sum = 0
+var cur = head
+while cur != null {
+  count += 1
+  sum += cur.value
+  cur = cur.next
+}
+print(count, sum)                       // expect: 200000 19999900000
+
+// reference cycles are collected too
+for i in 0..200000 {
+  var a = Node(i, null)
+  var b = Node(i, a)
+  a.next = b
+}
+
+// closures keep their captured variables alive
+var makers = []
+for i in 0..1000 {
+  var data = [i, i * 2]
+  makers.push(fun() => data[0] + data[1])
+}
+for i in 0..200000 { var g = [i, i] }
+print(makers[999](), makers[0]())       // expect: 2997 0
+
+// values held by native code while it calls back into the program
+var big = range(0, 50000).toList().map(fun(x) { var t = [x, x]; return "v" + x })
+print(big.length, big[0], big[49999])   // expect: 50000 v0 v49999
+var sorted = range(0, 20000).toList().map(fun(x) => "k" + (20000 - x)).sort(fun(a, b) { var t = [a, b]; return len(a) - len(b) })
+print(sorted[0], sorted.length)         // expect: k9 20000
+var folded = range(0, 50000).toList().reduce(fun(acc, x) { var t = [x]; return acc + [x].length }, 0)
+print(folded)                           // expect: 50000
+
+// objects reachable only through a method running on them
+class Chain {
+  fun init(n) { this.n = n }
+  fun build() {
+    var all = []
+    for i in 0..this.n { all.push(Chain(i)) }
+    return all.length
+  }
+  fun toString() { var junk = [1, 2, 3]; return "Chain(${this.n})" }
+}
+print(Chain(100000).build())            // expect: 100000
+var texts = []
+for i in 0..50000 { texts.push("${Chain(i)}") }
+print(texts[0], texts[49999])           // expect: Chain(0) Chain(49999)
