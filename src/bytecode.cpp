@@ -92,6 +92,12 @@ const OpInfo kOps[] = {
     {"SETTER", Operand::U16},
     {"UNSET", Operand::None},
     {"GET_UPVALUE_CHECKED", Operand::U16U16},
+    {"SHL", Operand::None},
+    {"SHR", Operand::None},
+    {"BIT_AND", Operand::None},
+    {"BIT_OR", Operand::None},
+    {"BIT_XOR", Operand::None},
+    {"BIT_NOT", Operand::None},
 };
 
 const char* const kTypeNames[] = {"", "int", "float", "number", "string", "bool", "list", "map", "range", "function"};
@@ -302,6 +308,11 @@ void verifyFunction(FunctionProto& f, const Program& program) {
                 case Op::Is:
                 case Op::Inherit:
                 case Op::Range:
+                case Op::Shl:
+                case Op::Shr:
+                case Op::BitAnd:
+                case Op::BitOr:
+                case Op::BitXor:
                     pops = 2;
                     pushes = 1;
                     break;
@@ -311,6 +322,7 @@ void verifyFunction(FunctionProto& f, const Program& program) {
                     break;
                 case Op::Neg:
                 case Op::Not:
+                case Op::BitNot:
                 case Op::IterInit:
                     pops = pushes = 1;
                     break;

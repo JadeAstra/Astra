@@ -187,7 +187,7 @@ class Box(val window, val vertical : bool, var padding : int = 0, var spacing : 
     val spare = this.vertical ? height - wanted[1] : width - wanted[0]
     var fillers = 0
     for child in this.children { if child.fill { fillers += 1 } }
-    val share = fillers > 0 && spare > 0 ? spare / fillers : 0
+    val share = fillers > 0 and spare > 0 ? spare / fillers : 0
 
     var position = (this.vertical ? y : x) + this.padding
     for child in this.children {
@@ -222,13 +222,13 @@ class Window : Box {
   // With no width or height, the window is made just large enough for its contents.
   fun init(title : string = "Astra", width : int = 0, height : int = 0, padding : int = 12, spacing : int = 8) {
     super.init(this, true, padding, spacing)
-    this.fitContent = width <= 0 || height <= 0
+    this.fitContent = width <= 0 or height <= 0
     this.id = GuiBackend.window(title, width > 0 ? width : 320, height > 0 ? height : 200)
     __guiObjects[this.id] = this
   }
 
   fun show() : Window {
-    if this.fitContent && !this.shown {
+    if this.fitContent and !this.shown {
       val wanted = this.measure()
       GuiBackend.setWindowSize(this.id, Math.max(wanted[0], 220), Math.max(wanted[1], 60))
     }
@@ -335,7 +335,7 @@ class Button(window, text : string, var onClick : function? = null, width : int 
   }
 
   fun handle(event, a, b, c) {
-    if event == "click" && this.onClick != null { this.onClick() }
+    if event == "click" and this.onClick != null { this.onClick() }
     return null
   }
 }
@@ -352,7 +352,7 @@ class CheckBox(window, text : string, var onChange : function? = null)
   fun click() { GuiBackend.click(this.id) }
 
   fun handle(event, a, b, c) {
-    if event == "click" && this.onChange != null { this.onChange(this.checked) }
+    if event == "click" and this.onChange != null { this.onChange(this.checked) }
     return null
   }
 }
@@ -363,7 +363,7 @@ class TextBox(window, text : string, var onChange : function? = null, width : in
   fun natural() : list => [170, GuiBackend.textSize("Ag")[1] + 10]
 
   fun handle(event, a, b, c) {
-    if event == "change" && this.onChange != null { this.onChange(this.text) }
+    if event == "change" and this.onChange != null { this.onChange(this.text) }
     return null
   }
 }
@@ -375,7 +375,7 @@ class TextArea(window, text : string, var onChange : function? = null, width : i
   fun stretchesTall() : bool => true
 
   fun handle(event, a, b, c) {
-    if event == "change" && this.onChange != null { this.onChange(this.text) }
+    if event == "change" and this.onChange != null { this.onChange(this.text) }
     return null
   }
 }
@@ -421,7 +421,7 @@ class ListBox(window, var onSelect : function? = null, width : int = 0, height :
   }
 
   fun handle(event, a, b, c) {
-    if event == "select" && this.onSelect != null { this.onSelect(this.selectedIndex, this.selected) }
+    if event == "select" and this.onSelect != null { this.onSelect(this.selectedIndex, this.selected) }
     return null
   }
 }

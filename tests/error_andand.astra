@@ -1,0 +1,4 @@
+// && and || are not operators: logical and/or are the words `and` and `or`.
+print("never runs")
+val both = true && false
+// expect compile error: error_andand.astra:3:17: error: '&&' is not an operator; logical and is written 'and'

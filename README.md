@@ -32,9 +32,9 @@ build.bat
 ```
 
 This finds the MSVC toolchain, configures with the CMake and Ninja that ship with Visual
-Studio, and produces `build\astra.exe`. Any other CMake setup works too
-(`cmake -S . -B build && cmake --build build`); GCC and Clang flags are in `CMakeLists.txt`
-but only the MSVC build has been tested.
+Studio, and produces `build\astra.exe` with a copy of `lib` beside it. Any other CMake setup
+works too (`cmake -S . -B build && cmake --build build`); GCC and Clang flags are in
+`CMakeLists.txt` but only the MSVC build has been tested.
 
 ## Usage
 
@@ -42,12 +42,40 @@ but only the MSVC build has been tested.
 astra                                 start the interactive prompt
 astra <file> [args...]                run a source (.astra) or bytecode (.astc) file
 astra build <file> [-o <out.astc>]    compile a source file to a bytecode file
+astra build <file> --exe [-o <app.exe>] [--windowed]
+                                      compile it into a program of its own
 astra dis <file>                      list the bytecode of a source or bytecode file
 ```
 
 `astra build` bundles the file and everything it imports into one `.astc`, which runs without
 the sources. Exit codes: 0 success, 65 compile error, 66 file not found, 70 uncaught runtime
 error, or whatever the script passes to `exit()`.
+
+### Standalone programs
+
+`astra build --exe` turns a script into an executable of its own:
+
+```
+astra build examples\bank.astra --exe                        makes examples\bank.exe
+astra build examples\gui_todo.astra --windowed -o Todo.exe   a GUI app with no console window
+```
+
+The result is one file holding the Astra runtime and the compiled script with everything it
+imports, the `gui` library included. It needs neither `astra.exe`, the sources nor `lib` to
+run, so it can be copied to another machine as it is.
+
+A built program runs as its own process, named after its file: `Todo.exe` is listed as
+`Todo.exe` in Task Manager, never as `astra.exe`, so two Astra apps running side by side are
+told apart by name. Rename the file and the process name follows.
+
+- Every command-line argument goes to the script and shows up in `args()`; a built program has
+  no `build`, `dis` or other astra commands.
+- `--windowed` is for GUI apps: starting the program opens no console window. `print` output
+  then goes nowhere unless it is redirected, and an uncaught error is shown in a message box
+  instead of being printed.
+- Without `--windowed` the program is a console program, with `print`, `input()` and exit
+  codes working as they do under `astra`.
+- Asking for a name ending in `.exe` with `-o` implies `--exe`.
 
 ## The language
 
@@ -114,8 +142,45 @@ Statements end at the end of the line; `;` separates statements on one line. A l
 inside `( )` or `[ ]` is ignored, and a line may continue with any operator except `-`, `(`
 or `[`, which start a new statement. Comments are `// ...` and `/* ... */`.
 
-Only `null` and `false` are falsy. `&&` and `||` short-circuit and return an operand;
-`cond ? a : b` is the conditional expression.
+Only `null` and `false` are falsy. Logical and/or are the words `and` and `or`; they stop as
+soon as the answer is known and give back one of their operands (`name or "unknown"`).
+`!x` is logical not, and `cond ? a : b` is the conditional expression.
+
+Operators, from the ones that bind tightest:
+
+| Operators | |
+| --- | --- |
+| `f()` `a[i]` `a.b` | after their operand |
+| `-x` `!x` `~x` | before their operand; `~` flips every bit of an int |
+| `*` `/` `%` | |
+| `+` `-` | |
+| `<<` `>>` | shift the bits of an int left or right |
+| `&` | bitwise and |
+| `^` | bitwise exclusive or |
+| `\|` | bitwise or |
+| `..` `..=` | ranges |
+| `<` `<=` `>` `>=` `is` | |
+| `==` `!=` | |
+| `and` | |
+| `or` | |
+| `? :` | |
+| `=` `+=` `-=` `*=` `/=` `%=` `<<=` `>>=` `&=` `\|=` `^=` | assignment |
+
+The bit operators work on ints. They bind more tightly than comparisons, so `flags & mask != 0`
+tests the masked bits, with no parentheses needed. `>>` keeps the sign of a negative number,
+and shifting by a negative amount is an error.
+
+`++` and `--` add or subtract one from a variable, a field or an element:
+
+```astra
+count++
+this.total--
+items[i]++
+```
+
+They are statements, not expressions: each stands on its own and has no value, so
+`val n = count++` and `list[i++]` are compile errors, and there is no `++count`. Change the
+target on one line and use it on the next. The operator goes on the same line as its target.
 
 ### Control flow
 
@@ -311,14 +376,15 @@ A `toString()` method controls how an instance prints. Classes can overload oper
 class Vec {
   fun init(x, y) { this.x = x; this.y = y }
   op +(o) => Vec(this.x + o.x, this.y + o.y)
-  op ==(o) => o is Vec && this.x == o.x && this.y == o.y
+  op ==(o) => o is Vec and this.x == o.x and this.y == o.y
   op -() => Vec(-this.x, -this.y)             // unary minus
   op [](i) => i == 0 ? this.x : this.y
 }
 ```
 
-Overloadable: `+ - * / %`, unary `-`, `==`, `< <= > >=`, `[]`, `[]=`. `!=` is the negation
-of `==`. Without an `==` operator, instances compare by identity.
+Overloadable: `+ - * / %`, `<< >>`, `& | ^`, unary `-` and `~`, `==`, `< <= > >=`, `[]`, `[]=`.
+`!=` is the negation of `==`, and `++` and `--` use `+` and `-`. Without an `==` operator,
+instances compare by identity.
 
 #### Properties
 
@@ -371,8 +437,8 @@ An imported file runs once. All files share one global namespace, so its top-lev
 functions, classes and variables are simply available afterwards.
 
 A file that is not found next to the importing one is looked for in the `lib` folder beside
-`astra.exe` (or beside the folder that contains it). That is where bundled libraries such as
-`gui` live.
+`astra.exe`, and nowhere else. That is where bundled libraries such as `gui` live, so
+`astra.exe` and its `lib` folder belong together when astra is copied somewhere.
 
 ## GUI
 
@@ -489,6 +555,7 @@ number.
 source ──lexer──▶ tokens ──parser──▶ AST ──compiler──▶ bytecode ──▶ VM
                                                           │
                                                           └── astra build ──▶ .astc file
+                                                                             or an .exe
 ```
 
 | File | Role |
@@ -502,11 +569,17 @@ source ──lexer──▶ tokens ──parser──▶ AST ──compiler─�
 | `src/builtins.cpp` | Standard library |
 | `src/gui.cpp` | Native backend of the GUI library (Windows) |
 | `lib/gui.astra` | The GUI library: widgets, layout and events, written in Astra |
-| `src/main.cpp` | Command line and REPL |
+| `src/main.cpp` | Command line, REPL and building standalone programs |
 
 Every function is checked by the verifier before it can run, whether it came from the
 compiler or from a `.astc` file: operands must be in range and the stack depth consistent on
 every path. That is also where each function's stack requirement is computed.
+
+A standalone program is a copy of `astra.exe` with the compiled bytecode attached to the end
+of the file, followed by its size and a marker. On startup astra looks at the last bytes of
+its own file; when the marker is there it runs the attached program instead of reading the
+command line. `astra.exe` is linked with the static C++ runtime so that such a copy has no
+DLLs to bring along.
 
 ## Tests
 
@@ -515,7 +588,8 @@ powershell -ExecutionPolicy Bypass -File tests\run.ps1
 ```
 
 Each `tests\*.astra` file states its expected output in `// expect:` comments. The runner
-executes every test twice, from source and from a compiled `.astc`, and compares both.
+executes every test three ways (from source, from a compiled `.astc`, and built into an
+`.exe`) and expects the same result from each.
 
 Setting the environment variable `ASTRA_GC_STRESS=1` makes the VM collect garbage at every
 opportunity, which is slow but useful for finding memory bugs when changing the VM.
@@ -535,3 +609,7 @@ opportunity, which is slow but useful for finding memory bugs when changing the 
 - Integer arithmetic wraps on overflow.
 - Bytecode files are verified when loaded, but that is a consistency check rather than a
   security sandbox. Run only `.astc` files you trust.
+- Standalone programs are about 0.9 MB each and have only been tried on Windows. They have
+  the default program icon and no version information, and since they are unsigned Windows
+  may ask for confirmation the first time one downloaded from the internet is run. The script
+  inside is stored as bytecode, not encrypted.

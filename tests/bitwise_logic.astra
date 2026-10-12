@@ -1,0 +1,95 @@
+// & | ^ ~ work on the bits of ints.
+print(12 & 10, 12 | 10, 12 ^ 10, ~12, ~0, ~-1)   // expect: 8 14 6 -13 -1 0
+print(0xFF & 0x0F, 0xF0 | 0x0F, 0xFF ^ 0x0F)     // expect: 15 255 240
+print(-1 & 255, -8 | 3, 5 ^ -1)                  // expect: 255 -5 -6
+
+// & binds tighter than ^, which binds tighter than |; all three are tighter than
+// comparisons and looser than shifts and arithmetic
+print(1 | 2 & 3, 1 ^ 3 & 2, 2 | 1 ^ 3)           // expect: 3 3 2
+print(6 & 3 == 2, 1 | 2 == 3, 1 << 2 | 1, 4 + 1 & 3)   // expect: true true 5 1
+
+// with assignment
+var flags = 0
+flags |= 4
+flags |= 1
+flags &= ~1
+flags ^= 6
+print(flags)                                     // expect: 2
+
+// the usual use: a set of yes/no options in one number
+val READ = 1 << 0
+val WRITE = 1 << 1
+val EXEC = 1 << 2
+var mode = READ | WRITE
+print(mode & WRITE != 0, mode & EXEC != 0, mode | EXEC)   // expect: true false 7
+mode &= ~WRITE
+print(mode, mode & WRITE != 0)                   // expect: 1 false
+
+// on fields and elements
+val masks = [0b1100]
+masks[0] &= 0b1010
+class Register {
+  var bits : int = 0b0001
+}
+val register = Register()
+register.bits |= 0b1000
+register.bits ^= 0b0001
+print(masks, register.bits)                      // expect: [8] 8
+
+fun attempt(f) {
+  try { return f() } catch (e) { return e.message }
+}
+
+// ints only
+print(attempt(fun() => 1.5 & 1))                 // expect: unsupported operand types for '&': float and int
+print(attempt(fun() => true | false))            // expect: unsupported operand types for '|': bool and bool
+print(attempt(fun() => 1 ^ "1"))                 // expect: unsupported operand types for '^': int and string
+print(attempt(fun() => ~"x"))                    // expect: cannot apply '~' to a value of type string
+
+// classes can define them
+class Flags(val bits : int) {
+  op &(other : Flags) : Flags => Flags(this.bits & other.bits)
+  op |(other : Flags) : Flags => Flags(this.bits | other.bits)
+  op ^(other : Flags) : Flags => Flags(this.bits ^ other.bits)
+  op ~() : Flags => Flags(~this.bits & 0xF)
+  fun toString() : string => "Flags(${this.bits})"
+}
+val x = Flags(0b1100)
+val y = Flags(0b1010)
+print(x & y, x | y, x ^ y, ~x)                   // expect: Flags(8) Flags(14) Flags(6) Flags(3)
+var z = x
+z |= y
+print(z)                                         // expect: Flags(14)
+class Plain
+print(attempt(fun() => Plain() & 1))             // expect: Plain does not define operator '&'
+print(attempt(fun() => ~Plain()))                // expect: Plain does not define operator '~'
+
+// logical and / or are words. They stop as soon as the answer is known and give back one
+// of their operands.
+print(true and false, true or false, null or "default", 1 and 2)   // expect: false true default 2
+var calls = []
+fun loud(label, value) {
+  calls.push(label)
+  return value
+}
+print(loud("a", false) and loud("b", true), loud("c", true) or loud("d", false), calls)   // expect: false true ["a", "c"]
+
+// `and` binds tighter than `or`; both are looser than comparisons and bit operators,
+// and tighter than ? :
+print(true or false and false, 1 < 2 and 2 < 3, 1 & 1 == 1 and 2 | 1 == 3)   // expect: true true true
+print(!true or true, !(true or true))            // expect: true false
+val age = 30
+val member = true
+print(age >= 18 and member ? "in" : "out")       // expect: in
+
+// they can lead the next line
+val allowed = age > 0
+  and age < 150
+  or member
+print(allowed)                                   // expect: true
+
+// names that merely contain the words are ordinary names
+val android = 1
+val order = 2
+val band = 3
+print(android + order + band)                    // expect: 6

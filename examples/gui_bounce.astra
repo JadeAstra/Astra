@@ -6,8 +6,8 @@ class Ball(var x : number, var y : number, var dx : number, var dy : number, val
   fun move(width : number, height : number) {
     this.x += this.dx
     this.y += this.dy
-    if this.x < this.radius || this.x > width - this.radius { this.dx = -this.dx }
-    if this.y < this.radius || this.y > height - this.radius { this.dy = -this.dy }
+    if this.x < this.radius or this.x > width - this.radius { this.dx = -this.dx }
+    if this.y < this.radius or this.y > height - this.radius { this.dy = -this.dy }
     this.x = Math.max(this.radius, Math.min(this.x, width - this.radius))
     this.y = Math.max(this.radius, Math.min(this.y, height - this.radius))
   }

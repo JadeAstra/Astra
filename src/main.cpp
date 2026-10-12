@@ -1,9 +1,11 @@
 // The `astra` command: runs, compiles and disassembles Astra programs, and hosts the REPL.
 
 #include <cstdio>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -38,37 +40,63 @@ const char* const kUsage =
     "  astra <file> [args...]                run a source (.astra) or bytecode (.astc) file\n"
     "  astra run <file> [args...]            same as above\n"
     "  astra build <file> [-o <out.astc>]    compile a source file to a bytecode file\n"
+    "  astra build <file> --exe [-o <app.exe>] [--windowed]\n"
+    "                                        compile it into a program of its own;\n"
+    "                                        --windowed gives it no console window\n"
     "  astra dis <file>                      list the bytecode of a source or bytecode file\n"
     "  astra --version\n"
     "  astra --help\n";
 
-// Where bundled libraries such as gui.astra live: a "lib" folder beside the executable, or
-// beside its parent folder (the layout of a source checkout, with the binary in build/).
-std::vector<std::string> libraryPaths() {
-    std::filesystem::path exe;
+// Set when this executable is a built program rather than the astra command.
+bool runningBundledProgram = false;
+
+// The file this process was started from; empty if it cannot be found out.
+std::filesystem::path executablePath() {
 #ifdef _WIN32
-    wchar_t buffer[MAX_PATH];
-    DWORD length = GetModuleFileNameW(nullptr, buffer, MAX_PATH);
-    if (length > 0 && length < MAX_PATH) exe = std::filesystem::path(buffer);
+    std::wstring buffer(1024, L'\0');
+    for (;;) {
+        DWORD length = GetModuleFileNameW(nullptr, buffer.data(), static_cast<DWORD>(buffer.size()));
+        if (length == 0) return {};
+        if (length < buffer.size()) return std::filesystem::path(buffer.substr(0, length));
+        buffer.resize(buffer.size() * 2);
+    }
 #else
     std::error_code ec;
-    exe = std::filesystem::read_symlink("/proc/self/exe", ec);
+    return std::filesystem::read_symlink("/proc/self/exe", ec);
 #endif
+}
+
+// Where bundled libraries such as gui.astra live: a "lib" folder beside the executable, and
+// nowhere else, so that a folder someone else can write to is never searched.
+std::vector<std::string> libraryPaths() {
+    std::filesystem::path exe = executablePath();
     std::vector<std::string> paths;
-    if (!exe.empty()) {
-        std::filesystem::path dir = exe.parent_path();
-        paths.push_back((dir / "lib").string());
-        paths.push_back((dir.parent_path() / "lib").string());
-    }
+    if (!exe.empty()) paths.push_back((exe.parent_path() / "lib").string());
     return paths;
 }
 
 bool stdinIsTerminal() {
-
 #ifdef _WIN32
     return _isatty(_fileno(stdin)) != 0;
 #else
     return isatty(fileno(stdin)) != 0;
+#endif
+}
+
+// Reports a problem that ends the program. A program built with --windowed has no console,
+// so there the message goes in a box instead of being lost.
+void reportFatal(const std::string& report) {
+    std::cout.flush();
+    std::cerr << report;
+
+#ifdef _WIN32
+    if (runningBundledProgram && GetConsoleWindow() == nullptr && GetFileType(GetStdHandle(STD_ERROR_HANDLE)) == FILE_TYPE_UNKNOWN) {
+        std::wstring title = executablePath().stem().wstring();
+        int size = MultiByteToWideChar(CP_UTF8, 0, report.data(), static_cast<int>(report.size()), nullptr, 0);
+        std::wstring wide(static_cast<size_t>(size), L'\0');
+        MultiByteToWideChar(CP_UTF8, 0, report.data(), static_cast<int>(report.size()), wide.data(), size);
+        MessageBoxW(nullptr, wide.c_str(), title.c_str(), MB_OK | MB_ICONERROR);
+    }
 #endif
 }
 
@@ -84,9 +112,102 @@ void reportUncaught(VM& vm, AstraThrow& thrown) {
         text = "exception (its toString() failed)";
     }
 
-    std::cerr << "Uncaught " << text << "\n";
-    for (const std::string& line : thrown.trace) std::cerr << "  " << line << "\n";
+    std::string report = "Uncaught " + text + "\n";
+    for (const std::string& line : thrown.trace) report += "  " + line + "\n";
+    reportFatal(report);
 }
+
+// ---- Programs built into an executable ----
+//
+// `astra build --exe` makes a copy of this executable with the compiled program attached to
+// the end, followed by the program's size and a marker. A copy that finds such a program on
+// itself runs it instead of acting as the astra command.
+
+const char kBundleMarker[8] = {'A', 'S', 'T', 'R', 'A', 'E', 'X', 'E'};
+const size_t kBundleTrailer = 8 + sizeof kBundleMarker;  // program size, then the marker
+
+// Reads a whole file as bytes; false if it cannot be opened.
+bool readBytes(const std::filesystem::path& path, std::string& out) {
+    std::ifstream file(path, std::ios::binary);
+    if (!file) return false;
+    std::ostringstream buffer;
+    buffer << file.rdbuf();
+    out = buffer.str();
+    return !file.bad();
+}
+
+// The size of the program attached to `image`, or -1 if there is none.
+int64_t bundledProgramSize(const std::string& image) {
+    if (image.size() < kBundleTrailer) return -1;
+    const char* trailer = image.data() + image.size() - kBundleTrailer;
+    if (std::memcmp(trailer + 8, kBundleMarker, sizeof kBundleMarker) != 0) return -1;
+
+    uint64_t size = 0;
+    for (int i = 0; i < 8; i++) size |= static_cast<uint64_t>(static_cast<unsigned char>(trailer[i])) << (8 * i);
+    if (size > image.size() - kBundleTrailer) return -1;
+    return static_cast<int64_t>(size);
+}
+
+// Checks only the last few bytes of the file, so an ordinary start of astra pays nothing.
+bool hasBundledProgram(const std::filesystem::path& exe) {
+    std::ifstream file(exe, std::ios::binary | std::ios::ate);
+    if (!file) return false;
+    std::streamoff size = file.tellg();
+    if (size < static_cast<std::streamoff>(kBundleTrailer)) return false;
+    char marker[sizeof kBundleMarker];
+    file.seekg(size - static_cast<std::streamoff>(sizeof kBundleMarker));
+    file.read(marker, sizeof marker);
+    return file && std::memcmp(marker, kBundleMarker, sizeof marker) == 0;
+}
+
+// Runs the program attached to this executable. Every command-line argument is the program's.
+int runBundled(const std::filesystem::path& exe, std::vector<std::string> scriptArgs) {
+    runningBundledProgram = true;
+    std::string image;
+    int64_t size = readBytes(exe, image) ? bundledProgramSize(image) : -1;
+    if (size < 0) {
+        reportFatal(exe.filename().string() + ": the program built into this file is damaged\n");
+        return kExitRuntimeError;
+    }
+    std::string bytecode = image.substr(image.size() - kBundleTrailer - static_cast<size_t>(size), static_cast<size_t>(size));
+    image.clear();
+    image.shrink_to_fit();
+
+    VM vm;
+    vm.scriptArgs = std::move(scriptArgs);
+    Program program;
+    try {
+        readProgram(program, vm, bytecode);
+    } catch (const std::runtime_error& e) {
+        reportFatal(exe.filename().string() + ": the program built into this file is damaged (" + e.what() + ")\n");
+        return kExitRuntimeError;
+    }
+
+    vm.load(program);
+    try {
+        vm.runModule(program.entry);
+    } catch (AstraThrow& thrown) {
+        reportUncaught(vm, thrown);
+        return kExitRuntimeError;
+    } catch (const AstraExit& exit) {
+        return exit.code;
+    }
+    return 0;
+}
+
+#ifdef _WIN32
+// Marks a Windows executable image as a windowed program, so that starting it opens no console.
+bool makeWindowed(std::string& image) {
+    if (image.size() < 0x40 || image[0] != 'M' || image[1] != 'Z') return false;
+    uint32_t peOffset = 0;
+    std::memcpy(&peOffset, image.data() + 0x3C, sizeof peOffset);
+    const size_t subsystemAt = static_cast<size_t>(peOffset) + 4 + 20 + 68;  // signature, file header, into the optional header
+    if (subsystemAt + 2 > image.size() || std::memcmp(image.data() + peOffset, "PE\0\0", 4) != 0) return false;
+    image[subsystemAt] = 2;  // IMAGE_SUBSYSTEM_WINDOWS_GUI
+    image[subsystemAt + 1] = 0;
+    return true;
+}
+#endif
 
 // Loads `path` into `program`, compiling it unless it is already bytecode.
 // Returns 0 on success, otherwise the exit code after reporting the problem.
@@ -143,7 +264,7 @@ int runFile(const std::string& path, std::vector<std::string> scriptArgs) {
     return 0;
 }
 
-int buildFile(const std::string& path, std::string outPath) {
+int buildFile(const std::string& path, std::string outPath, bool asExecutable, bool windowed) {
     std::string data;
     if (!readFile(path, data)) {
         std::cerr << "astra: cannot read '" << path << "'\n";
@@ -154,7 +275,14 @@ int buildFile(const std::string& path, std::string outPath) {
         return kExitUsage;
     }
 
-    if (outPath.empty()) outPath = std::filesystem::path(path).replace_extension(".astc").string();
+#ifdef _WIN32
+    const char* executableExtension = ".exe";
+#else
+    const char* executableExtension = "";
+#endif
+    if (outPath.empty())
+        outPath = std::filesystem::path(path).replace_extension(asExecutable ? executableExtension : ".astc").string();
+    if (asExecutable && std::filesystem::path(outPath) == std::filesystem::path(path)) outPath += ".out";
 
     VM vm;
     CompilerSession session(vm);
@@ -166,13 +294,59 @@ int buildFile(const std::string& path, std::string outPath) {
         return kExitCompileError;
     }
 
-    std::ofstream out(outPath, std::ios::binary | std::ios::trunc);
-    if (out) writeProgram(session.program, out);
-    out.flush();
-    if (!out) {
-        std::cerr << "astra: cannot write '" << outPath << "'\n";
+    if (!asExecutable) {
+        std::ofstream out(outPath, std::ios::binary | std::ios::trunc);
+        if (out) writeProgram(session.program, out);
+        out.flush();
+        if (!out) {
+            std::cerr << "astra: cannot write '" << outPath << "'\n";
+            return kExitCannotWrite;
+        }
+        return 0;
+    }
+
+    // A program of its own: this executable, with the compiled program attached.
+    std::ostringstream compiled;
+    writeProgram(session.program, compiled);
+    std::string bytecode = compiled.str();
+
+    std::string image;
+    if (!readBytes(executablePath(), image)) {
+        std::cerr << "astra: cannot read the astra executable to build from\n";
         return kExitCannotWrite;
     }
+    int64_t existing = bundledProgramSize(image);
+    if (existing >= 0) image.resize(image.size() - kBundleTrailer - static_cast<size_t>(existing));
+
+    if (windowed) {
+#ifdef _WIN32
+        if (!makeWindowed(image)) {
+            std::cerr << "astra: cannot make a windowed program from this executable\n";
+            return kExitCannotWrite;
+        }
+#endif
+    }
+
+    char sizeBytes[8];
+    for (int i = 0; i < 8; i++) sizeBytes[i] = static_cast<char>((static_cast<uint64_t>(bytecode.size()) >> (8 * i)) & 0xFF);
+
+    std::ofstream out(outPath, std::ios::binary | std::ios::trunc);
+    out.write(image.data(), static_cast<std::streamsize>(image.size()));
+    out.write(bytecode.data(), static_cast<std::streamsize>(bytecode.size()));
+    out.write(sizeBytes, sizeof sizeBytes);
+    out.write(kBundleMarker, sizeof kBundleMarker);
+    out.flush();
+    if (!out) {
+        std::cerr << "astra: cannot write '" << outPath << "' (is that program still running?)\n";
+        return kExitCannotWrite;
+    }
+    out.close();
+
+#ifndef _WIN32
+    std::error_code ec;
+    std::filesystem::permissions(outPath, std::filesystem::perms::owner_exec | std::filesystem::perms::group_exec |
+                                              std::filesystem::perms::others_exec, std::filesystem::perm_options::add, ec);
+#endif
     return 0;
 }
 
@@ -264,13 +438,18 @@ int dispatch(const std::vector<std::string>& args) {
 
     if (command == "build") {
         std::string input, output;
+        bool asExecutable = false, windowed = false;
         for (size_t i = 1; i < args.size(); i++) {
             if (args[i] == "-o" && i + 1 < args.size()) {
                 output = args[++i];
-            } else if (input.empty() && args[i] != "-o") {
+            } else if (args[i] == "--exe") {
+                asExecutable = true;
+            } else if (args[i] == "--windowed") {
+                asExecutable = windowed = true;
+            } else if (input.empty() && !args[i].empty() && args[i][0] != '-') {
                 input = args[i];
             } else {
-                std::cerr << "astra: usage: astra build <file> [-o <out.astc>]\n";
+                std::cerr << "astra: usage: astra build <file> [-o <out>] [--exe] [--windowed]\n";
                 return kExitUsage;
             }
         }
@@ -278,7 +457,9 @@ int dispatch(const std::vector<std::string>& args) {
             std::cerr << "astra: 'build' needs a file\n";
             return kExitUsage;
         }
-        return buildFile(input, output);
+        // Asking for an .exe by name is asking for a program.
+        if (std::filesystem::path(output).extension() == ".exe") asExecutable = true;
+        return buildFile(input, output, asExecutable, windowed);
     }
 
     if (command == "dis") {
@@ -309,10 +490,11 @@ int main(int argc, char** argv) {
 
     int code;
     try {
-        code = dispatch(std::vector<std::string>(argv + 1, argv + argc));
+        std::vector<std::string> args(argv + 1, argv + argc);
+        std::filesystem::path self = executablePath();
+        code = !self.empty() && hasBundledProgram(self) ? runBundled(self, std::move(args)) : dispatch(args);
     } catch (const std::exception& e) {
-        std::cout.flush();
-        std::cerr << "astra: internal error: " << e.what() << "\n";
+        reportFatal(std::string("astra: internal error: ") + e.what() + "\n");
         code = kExitRuntimeError;
     }
     std::cout.flush();

@@ -9,7 +9,7 @@
 namespace astra {
 
 // Recursive-descent parser. Statements end at a line break or ';'. A line break also stops
-// an expression from continuing with '(', '[' or binary '-', the only infix forms that could
+// an expression from continuing with '(', '[', binary '-', '++' or '--', the forms that could
 // equally well start the next statement.
 class Parser {
 public:
@@ -56,6 +56,10 @@ private:
     ExprPtr equality();
     ExprPtr comparison();
     ExprPtr range();
+    ExprPtr bitOr();
+    ExprPtr bitXor();
+    ExprPtr bitAnd();
+    ExprPtr shift();
     ExprPtr additive();
     ExprPtr multiplicative();
     ExprPtr unary();

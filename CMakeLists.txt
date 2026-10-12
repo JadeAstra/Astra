@@ -9,6 +9,10 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
   set(CMAKE_BUILD_TYPE Release)
 endif()
 
+# Link the C++ runtime into the executable: astra.exe, and the programs that
+# `astra build --exe` makes from it, then run on machines without Visual Studio's runtime.
+set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+
 add_executable(astra
   src/lexer.cpp
   src/parser.cpp
@@ -22,6 +26,13 @@ add_executable(astra
 )
 
 target_compile_definitions(astra PRIVATE ASTRA_VERSION="${PROJECT_VERSION}")
+
+# astra looks for libraries such as gui.astra only in the lib folder beside itself, so every
+# build puts a copy of lib/ next to the executable.
+add_custom_target(astra_lib ALL
+  COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/lib" "$<TARGET_FILE_DIR:astra>/lib"
+  COMMENT "Copying lib next to astra"
+  VERBATIM)
 
 if(MSVC)
   target_compile_options(astra PRIVATE /W4 /utf-8 /permissive-)

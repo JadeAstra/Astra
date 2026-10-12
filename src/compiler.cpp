@@ -88,6 +88,7 @@ uint8_t staticTypeOf(const Expr& expr) {
             const auto& unary = static_cast<const UnaryExpr&>(expr);
             if (unary.op == TokenType::Bang) return kTypeBool;
             uint8_t operand = staticTypeOf(*unary.operand);
+            if (unary.op == TokenType::Tilde) return operand == kTypeInt ? kTypeInt : 0;
             return operand == kTypeInt || operand == kTypeFloat ? operand : 0;
         }
         default: return 0;
@@ -156,7 +157,8 @@ public:
 
         for (size_t i = 0; i < statements.size(); i++) {
             const Stmt& stmt = *statements[i];
-            if (repl && i + 1 == statements.size() && stmt.kind == StmtKind::Expr) {
+            if (repl && i + 1 == statements.size() && stmt.kind == StmtKind::Expr &&
+                static_cast<const ExprStmt&>(stmt).expr->kind != ExprKind::IncDec) {
                 compileExpr(*static_cast<const ExprStmt&>(stmt).expr);
                 emit(Op::Return);
             } else {
@@ -483,10 +485,16 @@ private:
     void compileStmt(const Stmt& stmt) {
         line_ = stmt.line;
         switch (stmt.kind) {
-            case StmtKind::Expr:
-                compileExpr(*static_cast<const ExprStmt&>(stmt).expr);
-                emit(Op::Pop);
+            case StmtKind::Expr: {
+                const Expr& expr = *static_cast<const ExprStmt&>(stmt).expr;
+                if (expr.kind == ExprKind::IncDec) {
+                    compileIncDec(static_cast<const IncDecExpr&>(expr));  // a statement; leaves no value
+                } else {
+                    compileExpr(expr);
+                    emit(Op::Pop);
+                }
                 break;
+            }
 
             case StmtKind::Var: {
                 const auto& s = static_cast<const VarStmt&>(stmt);
@@ -1158,6 +1166,16 @@ private:
             case TokenType::SlashEq: return Op::Div;
             case TokenType::Percent:
             case TokenType::PercentEq: return Op::Mod;
+            case TokenType::Shl:
+            case TokenType::ShlEq: return Op::Shl;
+            case TokenType::Shr:
+            case TokenType::ShrEq: return Op::Shr;
+            case TokenType::Amp:
+            case TokenType::AmpEq: return Op::BitAnd;
+            case TokenType::Pipe:
+            case TokenType::PipeEq: return Op::BitOr;
+            case TokenType::Caret:
+            case TokenType::CaretEq: return Op::BitXor;
             case TokenType::EqEq:
             case TokenType::BangEq: return Op::Eq;
             case TokenType::Lt: return Op::Lt;
@@ -1217,7 +1235,7 @@ private:
                 const auto& e = static_cast<const UnaryExpr&>(expr);
                 compileExpr(*e.operand);
                 line_ = e.line;
-                emit(e.op == TokenType::Minus ? Op::Neg : Op::Not);
+                emit(e.op == TokenType::Minus ? Op::Neg : e.op == TokenType::Tilde ? Op::BitNot : Op::Not);
                 break;
             }
 
@@ -1255,6 +1273,12 @@ private:
             case ExprKind::Assign:
                 compileAssign(static_cast<const AssignExpr&>(expr));
                 break;
+
+            case ExprKind::IncDec: {
+                const char* op = static_cast<const IncDecExpr&>(expr).increment ? "++" : "--";
+                throw error(expr, std::string("'") + op + "' changes its target but has no value, so it cannot be used " +
+                                      "inside an expression; write it as a statement of its own");
+            }
 
             case ExprKind::Call: {
                 const auto& e = static_cast<const CallExpr&>(expr);
@@ -1371,6 +1395,68 @@ private:
         emitByte(static_cast<int>(e.namedCount));
     }
 
+    // In a class whose fields are all known (it declares some and has no superclass), assigning
+    // through `this` to a name that is neither a field nor a property with a setter is a mistake
+    // that can be reported straight away.
+    void requireDeclaredField(const MemberExpr& target) {
+        if (target.object->kind != ExprKind::This || class_ == nullptr || class_->closed == nullptr) return;
+        const ClassStmt& owner = *class_->closed;
+        bool declared = false;
+        for (const auto& field : owner.fields) declared = declared || field->name == target.name;
+        for (const auto& method : owner.methods)
+            declared = declared || (method->accessor == FunctionDecl::Accessor::Set && method->name == target.name);
+        if (!declared)
+            throw error(target, "class '" + owner.name + "' has no field '" + target.name +
+                                    "'; fields must be declared in the class with val or var");
+    }
+
+    // x++ and x-- as statements: the same as x += 1 and x -= 1 with the result discarded.
+    void compileIncDec(const IncDecExpr& e) {
+        Op change = e.increment ? Op::Add : Op::Sub;
+
+        switch (e.target->kind) {
+            case ExprKind::Name: {
+                const auto& target = static_cast<const NameExpr&>(*e.target);
+                emitGet(target.name, target);
+                emit(Op::Const, intConstant(1));
+                line_ = e.line;
+                emit(change);
+                emitSet(target.name, target);
+                break;
+            }
+
+            case ExprKind::Member: {
+                const auto& target = static_cast<const MemberExpr&>(*e.target);
+                requireDeclaredField(target);
+                compileExpr(*target.object);
+                emit(Op::Dup);
+                line_ = e.line;
+                emit(Op::GetProp, stringConstant(target.name));
+                emit(Op::Const, intConstant(1));
+                emit(change);
+                emit(Op::SetProp, stringConstant(target.name));
+                break;
+            }
+
+            case ExprKind::Index: {
+                const auto& target = static_cast<const IndexExpr&>(*e.target);
+                compileExpr(*target.object);
+                compileExpr(*target.index);
+                emit(Op::Dup2);
+                line_ = e.line;
+                emit(Op::GetIndex);
+                emit(Op::Const, intConstant(1));
+                emit(change);
+                emit(Op::SetIndex);
+                break;
+            }
+
+            default:
+                throw error(e, "this cannot be incremented or decremented");
+        }
+        emit(Op::Pop);
+    }
+
     void compileAssign(const AssignExpr& e) {
         bool compound = e.op != TokenType::Eq;
 
@@ -1387,16 +1473,7 @@ private:
 
             case ExprKind::Member: {
                 const auto& target = static_cast<const MemberExpr&>(*e.target);
-                if (target.object->kind == ExprKind::This && class_ != nullptr && class_->closed != nullptr) {
-                    const ClassStmt& owner = *class_->closed;
-                    bool declared = false;
-                    for (const auto& field : owner.fields) declared = declared || field->name == target.name;
-                    for (const auto& method : owner.methods)
-                        declared = declared || (method->accessor == FunctionDecl::Accessor::Set && method->name == target.name);
-                    if (!declared)
-                        throw error(target, "class '" + owner.name + "' has no field '" + target.name +
-                                                "'; fields must be declared in the class with val or var");
-                }
+                requireDeclaredField(target);
                 compileExpr(*target.object);
                 if (compound) {
                     emit(Op::Dup);

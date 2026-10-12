@@ -106,7 +106,7 @@ print(attempt(fun() => Animal.create(null)))      // expect: argument 'name' of 
 class Money {
   fun init(cents : int) { this.cents = cents }
   op +(other : Money) : Money => Money(this.cents + other.cents)
-  op ==(other : any) : bool => other is Money && this.cents == other.cents
+  op ==(other : any) : bool => other is Money and this.cents == other.cents
   fun toString() : string => "$" + this.cents / 100 + "." + this.cents % 100
 }
 print(Money(150) + Money(200), Money(5) == Money(5), Money(5) == 5)   // expect: $3.50 true false

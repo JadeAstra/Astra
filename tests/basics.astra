@@ -28,10 +28,10 @@ line")
 print("${[1, "two"]} ${{k: "v"}} ${null}")   // expect: [1, "two"] {"k": "v"} null
 
 // Truthiness and logic
-print(null || "default")                 // expect: default
-print(0 || "x")                          // expect: 0
-print(false && boom())                   // expect: false
-print(1 && 2, null && 2)                 // expect: 2 null
+print(null or "default")                 // expect: default
+print(0 or "x")                          // expect: 0
+print(false and boom())                   // expect: false
+print(1 and 2, null and 2)                 // expect: 2 null
 print(true ? "yes" : "no", false ? 1 : 2)    // expect: yes 2
 
 // Variables

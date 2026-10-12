@@ -41,12 +41,23 @@ VM::VM() : output(&std::cout), input(&std::cin), rng(std::random_device{}()) {
     names.opNeg = intern("unary-");
     names.opIndex = intern("[]");
     names.opIndexSet = intern("[]=");
+    names.opShl = intern("<<");
+    names.opShr = intern(">>");
+    names.opBitAnd = intern("&");
+    names.opBitOr = intern("|");
+    names.opBitXor = intern("^");
+    names.opBitNot = intern("unary~");
 
     opNames_[static_cast<int>(Op::Add)] = names.opAdd;
     opNames_[static_cast<int>(Op::Sub)] = names.opSub;
     opNames_[static_cast<int>(Op::Mul)] = names.opMul;
     opNames_[static_cast<int>(Op::Div)] = names.opDiv;
     opNames_[static_cast<int>(Op::Mod)] = names.opMod;
+    opNames_[static_cast<int>(Op::Shl)] = names.opShl;
+    opNames_[static_cast<int>(Op::Shr)] = names.opShr;
+    opNames_[static_cast<int>(Op::BitAnd)] = names.opBitAnd;
+    opNames_[static_cast<int>(Op::BitOr)] = names.opBitOr;
+    opNames_[static_cast<int>(Op::BitXor)] = names.opBitXor;
     opNames_[static_cast<int>(Op::Lt)] = names.opLt;
     opNames_[static_cast<int>(Op::Le)] = names.opLe;
     opNames_[static_cast<int>(Op::Gt)] = names.opGt;
@@ -499,7 +510,7 @@ void VM::invokeOperator(Value receiver, ObjString* name, int argc) {
     ObjInstance* instance = asInstance(receiver);
     const Value* method = instance->cls->methods.find(name);
     if (method == nullptr) {
-        const std::string& symbol = name == names.opNeg ? names.opSub->chars : name->chars;
+        const std::string symbol = name == names.opNeg ? "-" : name == names.opBitNot ? "~" : name->chars;
         throw runtimeError(instance->cls->name->chars + " does not define operator '" + symbol + "'");
     }
     callClosure(asClosure(*method), argc);
@@ -773,6 +784,39 @@ std::string VM::declaredTypeText(uint8_t type, const ObjClass* cls) const {
 AstraThrow VM::typeMismatch(const std::string& variable, uint8_t type, const ObjClass* cls, Value v) {
     return runtimeError("cannot assign a value of type " + typeName(v) + " to '" + variable + "', which is declared as " +
                         declaredTypeText(type, cls));
+}
+
+// a << b and a >> b on ints. Returns true if an overloaded operator was called instead.
+bool VM::shift(Op op) {
+    Value a = sp_[-2], b = sp_[-1];
+    if (!a.isInt() || !b.isInt()) return binarySlow(op);
+
+    int64_t count = b.as.i;
+    if (count < 0) throw runtimeError("cannot shift by a negative amount (" + std::to_string(count) + ")");
+
+    int64_t result;
+    if (op == Op::Shl) {
+        // Bits shifted past the top are lost; a count of 64 or more leaves nothing.
+        result = count >= 64 ? 0 : static_cast<int64_t>(static_cast<uint64_t>(a.as.i) << count);
+    } else {
+        // The sign is kept: negative numbers stay negative, ending at -1.
+        if (count >= 64) result = a.as.i < 0 ? -1 : 0;
+        else result = a.as.i < 0 ? ~(~a.as.i >> count) : a.as.i >> count;
+    }
+    sp_[-2] = Value::integer(result);
+    sp_--;
+    return false;
+}
+
+// a & b, a | b and a ^ b on ints. Returns true if an overloaded operator was called instead.
+bool VM::bitwise(Op op) {
+    Value a = sp_[-2], b = sp_[-1];
+    if (!a.isInt() || !b.isInt()) return binarySlow(op);
+
+    int64_t result = op == Op::BitAnd ? a.as.i & b.as.i : op == Op::BitOr ? a.as.i | b.as.i : a.as.i ^ b.as.i;
+    sp_[-2] = Value::integer(result);
+    sp_--;
+    return false;
 }
 
 // ---- Iteration ----
@@ -1172,6 +1216,33 @@ void VM::run(int baseFrame) {
                         } else {
                             SAVE_IP();
                             if (binarySlow(Op::Mod)) LOAD_FRAME();
+                        }
+                        break;
+                    }
+
+                    case Op::Shl:
+                    case Op::Shr:
+                        SAVE_IP();
+                        if (shift(static_cast<Op>(ip[-1]))) LOAD_FRAME();
+                        break;
+
+                    case Op::BitAnd:
+                    case Op::BitOr:
+                    case Op::BitXor:
+                        SAVE_IP();
+                        if (bitwise(static_cast<Op>(ip[-1]))) LOAD_FRAME();
+                        break;
+
+                    case Op::BitNot: {
+                        Value a = sp_[-1];
+                        if (a.isInt()) {
+                            sp_[-1] = Value::integer(~a.as.i);
+                        } else if (a.isObjType(ObjType::Instance)) {
+                            SAVE_IP();
+                            invokeOperator(a, names.opBitNot, 0);
+                            LOAD_FRAME();
+                        } else {
+                            throw runtimeError("cannot apply '~' to a value of type " + typeName(a));
                         }
                         break;
                     }

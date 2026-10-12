@@ -292,6 +292,9 @@ std::unique_ptr<FunctionDecl> Parser::method() {
         size_t arity = decl->params.size();
         if (op == "-" && arity == 0) {
             decl->name = "unary-";
+        } else if (op == "~") {
+            if (arity != 0) throw error(opToken, "op ~ takes no parameters");
+            decl->name = "unary~";
         } else if (op == "[]=") {
             if (arity != 2) throw error(opToken, "op []= takes exactly two parameters (index, value)");
         } else if (arity != 1) {
@@ -319,6 +322,12 @@ std::string Parser::operatorName() {
         case TokenType::LtEq:
         case TokenType::Gt:
         case TokenType::GtEq:
+        case TokenType::Shl:
+        case TokenType::Shr:
+        case TokenType::Amp:
+        case TokenType::Pipe:
+        case TokenType::Caret:
+        case TokenType::Tilde:
             return t.text;
         case TokenType::LBracket:
             expect(TokenType::RBracket, "']'");
@@ -499,7 +508,12 @@ ExprPtr Parser::assignment() {
         case TokenType::MinusEq:
         case TokenType::StarEq:
         case TokenType::SlashEq:
-        case TokenType::PercentEq: {
+        case TokenType::PercentEq:
+        case TokenType::ShlEq:
+        case TokenType::ShrEq:
+        case TokenType::AmpEq:
+        case TokenType::PipeEq:
+        case TokenType::CaretEq: {
             const Token& op = advance();
             if (left->kind != ExprKind::Name && left->kind != ExprKind::Member && left->kind != ExprKind::Index)
                 throw error(op, "invalid assignment target");
@@ -529,7 +543,7 @@ ExprPtr Parser::ternary() {
 
 ExprPtr Parser::logicalOr() {
     ExprPtr left = logicalAnd();
-    while (check(TokenType::OrOr)) {
+    while (check(TokenType::Or)) {
         const Token& op = advance();
         auto e = node<LogicalExpr>(op);
         e->isAnd = false;
@@ -542,7 +556,7 @@ ExprPtr Parser::logicalOr() {
 
 ExprPtr Parser::logicalAnd() {
     ExprPtr left = equality();
-    while (check(TokenType::AndAnd)) {
+    while (check(TokenType::And)) {
         const Token& op = advance();
         auto e = node<LogicalExpr>(op);
         e->isAnd = true;
@@ -584,14 +598,54 @@ ExprPtr Parser::comparison() {
 }
 
 ExprPtr Parser::range() {
-    ExprPtr left = additive();
+    ExprPtr left = bitOr();
     if (check(TokenType::DotDot) || check(TokenType::DotDotEq)) {
         const Token& op = advance();
         auto e = node<RangeExpr>(op);
         e->inclusive = op.type == TokenType::DotDotEq;
         e->start = std::move(left);
-        e->end = additive();
+        e->end = bitOr();
         return e;
+    }
+    return left;
+}
+
+ExprPtr Parser::bitOr() {
+    ExprPtr left = bitXor();
+    while (check(TokenType::Pipe)) {
+        const Token& op = advance();
+        ExprPtr right = bitXor();
+        left = binary(op, std::move(left), std::move(right));
+    }
+    return left;
+}
+
+ExprPtr Parser::bitXor() {
+    ExprPtr left = bitAnd();
+    while (check(TokenType::Caret)) {
+        const Token& op = advance();
+        ExprPtr right = bitAnd();
+        left = binary(op, std::move(left), std::move(right));
+    }
+    return left;
+}
+
+ExprPtr Parser::bitAnd() {
+    ExprPtr left = shift();
+    while (check(TokenType::Amp)) {
+        const Token& op = advance();
+        ExprPtr right = shift();
+        left = binary(op, std::move(left), std::move(right));
+    }
+    return left;
+}
+
+ExprPtr Parser::shift() {
+    ExprPtr left = additive();
+    while (check(TokenType::Shl) || check(TokenType::Shr)) {
+        const Token& op = advance();
+        ExprPtr right = additive();
+        left = binary(op, std::move(left), std::move(right));
     }
     return left;
 }
@@ -617,13 +671,19 @@ ExprPtr Parser::multiplicative() {
 }
 
 ExprPtr Parser::unary() {
-    if (check(TokenType::Bang) || check(TokenType::Minus)) {
+    if (check(TokenType::Bang) || check(TokenType::Minus) || check(TokenType::Tilde)) {
         DepthGuard guard(*this);
         const Token& op = advance();
         auto e = node<UnaryExpr>(op);
         e->op = op.type;
         e->operand = unary();
         return e;
+    }
+    if (check(TokenType::PlusPlus) || check(TokenType::MinusMinus)) {
+        // There is no ++x or --x: the operator goes after its target, as a statement.
+        const Token& op = peek();
+        std::string hint = op.type == TokenType::MinusMinus ? "; to negate twice, write -(-x)" : "";
+        throw error(op, "'" + op.text + "' goes after what it changes, as a statement of its own (count" + op.text + ")" + hint);
     }
     return postfix();
 }
@@ -663,6 +723,14 @@ ExprPtr Parser::postfix() {
             expect(TokenType::RBracket, "']' after index");
             index->object = std::move(e);
             e = std::move(index);
+        } else if ((t.type == TokenType::PlusPlus || t.type == TokenType::MinusMinus) && !t.newlineBefore) {
+            advance();
+            if (e->kind != ExprKind::Name && e->kind != ExprKind::Member && e->kind != ExprKind::Index)
+                throw error(t, "'" + t.text + "' needs a variable, a field or an element to change");
+            auto change = node<IncDecExpr>(t);
+            change->increment = t.type == TokenType::PlusPlus;
+            change->target = std::move(e);
+            e = std::move(change);
         } else if (t.type == TokenType::Dot) {
             advance();
             const Token& name = expect(TokenType::Identifier, "a member name after '.'");

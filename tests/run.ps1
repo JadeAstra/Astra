@@ -1,5 +1,5 @@
-# Runs every tests\*.astra file twice: straight from source, and compiled to a bytecode
-# file first. Expected output comes from comments in the test itself:
+# Runs every tests\*.astra file three ways: straight from source, compiled to a bytecode
+# file, and built into a program of its own. Expected output comes from comments in the test:
 #
 #   // expect: <line>                  the next line of standard output
 #   // expect runtime error: <text>    the program fails (exit code 70) and reports <text>
@@ -16,9 +16,10 @@ $Astra = (Resolve-Path $Astra).Path
 $tmp = Join-Path ([IO.Path]::GetTempPath()) "astra-tests-$PID"
 New-Item -ItemType Directory -Force $tmp | Out-Null
 
-function Invoke-Astra([string[]]$AstraArgs) {
+# Runs astra, or with -Program a program built by `astra build --exe`.
+function Invoke-Astra([string[]]$AstraArgs, [string]$Program = $Astra) {
     $psi = New-Object System.Diagnostics.ProcessStartInfo
-    $psi.FileName = $Astra
+    $psi.FileName = $Program
     $psi.Arguments = ($AstraArgs | ForEach-Object { '"' + $_ + '"' }) -join ' '
     $psi.UseShellExecute = $false
     $psi.RedirectStandardOutput = $true
@@ -90,6 +91,14 @@ foreach ($test in Get-ChildItem (Join-Path $PSScriptRoot '*.astra') | Sort-Objec
             $results['compiled'] = "build failed: $($build.Error.Trim())"
         } else {
             $results['compiled'] = Compare-Run (Invoke-Astra @($bytecode)) $expected $errorText $exitCode
+        }
+
+        $program = Join-Path $tmp ($test.BaseName + '.exe')
+        $build = Invoke-Astra @('build', $test.FullName, '--exe', '-o', $program)
+        if ($build.Code -ne 0) {
+            $results['program'] = "build failed: $($build.Error.Trim())"
+        } else {
+            $results['program'] = Compare-Run (Invoke-Astra @() -Program $program) $expected $errorText $exitCode
         }
     }
 

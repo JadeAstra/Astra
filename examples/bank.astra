@@ -40,7 +40,7 @@ class Bank {
   fun transfer(from : string, to : string, amount : number) {
     val source : Account? = this.accounts[from]
     val target : Account? = this.accounts[to]
-    if source == null || target == null { throw Error("unknown account") }
+    if source == null or target == null { throw Error("unknown account") }
     source.withdraw(amount)
     target.deposit(amount)
   }

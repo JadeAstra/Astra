@@ -25,7 +25,7 @@ val summary = actions.label("")
 fun refresh() {
   val selected = list.selectedIndex
   list.setItems(tasks)
-  if selected >= 0 && selected < tasks.length { list.selectedIndex = selected }
+  if selected >= 0 and selected < tasks.length { list.selectedIndex = selected }
 
   val remaining = tasks.filter(fun(task) => !task.done).length
   summary.text = "$remaining of ${tasks.length} left"

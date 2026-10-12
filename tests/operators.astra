@@ -6,7 +6,7 @@ class Vec {
   op /(k) { return Vec(this.x / k, this.y / k) }
   op %(k) { return Vec(this.x % k, this.y % k) }
   op -() { return Vec(-this.x, -this.y) }
-  op ==(o) { return o is Vec && this.x == o.x && this.y == o.y }
+  op ==(o) { return o is Vec and this.x == o.x and this.y == o.y }
   op <(o) { return this.len2() < o.len2() }
   op <=(o) { return this.len2() <= o.len2() }
   op >(o) { return this.len2() > o.len2() }

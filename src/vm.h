@@ -58,6 +58,12 @@ struct Names {
     ObjString* opNeg;
     ObjString* opIndex;
     ObjString* opIndexSet;
+    ObjString* opShl;
+    ObjString* opShr;
+    ObjString* opBitAnd;
+    ObjString* opBitOr;
+    ObjString* opBitXor;
+    ObjString* opBitNot;
 };
 
 enum class BuiltinType { String, List, Map, Range, Count_ };
@@ -198,6 +204,8 @@ private:
     void setIndex(Value obj, Value index, Value value);
     bool binarySlow(Op op);
     bool compareSlow(Op op);
+    bool shift(Op op);
+    bool bitwise(Op op);
 
     bool matchesType(Value v, uint8_t type, const ObjClass* cls) const;
     ObjClass* popTypeClass(uint8_t type);

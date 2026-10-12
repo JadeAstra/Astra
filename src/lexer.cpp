@@ -16,6 +16,7 @@ const std::unordered_map<std::string, TokenType> kKeywords = {
     {"continue", TokenType::Continue}, {"true", TokenType::True},     {"false", TokenType::False},
     {"null", TokenType::Null},     {"try", TokenType::Try},           {"catch", TokenType::Catch},
     {"throw", TokenType::Throw},   {"import", TokenType::Import},     {"is", TokenType::Is},
+    {"and", TokenType::And},       {"or", TokenType::Or},
 };
 
 bool isDigit(char c) { return c >= '0' && c <= '9'; }
@@ -201,14 +202,44 @@ void Lexer::scanToken() {
                 type = TokenType::Dot;
             }
             break;
-        case '+': withEq(TokenType::Plus, TokenType::PlusEq); break;
-        case '-': withEq(TokenType::Minus, TokenType::MinusEq); break;
+        case '+':
+            if (next('+')) {
+                type = TokenType::PlusPlus;
+                length = 2;
+            } else {
+                withEq(TokenType::Plus, TokenType::PlusEq);
+            }
+            break;
+        case '-':
+            if (next('-')) {
+                type = TokenType::MinusMinus;
+                length = 2;
+            } else {
+                withEq(TokenType::Minus, TokenType::MinusEq);
+            }
+            break;
         case '*': withEq(TokenType::Star, TokenType::StarEq); break;
         case '/': withEq(TokenType::Slash, TokenType::SlashEq); break;
         case '%': withEq(TokenType::Percent, TokenType::PercentEq); break;
         case '!': withEq(TokenType::Bang, TokenType::BangEq); break;
-        case '<': withEq(TokenType::Lt, TokenType::LtEq); break;
-        case '>': withEq(TokenType::Gt, TokenType::GtEq); break;
+        case '<':
+            if (next('<')) {
+                bool assign = pos_ + 2 < end_ && src_[pos_ + 2] == '=';
+                type = assign ? TokenType::ShlEq : TokenType::Shl;
+                length = assign ? 3 : 2;
+            } else {
+                withEq(TokenType::Lt, TokenType::LtEq);
+            }
+            break;
+        case '>':
+            if (next('>')) {
+                bool assign = pos_ + 2 < end_ && src_[pos_ + 2] == '=';
+                type = assign ? TokenType::ShrEq : TokenType::Shr;
+                length = assign ? 3 : 2;
+            } else {
+                withEq(TokenType::Gt, TokenType::GtEq);
+            }
+            break;
         case '=':
             if (next('=')) {
                 type = TokenType::EqEq;
@@ -221,15 +252,15 @@ void Lexer::scanToken() {
             }
             break;
         case '&':
-            if (!next('&')) throw error("unexpected character '&' (did you mean '&&'?)");
-            type = TokenType::AndAnd;
-            length = 2;
+            if (next('&')) throw error("'&&' is not an operator; logical and is written 'and'");
+            withEq(TokenType::Amp, TokenType::AmpEq);
             break;
         case '|':
-            if (!next('|')) throw error("unexpected character '|' (did you mean '||'?)");
-            type = TokenType::OrOr;
-            length = 2;
+            if (next('|')) throw error("'||' is not an operator; logical or is written 'or'");
+            withEq(TokenType::Pipe, TokenType::PipeEq);
             break;
+        case '^': withEq(TokenType::Caret, TokenType::CaretEq); break;
+        case '~': type = TokenType::Tilde; break;
         default:
             throw error(std::string("unexpected character '") + c + "'");
     }

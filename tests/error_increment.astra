@@ -1,0 +1,5 @@
+// ++ has no value, so it cannot be used inside an expression.
+print("never runs")
+var count = 0
+val next = count++
+// expect compile error: error_increment.astra:4:17: error: '++' changes its target but has no value, so it cannot be used inside an expression; write it as a statement of its own

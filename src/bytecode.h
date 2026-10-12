@@ -93,6 +93,13 @@ enum class Op : uint8_t {
     Unset,              //                                 -> (the "no value yet" mark)
     GetUpvalueChecked,  // u16 index, u16 variable name    -> value  (throws if it has no value yet)
 
+    Shl,                //                                 a b -> a << b
+    Shr,                //                                 a b -> a >> b
+    BitAnd,             //                                 a b -> a & b
+    BitOr,              //                                 a b -> a | b
+    BitXor,             //                                 a b -> a ^ b
+    BitNot,             //                                 a -> ~a
+
     Count_,
 };
 

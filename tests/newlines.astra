@@ -28,7 +28,7 @@ print(long)                             // expect: 6
 
 // operators that cannot start a statement may also lead the next line
 var cond = true
-  && false
+  and false
 print(cond)                             // expect: false
 var pick = cond
   ? "yes"

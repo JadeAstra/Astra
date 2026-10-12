@@ -19,7 +19,7 @@ struct Node {
 
 enum class ExprKind {
     Literal, Interp, Name, This, Super, Unary, Binary, Logical, Ternary, Assign,
-    Call, Member, Index, List, Map, Range, Is, Function,
+    Call, Member, Index, List, Map, Range, Is, Function, IncDec,
 };
 
 struct Expr : Node {
@@ -117,7 +117,16 @@ struct AssignExpr : Expr {
     AssignExpr() : Expr(ExprKind::Assign) {}
 };
 
+// x++ and x--. The target is a variable, a field or an element. These are parsed where an
+// expression can appear but only allowed as a statement of their own: they have no value.
+struct IncDecExpr : Expr {
+    ExprPtr target;
+    bool increment = false;
+    IncDecExpr() : Expr(ExprKind::IncDec) {}
+};
+
 struct CallExpr : Expr {
+
     ExprPtr callee;
     std::vector<ExprPtr> args;
 

@@ -27,7 +27,7 @@ canvas.onMouseDown = fun(x, y, button) {
 }
 
 canvas.onMouseMove = fun(x, y, button) {
-  if button == 1 && lastX != null {
+  if button == 1 and lastX != null {
     canvas.line(lastX, lastY, x, y, color, thickness)
     lastX = x
     lastY = y

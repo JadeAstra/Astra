@@ -5,7 +5,7 @@ class Vec2(val x : number, val y : number) {
   op -(other : Vec2) : Vec2 => Vec2(this.x - other.x, this.y - other.y)
   op *(scale : number) : Vec2 => Vec2(this.x * scale, this.y * scale)
   op -() : Vec2 => Vec2(-this.x, -this.y)
-  op ==(other) : bool => other is Vec2 && this.x == other.x && this.y == other.y
+  op ==(other) : bool => other is Vec2 and this.x == other.x and this.y == other.y
   op <(other : Vec2) : bool => this.length() < other.length()
   op [](i : int) : number => i == 0 ? this.x : this.y
 
