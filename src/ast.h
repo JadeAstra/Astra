@@ -52,6 +52,10 @@ struct FunctionDecl : Node {
     std::vector<StmtPtr> body;
     bool isStatic = false;
 
+    // A lambda literal, `{ a, b -> ... }` or `{ ... it ... }`. Its value is its last expression,
+    // and a name it does not declare may belong to the object it is run on (its receiver).
+    bool isLambda = false;
+
     // In a class: `get name()` and `set name(value)` define a property instead of a method.
     enum class Accessor { None, Get, Set };
     Accessor accessor = Accessor::None;
@@ -134,6 +138,9 @@ struct CallExpr : Expr {
     // Positional arguments always come first.
     std::vector<std::string> names;
     size_t namedCount = 0;
+
+    // The last argument is a lambda written after the ')': `button("OK") { ... }`.
+    bool trailingLambda = false;
     CallExpr() : Expr(ExprKind::Call) {}
 };
 

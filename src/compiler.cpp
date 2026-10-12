@@ -115,6 +115,10 @@ struct FunctionState {
     LoopState* loop = nullptr;
     int tryDepth = 0;  // try blocks currently open in this function
     TypeSpec returnType;  // untyped unless the function declares one
+
+    // A lambda literal: a name it cannot find among its variables may be a member of the
+    // object it is run on, which is only known when it runs.
+    bool isLambda = false;
 };
 
 struct ClassState {
@@ -352,6 +356,16 @@ private:
         return static_cast<int>(upvalues.size()) - 1;
     }
 
+    // Gives `state` access to slot 0 (the receiver, if there is one) of the function `levels`
+    // steps out from it, as an upvalue.
+    int captureReceiver(FunctionState* state, int levels) {
+        if (levels == 1) {
+            state->enclosing->locals[0].isCaptured = true;
+            return addUpvalue(state, true, 0);
+        }
+        return addUpvalue(state, false, captureReceiver(state->enclosing, levels - 1));
+    }
+
     void emitGet(const std::string& name, const Node& at) {
         VarInfo info;
         int slot = resolveLocal(fs_, name, at, info);
@@ -371,6 +385,13 @@ private:
             return;
         }
 
+        if (fs_->isLambda) {
+            // Not a variable of the lambda or of anything around it: a member of the object
+            // the lambda runs on, if that has one by this name, and otherwise a global.
+            emit(Op::GetImplicit, stringConstant(name));
+            emitU16(session_.globalSlot(name));
+            return;
+        }
         emit(Op::GetGlobal, session_.globalSlot(name));
     }
 
@@ -389,6 +410,12 @@ private:
             if (info.isVal) throw error(at, "cannot assign to val '" + name + "'");
             emitTypeCheck(info.type, name, at);
             emit(Op::SetUpvalue, upvalue);
+            return;
+        }
+
+        if (fs_->isLambda) {
+            emit(Op::SetImplicit, stringConstant(name));
+            emitU16(session_.globalSlot(name));
             return;
         }
 
@@ -1045,6 +1072,7 @@ private:
         state.proto->source = file_;
         state.proto->arity = static_cast<int>(decl.params.size());
         state.scopeDepth = 1;
+        state.isLambda = decl.isLambda;
 
         // Slot 0 holds the receiver in methods and the callee itself otherwise.
         bool hasThis = kind == FunctionKind::Method || kind == FunctionKind::Initializer || kind == FunctionKind::Setter;
@@ -1058,6 +1086,14 @@ private:
         if (kind == FunctionKind::Initializer && decl.returnType.present())
             throw error(decl.returnType, "an initializer cannot declare a return type");
 
+        // A lambda written inside other lambdas can also reach the objects those run on,
+        // innermost first: in `grid { row { ... } }` the inner block sees the row, then the grid.
+        if (decl.isLambda) {
+            int levels = 1;
+            for (FunctionState* outer = state.enclosing; outer != nullptr && outer->isLambda; outer = outer->enclosing)
+                state.proto->outerReceivers.push_back(static_cast<uint16_t>(captureReceiver(&state, levels++)));
+        }
+
         fs_ = &state;
         line_ = decl.line;
 
@@ -1068,10 +1104,21 @@ private:
         for (size_t i = 0; i < decl.params.size(); i++) {
             const Expr* defaultValue = decl.paramDefaults[i].get();
             if (defaultValue == nullptr) {
-                if (sawDefault)
-                    throw error(decl.paramPositions[i], "parameter '" + decl.params[i] + "' has no default value but follows " +
-                                                            "one that has; parameters with defaults must come last");
-                requiredArgs++;
+                if (!sawDefault) {
+                    requiredArgs++;
+                    continue;
+                }
+                // A parameter without a default after one with: `grid(id = null, build)`. It
+                // is there to be given as a lambda after the call or by name, so a call may
+                // pass fewer arguments than reach it. If it then has no value, that is an error.
+                // (Spike: the message is thrown as text; M1 gives it a proper error.)
+                line_ = decl.paramPositions[i].line;
+                emit(Op::DefaultArg, static_cast<int>(i + 1));
+                int toPassed = here();
+                emitI32(0);
+                emit(Op::Const, stringConstant(displayName + "() is missing argument '" + decl.params[i] + "'"));
+                emit(Op::Throw);
+                patchJump(toPassed);
                 continue;
             }
             sawDefault = true;
@@ -1283,7 +1330,9 @@ private:
             case ExprKind::Call: {
                 const auto& e = static_cast<const CallExpr&>(expr);
                 int argc = static_cast<int>(e.args.size());
-                if (e.namedCount > 0) {
+                // A lambda after the call belongs to the last parameter, which only the
+                // function being called knows the position of.
+                if (e.namedCount > 0 || (e.trailingLambda && e.callee->kind != ExprKind::Member)) {
                     compileNamedCall(e);
                 } else if (e.callee->kind == ExprKind::Member) {
                     const auto& member = static_cast<const MemberExpr&>(*e.callee);
@@ -1380,7 +1429,10 @@ private:
     void compileNamedCall(const CallExpr& e) {
         compileExpr(*e.callee);
 
-        size_t positional = e.args.size() - e.namedCount;
+        // A lambda written after the ')' goes to the last parameter, whatever was named before
+        // it. It travels with the named arguments under the empty name.
+        size_t trailing = e.trailingLambda ? 1 : 0;
+        size_t positional = e.args.size() - e.namedCount - trailing;
         for (size_t i = 0; i < e.args.size(); i++) {
             if (i >= positional) {
                 line_ = e.args[i]->line;
@@ -1392,7 +1444,7 @@ private:
         line_ = e.line;
         emit(Op::CallNamed);
         emitByte(static_cast<int>(positional));
-        emitByte(static_cast<int>(e.namedCount));
+        emitByte(static_cast<int>(e.namedCount + trailing));
     }
 
     // In a class whose fields are all known (it declares some and has no superclass), assigning

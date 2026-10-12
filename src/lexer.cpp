@@ -214,6 +214,9 @@ void Lexer::scanToken() {
             if (next('-')) {
                 type = TokenType::MinusMinus;
                 length = 2;
+            } else if (next('>')) {
+                type = TokenType::ThinArrow;
+                length = 2;
             } else {
                 withEq(TokenType::Minus, TokenType::MinusEq);
             }

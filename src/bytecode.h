@@ -100,6 +100,11 @@ enum class Op : uint8_t {
     BitXor,             //                                 a b -> a ^ b
     BitNot,             //                                 a -> ~a
 
+    // A name in a lambda literal that is none of its variables: a member of the object the
+    // lambda is run on, or of one that an enclosing lambda is run on, and failing that a global.
+    GetImplicit,        // u16 name, u16 global            -> value
+    SetImplicit,        // u16 name, u16 global            value -> value
+
     Count_,
 };
 
@@ -157,6 +162,10 @@ struct FunctionProto {
     std::vector<Value> constants;          // ints, floats and interned strings
     std::vector<FunctionProto*> protos;    // nested functions
     std::vector<UpvalueDesc> upvalues;
+
+    // For a lambda literal inside other lambda literals: the upvalues holding slot 0 of each
+    // enclosing one, innermost first. That slot is the object the lambda was run on, if any.
+    std::vector<uint16_t> outerReceivers;
 };
 
 // A whole compiled program, ready to run or to write to a bytecode file.

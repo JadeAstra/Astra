@@ -168,6 +168,45 @@ Value VM::call(Value callee, int argc, const Value* args) {
     return *--sp_;
 }
 
+Value VM::callOn(Value receiver, Value callee, int argc, const Value* args) {
+    // Only a function written in Astra can be given an object to run on.
+    if (!callee.isObjType(ObjType::Closure)) return call(callee, argc, args);
+    if (nativeDepth_ >= kMaxNativeDepth || stackEnd_ - sp_ < argc + 1) throw runtimeError("stack overflow");
+
+    struct DepthGuard {
+        int& depth;
+        explicit DepthGuard(int& d) : depth(d) { depth++; }
+        ~DepthGuard() { depth--; }
+    } guard(nativeDepth_);
+
+    int base = frameCount_;
+    *sp_++ = receiver;  // slot 0, where a method has `this`
+    for (int i = 0; i < argc; i++) *sp_++ = args[i];
+    callClosure(asClosure(callee), argc);
+    run(base);
+    return *--sp_;
+}
+
+// The object a name in a lambda belongs to: the one the lambda is running on, or failing that
+// the one an enclosing lambda is running on, whichever first has a member of that name.
+// Undefined if none has, in which case the name is a global.
+Value VM::implicitReceiver(const CallFrame* frame, const Value* base, const ObjString* name) const {
+    auto has = [&](Value candidate) {
+        if (!candidate.isObjType(ObjType::Instance)) return false;  // slot 0 is the function itself
+        const ObjInstance* instance = asInstance(candidate);
+        const ObjClass* cls = instance->cls;
+        return instance->fields.find(name) != nullptr || cls->methods.find(name) != nullptr ||
+               cls->declaredIndex.find(name) != nullptr ||
+               (cls->hasAccessors && (cls->getters.find(name) != nullptr || cls->setters.find(name) != nullptr));
+    };
+    if (has(base[0])) return base[0];
+    for (uint16_t upvalue : frame->closure->proto->outerReceivers) {
+        Value outer = *frame->closure->upvalues[upvalue]->location;
+        if (has(outer)) return outer;
+    }
+    return Value::undefined();
+}
+
 // Runs a method that takes no arguments on `receiver` and returns its result.
 Value VM::callWithReceiver(Value receiver, ObjClosure* method) {
     if (nativeDepth_ >= kMaxNativeDepth || stackEnd_ - sp_ < 1) throw runtimeError("stack overflow");
@@ -372,6 +411,14 @@ bool VM::callNamed(int positional, int named) {
     Value* first = sp_ - positional - 2 * named;
     Value callee = first[-1];
 
+    // A lambda written after a call to a built-in function is simply its last argument.
+    if (named == 1 && sp_[-2].isString() && asString(sp_[-2])->chars.empty() &&
+        (callee.isObjType(ObjType::Native) || callee.isObjType(ObjType::BoundNative))) {
+        sp_[-2] = sp_[-1];
+        sp_--;
+        return callValue(callee, positional + 1);
+    }
+
     // The function whose parameter names the arguments are matched against.
     const FunctionProto* proto = nullptr;
     auto display = [&]() -> std::string {
@@ -419,11 +466,14 @@ bool VM::callNamed(int positional, int named) {
         const ObjString* name = asString(pair[0]);  // interned, like the parameter names
 
         int index = -1;
-        for (int p = 0; p < arity; p++) {
-            if (proto->paramNames[static_cast<size_t>(p)] == name) {
-                index = p;
-                break;
-            }
+        if (name->chars.empty()) {
+            // The lambda written after the call: it is the last parameter.
+            if (arity == 0) throw runtimeError(display() + "() takes no arguments, so no lambda can follow the call");
+            index = arity - 1;
+            name = proto->paramNames[static_cast<size_t>(index)];
+        }
+        for (int p = 0; index < 0 && p < arity; p++) {
+            if (proto->paramNames[static_cast<size_t>(p)] == name) index = p;
         }
         if (index < 0) throw runtimeError(display() + "() has no parameter named '" + name->chars + "'");
         if (arranged[static_cast<size_t>(index)].kind != ValueKind::Undefined)
@@ -481,6 +531,7 @@ bool VM::invoke(ObjString* name, int argc) {
                     return callValue(callee, argc);
                 }
             }
+            if (scopeFunction(name, argc)) return false;
             throw runtimeError("undefined method '" + name->chars + "' on " + instance->cls->name->chars);
         }
 
@@ -495,13 +546,34 @@ bool VM::invoke(ObjString* name, int argc) {
     }
 
     const NativeMethod* method = findNativeMethod(receiver, name);
-    if (method == nullptr)
+    if (method == nullptr) {
+        if (scopeFunction(name, argc)) return false;
         throw runtimeError("undefined method '" + name->chars + "' on a value of type " + typeName(receiver));
+    }
     checkArity(method->name, method->minArgs, method->maxArgs, argc);
     Value result = method->fn(*this, receiver, argc, sp_ - argc);
     sp_ -= argc + 1;
     *sp_++ = result;
     return false;
+}
+
+// x.let { }, x.also { }, x.apply { } and x.run { } on any value that has no method of its own
+// by that name. `let` and `also` hand the value to the block as its argument; `apply` and
+// `run` run the block on the value. `also` and `apply` give the value back, the others the
+// block's result. (Spike: these are ordinary calls here. The plan has the compiler expand
+// them in place, which is also what lets a `return` inside them leave the enclosing function.)
+bool VM::scopeFunction(ObjString* name, int argc) {
+    if (argc != 1) return false;
+    const std::string& n = name->chars;
+    bool onReceiver = n == "apply" || n == "run";
+    if (!onReceiver && n != "let" && n != "also") return false;
+
+    Value receiver = sp_[-2], block = sp_[-1];  // both stay on the stack while the block runs
+    Value result = onReceiver ? callOn(receiver, block, 0, nullptr) : call(block, 1, &receiver);
+    if (n == "apply" || n == "also") result = receiver;
+    sp_ -= 2;
+    *sp_++ = result;
+    return true;
 }
 
 // Calls an overloaded operator; the receiver and its operands are already on the stack in
@@ -1042,6 +1114,71 @@ void VM::run(int baseFrame) {
                         size_t index = static_cast<size_t>(READ_U16());
                         globals_[index] = *--sp_;
                         globalTypes_[index] = TypeConstraint{};
+                        break;
+                    }
+
+                    case Op::GetImplicit: {
+                        ObjString* name = asString(consts[READ_U16()]);
+                        size_t index = static_cast<size_t>(READ_U16());
+                        Value receiver = implicitReceiver(frame, base, name);
+                        if (receiver.kind == ValueKind::Undefined) {
+                            Value value = globals_[index];
+                            if (value.kind == ValueKind::Undefined)
+                                throw runtimeError("undefined variable '" + program_->globalNames[index] + "'");
+                            *sp_++ = value;
+                            break;
+                        }
+                        ObjInstance* instance = asInstance(receiver);
+                        if (const Value* field = instance->fields.find(name)) {
+                            *sp_++ = *field;
+                            break;
+                        }
+                        if (instance->cls->hasAccessors) {
+                            if (const Value* getter = instance->cls->getters.find(name)) {
+                                *sp_++ = receiver;
+                                SAVE_IP();
+                                callClosure(asClosure(*getter), 0);
+                                LOAD_FRAME();
+                                break;
+                            }
+                        }
+                        SAVE_IP();
+                        *sp_++ = getProperty(receiver, name);  // a method, bound to the object
+                        break;
+                    }
+                    case Op::SetImplicit: {
+                        ObjString* name = asString(consts[READ_U16()]);
+                        size_t index = static_cast<size_t>(READ_U16());
+                        Value receiver = implicitReceiver(frame, base, name);
+                        if (receiver.kind == ValueKind::Undefined) {
+                            Value& slot = globals_[index];
+                            if (slot.kind == ValueKind::Undefined)
+                                throw runtimeError("undefined variable '" + program_->globalNames[index] + "'");
+                            const TypeConstraint& declared = globalTypes_[index];
+                            if (declared.type != 0 && !matchesType(sp_[-1], declared.type, declared.cls))
+                                throw typeMismatch(program_->globalNames[index], declared.type, declared.cls, sp_[-1]);
+                            slot = sp_[-1];
+                            break;
+                        }
+                        // Lay the object under the value, as an assignment to obj.name has them.
+                        Value value = sp_[-1];
+                        sp_[-1] = receiver;
+                        *sp_++ = value;
+                        SAVE_IP();
+                        ObjClass* cls = asInstance(receiver)->cls;
+                        if (cls->hasAccessors) {
+                            if (const Value* setter = cls->setters.find(name)) {
+                                callClosure(asClosure(*setter), 1);
+                                LOAD_FRAME();
+                                break;
+                            }
+                            if (cls->getters.find(name) != nullptr)
+                                throw runtimeError("property '" + name->chars + "' of " + cls->name->chars +
+                                                   " cannot be assigned: it has no setter");
+                        }
+                        setProperty(receiver, name, value);
+                        sp_[-2] = value;
+                        sp_--;
                         break;
                     }
                     case Op::DefineTypedGlobal: {

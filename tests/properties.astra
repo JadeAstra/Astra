@@ -97,7 +97,7 @@ print(handlers.increment(5), handlers.increment(2))   // expect: 5 7
 
 // `get` and `set` are only special at the start of a class member
 class Store {
-  val data : map = {}
+  val data : map = {:}
   fun get(key) => this.data.get(key, "missing")
   fun set(key, value) { this.data[key] = value }
   get size() : int => this.data.length

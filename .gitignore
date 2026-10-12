@@ -2,3 +2,4 @@ build/
 *.astc
 *.exe
 .vs/
+spikes/m0/out/

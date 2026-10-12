@@ -41,6 +41,15 @@ struct Parser::DepthGuard {
     ~DepthGuard() { parser.depth_--; }
 };
 
+// Sets headerExpr_ for as long as it lives and then puts the old value back.
+struct Parser::HeaderGuard {
+    Parser& parser;
+    bool saved;
+    HeaderGuard(Parser& p, bool value) : parser(p), saved(p.headerExpr_) { p.headerExpr_ = value; }
+    ~HeaderGuard() { restore(); }
+    void restore() { parser.headerExpr_ = saved; }
+};
+
 Parser::Parser(const std::vector<Token>& tokens, std::string file) : toks_(tokens), file_(std::move(file)) {}
 
 const Token& Parser::advance() {
@@ -128,13 +137,68 @@ StmtPtr Parser::declaration() {
 
 // Parses ": type" or ": type?" if a ':' comes next; otherwise returns an absent annotation.
 TypeAnnotation Parser::optionalType() {
-    TypeAnnotation type;
-    if (!match(TokenType::Colon)) return type;
+    if (!match(TokenType::Colon)) return TypeAnnotation{};
+    return typeExpression();
+}
 
-    const Token& name = expect(TokenType::Identifier, "a type name after ':'");
-    type.name = name.text;
-    type.line = name.line;
-    type.col = name.col;
+// A type: `int`, `Animal?`, `list<string>`, `(int, string) -> bool`, `Grid.() -> Unit`.
+// Type arguments and the parts of a function type are read and then dropped: only "list",
+// "map" or "function" is checked when the program runs.
+TypeAnnotation Parser::typeExpression() {
+    DepthGuard guard(*this);
+    TypeAnnotation type;
+    type.line = peek().line;
+    type.col = peek().col;
+
+    auto functionRest = [&] {
+        // The '(' has been read: parameter types, ')', '->' and the result type.
+        while (!check(TokenType::RParen)) {
+            if (check(TokenType::Identifier) && peekNext().type == TokenType::Colon) {
+                advance();  // a parameter name, as in (delayMs : int) -> Unit
+                advance();
+            }
+            typeExpression();
+            if (!match(TokenType::Comma)) break;
+        }
+        expect(TokenType::RParen, "')' in a function type");
+    };
+
+    if (match(TokenType::LParen)) {
+        functionRest();
+        if (match(TokenType::ThinArrow)) {
+            typeExpression();
+            type.name = "function";
+        } else {
+            throw error(peek(), "expected '->' after the parameter types of a function type");
+        }
+    } else {
+        const Token& name = expect(TokenType::Identifier, "a type name after ':'");
+        type.name = name.text;
+        if (match(TokenType::Lt)) {
+            do typeExpression();
+            while (match(TokenType::Comma));
+            // `map<string, list<int>>` ends in what the lexer reads as one '>>'.
+            if (check(TokenType::Shr)) {
+                if (pendingTypeClose_) {
+                    pendingTypeClose_ = false;
+                    advance();
+                } else {
+                    pendingTypeClose_ = true;
+                }
+            } else {
+                expect(TokenType::Gt, "'>' to end the type arguments");
+            }
+        }
+        if (check(TokenType::Dot) && peekNext().type == TokenType::LParen) {
+            // A function that runs on an object of this type: `Grid.() -> Unit`.
+            advance();
+            advance();
+            functionRest();
+            expect(TokenType::ThinArrow, "'->' in a function type");
+            typeExpression();
+            type.name = "function";
+        }
+    }
     type.nullable = match(TokenType::Question);
     return type;
 }
@@ -397,8 +461,12 @@ StmtPtr Parser::statement() {
         case TokenType::While: {
             advance();
             auto s = node<WhileStmt>(t);
-            s->condition = expression();
+            {
+                HeaderGuard header(*this, true);
+                s->condition = expression();
+            }
             s->body = block();
+            rejectLambdaInHeader("while");
             return s;
         }
 
@@ -408,9 +476,14 @@ StmtPtr Parser::statement() {
             bool paren = match(TokenType::LParen);
             s->variable = expect(TokenType::Identifier, "a loop variable name").text;
             expect(TokenType::In, "'in'");
-            s->iterable = expression();
+            {
+                // Inside `for (x in items)` the ')' ends the expression, so a lambda may follow a call.
+                HeaderGuard header(*this, !paren);
+                s->iterable = expression();
+            }
             if (paren) expect(TokenType::RParen, "')'");
             s->body = block();
+            if (!paren) rejectLambdaInHeader("for");
             return s;
         }
 
@@ -476,11 +549,24 @@ StmtPtr Parser::statement() {
     }
 }
 
+// In `if items.any { it > 1 } { ... }` the first '{' was taken as the body, because in a
+// condition a '{' always is. What follows the body on the same line gives that away.
+void Parser::rejectLambdaInHeader(const char* keyword) {
+    const Token& next = peek();
+    if (next.newlineBefore || (next.type != TokenType::LBrace && next.type != TokenType::Dot)) return;
+    throw error(next, std::string("the '{' before this was read as the body of the '") + keyword +
+                          "'; to pass a lambda to a call in its condition, put the condition in parentheses");
+}
+
 StmtPtr Parser::ifStatement() {
     const Token& kw = advance();
     auto s = node<IfStmt>(kw);
-    s->condition = expression();
+    {
+        HeaderGuard header(*this, true);
+        s->condition = expression();
+    }
     s->then = block();
+    rejectLambdaInHeader("if");
     if (match(TokenType::Else)) {
         if (check(TokenType::If)) {
             DepthGuard guard(*this);
@@ -695,6 +781,7 @@ ExprPtr Parser::postfix() {
         if (t.type == TokenType::LParen && !t.newlineBefore) {
             advance();
             auto call = node<CallExpr>(t);
+            HeaderGuard inside(*this, false);
             while (!check(TokenType::RParen)) {
                 // `name = value` passes an argument by name.
                 if (check(TokenType::Identifier) && peekNext().type == TokenType::Eq) {
@@ -713,12 +800,31 @@ ExprPtr Parser::postfix() {
                 if (!match(TokenType::Comma)) break;
             }
             expect(TokenType::RParen, "')' after arguments");
+            inside.restore();
+            // A lambda written straight after the ')' is the call's last argument.
+            if (trailingLambdaNext()) {
+                const Token& open = advance();
+                call->names.emplace_back();
+                call->trailingLambda = true;
+                call->args.push_back(lambdaLiteral(open, lambdaHasParams()));
+            }
             if (call->args.size() > 255) throw error(t, "a call cannot have more than 255 arguments");
+            call->callee = std::move(e);
+            e = std::move(call);
+        } else if (t.type == TokenType::LBrace && trailingLambdaNext() &&
+                   (e->kind == ExprKind::Name || e->kind == ExprKind::Member)) {
+            // `grid { ... }`, `items.forEach { ... }`: a call whose only argument is the lambda.
+            advance();
+            auto call = node<CallExpr>(t);
+            call->names.emplace_back();
+            call->trailingLambda = true;
+            call->args.push_back(lambdaLiteral(t, lambdaHasParams()));
             call->callee = std::move(e);
             e = std::move(call);
         } else if (t.type == TokenType::LBracket && !t.newlineBefore) {
             advance();
             auto index = node<IndexExpr>(t);
+            HeaderGuard inside(*this, false);
             index->index = expression();
             expect(TokenType::RBracket, "']' after index");
             index->object = std::move(e);
@@ -810,12 +916,14 @@ ExprPtr Parser::primary() {
         }
 
         case TokenType::LParen: {
+            HeaderGuard inside(*this, false);
             ExprPtr e = expression();
             expect(TokenType::RParen, "')'");
             return e;
         }
 
         case TokenType::LBracket: {
+            HeaderGuard inside(*this, false);
             auto e = node<ListExpr>(t);
             while (!check(TokenType::RBracket)) {
                 e->items.push_back(expression());
@@ -826,7 +934,7 @@ ExprPtr Parser::primary() {
         }
 
         case TokenType::LBrace:
-            return mapLiteral(t);
+            return braceExpression(t);
 
         case TokenType::Fun: {
             auto e = node<FunctionExpr>(t);
@@ -881,6 +989,153 @@ ExprPtr Parser::mapLiteral(const Token& open) {
     }
     expect(TokenType::RBrace, "'}' to end the map");
     return map;
+}
+
+// A '{' where a value is expected is a map or a lambda. What follows it decides:
+//   {:}                 the empty map
+//   { key: value, ... } a map, when a key and ':' come first
+//   { a, b -> ... }     a lambda with parameters, when a '->' closes its first line
+//   { ... }  and  {}    a lambda whose one parameter, if it is given one, is `it`
+ExprPtr Parser::braceExpression(const Token& open) {
+    if (check(TokenType::Colon) && peekNext().type == TokenType::RBrace) {
+        advance();
+        advance();
+        return node<MapExpr>(open);
+    }
+    if (check(TokenType::RBrace)) return lambdaLiteral(open, false);
+    if (lambdaHasParams()) return lambdaLiteral(open, true);
+    if (startsMapEntry()) {
+        HeaderGuard inside(*this, false);
+        return mapLiteral(open);
+    }
+    return lambdaLiteral(open, false);
+}
+
+// True if a lambda may start here as the last argument of the call just parsed.
+bool Parser::trailingLambdaNext() const {
+    return peek().type == TokenType::LBrace && !peek().newlineBefore && !headerExpr_;
+}
+
+// After a '{': does a map entry come next, that is a key followed by ':'?
+bool Parser::startsMapEntry() const {
+    switch (peek().type) {
+        case TokenType::Identifier:
+        case TokenType::String:
+        case TokenType::Int:
+        case TokenType::Float:
+            return peekNext().type == TokenType::Colon;
+        case TokenType::LBracket: {
+            // A computed key, `{ [expr]: value }`: find the matching ']'.
+            int nesting = 0;
+            for (size_t i = p_; i < toks_.size(); i++) {
+                TokenType type = toks_[i].type;
+                if (type == TokenType::Eof) return false;
+                if (type == TokenType::LBracket || type == TokenType::LParen || type == TokenType::LBrace) nesting++;
+                if (type == TokenType::RBracket || type == TokenType::RParen || type == TokenType::RBrace) nesting--;
+                if (nesting == 0) return i + 1 < toks_.size() && toks_[i + 1].type == TokenType::Colon;
+            }
+            return false;
+        }
+        default:
+            return false;
+    }
+}
+
+// After a '{': does the lambda name its parameters, `a, b ->`? The '->' has to come on the
+// first line and outside any brackets, before the lambda could have ended.
+bool Parser::lambdaHasParams() const {
+    if (peek().type != TokenType::Identifier) return false;
+    int nesting = 0;
+    for (size_t i = p_; i < toks_.size(); i++) {
+        const Token& t = toks_[i];
+        if (i > p_ && nesting == 0 && t.newlineBefore) return false;
+        switch (t.type) {
+            case TokenType::LParen:
+            case TokenType::LBracket:
+            case TokenType::LBrace:
+                nesting++;
+                break;
+            case TokenType::RParen:
+            case TokenType::RBracket:
+                nesting--;
+                break;
+            case TokenType::RBrace:
+                if (nesting == 0) return false;
+                nesting--;
+                break;
+            case TokenType::ThinArrow:
+                if (nesting == 0) return true;
+                break;
+            case TokenType::Semicolon:
+                if (nesting == 0) return false;
+                break;
+            case TokenType::Eof:
+                return false;
+            default:
+                break;
+        }
+    }
+    return false;
+}
+
+// The rest of a lambda literal, after its '{'.
+ExprPtr Parser::lambdaLiteral(const Token& open, bool hasParams) {
+    DepthGuard guard(*this);
+    auto e = node<FunctionExpr>(open);
+    auto decl = std::make_unique<FunctionDecl>();
+    decl->line = open.line;
+    decl->col = open.col;
+    decl->name = "<lambda>";
+    decl->isLambda = true;
+
+    auto addParam = [&](const Token& at, const std::string& name) {
+        if (name != "_" && std::find(decl->params.begin(), decl->params.end(), name) != decl->params.end())
+            throw error(at, "duplicate parameter '" + name + "'");
+        // Kotlin's "not used" marker may be repeated; each gets a name nothing can refer to.
+        decl->params.push_back(name == "_" ? "_" + std::to_string(decl->params.size()) : name);
+        Node position;
+        position.line = at.line;
+        position.col = at.col;
+        decl->paramPositions.push_back(position);
+    };
+
+    if (hasParams) {
+        do {
+            const Token& param = expect(TokenType::Identifier, "a parameter name");
+            addParam(param, param.text);
+            decl->paramTypes.push_back(optionalType());
+            decl->paramDefaults.push_back(nullptr);
+        } while (match(TokenType::Comma));
+        expect(TokenType::ThinArrow, "'->' after the lambda's parameters");
+    } else {
+        // No parameter list: the lambda takes nothing, or one value that it calls `it`.
+        addParam(open, "it");
+        decl->paramTypes.emplace_back();
+        decl->paramDefaults.push_back(node<LiteralExpr>(open));
+    }
+
+    {
+        HeaderGuard body(*this, false);
+        for (;;) {
+            skipSemicolons();
+            if (check(TokenType::RBrace) || check(TokenType::Eof)) break;
+            decl->body.push_back(declaration());
+        }
+    }
+    expect(TokenType::RBrace, "'}' to end the lambda");
+
+    // The value of a lambda is the value of its last expression.
+    if (!decl->body.empty() && decl->body.back()->kind == StmtKind::Expr) {
+        auto& last = static_cast<ExprStmt&>(*decl->body.back());
+        auto result = std::make_unique<ReturnStmt>();
+        result->line = last.line;
+        result->col = last.col;
+        result->value = std::move(last.expr);
+        decl->body.back() = std::move(result);
+    }
+
+    e->fn = std::move(decl);
+    return e;
 }
 
 }  // namespace astra

@@ -1,0 +1,93 @@
+// Spike: an OpenGL window driven from a script. Draws shapes and text, saves what was drawn
+// from an offscreen framebuffer, and receives raw events.
+//   astra window.astra <folder>            hidden: writes scene.png and scene_2x.png and exits
+//   astra window.astra <folder> show [ms]  shows the window, for ms milliseconds or until closed
+val folder = args().length > 0 ? args()[0] : "."
+val show = args().length > 1 and args()[1] == "show"
+val showFor = args().length > 2 ? int(args()[2]) : 0
+
+var mouseX = -1
+var mouseY = -1
+var events = 0
+var lastEvent = "none yet"
+
+fun scene(width, height) {
+  Spike.fillRect(0, 0, width, height, 0xF4F4F4, 1.0)
+
+  // A title bar and some text, at several sizes.
+  Spike.fillRect(0, 0, width, 34, 0x1565C0, 1.0)
+  Spike.text("jade spike: OpenGL drawing and our own text", 12, 22, 14, 0xFFFFFF, true)
+  var y = 60
+  for size in [11, 12, 13, 16, 22] {
+    val w = Spike.text("Size $size: The quick brown fox jumps over the lazy dog", 16, y, size, 0x1A2420, true)
+    // The measured width, drawn as a rule under the line: it must end where the text ends.
+    Spike.fillRect(16, y + 3, w, 1, 0xD04040, 1.0)
+    y += Spike.lineHeight(size) + 6
+  }
+
+  // Widget-like shapes: a field, a button, a focused button, a check box, a radio button.
+  Spike.roundRect(16, 200, 220, 26, 3, 0, 0xFFFFFF, 1.0)
+  Spike.roundRect(16, 200, 220, 26, 3, 1, 0x808080, 1.0)
+  Spike.text("a text field", 24, 218, 13, 0x1A2420, true)
+  Spike.fillRect(24 + Spike.measure("a text field", 13) + 1, 205, 1, 16, 0x000000, 1.0)   // the caret
+
+  Spike.roundRect(250, 200, 90, 26, 5, 0, 0xECECEC, 1.0)
+  Spike.roundRect(250, 200, 90, 26, 5, 1, 0x808080, 1.0)
+  val ok = "OK"
+  Spike.text(ok, 250 + (90 - Spike.measure(ok, 13)) / 2, 218, 13, 0x1A2420, true)
+
+  Spike.roundRect(352, 200, 90, 26, 5, 0, 0x2D6CDF, 1.0)
+  Spike.roundRect(350, 198, 94, 30, 7, 2, 0x2D6CDF, 0.35)
+  val cancel = "Cancel"
+  Spike.text(cancel, 352 + (90 - Spike.measure(cancel, 13)) / 2, 218, 13, 0xFFFFFF, true)
+
+  Spike.roundRect(16, 244, 16, 16, 2, 1, 0x606060, 1.0)
+  Spike.line(19, 252, 22, 256, 2, 0x1565C0, 1.0)
+  Spike.line(22, 256, 28, 247, 2, 0x1565C0, 1.0)
+  Spike.text("a check box", 40, 257, 13, 0x1A2420, true)
+  Spike.oval(150, 244, 16, 16, 1, 0x606060, 1.0)
+  Spike.oval(154, 248, 8, 8, 0, 0x1565C0, 1.0)
+  Spike.text("a radio button", 174, 257, 13, 0x1A2420, true)
+
+  // Smooth edges: ovals, thick and thin lines at angles, translucent overlap.
+  Spike.oval(470, 60, 120, 80, 0, 0x0FA47F, 1.0)
+  Spike.oval(530, 90, 120, 80, 0, 0x1565C0, 0.5)
+  Spike.oval(470, 60, 120, 80, 2, 0x1A2420, 1.0)
+  for i in 0..8 { Spike.line(470, 190, 650, 190 + i * 9, 1 + i * 0.5, 0x1A2420, 1.0) }
+  Spike.line(16, 280, 650, 280, 1, 0x808080, 1.0)                 // a one-pixel rule: must be crisp
+
+  Spike.text("events: $events   last: $lastEvent   pointer: $mouseX, $mouseY", 16, 300, 12, 0x606060, true)
+  if mouseX >= 0 { Spike.oval(mouseX - 6, mouseY - 6, 12, 12, 2, 0xD04040, 1.0) }
+}
+
+Spike.onEvent { kind, a, b, c ->
+  if kind == "paint" {
+    scene(a, b)
+  } else {
+    events += 1
+    lastEvent = kind
+    if kind == "mouseMove" { mouseX = a; mouseY = b }
+    if kind == "keyDown" and a == 27 { Spike.quit() }            // Escape
+    Spike.redraw()
+  }
+}
+
+if show {
+  val scale = Spike.open("jade spike", 680, 320, true, 0)
+  print("showing at scale $scale: ${Spike.glInfo()}")
+  Spike.snapshot(folder + "/scene_shown.png")
+  Spike.run(showFor)
+  print("closed after $events events; last was $lastEvent")
+} else {
+  // Hidden: nothing appears on screen. The same picture at 1x and at 2x.
+  Spike.open("hidden", 680, 320, false, 1)
+  print(Spike.glInfo())
+  Spike.snapshot(folder + "/scene.png")
+  Spike.frame()
+  Spike.close()
+  Spike.open("hidden 2x", 680, 320, false, 2)
+  Spike.snapshot(folder + "/scene_2x.png")
+  Spike.frame()
+  Spike.close()
+  print("width of 'The quick brown fox' at 13 px: ${Spike.measure("The quick brown fox", 13)}")
+}

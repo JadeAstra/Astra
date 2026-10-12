@@ -108,6 +108,10 @@ public:
     // stack must be protected with TempRoot / TempVector across this call.
     Value call(Value callee, int argc, const Value* args);
 
+    // Runs a function with `receiver` as the object it runs on: inside it, a name that is not
+    // one of its variables is looked up on that object first (see Op::GetImplicit).
+    Value callOn(Value receiver, Value callee, int argc, const Value* args);
+
     // ---- Helpers for native code ----
 
     AstraThrow runtimeError(const std::string& message);
@@ -190,12 +194,14 @@ private:
     bool callValue(Value callee, int argc);
     void callClosure(ObjClosure* closure, int argc);
     bool invoke(ObjString* name, int argc);
+    bool scopeFunction(ObjString* name, int argc);
     bool callNamed(int positional, int named);
     void invokeOperator(Value receiver, ObjString* name, int argc);
     Value callNative(const std::string& name, int minArgs, int maxArgs, int argc);
     void checkArity(const std::string& name, int minArgs, int maxArgs, int argc);
 
     Value callWithReceiver(Value receiver, ObjClosure* method);
+    Value implicitReceiver(const CallFrame* frame, const Value* base, const ObjString* name) const;
     void checkFieldAssignment(ObjInstance* instance, ObjString* name, Value value);
     void checkRequiredFields(ObjInstance* instance, const ObjClosure* init);
     Value getProperty(Value obj, ObjString* name);
@@ -266,5 +272,6 @@ void registerBuiltins(VM& vm);
 
 // The native half of the GUI library (lib/gui.astra). Defined in gui.cpp.
 void registerGui(VM& vm);
+void registerSpike(VM& vm);  // M0 spike: the `Spike` class (src/spike/glwin.cpp)
 
 }  // namespace astra

@@ -44,7 +44,7 @@ m.clear()
 print(m, len(m))                                 // expect: {} 0
 
 // a map keeps insertion order through heavy churn
-var churn = {}
+var churn = {:}
 for i in 0..200 { churn[i] = i }
 for i in 0..200 { if i % 10 != 0 { churn.remove(i) } }
 churn["last"] = true

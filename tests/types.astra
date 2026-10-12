@@ -30,7 +30,7 @@ print(attempt(fun() { ratio = 1 }))            // expect: cannot assign a value 
 print(attempt(fun() { label = null }))         // expect: cannot assign a value of type null to 'label', which is declared as string
 print(attempt(fun() { flag = 0 }))             // expect: cannot assign a value of type int to 'flag', which is declared as bool
 print(attempt(fun() { amount = "7" }))         // expect: cannot assign a value of type string to 'amount', which is declared as number
-print(attempt(fun() { items = {} }))           // expect: cannot assign a value of type map to 'items', which is declared as list
+print(attempt(fun() { items = {:} }))           // expect: cannot assign a value of type map to 'items', which is declared as list
 print(attempt(fun() { action = print }))       // expect: ok
 print(ratio, label, flag, amount)             // expect: 1.0 ab true 2.5
 

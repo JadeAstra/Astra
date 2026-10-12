@@ -1,0 +1,75 @@
+// Spike: lambda literals and trailing lambdas.
+
+// A lambda with parameters, and one with the implicit `it`.
+val add = { a, b -> a + b }
+val double = { it * 2 }
+print(add(2, 3), double(21))                      // expect: 5 42
+
+// Its value is its last expression, after any statements.
+val describe = { n ->
+  val kind = n % 2 == 0 ? "even" : "odd"
+  "$n is $kind"
+}
+print(describe(7))                                // expect: 7 is odd
+
+// A lambda with no parameter list takes nothing or one value.
+val hello = { "hello" }
+print(hello(), hello("ignored"))                  // expect: hello hello
+
+// The empty lambda does nothing; {:} is the empty map.
+val nothing = {}
+val empty = {:}
+print(nothing(), nothing(1), type(nothing), type(empty), empty)   // expect: null null function map {}
+
+// Maps with entries are still maps.
+val ages = { "Ann": 9, bob: 10, 3: "three", [1 + 1]: "two" }
+print(ages["Ann"], ages["bob"], ages[3], ages[2]) // expect: 9 10 three two
+
+// Trailing lambdas: after the ')' and with no parentheses at all.
+fun twice(f) { f(); f() }
+fun apply3(x, f) => f(x)
+var count = 0
+twice { count += 1 }
+twice() { count += 10 }
+print(count, apply3(4) { it * it })               // expect: 22 16
+
+// Methods take them too, and they chain.
+val evens = [1, 2, 3, 4, 5, 6].filter { it % 2 == 0 }.map { it * 10 }
+print(evens)                                      // expect: [20, 40, 60]
+[1, 2].each { x -> write(x, " ") }
+print("")                                         // expect: 1 2
+
+// Typed parameters, and the unused marker.
+val area = { w : int, h : int -> w * h }
+val first = { a, _ -> a }
+val pick = { _, _, c -> c }
+print(area(3, 4), first(1, 2), pick(1, 2, 3))     // expect: 12 1 3
+
+// In the condition of if, while and for a '{' opens the body, as before.
+fun yes() => true
+val items = [1, 2, 3]
+if yes() { print("if body") }                     // expect: if body
+var n = 0
+while n < items.length { n += 1 }
+for item in items { n += item }
+print(n)                                          // expect: 9
+// Parentheses make a lambda possible again inside a condition.
+if (items.filter { it > 1 }.length == 2) { print("two are greater than 1") }   // expect: two are greater than 1
+for (item in items.map { it + 1 }) { write(item, " ") }
+print("")                                         // expect: 2 3 4
+
+// A '{' on the next line is not a trailing lambda: it starts a block.
+val fn = yes
+{
+  print("a block of its own")                     // expect: a block of its own
+}
+
+// Lambdas nest, and each has its own `it`.
+val table = [1, 2].map { row -> [10, 20].map { it + row } }
+print(table)                                      // expect: [[11, 21], [12, 22]]
+
+// A function type as a declared type.
+fun run(f : (int) -> int, start : int) : int => f(start)
+val callbacks : list<(int) -> int> = [{ it + 1 }, { it * 3 }]
+val names : map<string, list<int>> = { "a": [1] }
+print(run(callbacks[1], 5), names)                // expect: 15 {"a": [1]}

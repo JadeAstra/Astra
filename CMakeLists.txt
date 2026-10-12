@@ -23,7 +23,14 @@ add_executable(astra
   src/builtins.cpp
   src/gui.cpp
   src/main.cpp
+  # M0 spike: an OpenGL window and a text engine of our own, as the `Spike` class.
+  src/spike/font.cpp
+  src/spike/png.cpp
+  src/spike/glwin.cpp
 )
+if(WIN32)
+  target_link_libraries(astra PRIVATE opengl32)
+endif()
 
 target_compile_definitions(astra PRIVATE ASTRA_VERSION="${PROJECT_VERSION}")
 

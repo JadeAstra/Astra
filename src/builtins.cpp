@@ -212,6 +212,11 @@ void registerGlobals(VM& vm) {
         return Value::object(vm.alloc<ObjRange>(start, end, step, false));
     });
 
+    // with(obj) { ... }: runs the block on obj, so that the names in it are obj's members.
+    vm.defineNative("with", 2, 2, [](VM& vm, int, Value* args) -> Value {
+        return vm.callOn(args[0], args[1], 0, nullptr);
+    });
+
     vm.defineNative("assert", 1, 2, [](VM& vm, int argc, Value* args) -> Value {
         if (args[0].truthy()) return Value::null();
         throw vm.runtimeError(argc > 1 ? vm.stringify(args[1]) : "assertion failed");
@@ -756,6 +761,7 @@ void registerBuiltins(VM& vm) {
     registerMapMethods(vm);
     registerRangeMethods(vm);
     registerGui(vm);
+    registerSpike(vm);
 }
 
 }  // namespace astra

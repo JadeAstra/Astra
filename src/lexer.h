@@ -18,7 +18,7 @@ enum class TokenType {
     Plus, Minus, Star, Slash, Percent,
     PlusEq, MinusEq, StarEq, SlashEq, PercentEq,
     Bang, BangEq, Eq, EqEq, Lt, LtEq, Gt, GtEq,
-    Arrow, DotDot, DotDotEq,
+    Arrow, ThinArrow, DotDot, DotDotEq,   // => -> .. ..=
     Amp, Pipe, Caret, Tilde, AmpEq, PipeEq, CaretEq,   // & | ^ ~ &= |= ^=
     Shl, Shr, ShlEq, ShrEq,   // << >> <<= >>=
     PlusPlus, MinusMinus,     // ++ --

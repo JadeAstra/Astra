@@ -22,6 +22,12 @@ private:
     size_t p_ = 0;
     int depth_ = 0;
 
+    // True while parsing the condition of an `if`, `while` or `for`: a '{' there opens the
+    // body, so it cannot also be a lambda passed to the call just before it. Parentheses and
+    // brackets switch it off again for what they enclose.
+    bool headerExpr_ = false;
+    struct HeaderGuard;
+
     struct DepthGuard;
 
     const Token& peek() const { return toks_[p_]; }
@@ -37,6 +43,8 @@ private:
 
     StmtPtr declaration();
     TypeAnnotation optionalType();
+    TypeAnnotation typeExpression();
+    bool pendingTypeClose_ = false;  // half of a '>>' that closed an inner type argument list
     std::unique_ptr<VarStmt> varDeclaration(bool isField);
     StmtPtr classDeclaration();
     std::unique_ptr<FunctionDecl> method();
@@ -46,6 +54,7 @@ private:
     std::unique_ptr<BlockStmt> block();
     StmtPtr statement();
     StmtPtr ifStatement();
+    void rejectLambdaInHeader(const char* keyword);
 
     ExprPtr parseSingleExpression();
     ExprPtr expression();
@@ -66,6 +75,11 @@ private:
     ExprPtr postfix();
     ExprPtr primary();
     ExprPtr mapLiteral(const Token& open);
+    ExprPtr braceExpression(const Token& open);
+    ExprPtr lambdaLiteral(const Token& open, bool hasParams);
+    bool lambdaHasParams() const;
+    bool startsMapEntry() const;
+    bool trailingLambdaNext() const;
 };
 
 }  // namespace astra

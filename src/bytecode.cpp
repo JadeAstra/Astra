@@ -98,6 +98,8 @@ const OpInfo kOps[] = {
     {"BIT_OR", Operand::None},
     {"BIT_XOR", Operand::None},
     {"BIT_NOT", Operand::None},
+    {"GET_IMPLICIT", Operand::U16U16},
+    {"SET_IMPLICIT", Operand::U16U16},
 };
 
 const char* const kTypeNames[] = {"", "int", "float", "number", "string", "bool", "list", "map", "range", "function"};
@@ -187,6 +189,8 @@ void verifyFunction(FunctionProto& f, const Program& program) {
     if (f.arity < 0 || f.arity > 255) fail("bad arity");
     if (f.minArity < -1 || f.minArity > f.arity) fail("bad arity");
     if (!f.paramNames.empty() && f.paramNames.size() != static_cast<size_t>(f.arity)) fail("bad parameter names");
+    for (uint16_t upvalue : f.outerReceivers)
+        if (upvalue >= f.upvalues.size()) fail("receiver upvalue out of range");
 
     // Stack depth on entry to each instruction, counted from the frame base (slot 0 is the
     // callee or receiver, then the parameters). -1 means not reached yet.
@@ -279,6 +283,18 @@ void verifyFunction(FunctionProto& f, const Program& program) {
                     if (static_cast<size_t>(a) >= f.upvalues.size()) fail("upvalue out of range");
                     if (op == Op::GetUpvalue) pushes = 1;
                     else pops = pushes = 1;
+                    break;
+                case Op::GetImplicit:
+                case Op::SetImplicit:
+                    requireName(a);
+                    if (static_cast<size_t>(b) >= program.globalNames.size()) fail("global out of range");
+                    if (op == Op::GetImplicit) {
+                        pushes = 1;
+                    } else {
+                        pops = pushes = 1;
+                        // On the way, the object is slid in under the value.
+                        maxDepth = std::max(maxDepth, depth + 1);
+                    }
                     break;
                 case Op::GetProp:
                     requireName(a);
@@ -534,6 +550,10 @@ void disassembleFunction(const FunctionProto& f, const Program& program, std::os
             case Op::SuperInvoke:
                 out << " " << a << " argc=" << b << "  ; " << asString(f.constants[a])->chars;
                 break;
+            case Op::GetImplicit:
+            case Op::SetImplicit:
+                out << " " << a << " " << b << "  ; " << asString(f.constants[a])->chars;
+                break;
             case Op::CallNamed:
                 out << " positional=" << a << " named=" << b;
                 break;
@@ -594,7 +614,7 @@ void disassemble(const Program& program, std::ostream& out) {
 namespace {
 
 const char kMagic[4] = {'A', 'S', 'T', 'R'};
-const uint8_t kFormatVersion = 3;
+const uint8_t kFormatVersion = 4;
 const int kMaxProtoNesting = 200;
 
 enum ConstantTag : uint8_t { TagInt = 0, TagFloat = 1, TagString = 2 };
@@ -631,6 +651,8 @@ struct Writer {
             u8(uv.isLocal ? 1 : 0);
             u16(uv.index);
         }
+        u32(static_cast<uint32_t>(f.outerReceivers.size()));
+        for (uint16_t upvalue : f.outerReceivers) u16(upvalue);
 
         u32(static_cast<uint32_t>(f.code.size()));
         out.write(reinterpret_cast<const char*>(f.code.data()), static_cast<std::streamsize>(f.code.size()));
@@ -725,6 +747,12 @@ struct Reader {
         for (uint32_t i = 0; i < upvalueCount; i++) {
             bool isLocal = u8() != 0;
             f->upvalues.push_back(UpvalueDesc{isLocal, u16()});
+        }
+        uint32_t receiverCount = count(2);
+        for (uint32_t i = 0; i < receiverCount; i++) {
+            uint16_t upvalue = u16();
+            if (upvalue >= f->upvalues.size()) corrupt();
+            f->outerReceivers.push_back(upvalue);
         }
 
         uint32_t codeSize = count(1);

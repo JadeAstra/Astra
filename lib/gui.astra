@@ -16,8 +16,8 @@
 
 // ---- Connecting native events to objects ----
 
-val __guiObjects = {}   // id -> Window or Widget
-val __guiTimers = {}    // timer id -> [action, repeats]
+val __guiObjects = {:}   // id -> Window or Widget
+val __guiTimers = {:}    // timer id -> [action, repeats]
 
 fun __guiDispatch(id, event, a, b, c) {
   if id == 0 {

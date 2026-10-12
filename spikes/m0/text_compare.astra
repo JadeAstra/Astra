@@ -1,0 +1,5 @@
+// Spike: our own text engine beside Windows' rendering of the same line of Segoe UI.
+// Writes text_compare.png (black on white), text_compare_dark.png and a 3x enlargement of the
+// 12 and 13 pixel rows, and prints the width each engine gives the line.
+val folder = args().length > 0 ? args()[0] : "."
+print(Spike.compareText(folder + "/text_compare.png", folder + "/text_compare_zoom.png"))

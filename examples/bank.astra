@@ -30,7 +30,7 @@ class Account(val owner : string, var balance : number) {
 }
 
 class Bank {
-  val accounts : map = {}
+  val accounts : map = {:}
 
   fun open(owner : string, balance : number) : Account {
     this.accounts[owner] = Account(owner, balance)
