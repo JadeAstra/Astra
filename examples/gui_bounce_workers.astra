@@ -7,7 +7,8 @@
 // workers run bounce_worker.astra. They move their balls sixty times a second whatever this
 // program is doing, and say where the balls are whenever it asks, which is once a frame.
 //
-// gui_bounce.astra is the same thing in one loop on one core.
+// gui_bounce.astra is the same thing in one loop on one core, and gui_bounce_threads.astra
+// with threads.
 import gui.*
 
 val startingBalls = 50000

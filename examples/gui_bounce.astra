@@ -1,7 +1,8 @@
 // Animation: thousands of balls bouncing around a canvas, moved and drawn by one loop.
 // Click the canvas to add a hundred more; Space pauses.
 //
-// gui_bounce_workers.astra is the same thing with the moving done on other cores.
+// This is the version with no threads at all. gui_bounce_threads.astra moves the balls on
+// background threads, and gui_bounce_workers.astra on other cores.
 import gui.*
 
 val startingBalls = 50000

@@ -1,0 +1,104 @@
+// Animation with threads: thousands of balls bouncing around a canvas. Background threads
+// move the balls, each its own share of them, and the main thread only draws.
+// Click the canvas to add a hundred more; Space pauses.
+//
+// One thread runs Astra code at a time, so four threads do not move the balls four times as
+// fast. What they give is that the moving does not wait for the drawing: each thread goes
+// round as often as it gets a turn, up to sixty times a second, whatever a frame costs.
+//
+// gui_bounce.astra is the same thing in one loop, and gui_bounce_workers.astra with the
+// moving done on other cores.
+import gui.*
+
+val startingBalls = 50000
+val threadCount = 4
+
+class Ball(var x : number, var y : number, var dx : number, var dy : number, val radius : number, val color : int) {
+  // Moves on by `steps` sixtieths of a second, turning back at the edges.
+  fun move(width : number, height : number, steps : number) {
+    x += dx * steps
+    y += dy * steps
+    if x < radius { x = radius; dx = dx.absoluteValue }
+    if x > width - radius { x = Math.max(radius, width - radius); dx = -dx.absoluteValue }
+    if y < radius { y = radius; dy = dy.absoluteValue }
+    if y > height - radius { y = Math.max(radius, height - radius); dy = -dy.absoluteValue }
+  }
+}
+
+val palette = [Color.red, Color.blue, Color.green, Color.orange, Color.purple, Color.cyan, Color.pink]
+
+// What the threads share. Each thread moves the balls of one group. A list is never seen
+// half changed, so a ball can be added to a group while its thread is going through it.
+val groups = List(threadCount) { [] }
+var ballCount = 0
+@Volatile var width = 760.0
+@Volatile var height = 520.0
+@Volatile var paused = false
+val steps = AtomicInteger()          // how many times a group has been moved, for the status line
+
+fun addBall(x : number, y : number) {
+  val speed = 1 + Math.random() * 3
+  val angle = Math.random() * 2 * Math.pi
+  val ball = Ball(x, y, Math.cos(angle) * speed, Math.sin(angle) * speed, 3 + Math.randomInt(0, 4), palette[ballCount % palette.size])
+  groups[ballCount % threadCount].add(ball)
+  ballCount += 1
+}
+
+// ---- The threads that move the balls ----
+// Each goes round up to sixty times a second. It measures how long it really was since
+// last time, so the balls keep their speed when the drawing leaves the threads fewer turns.
+for group in groups {
+  thread(isDaemon = true) {
+    var last = clock()
+    while (true) {
+      val now = clock()
+      val elapsed = Math.min((now - last) * 60, 6)      // in sixtieths of a second
+      last = now
+      if !paused {
+        for ball in group { ball.move(width, height, elapsed) }
+        steps.incrementAndGet()
+      }
+      Thread.sleep(16)
+    }
+  }
+}
+
+// ---- The window, on the main thread ----
+val window = Window("Bounce", 780, 580, padding = 0, spacing = 0)
+val canvas = window.canvas(fill = true)
+val status = window.label("")
+
+canvas.onMouseDown = { x, y, button -> repeat(100) { addBall(x, y) } }
+canvas.onKeyDown = { key -> if key == "Space" { paused = !paused } }
+
+var frames = 0
+var measuredAt = clock()
+var rates = "measuring..."
+
+// Draws the balls where the threads have put them.
+fun frame() {
+  val (w, h) = canvas.size()
+  width = w
+  height = h
+  canvas.clear(0x202830)
+  for group in groups {
+    for ball in group { canvas.fillCircle(ball.x, ball.y, ball.radius, ball.color) }
+  }
+
+  // Once a second: how many frames were drawn, and how often each thread moved its balls.
+  frames += 1
+  val now = clock()
+  if now - measuredAt >= 1 {
+    val seconds = now - measuredAt
+    rates = "%.0f frames and %.0f moves a second".format(frames / seconds, steps.getAndSet(0) / seconds / threadCount)
+    frames = 0
+    measuredAt = now
+  }
+  status.text = "  $ballCount balls on $threadCount threads: $rates" + (paused ? " (paused)" : "") + ". Click for more; Space pauses."
+}
+
+repeat(startingBalls) { addBall(Math.random() * width, Math.random() * height) }
+window.show()
+canvas.focus()
+App.every(16, frame)
+App.run()

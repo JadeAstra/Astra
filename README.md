@@ -1830,8 +1830,9 @@ opportunity, which is slow but useful for finding memory bugs when changing the 
 - Astra code that shares its objects does not run on several cores at once: threads take
   turns, and workers, which do run side by side, share nothing.
 - The old `gui` library draws one shape at a call, which is what limits an animation of
-  thousands of shapes: no thread or worker can draw for it. `examples\gui_bounce.astra` and
-  `examples\gui_bounce_workers.astra` show it, the second with the moving done on other cores.
+  thousands of shapes: no thread or worker can draw for it. Three examples show it:
+  `gui_bounce.astra` moves and draws in one loop, `gui_bounce_threads.astra` moves the balls
+  on background threads, and `gui_bounce_workers.astra` on other cores.
 - An `object` is created where it is written, and top-level variables get their values in
   order (file by file for a folder), so one cannot be used by a statement that runs earlier.
 - Integer arithmetic wraps on overflow.
