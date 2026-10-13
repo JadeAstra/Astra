@@ -16,6 +16,10 @@ namespace astra {
 
 namespace fs = std::filesystem;
 
+// The standard library past the prelude: src/std/*.astra, packed into the executable by the build.
+extern const unsigned char kStdSource[];
+extern const size_t kStdSourceSize;
+
 namespace {
 
 // Compiled into every program as module 0. Runtime errors are instances of Error.
@@ -29,13 +33,6 @@ const char* const kPrelude = R"(class Error {
   }
 }
 
-data Pair(val first, val second) {
-  fun toList() => [first, second]
-}
-
-data Triple(val first, val second, val third) {
-  fun toList() => [first, second, third]
-}
 )";
 
 enum class FunctionKind { Script, Function, Method, Initializer, StaticMethod, Setter };
@@ -655,6 +652,11 @@ private:
                (name.visibility == GlobalName::Internal && owner.library == ns_->library);
     }
 
+    // Whether `name` is a built-in that only the standard library's own source may use.
+    bool libraryOnly(const std::string& name) const {
+        return name.size() > 2 && name[0] == '_' && name[1] == '_' && ns_ != session_.builtins_ && session_.vm_.hasBuiltin(name);
+    }
+
     // What a bare name means at the top level, if anything declares it: a private name of this
     // file, a name of this folder, a name of an imported folder that this file may see, or a
     // built-in. The folder's own names come before imported ones.
@@ -679,6 +681,9 @@ private:
         if (found != nullptr) return found;
 
         Namespace& builtins = *session_.builtins_;
+        // A built-in whose name starts with two underscores is the standard library's own:
+        // to any other file there is no such name (resolveGlobal reports its use).
+        if (libraryOnly(name)) return nullptr;
         if (auto it = builtins.names.find(name); it != builtins.names.end() && it->second.declared) return &it->second;
         if (session_.vm_.hasBuiltin(name)) {
             GlobalName& builtin = builtins.names[name];
@@ -693,6 +698,7 @@ private:
     // declared by a file of this folder that is loaded later.
     GlobalName* resolveGlobal(const std::string& name, const Node& at) const {
         if (GlobalName* known = findGlobal(name, at)) return known;
+        if (libraryOnly(name)) throw error(at, "'" + name + "' is for the standard library's own use");
         GlobalName& fresh = ns_->names[name];
         if (fresh.slot < 0) fresh.slot = session_.newSlot(name);
         return &fresh;
@@ -2913,7 +2919,11 @@ private:
                 // function being called knows the position of.
                 if (compileScopeCall(e)) {
                     // let, also or takeIf with a lambda: done in place
-                } else if (e.namedCount > 0 || e.hasSpread || (e.trailingLambda && e.callee->kind != ExprKind::Member)) {
+                } else if (e.namedCount > 0 || e.hasSpread ||
+                           (e.trailingLambda &&
+                            (e.callee->kind != ExprKind::Member ||
+                             importedMember(*static_cast<const MemberExpr&>(*e.callee).object,
+                                            static_cast<const MemberExpr&>(*e.callee).name, *e.callee) != nullptr))) {
                     compileNamedCall(e);
                 } else if (e.callee->kind == ExprKind::Member &&
                            importedMember(*static_cast<const MemberExpr&>(*e.callee).object,
@@ -2924,7 +2934,7 @@ private:
                     int toEnd = member.safe ? emitJump(Op::JumpIfNull) : -1;
                     compileArgs(e.args);
                     line_ = member.line;
-                    emit(Op::Invoke, stringConstant(member.name));
+                    emit(e.trailingLambda ? Op::InvokeTrailing : Op::Invoke, stringConstant(member.name));
                     emitByte(argc);
                     if (toEnd >= 0) patchJump(toEnd);
                 } else if (e.callee->kind == ExprKind::Name && compileBareCall(e)) {
@@ -2936,7 +2946,7 @@ private:
                     compileArgs(e.args);
                     emitGet("super", sup);
                     line_ = sup.line;
-                    emit(Op::SuperInvoke, stringConstant(sup.method));
+                    emit(e.trailingLambda ? Op::SuperInvokeTrailing : Op::SuperInvoke, stringConstant(sup.method));
                     emitByte(argc);
                 } else {
                     compileExpr(*e.callee);
@@ -3457,7 +3467,10 @@ CompilerSession::CompilerSession(VM& vm) : vm_(vm) {
     builtins->library = "<builtin>";
     builtins_ = builtins.get();
     namespaces_["<builtin>"] = std::move(builtins);
-    program.modules.push_back(compileUnit(kPrelude, "<prelude>", "<builtin>", "<prelude>", false));
+    // The standard library is part of the prelude: every program starts with it loaded.
+    std::string prelude = kPrelude;
+    prelude.append(reinterpret_cast<const char*>(kStdSource), kStdSourceSize);
+    program.modules.push_back(compileUnit(prelude, "<std>", "<builtin>", "<prelude>", false));
 }
 
 int CompilerSession::compileFile(const std::string& path) {

@@ -1,0 +1,109 @@
+// The Kotlin names for lists.
+
+// Making lists.
+print(listOf(1, 2, 3), mutableListOf(), emptyList(), listOfNotNull(1, null, 2))   // expect: [1, 2, 3] [] [] [1, 2]
+print(List(4) { it * it }, MutableList(2) { "x" })       // expect: [0, 1, 4, 9] ["x", "x"]
+print(buildList { add(1); add(2); addAll([3, 4]) })      // expect: [1, 2, 3, 4]
+
+// Adding, reading and removing.
+val xs = mutableListOf(10, 20, 30)
+print(xs.add(40), xs.size, xs.lastIndex, xs.indices)     // expect: true 4 3 0..<4
+xs.add(1, 15)
+xs.addAll([50, 60])
+xs.addAll(0, 1..2)
+print(xs)                                                // expect: [1, 2, 10, 15, 20, 30, 40, 50, 60]
+print(xs.isEmpty(), xs.isNotEmpty(), [].isEmpty())       // expect: false true true
+print(xs.first(), xs.last(), xs.get(2), xs.getOrNull(99), xs.getOrNull(-1))   // expect: 1 60 10 null null
+print(xs.first { it > 12 }, xs.last { it < 12 }, xs.firstOrNull { it > 99 }, [].lastOrNull())   // expect: 15 10 null null
+print(xs.set(0, 100), xs[0], xs.getOrElse(50) { it * 2 })                 // expect: 1 100 100
+print(xs.removeFirst(), xs.removeLast(), xs.removeAt(0), xs)              // expect: 100 60 2 [10, 15, 20, 30, 40, 50]
+print([].removeFirstOrNull(), [].removeLastOrNull(), [1].removeLastOrNull())   // expect: null null 1
+print(xs.removeAll { it > 35 }, xs)                                       // expect: true [10, 15, 20, 30]
+print(xs.retainAll([10, 20, 99]), xs)                                     // expect: true [10, 20]
+print(xs.removeAll([7]), xs.removeIf { it == 10 }, xs)                    // expect: false true [20]
+xs.addFirst(5)
+xs.addLast(25)
+print(xs, xs.contains(5), 25 in xs, xs.containsAll([5, 20]), xs.indexOf(25), [1, 2, 1].lastIndexOf(1))   // expect: [5, 20, 25] true true true 2 2
+
+// Errors that say what went wrong.
+try { [].first() } catch (e) { print(e.message) }                        // expect: first() of an empty list
+try { [1].first { it > 5 } } catch (e) { print(e.message) }              // expect: first(): no item of the list meets the condition
+try { [1, 2].get(2) } catch (e) { print(e.message) }                     // expect: get: index 2 is out of range (size 2)
+try { [1, 2].subList(1, 5) } catch (e) { print(e.message) }              // expect: subList(1, 5) is out of range for a list of size 2
+try { [1, 2].single() } catch (e) { print(e.message) }                   // expect: single(): expected one item but found 2
+try { [].max() } catch (e) { print(e.message) }                          // expect: max() of an empty list
+
+// Going through a list.
+val seen = []
+[1, 2, 3].forEach { seen.add(it * 2) }
+["a", "b"].forEachIndexed { i, s -> seen.add("$i$s") }
+print(seen)                                              // expect: [2, 4, 6, "0a", "1b"]
+print([1, 2].onEach { seen.add(it) }, seen.size)         // expect: [1, 2] 7
+
+// Asking.
+val ns = [3, 1, 4, 1, 5, 9, 2, 6]
+print(ns.any { it > 8 }, ns.all { it > 0 }, ns.none { it > 9 }, ns.count { it % 2 == 0 }, ns.count())   // expect: true true true 3 8
+print([].any(), [1].any(), [].none(), ns.indexOfFirst { it == 1 }, ns.indexOfLast { it == 1 }, ns.indexOfFirst { it > 99 })   // expect: false true true 1 3 -1
+print(ns.find { it > 4 }, ns.findLast { it > 4 }, [7].single(), [7, 8].singleOrNull(), ns.single { it == 9 })   // expect: 5 6 7 null 9
+val nothing = null
+print(nothing.isNullOrEmpty(), [].isNullOrEmpty(), [1].isNullOrEmpty(), [5].orEmpty(), [].ifEmpty { [0] })   // expect: true true false [5] [0]
+// Strings and maps have an orEmpty() for null as well, so on null it has to be said which.
+try { nothing.orEmpty() } catch (e) { print(e.message) }   // expect: orEmpty() is called on null, and more than one type has its own orEmpty() that takes null, so there is no telling which is meant; use ?: to say what stands in for null
+print(nothing ?: [])                                     // expect: []
+
+// Making other lists.
+print(ns.map { it * 2 }.take(3), ns.mapIndexed { i, n -> i * n }.takeLast(2), ns.mapNotNull { it > 4 ? it : null })   // expect: [6, 2, 8] [12, 42] [5, 9, 6]
+print(ns.filter { it > 3 }, ns.filterNot { it > 3 }, [1, null, 2].filterNotNull(), ns.filterIndexed { i, n -> i % 3 == 0 })   // expect: [4, 5, 9, 6] [3, 1, 1, 2] [1, 2] [3, 1, 2]
+print([[1, 2], [3]].flatten(), [1, 2].flatMap { [it, it * 10] }, ns.partition { it > 3 })   // expect: [1, 2, 3] [1, 10, 2, 20] Pair(first=[4, 5, 9, 6], second=[3, 1, 1, 2])
+print(ns.take(2), ns.take(99).size, ns.drop(6), ns.drop(99), ns.dropLast(6), ns.takeLast(1))   // expect: [3, 1] 8 [2, 6] [] [3, 1] [6]
+print(ns.takeWhile { it != 4 }, ns.dropWhile { it != 9 }, ns.subList(1, 3), ns.slice(-2))   // expect: [3, 1] [9, 2, 6] [1, 4] [2, 6]
+print([1, 2, 3, 4, 5].chunked(2), [1, 2, 3, 4].windowed(2), [1, 2, 3, 4, 5].windowed(3, 2, true))   // expect: [[1, 2], [3, 4], [5]] [[1, 2], [2, 3], [3, 4]] [[1, 2, 3], [3, 4, 5], [5]]
+print([1, 2, 3].zip(["a", "b"]), [1, 2].zip([10, 20]) { a, b -> a + b }, [1, 4, 9].zipWithNext { a, b -> b - a })   // expect: [Pair(first=1, second="a"), Pair(first=2, second="b")] [11, 22] [3, 5]
+print(["a", "b"].withIndex(), ns.distinct(), ["aa", "b", "cc"].distinctBy { it.length })   // expect: [IndexedValue(index=0, value="a"), IndexedValue(index=1, value="b")] [3, 1, 4, 5, 9, 2, 6] ["aa", "b"]
+print([1, 2].plus(3), [1, 2].plus([3, 4]), [1, 2, 3, 2].minus(2), [1, 2, 3].minus([1, 3]))   // expect: [1, 2, 3] [1, 2, 3, 4] [1, 3, 2] [2]
+for (index, value) in ["x", "y"].withIndex() { write(index, value, " ") }
+print()                                                  // expect: 0x 1y
+
+// toList and reversed give new lists; the original is untouched.
+val original = [1, 2, 3]
+val copy = original.toList()
+copy.add(4)
+print(original, copy, original.reversed(), original, original.toMutableList() == original, original.copyOf() === original)   // expect: [1, 2, 3] [1, 2, 3, 4] [3, 2, 1] [1, 2, 3] true false
+
+// Order.
+val words = ["pear", "fig", "banana", "kiwi"]
+print(words.sorted(), words.sortedDescending())          // expect: ["banana", "fig", "kiwi", "pear"] ["pear", "kiwi", "fig", "banana"]
+print(words.sortedBy { it.length }, words.sortedByDescending { it.length })   // expect: ["fig", "pear", "kiwi", "banana"] ["banana", "pear", "kiwi", "fig"]
+print(words.sortedWith { a, b -> a.length - b.length }, words)   // expect: ["fig", "pear", "kiwi", "banana"] ["pear", "fig", "banana", "kiwi"]
+print(words.sortedWith(compareBy({ it.length }, { it })))        // expect: ["fig", "kiwi", "pear", "banana"]
+print(words.sortedWith(compareByDescending { it.length }.thenBy { it }))   // expect: ["banana", "kiwi", "pear", "fig"]
+print([3, 1, 2].sortedWith(reverseOrder()), [3, 1, 2].sortedWith(naturalOrder().reversed()), naturalOrder().compare(1, 2))   // expect: [3, 2, 1] [3, 2, 1] -1
+val sortable = [3, 1, 2]
+sortable.sortDescending()
+write(sortable, "")
+sortable.sortBy { it }
+write(sortable, "")
+sortable.sortByDescending { it }
+write(sortable, "")
+sortable.sortWith { a, b -> a - b }
+print(sortable)                                          // expect: [3, 2, 1][1, 2, 3][3, 2, 1][1, 2, 3]
+Math.seed(7)
+val shuffled = [1, 2, 3, 4, 5].shuffled()
+print(shuffled.sorted(), shuffled.size, [1, 2, 3].random() in [1, 2, 3])   // expect: [1, 2, 3, 4, 5] 5 true
+
+// Working a value out.
+print(ns.sum(), ns.sumOf { it * 2 }, ns.fold(100) { acc, n -> acc - n }, ns.reduce { a, b -> a > b ? a : b })   // expect: 31 62 69 9
+print(ns.max(), ns.min(), [].maxOrNull(), ["b", "a"].minOrNull(), [1, 2, 3, 4].average(), [1.5, 2.5].sum())   // expect: 9 1 null a 2.5 4.0
+print(words.maxBy { it.length }, words.minBy { it.length }, words.maxOf { it.length }, words.minOf { it.length }, [].maxByOrNull { it }, [].minOfOrNull { it })   // expect: banana fig 6 3 null null
+print(ns.reduce({ a, b -> a + b }, 1000))                // expect: 1031
+
+// As text.
+print([1, 2, 3].joinToString(), [1, 2, 3].joinToString("-"), [1, 2, 3].joinToString(prefix = "<", postfix = ">"))   // expect: 1, 2, 3 1-2-3 <1, 2, 3>
+print([1, 2, 3].joinToString { "#$it" }, [1, 2, 3].joinToString(" + ") { it * 2 }, [1, 2, 3, 4].joinToString(limit = 2))   // expect: #1, #2, #3 2 + 4 + 6 1, 2, ...
+print([1, 2, 3].joinToString(separator = "", transform = { it + 1 }), ["a", null].joinToString())   // expect: 234 a, null
+
+// Maps and sets from a list.
+print(words.associate { it to it.length })               // expect: {"pear": 4, "fig": 3, "banana": 6, "kiwi": 4}
+print(words.associateBy { it[0] }, words.associateBy({ it[0] }, { it.length }))   // expect: {"p": "pear", "f": "fig", "b": "banana", "k": "kiwi"} {"p": 4, "f": 3, "b": 6, "k": 4}
+print(words.associateWith { it.length }["fig"], words.groupBy { it.length })   // expect: 3 {4: ["pear", "kiwi"], 3: ["fig"], 6: ["banana"]}
+print(words.groupBy({ it.length }, { it.upper() })[4], [1 to "a", 2 to "b"].toMap(), [1, 1, 2].toSet())   // expect: ["PEAR", "KIWI"] {1: "a", 2: "b"} {1, 2}

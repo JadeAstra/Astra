@@ -1,0 +1,578 @@
+// ---- Lists ----
+// The methods a list has besides the built-in ones (add, first, map, filter, sort and so on,
+// which are in builtins.cpp and stdlib.cpp).
+
+// -- Going through the items --
+
+fun list.forEach(action) {
+  for item in this { action(item) }
+}
+
+fun list.forEachIndexed(action) {
+  var index = 0
+  for item in this {
+    action(index, item)
+    index += 1
+  }
+}
+
+fun list.onEach(action) {
+  for item in this { action(item) }
+  return this
+}
+
+// -- Asking about the items --
+
+fun list.any(predicate = null) {
+  if (predicate == null) { return this.length > 0 }
+  for item in this {
+    if (predicate(item)) { return true }
+  }
+  return false
+}
+
+fun list.all(predicate) {
+  for item in this {
+    if (!predicate(item)) { return false }
+  }
+  return true
+}
+
+fun list.none(predicate = null) {
+  if (predicate == null) { return this.length == 0 }
+  for item in this {
+    if (predicate(item)) { return false }
+  }
+  return true
+}
+
+fun list.count(predicate = null) {
+  if (predicate == null) { return this.length }
+  var total = 0
+  for item in this {
+    if (predicate(item)) { total += 1 }
+  }
+  return total
+}
+
+fun list.containsAll(items) {
+  for item in items {
+    if (!this.contains(item)) { return false }
+  }
+  return true
+}
+
+fun list?.orEmpty() => this == null ? [] : this
+fun list.ifEmpty(defaultValue) => this.length == 0 ? defaultValue() : this
+
+// -- Finding --
+
+fun list.indexOfFirst(predicate) {
+  var index = 0
+  for item in this {
+    if (predicate(item)) { return index }
+    index += 1
+  }
+  return -1
+}
+
+fun list.indexOfLast(predicate) {
+  var index = this.length - 1
+  while (index >= 0) {
+    if (predicate(this[index])) { return index }
+    index -= 1
+  }
+  return -1
+}
+
+fun list.findLast(predicate) => this.lastOrNull(predicate)
+
+// The only item, or the only one that meets the condition.
+fun list.single(predicate = null) {
+  val found = predicate == null ? this : this.filter(predicate)
+  if (found.length != 1) {
+    throw Error("single(): expected one item but found " + str(found.length))
+  }
+  return found[0]
+}
+
+fun list.singleOrNull(predicate = null) {
+  val found = predicate == null ? this : this.filter(predicate)
+  return found.length == 1 ? found[0] : null
+}
+
+fun list.getOrElse(index, defaultValue) => index >= 0 and index < this.length ? this[index] : defaultValue(index)
+fun list.elementAt(index) => this.get(index)
+fun list.elementAtOrNull(index) => this.getOrNull(index)
+
+// -- Making another list --
+
+fun list.mapIndexed(transform) {
+  val out = []
+  var index = 0
+  for item in this {
+    out.add(transform(index, item))
+    index += 1
+  }
+  return out
+}
+
+fun list.mapNotNull(transform) {
+  val out = []
+  for item in this {
+    val made = transform(item)
+    if (made != null) { out.add(made) }
+  }
+  return out
+}
+
+fun list.mapIndexedNotNull(transform) {
+  val out = []
+  var index = 0
+  for item in this {
+    val made = transform(index, item)
+    if (made != null) { out.add(made) }
+    index += 1
+  }
+  return out
+}
+
+fun list.flatMap(transform) {
+  val out = []
+  for item in this { out.addAll(transform(item)) }
+  return out
+}
+
+fun list.flatten() {
+  val out = []
+  for item in this { out.addAll(item) }
+  return out
+}
+
+fun list.filterNot(predicate) {
+  val out = []
+  for item in this {
+    if (!predicate(item)) { out.add(item) }
+  }
+  return out
+}
+
+fun list.filterNotNull() {
+  val out = []
+  for item in this {
+    if (item != null) { out.add(item) }
+  }
+  return out
+}
+
+fun list.filterIndexed(predicate) {
+  val out = []
+  var index = 0
+  for item in this {
+    if (predicate(index, item)) { out.add(item) }
+    index += 1
+  }
+  return out
+}
+
+// The items that meet the condition and those that do not, as a Pair of lists.
+fun list.partition(predicate) {
+  val yes = []
+  val no = []
+  for item in this {
+    if (predicate(item)) { yes.add(item) } else { no.add(item) }
+  }
+  return Pair(yes, no)
+}
+
+fun list.take(count) {
+  if (count < 0) { throw Error("take(" + str(count) + "): the count cannot be negative") }
+  return this.slice(0, count)
+}
+
+fun list.takeLast(count) {
+  if (count < 0) { throw Error("takeLast(" + str(count) + "): the count cannot be negative") }
+  return count >= this.length ? this.toList() : this.slice(this.length - count)
+}
+
+fun list.drop(count) {
+  if (count < 0) { throw Error("drop(" + str(count) + "): the count cannot be negative") }
+  return count >= this.length ? [] : this.slice(count)
+}
+
+fun list.dropLast(count) {
+  if (count < 0) { throw Error("dropLast(" + str(count) + "): the count cannot be negative") }
+  return count >= this.length ? [] : this.slice(0, this.length - count)
+}
+
+fun list.takeWhile(predicate) {
+  val out = []
+  for item in this {
+    if (!predicate(item)) { break }
+    out.add(item)
+  }
+  return out
+}
+
+fun list.dropWhile(predicate) {
+  var index = 0
+  while (index < this.length and predicate(this[index])) { index += 1 }
+  return this.slice(index)
+}
+
+// The list cut into lists of `size` items; the last may be shorter.
+fun list.chunked(size) {
+  if (size < 1) { throw Error("chunked(" + str(size) + "): the size has to be at least 1") }
+  val out = []
+  var start = 0
+  while (start < this.length) {
+    out.add(this.slice(start, start + size))
+    start += size
+  }
+  return out
+}
+
+// Every run of `size` items in a row, moving along by `step`.
+fun list.windowed(size, step = 1, partialWindows = false) {
+  if (size < 1 or step < 1) { throw Error("windowed: the size and the step have to be at least 1") }
+  val out = []
+  var start = 0
+  while (start < this.length) {
+    if (start + size > this.length and !partialWindows) { break }
+    out.add(this.slice(start, start + size))
+    start += step
+  }
+  return out
+}
+
+// Pairs each item with the one at the same position in `other`, as far as the shorter goes.
+fun list.zip(other, transform = null) {
+  val out = []
+  val count = this.length < other.length ? this.length : other.length
+  for index in 0..<count {
+    out.add(transform == null ? Pair(this[index], other[index]) : transform(this[index], other[index]))
+  }
+  return out
+}
+
+fun list.zipWithNext(transform = null) {
+  val out = []
+  for index in 0..<this.length - 1 {
+    out.add(transform == null ? Pair(this[index], this[index + 1]) : transform(this[index], this[index + 1]))
+  }
+  return out
+}
+
+fun list.withIndex() {
+  val out = []
+  var index = 0
+  for item in this {
+    out.add(IndexedValue(index, item))
+    index += 1
+  }
+  return out
+}
+
+fun list.distinct() {
+  val seen = {:}
+  val out = []
+  for item in this {
+    if (!seen.has(item)) {
+      seen[item] = true
+      out.add(item)
+    }
+  }
+  return out
+}
+
+fun list.distinctBy(selector) {
+  val seen = {:}
+  val out = []
+  for item in this {
+    val key = selector(item)
+    if (!seen.has(key)) {
+      seen[key] = true
+      out.add(item)
+    }
+  }
+  return out
+}
+
+fun list.plus(other) => other is list ? this + other : this + [other]
+
+fun list.minus(other) {
+  if (other is list or other is Set) { return this.filter { !other.contains(it) } }
+  val out = this.toList()
+  out.remove(other)
+  return out
+}
+
+fun list.asReversed() => this.reversed()
+fun list.copyOf() => this.toList()
+
+// -- Order --
+
+fun list.sorted() => this.toList().sort()
+fun list.sortedDescending() => this.toList().sort { a, b -> compareValues(b, a) }
+fun list.sortedBy(selector) => this.toList().sort { a, b -> compareValues(selector(a), selector(b)) }
+fun list.sortedByDescending(selector) => this.toList().sort { a, b -> compareValues(selector(b), selector(a)) }
+fun list.sortedWith(comparator) => this.toList().sort(comparator)
+
+// These sort the list itself.
+fun list.sortBy(selector) {
+  this.sort { a, b -> compareValues(selector(a), selector(b)) }
+}
+
+fun list.sortByDescending(selector) {
+  this.sort { a, b -> compareValues(selector(b), selector(a)) }
+}
+
+fun list.sortWith(comparator) {
+  this.sort(comparator)
+}
+
+fun list.sortDescending() {
+  this.sort { a, b -> compareValues(b, a) }
+}
+
+fun list.shuffle() {
+  var index = this.length - 1
+  while (index > 0) {
+    val other = Math.randomInt(0, index)
+    val held = this[index]
+    this[index] = this[other]
+    this[other] = held
+    index -= 1
+  }
+}
+
+fun list.shuffled() {
+  val out = this.toList()
+  out.shuffle()
+  return out
+}
+
+fun list.random() {
+  if (this.length == 0) { throw Error("random() of an empty list") }
+  return this[Math.randomInt(0, this.length - 1)]
+}
+
+// -- Working a value out of the items --
+
+fun list.fold(initial, operation) {
+  var result = initial
+  for item in this { result = operation(result, item) }
+  return result
+}
+
+fun list.sum() {
+  var total = 0
+  for item in this { total += item }
+  return total
+}
+
+fun list.sumOf(selector) {
+  var total = 0
+  for item in this { total += selector(item) }
+  return total
+}
+
+fun list.average() => this.length == 0 ? Double.nan : this.sum().toDouble() / this.length
+
+fun list.maxOrNull() {
+  if (this.length == 0) { return null }
+  var best = this[0]
+  for item in this {
+    if (compareValues(item, best) > 0) { best = item }
+  }
+  return best
+}
+
+fun list.minOrNull() {
+  if (this.length == 0) { return null }
+  var best = this[0]
+  for item in this {
+    if (compareValues(item, best) < 0) { best = item }
+  }
+  return best
+}
+
+fun list.max() {
+  if (this.length == 0) { throw Error("max() of an empty list") }
+  return this.maxOrNull()
+}
+
+fun list.min() {
+  if (this.length == 0) { throw Error("min() of an empty list") }
+  return this.minOrNull()
+}
+
+// The item for which the selector gives the most, or the least.
+fun list.maxByOrNull(selector) {
+  if (this.length == 0) { return null }
+  var best = this[0]
+  var most = selector(best)
+  for index in 1..<this.length {
+    val value = selector(this[index])
+    if (compareValues(value, most) > 0) {
+      best = this[index]
+      most = value
+    }
+  }
+  return best
+}
+
+fun list.minByOrNull(selector) {
+  if (this.length == 0) { return null }
+  var best = this[0]
+  var least = selector(best)
+  for index in 1..<this.length {
+    val value = selector(this[index])
+    if (compareValues(value, least) < 0) {
+      best = this[index]
+      least = value
+    }
+  }
+  return best
+}
+
+fun list.maxBy(selector) {
+  if (this.length == 0) { throw Error("maxBy() of an empty list") }
+  return this.maxByOrNull(selector)
+}
+
+fun list.minBy(selector) {
+  if (this.length == 0) { throw Error("minBy() of an empty list") }
+  return this.minByOrNull(selector)
+}
+
+// The most, or the least, that the selector gives for any item.
+fun list.maxOfOrNull(selector) {
+  if (this.length == 0) { return null }
+  var most = selector(this[0])
+  for index in 1..<this.length {
+    val value = selector(this[index])
+    if (compareValues(value, most) > 0) { most = value }
+  }
+  return most
+}
+
+fun list.minOfOrNull(selector) {
+  if (this.length == 0) { return null }
+  var least = selector(this[0])
+  for index in 1..<this.length {
+    val value = selector(this[index])
+    if (compareValues(value, least) < 0) { least = value }
+  }
+  return least
+}
+
+fun list.maxOf(selector) {
+  if (this.length == 0) { throw Error("maxOf() of an empty list") }
+  return this.maxOfOrNull(selector)
+}
+
+fun list.minOf(selector) {
+  if (this.length == 0) { throw Error("minOf() of an empty list") }
+  return this.minOfOrNull(selector)
+}
+
+// The items as text, one after another. A lambda after the call says how each is shown:
+// names.joinToString(", ") { it.upper() }
+fun list.joinToString(separator = ", ", prefix = "", postfix = "", limit = -1, truncated = "...", transform = null) {
+  if (transform == null and limit < 0) { return prefix + this.join(separator) + postfix }
+  val parts = []
+  var count = 0
+  for item in this {
+    if (limit >= 0 and count >= limit) {
+      parts.add(truncated)
+      break
+    }
+    parts.add(transform == null ? str(item) : str(transform(item)))
+    count += 1
+  }
+  return prefix + parts.join(separator) + postfix
+}
+
+// -- Maps and sets from a list --
+
+// A map from pairs: by the transform, or with no argument from a list that holds pairs.
+fun list.associate(transform) {
+  val out = {:}
+  for item in this {
+    val (key, value) = transform(item)
+    out[key] = value
+  }
+  return out
+}
+
+fun list.toMap() {
+  val out = {:}
+  for (key, value) in this { out[key] = value }
+  return out
+}
+
+fun list.associateBy(keySelector, valueTransform = null) {
+  val out = {:}
+  for item in this {
+    out[keySelector(item)] = valueTransform == null ? item : valueTransform(item)
+  }
+  return out
+}
+
+fun list.associateWith(valueSelector) {
+  val out = {:}
+  for item in this { out[item] = valueSelector(item) }
+  return out
+}
+
+// A map from each key to the list of items that gave it.
+fun list.groupBy(keySelector, valueTransform = null) {
+  val out = {:}
+  for item in this {
+    val key = keySelector(item)
+    var group = out[key]
+    if (group == null) {
+      group = []
+      out[key] = group
+    }
+    group.add(valueTransform == null ? item : valueTransform(item))
+  }
+  return out
+}
+
+fun list.toSet() => Set(this)
+fun list.toMutableSet() => Set(this)
+
+// -- Changing the list itself --
+
+fun list.addFirst(item) {
+  this.insert(0, item)
+}
+
+fun list.addLast(item) {
+  this.add(item)
+}
+
+// removeAll and retainAll take a condition or a collection of items. True if anything went.
+fun list.removeAll(what) {
+  val kept = what is function ? this.filterNot(what) : this.filter { !what.contains(it) }
+  val changed = kept.length != this.length
+  if (changed) {
+    this.clear()
+    this.addAll(kept)
+  }
+  return changed
+}
+
+fun list.retainAll(what) {
+  val kept = what is function ? this.filter(what) : this.filter { what.contains(it) }
+  val changed = kept.length != this.length
+  if (changed) {
+    this.clear()
+    this.addAll(kept)
+  }
+  return changed
+}
+
+fun list.removeIf(predicate) => this.removeAll(predicate)

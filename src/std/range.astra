@@ -1,0 +1,109 @@
+// ---- Ranges ----
+// A range can be looped over, and has the methods of a list that only read: each makes a
+// list of its numbers where it needs one.
+
+fun range.forEach(action) {
+  for number in this { action(number) }
+}
+
+fun range.map(transform) {
+  val out = []
+  for number in this { out.add(transform(number)) }
+  return out
+}
+
+fun range.mapNotNull(transform) {
+  val out = []
+  for number in this {
+    val made = transform(number)
+    if (made != null) { out.add(made) }
+  }
+  return out
+}
+
+fun range.flatMap(transform) {
+  val out = []
+  for number in this { out.addAll(transform(number)) }
+  return out
+}
+
+fun range.filter(predicate) {
+  val out = []
+  for number in this {
+    if (predicate(number)) { out.add(number) }
+  }
+  return out
+}
+
+fun range.any(predicate = null) {
+  if (predicate == null) { return this.length > 0 }
+  for number in this {
+    if (predicate(number)) { return true }
+  }
+  return false
+}
+
+fun range.all(predicate) {
+  for number in this {
+    if (!predicate(number)) { return false }
+  }
+  return true
+}
+
+fun range.none(predicate = null) {
+  if (predicate == null) { return this.length == 0 }
+  for number in this {
+    if (predicate(number)) { return false }
+  }
+  return true
+}
+
+fun range.count(predicate = null) {
+  if (predicate == null) { return this.length }
+  var total = 0
+  for number in this {
+    if (predicate(number)) { total += 1 }
+  }
+  return total
+}
+
+fun range.firstOrNull(predicate = null) {
+  for number in this {
+    if (predicate == null or predicate(number)) { return number }
+  }
+  return null
+}
+
+fun range.find(predicate) => this.firstOrNull(predicate)
+
+fun range.sum() {
+  var total = 0
+  for number in this { total += number }
+  return total
+}
+
+fun range.sumOf(selector) {
+  var total = 0
+  for number in this { total += selector(number) }
+  return total
+}
+
+fun range.associateWith(valueSelector) {
+  val out = {:}
+  for number in this { out[number] = valueSelector(number) }
+  return out
+}
+
+fun range.isNotEmpty() => this.length > 0
+fun range.reversed() => this.toList().reversed()
+fun range.toMutableList() => this.toList()
+fun range.toSet() => Set(this)
+
+fun range.random() {
+  if (this.length == 0) { throw Error("random() of an empty range") }
+  return this.start + Math.randomInt(0, this.length - 1) * this.step
+}
+
+fun range.joinToString(separator = ", ", prefix = "", postfix = "", limit = -1, truncated = "...", transform = null) {
+  return this.toList().joinToString(separator, prefix, postfix, limit, truncated, transform)
+}

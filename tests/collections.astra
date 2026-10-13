@@ -38,8 +38,8 @@ print(m["a"], m["missing"], m[3], m[3.0], m.length)   // expect: 1 null three th
 m["a"] += 41
 m["new"] = true
 print(m.has("a"), m.has("zzz"), m.get("zzz", "fallback"), m["a"])   // expect: true false fallback 42
-print(m.remove("b c"), m.remove("b c"), m.keys())    // expect: true false ["a", 3, 2, "new"]
-print(m.values(), m.entries())                   // expect: [42, "three", "two", true] [["a", 42], [3, "three"], [2, "two"], ["new", true]]
+print(m.remove("b c"), m.remove("b c"), m.keys())    // expect: 2 null ["a", 3, 2, "new"]
+print(m.values(), m.entries()[0], m.entries().length)     // expect: [42, "three", "two", true] MapEntry(key="a", value=42) 4
 m.clear()
 print(m, len(m))                                 // expect: {} 0
 

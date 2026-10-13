@@ -1,0 +1,97 @@
+// ---- StringBuilder ----
+
+// Text put together a piece at a time. Adding to a string with += copies the whole string
+// each time, which is slow for a long text built in a loop; this keeps the pieces and joins
+// them once.
+//
+//   val out = StringBuilder()
+//   for line in lines { out.append(line).append("\n") }
+//   print(out.toString())
+//
+// buildString { append("a"); append(1) } does the same in one expression.
+class StringBuilder {
+  private val parts = []
+  private var count = 0
+
+  fun init(initial = "") {
+    // Kotlin's StringBuilder(capacity) takes a number; there is nothing to do with one here.
+    if (initial is string and initial.length > 0) {
+      parts.add(initial)
+      count = initial.length
+    }
+  }
+
+  // In characters.
+  get length() => count
+  get lastIndex() => count - 1
+  fun isEmpty() => count == 0
+  fun isNotEmpty() => count != 0
+
+  // Adds a value as print would show it. Gives the builder, so that calls can be chained.
+  fun append(value) {
+    val text = str(value)
+    parts.add(text)
+    count += text.length
+    return this
+  }
+
+  fun appendLine(value = "") {
+    append(value)
+    return append("\n")
+  }
+
+  fun toString() {
+    if (parts.length == 0) { return "" }
+    if (parts.length > 1) { replaceWith(parts.join("")) }
+    return parts[0]
+  }
+
+  private fun replaceWith(text) {
+    parts.clear()
+    parts.add(text)
+    count = text.length
+  }
+
+  fun clear() {
+    parts.clear()
+    count = 0
+    return this
+  }
+
+  // Positions count characters, as in a string.
+  fun insert(index, value) {
+    val text = toString()
+    replaceWith(text.substring(0, index) + str(value) + text.substring(index))
+    return this
+  }
+
+  fun deleteRange(startIndex, endIndex) {
+    val text = toString()
+    val end = endIndex > text.length ? text.length : endIndex
+    replaceWith(text.substring(0, startIndex) + text.substring(end))
+    return this
+  }
+
+  fun delete(startIndex, endIndex) => deleteRange(startIndex, endIndex)
+  fun deleteAt(index) => deleteRange(index, index + 1)
+  fun deleteCharAt(index) => deleteRange(index, index + 1)
+
+  // Cuts the text down to `newLength` characters; a longer length leaves it as it is.
+  fun setLength(newLength) {
+    if (newLength < count) { replaceWith(toString().substring(0, newLength)) }
+  }
+
+  fun reverse() {
+    replaceWith(toString().reversed())
+    return this
+  }
+
+  fun get(index) => toString().get(index)
+  op [](index) => toString().get(index)
+  fun substring(startIndex, endIndex = null) => toString().substring(startIndex, endIndex == null ? count : endIndex)
+  fun indexOf(text, startIndex = 0) => toString().indexOf(text, startIndex)
+  fun lastIndexOf(text) => toString().lastIndexOf(text)
+  fun contains(text) => toString().contains(text)
+  fun startsWith(prefix) => toString().startsWith(prefix)
+  fun endsWith(suffix) => toString().endsWith(suffix)
+}

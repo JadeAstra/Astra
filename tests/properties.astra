@@ -110,7 +110,7 @@ print(get, set, store.size)                      // expect: 1 missing 1
 
 // string interpolation and methods see properties as values
 class Circle(val radius : number) {
-  get area() : number => Math.PI * this.radius * this.radius
+  get area() : number => Math.pi * this.radius * this.radius
   get diameter() : number => this.radius * 2
   fun describe() : string => "circle of diameter ${this.diameter}"
 }

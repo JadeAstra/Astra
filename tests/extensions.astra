@@ -42,9 +42,9 @@ print({ it + 1 }.twice(5), "x".shout().shout(), [3, 4].total().double())   // ex
 
 // On every value, and on null.
 fun any.tag() => "<" + this + ">"
-fun string?.orEmpty() => this == null ? "" : this
+fun string?.orNothing() => this == null ? "" : this
 fun string?.isBlank() => this == null or this.trim().length == 0
-print(5.tag(), "x".tag(), [1].tag(), s.name.tag(), missing.orEmpty().length, "kept".orEmpty(), missing.isBlank(), " ".isBlank(), "a".isBlank())   // expect: <5> <x> <[1]> <rect> 0 kept true true false
+print(5.tag(), "x".tag(), [1].tag(), s.name.tag(), missing.orNothing().length, "kept".orNothing(), missing.isBlank(), " ".isBlank(), "a".isBlank())   // expect: <5> <x> <[1]> <rect> 0 kept true true false
 
 // On an interface, an enum, and a class declared inside another.
 interface Named { val name }

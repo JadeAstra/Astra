@@ -132,9 +132,11 @@ const OpInfo kOps[] = {
     {"EXTENSION", Operand::U16U8},
     {"MARK_ABSTRACT", Operand::None},
     {"CHECK_OVERRIDE", Operand::U16U8},
+    {"INVOKE_TRAILING", Operand::U16U8},
+    {"SUPER_INVOKE_TRAILING", Operand::U16U8},
 };
 
-const char* const kTypeNames[] = {"", "int", "float", "number", "string", "bool", "list", "map", "range", "function"};
+const char* const kTypeNames[] = {"", "int", "float", "number", "string", "bool", "list", "map", "range", "function", "bytes"};
 
 static_assert(sizeof(kOps) / sizeof(kOps[0]) == static_cast<size_t>(Op::Count_), "kOps must match the Op enum");
 
@@ -530,8 +532,20 @@ static int analyzeStack(FunctionProto& f, const Program& program, bool partial) 
                     pops = b + 1;
                     pushes = 1;
                     break;
+                case Op::InvokeTrailing:
+                    requireName(a);
+                    if (b < 1) fail("a call with a lambda after it has no arguments");
+                    pops = b + 1;
+                    pushes = 1;
+                    break;
                 case Op::SuperInvoke:
                     requireName(a);
+                    pops = b + 2;
+                    pushes = 1;
+                    break;
+                case Op::SuperInvokeTrailing:
+                    requireName(a);
+                    if (b < 1) fail("a call with a lambda after it has no arguments");
                     pops = b + 2;
                     pushes = 1;
                     break;
@@ -721,7 +735,9 @@ void disassembleFunction(const FunctionProto& f, const Program& program, std::os
                 out << " " << a << "  ; " << asString(f.constants[a])->chars;
                 break;
             case Op::Invoke:
+            case Op::InvokeTrailing:
             case Op::SuperInvoke:
+            case Op::SuperInvokeTrailing:
                 out << " " << a << " argc=" << b << "  ; " << asString(f.constants[a])->chars;
                 break;
             case Op::GetImplicit:
@@ -791,8 +807,9 @@ void disassembleFunction(const FunctionProto& f, const Program& program, std::os
 }  // namespace
 
 void disassemble(const Program& program, std::ostream& out) {
-    for (const FunctionProto* module : program.modules)
-        if (module != nullptr) disassembleFunction(*module, program, out);
+    // Module 0 is the standard library, the same in every program, and is left out.
+    for (size_t i = 1; i < program.modules.size(); i++)
+        if (program.modules[i] != nullptr) disassembleFunction(*program.modules[i], program, out);
 }
 
 // ---- Bytecode files ----

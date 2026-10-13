@@ -1,0 +1,3 @@
+// The built-ins that the standard library is written on are not names a program can use.
+// expect compile error: '__file' is for the standard library's own use
+print(__file.exists("x"))

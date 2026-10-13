@@ -1,0 +1,343 @@
+// ---- Sets and deques ----
+
+// A collection that holds each value once, in the order the values were first added. Two
+// values are the same one if they are ==, as for the keys of a map: a number, a string, a
+// list or a data object by what it holds, any other object by being itself.
+//
+//   val seen = Set()            setOf(1, 2, 3)            [1, 2, 2].toSet()
+class Set {
+  private val items = {:}
+
+  // From anything a for loop takes: a list, a range, another set.
+  fun init(from = null) {
+    if (from != null) {
+      for item in from { items[item] = true }
+    }
+  }
+
+  get size() => items.size
+  get length() => items.size
+  fun isEmpty() => items.size == 0
+  fun isNotEmpty() => items.size != 0
+
+  // `item in set` asks this.
+  fun contains(item) => items.has(item)
+
+  fun containsAll(from) {
+    for item in from {
+      if (!items.has(item)) { return false }
+    }
+    return true
+  }
+
+  // True if the item was not there before.
+  fun add(item) {
+    if (items.has(item)) { return false }
+    items[item] = true
+    return true
+  }
+
+  fun addAll(from) {
+    val before = items.size
+    for item in from { items[item] = true }
+    return items.size != before
+  }
+
+  // True if the item was there.
+  fun remove(item) => items.remove(item) != null
+
+  // removeAll and retainAll take a condition or a collection. True if anything went.
+  fun removeAll(what) {
+    val before = items.size
+    for item in items.keys {
+      if (what is function ? what(item) : what.contains(item)) { items.remove(item) }
+    }
+    return items.size != before
+  }
+
+  fun retainAll(what) {
+    val before = items.size
+    for item in items.keys {
+      if (!(what is function ? what(item) : what.contains(item))) { items.remove(item) }
+    }
+    return items.size != before
+  }
+
+  fun removeIf(predicate) => removeAll(predicate)
+
+  fun clear() {
+    items.clear()
+  }
+
+  // A for loop goes through the items as they were when it began.
+  fun iterator() => items.keys
+  fun toList() => items.keys
+  fun toMutableList() => items.keys
+  fun toSet() => Set(this)
+  fun toMutableSet() => Set(this)
+
+  // The sets made of both, of what is in both, and of what is only in this one.
+  fun union(other) {
+    val out = Set(this)
+    out.addAll(other)
+    return out
+  }
+
+  fun intersect(other) {
+    val out = Set()
+    for item in other {
+      if (items.has(item)) { out.add(item) }
+    }
+    return out
+  }
+
+  fun subtract(other) {
+    val out = Set(this)
+    for item in other { out.remove(item) }
+    return out
+  }
+
+  // set + item, set + collection, and the same with -, each giving a new set.
+  op +(other) {
+    val out = Set(this)
+    if (other is list or other is Set or other is range) { out.addAll(other) } else { out.add(other) }
+    return out
+  }
+
+  op -(other) {
+    val out = Set(this)
+    if (other is list or other is Set or other is range) {
+      for item in other { out.remove(item) }
+    } else {
+      out.remove(other)
+    }
+    return out
+  }
+
+  fun plus(other) => this + other
+  fun minus(other) => this - other
+
+  // Two sets are equal if they hold the same items, whatever the order.
+  op ==(other) => other is Set and other.size == items.size and containsAll(other)
+
+  fun first() {
+    if (items.size == 0) { throw Error("first() of an empty set") }
+    return items.keys[0]
+  }
+
+  fun last() {
+    if (items.size == 0) { throw Error("last() of an empty set") }
+    return items.keys[items.size - 1]
+  }
+
+  // What a list has for reading: each works on the items in order, and those that make a
+  // collection make a list.
+  fun firstOrNull(predicate = null) => items.keys.firstOrNull(predicate)
+  fun lastOrNull(predicate = null) => items.keys.lastOrNull(predicate)
+  fun find(predicate) => items.keys.firstOrNull(predicate)
+  fun single() => items.keys.single()
+  fun singleOrNull() => items.keys.singleOrNull()
+  fun forEach(action) { items.keys.forEach(action) }
+  fun map(transform) => items.keys.map(transform)
+  fun mapNotNull(transform) => items.keys.mapNotNull(transform)
+  fun flatMap(transform) => items.keys.flatMap(transform)
+  fun filter(predicate) => items.keys.filter(predicate)
+  fun filterNot(predicate) => items.keys.filterNot(predicate)
+  fun any(predicate = null) => items.keys.any(predicate)
+  fun all(predicate) => items.keys.all(predicate)
+  fun none(predicate = null) => items.keys.none(predicate)
+  fun count(predicate = null) => items.keys.count(predicate)
+  fun fold(initial, operation) => items.keys.fold(initial, operation)
+  fun sum() => items.keys.sum()
+  fun sumOf(selector) => items.keys.sumOf(selector)
+  fun maxOrNull() => items.keys.maxOrNull()
+  fun minOrNull() => items.keys.minOrNull()
+  fun maxOf(selector) => items.keys.maxOf(selector)
+  fun minOf(selector) => items.keys.minOf(selector)
+  fun maxByOrNull(selector) => items.keys.maxByOrNull(selector)
+  fun minByOrNull(selector) => items.keys.minByOrNull(selector)
+  fun sorted() => items.keys.sort()
+  fun sortedDescending() => items.keys.sortedDescending()
+  fun sortedBy(selector) => items.keys.sortedBy(selector)
+  fun sortedByDescending(selector) => items.keys.sortedByDescending(selector)
+  fun sortedWith(comparator) => items.keys.sort(comparator)
+  fun associateWith(valueSelector) => items.keys.associateWith(valueSelector)
+  fun associateBy(keySelector) => items.keys.associateBy(keySelector)
+  fun groupBy(keySelector) => items.keys.groupBy(keySelector)
+  fun partition(predicate) => items.keys.partition(predicate)
+
+  fun joinToString(separator = ", ", prefix = "", postfix = "", limit = -1, truncated = "...", transform = null) {
+    return items.keys.joinToString(separator, prefix, postfix, limit, truncated, transform)
+  }
+
+  // {1, 2, 3}, with each item as a list shows it.
+  fun toString() {
+    val text = str(items.keys)
+    return "{" + text.substring(1, text.length - 1) + "}"
+  }
+}
+
+// A queue open at both ends: adding and removing are quick at the front as well as the back,
+// where a list is quick only at the back.
+//
+//   val queue = Deque()        queue.addLast(job)        val next = queue.removeFirst()
+class Deque {
+  // The items are items[head ..< items.length]; what is before `head` has been taken from
+  // the front, or is room made for adding there.
+  private var items = []
+  private var head = 0
+
+  fun init(from = null) {
+    if (from != null) { items.addAll(from) }
+  }
+
+  get size() => items.length - head
+  get length() => items.length - head
+  get lastIndex() => items.length - head - 1
+  get indices() => 0..<(items.length - head)
+  fun isEmpty() => items.length == head
+  fun isNotEmpty() => items.length != head
+
+  fun addLast(item) {
+    items.add(item)
+  }
+
+  fun add(item) {
+    items.add(item)
+    return true
+  }
+
+  fun addAll(from) {
+    return items.addAll(from)
+  }
+
+  fun addFirst(item) {
+    if (head == 0) {
+      // No room in front: make as much as the deque holds, so that it is seldom done.
+      val room = items.length > 8 ? items.length : 8
+      val grown = List(room) { null }
+      grown.addAll(items)
+      items = grown
+      head = room
+    }
+    head -= 1
+    items[head] = item
+  }
+
+  fun removeFirst() {
+    if (items.length == head) { throw Error("removeFirst() from an empty deque") }
+    val item = items[head]
+    items[head] = null
+    head += 1
+    tidy()
+    return item
+  }
+
+  fun removeLast() {
+    if (items.length == head) { throw Error("removeLast() from an empty deque") }
+    val item = items.removeLast()
+    tidy()
+    return item
+  }
+
+  fun removeFirstOrNull() => items.length == head ? null : removeFirst()
+  fun removeLastOrNull() => items.length == head ? null : removeLast()
+
+  // Gives back the room in front once it is most of the list.
+  private fun tidy() {
+    if (head == items.length) {
+      items.clear()
+      head = 0
+    } else if (head > 32 and head * 4 > items.length * 3) {
+      items = items.slice(head)
+      head = 0
+    }
+  }
+
+  fun first() {
+    if (items.length == head) { throw Error("first() of an empty deque") }
+    return items[head]
+  }
+
+  fun last() {
+    if (items.length == head) { throw Error("last() of an empty deque") }
+    return items[items.length - 1]
+  }
+
+  fun firstOrNull() => items.length == head ? null : items[head]
+  fun lastOrNull() => items.length == head ? null : items[items.length - 1]
+
+  // deque[0] is the front.
+  fun get(index) {
+    if (index < 0 or index >= items.length - head) {
+      throw Error("get: index " + str(index) + " is out of range (size " + str(items.length - head) + ")")
+    }
+    return items[head + index]
+  }
+
+  fun getOrNull(index) => index >= 0 and index < items.length - head ? items[head + index] : null
+
+  fun set(index, item) {
+    if (index < 0 or index >= items.length - head) {
+      throw Error("set: index " + str(index) + " is out of range (size " + str(items.length - head) + ")")
+    }
+    items[head + index] = item
+  }
+
+  op [](index) => get(index)
+  op []=(index, item) { set(index, item) }
+
+  fun indexOf(item) {
+    for index in head..<items.length {
+      if (items[index] == item) { return index - head }
+    }
+    return -1
+  }
+
+  fun contains(item) => indexOf(item) >= 0
+
+  // Takes out the first item equal to this one. True if there was one.
+  fun remove(item) {
+    val index = indexOf(item)
+    if (index < 0) { return false }
+    items.removeAt(head + index)
+    tidy()
+    return true
+  }
+
+  fun removeAt(index) {
+    val item = get(index)
+    items.removeAt(head + index)
+    tidy()
+    return item
+  }
+
+  fun clear() {
+    items.clear()
+    head = 0
+  }
+
+  // A for loop goes through the items as they were when it began, front to back.
+  fun iterator() => items.slice(head)
+  fun toList() => items.slice(head)
+  fun toMutableList() => items.slice(head)
+
+  fun forEach(action) { items.slice(head).forEach(action) }
+  fun map(transform) => items.slice(head).map(transform)
+  fun filter(predicate) => items.slice(head).filter(predicate)
+  fun any(predicate = null) => items.slice(head).any(predicate)
+  fun all(predicate) => items.slice(head).all(predicate)
+  fun none(predicate = null) => items.slice(head).none(predicate)
+  fun count(predicate = null) => items.slice(head).count(predicate)
+  fun find(predicate) => items.slice(head).firstOrNull(predicate)
+  fun reversed() => items.slice(head).reversed()
+
+  fun joinToString(separator = ", ", prefix = "", postfix = "", limit = -1, truncated = "...", transform = null) {
+    return items.slice(head).joinToString(separator, prefix, postfix, limit, truncated, transform)
+  }
+
+  op ==(other) => other is Deque and other.toList() == toList()
+
+  // As a list shows itself: [1, 2, 3]
+  fun toString() => str(items.slice(head))
+}

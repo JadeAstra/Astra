@@ -1,0 +1,124 @@
+// ---- Files ----
+
+// A file or folder on disk, by its path. Making a File touches nothing: the disk is only
+// looked at when something is asked of it.
+//
+//   val notes = File("notes.txt")
+//   if (notes.exists()) { print(notes.readText()) }
+//   File(folder, "out.bin").writeBytes(data)
+//
+// The work itself is done by the built-in __file, which only the standard library can name.
+class File {
+  val path
+
+  // File(path), or File(folder, name) for something inside a folder. The folder may be a
+  // File or a path.
+  fun init(path, child = null) {
+    val base = path is File ? path.path : str(path)
+    this.path = child == null ? base : __file.join(base, child is File ? child.path : str(child))
+  }
+
+  // By path, without making a File: File.read("a.txt")
+  static fun read(path) => __file.read(path)
+  static fun write(path, text) { __file.write(path, text) }
+  static fun append(path, text) { __file.append(path, text) }
+  static fun exists(path) => __file.exists(path)
+  static val separator = __file.separator
+
+  // -- What the path says --
+
+  // The last name in the path: File("a/b.txt").name is "b.txt".
+  get name() => __file.name(this.path)
+
+  // What follows the last dot of the name, without the dot; "" if there is none.
+  get extension() {
+    val whole = __file.name(this.path)
+    val dot = whole.lastIndexOf(".")
+    return dot < 0 ? "" : whole.substring(dot + 1)
+  }
+
+  get nameWithoutExtension() {
+    val whole = __file.name(this.path)
+    val dot = whole.lastIndexOf(".")
+    return dot < 0 ? whole : whole.substring(0, dot)
+  }
+
+  // The folder it is in, as a path and as a File; null if the path names none.
+  get parent() => __file.parent(this.path)
+
+  get parentFile() {
+    val folder = __file.parent(this.path)
+    return folder == null ? null : File(folder)
+  }
+
+  get absolutePath() => __file.absolute(this.path)
+  get absoluteFile() => File(__file.absolute(this.path))
+
+  // Something inside this folder: File("a").resolve("b.txt") is a/b.txt.
+  fun resolve(child) => File(this.path, child)
+
+  // -- What is on disk --
+
+  fun exists() => __file.exists(this.path)
+  get isFile() => __file.isFile(this.path)
+  get isDirectory() => __file.isDirectory(this.path)
+
+  // The size in bytes, and when it was last written in milliseconds since the start of
+  // 1970. Both are 0 for a file that is not there.
+  fun length() => __file.size(this.path)
+  fun lastModified() => __file.lastModified(this.path)
+
+  // The names in a folder, in order, and the same as Files. Null if it is not a folder.
+  fun list() => __file.list(this.path)
+
+  fun listFiles() {
+    val names = __file.list(this.path)
+    if (names == null) { return null }
+    val folder = this.path
+    return names.map { File(folder, it) }
+  }
+
+  // -- Reading and writing --
+  // Text is UTF-8. Each call reads or writes the whole file.
+
+  fun readText() => __file.read(this.path)
+
+  // The lines of the file, without their line ends.
+  fun readLines() {
+    val lines = __file.read(this.path).lines()
+    // A file that ends in a line end has no empty last line.
+    if (lines.length > 0 and lines[lines.length - 1] == "") { lines.removeLast() }
+    return lines
+  }
+
+  fun forEachLine(action) {
+    for line in readLines() { action(line) }
+  }
+
+  fun readBytes() => __file.readBytes(this.path)
+
+  fun writeText(text) { __file.write(this.path, text) }
+  fun appendText(text) { __file.append(this.path, text) }
+  fun writeBytes(data) { __file.writeBytes(this.path, data) }
+  fun appendBytes(data) { __file.appendBytes(this.path, data) }
+
+  // -- Changing what is on disk --
+
+  // Each gives true if it did what was asked. delete() takes a file or an empty folder.
+  fun delete() => __file.delete(this.path)
+  fun deleteRecursively() => __file.deleteRecursively(this.path)
+  fun mkdirs() => __file.mkdirs(this.path)
+  fun mkdir() => __file.mkdirs(this.path)
+  fun renameTo(target) => __file.rename(this.path, target is File ? target.path : str(target))
+
+  // Gives the File it was copied to. It is an error if that is there already, unless
+  // `overwrite` is true.
+  fun copyTo(target, overwrite = false) {
+    val to = target is File ? target : File(target)
+    __file.copy(this.path, to.path, overwrite)
+    return to
+  }
+
+  op ==(other) => other is File and other.path == this.path
+  fun toString() => this.path
+}

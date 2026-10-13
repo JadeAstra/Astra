@@ -18,7 +18,7 @@ val balls = []
 
 fun addBall(x : number, y : number) {
   val speed = 2 + Math.random() * 4
-  val angle = Math.random() * 2 * Math.PI
+  val angle = Math.random() * 2 * Math.pi
   balls.push(Ball(x, y, Math.cos(angle) * speed, Math.sin(angle) * speed,
                   10 + Math.randomInt(0, 14), palette[balls.length % palette.length]))
 }
@@ -41,7 +41,7 @@ fun frame() {
   status.text = "  ${balls.length} balls" + (paused ? " (paused)" : "") + ". Click to add one; Space pauses."
 }
 
-for i in 0..5 { addBall(100 + i * 60, 80 + i * 40) }
+for i in 0..5000 { addBall(100 + i * 60, 80 + i * 40) }
 window.show()
 canvas.focus()
 App.every(16, frame)

@@ -1,0 +1,192 @@
+// The standard library, the part written in Astra. These files are packed into astra.exe by
+// the build and loaded before every program, after the prelude in compiler.cpp. The names
+// are Kotlin's, so that code ported from it reads the same.
+//
+// Inside an extension function a bare name is looked for on `this` first. The library
+// writes `this.` out, which goes straight to the member.
+
+// ---- Small values that functions hand out ----
+
+// Two values, made with `a to b` or Pair(a, b).
+data Pair(val first, val second) {
+  fun toList() => [first, second]
+}
+
+data Triple(val first, val second, val third) {
+  fun toList() => [first, second, third]
+}
+
+// One key of a map with its value: what map.entries holds.
+data MapEntry(val key, val value) {
+  fun toPair() => Pair(key, value)
+}
+
+// An item with its position: what withIndex() gives.
+data IndexedValue(val index, val value)
+
+// ---- Checks ----
+
+// Each throws an Error unless the condition holds. The message is a function, so that it is
+// only worked out when it is needed: require(n > 0) { "n is $n" }
+fun require(condition, lazyMessage = null) {
+  if (!condition) { throw Error(lazyMessage == null ? "Failed requirement." : str(lazyMessage())) }
+}
+
+fun check(condition, lazyMessage = null) {
+  if (!condition) { throw Error(lazyMessage == null ? "Check failed." : str(lazyMessage())) }
+}
+
+fun requireNotNull(value, lazyMessage = null) {
+  if (value == null) { throw Error(lazyMessage == null ? "Required value was null." : str(lazyMessage())) }
+  return value
+}
+
+fun checkNotNull(value, lazyMessage = null) {
+  if (value == null) { throw Error(lazyMessage == null ? "Required value was null." : str(lazyMessage())) }
+  return value
+}
+
+fun error(message) {
+  throw Error(str(message))
+}
+
+// Runs `action` that many times, giving it 0, 1, 2 and so on.
+fun repeat(times, action) {
+  for index in 0..<times { action(index) }
+}
+
+// ---- Every value ----
+
+fun any?.toString() => str(this)
+fun any?.equals(other) => this == other
+fun any.compareTo(other) => compareValues(this, other)
+fun any?.takeUnless(predicate) => predicate(this) ? null : this
+
+// For a string, a list, a map or a set that may be null. It is one function for all of them,
+// since null does not say which of them it would have been.
+fun any?.isNullOrEmpty() => this == null or this.isEmpty()
+
+// ---- Functions ----
+
+// callback.invoke(a, b) is callback(a, b); with ?. it calls a function that may be null.
+fun function.invoke(vararg arguments) {
+  val callee = this
+  return callee(*arguments)
+}
+
+// ---- Comparators ----
+// A comparator is a function of two values that gives a negative number, zero or a positive
+// one. sort, sortedWith and the like take one.
+
+// Orders by what each selector gives, the first that tells two values apart deciding.
+fun compareBy(vararg selectors) {
+  return { a, b ->
+    var order = 0
+    for selector in selectors {
+      order = compareValues(selector(a), selector(b))
+      if (order != 0) { break }
+    }
+    order
+  }
+}
+
+fun compareByDescending(selector) => { a, b -> compareValues(selector(b), selector(a)) }
+fun naturalOrder() => { a, b -> compareValues(a, b) }
+fun reverseOrder() => { a, b -> compareValues(b, a) }
+
+fun function.compare(a, b) {
+  val comparator = this
+  return comparator(a, b)
+}
+
+// A comparator that falls back on a selector, or on another comparator, where this one
+// finds two values equal.
+fun function.thenBy(selector) {
+  val first = this
+  return { a, b ->
+    val order = first(a, b)
+    order != 0 ? order : compareValues(selector(a), selector(b))
+  }
+}
+
+fun function.thenByDescending(selector) {
+  val first = this
+  return { a, b ->
+    val order = first(a, b)
+    order != 0 ? order : compareValues(selector(b), selector(a))
+  }
+}
+
+fun function.then(comparator) {
+  val first = this
+  return { a, b ->
+    val order = first(a, b)
+    order != 0 ? order : comparator(a, b)
+  }
+}
+
+fun function.reversed() {
+  val comparator = this
+  return { a, b -> comparator(b, a) }
+}
+
+// ---- Making collections ----
+
+fun listOf(vararg items) => items
+fun mutableListOf(vararg items) => items
+fun arrayListOf(vararg items) => items
+fun emptyList() => []
+fun listOfNotNull(vararg items) => items.filter { it != null }
+
+// List(3) { it * 2 } is [0, 2, 4]: `size` items, each worked out from its position.
+fun List(size, init) {
+  val out = []
+  for index in 0..<size { out.add(init(index)) }
+  return out
+}
+
+fun MutableList(size, init) => List(size, init)
+
+// mapOf("a" to 1, "b" to 2)
+fun mapOf(vararg pairs) {
+  val out = {:}
+  for (key, value) in pairs { out[key] = value }
+  return out
+}
+
+fun mutableMapOf(vararg pairs) => mapOf(*pairs)
+fun hashMapOf(vararg pairs) => mapOf(*pairs)
+fun linkedMapOf(vararg pairs) => mapOf(*pairs)
+fun emptyMap() => {:}
+
+fun setOf(vararg items) => Set(items)
+fun mutableSetOf(vararg items) => Set(items)
+fun hashSetOf(vararg items) => Set(items)
+fun linkedSetOf(vararg items) => Set(items)
+fun emptySet() => Set()
+
+// Each runs the lambda on a new collection, so that add(...), put(...) or append(...) inside
+// it fill that collection, and gives what was built.
+fun buildList(builder) {
+  val out = []
+  with(out, builder)
+  return out
+}
+
+fun buildMap(builder) {
+  val out = {:}
+  with(out, builder)
+  return out
+}
+
+fun buildSet(builder) {
+  val out = Set()
+  with(out, builder)
+  return out
+}
+
+fun buildString(builder) {
+  val out = StringBuilder()
+  with(out, builder)
+  return out.toString()
+}

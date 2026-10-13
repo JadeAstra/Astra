@@ -21,8 +21,8 @@ abstract class Shape(val name : string) : Drawable {
 }
 
 class Circle(val radius : number) : Shape("circle") {
-  override fun area() => Math.PI * radius * radius
-  override fun perimeter() => 2 * Math.PI * radius
+  override fun area() => Math.pi * radius * radius
+  override fun perimeter() => 2 * Math.pi * radius
 }
 
 class Rect(val width : number, val height : number, name : string = "rectangle") : Shape(name) {

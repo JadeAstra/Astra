@@ -1,0 +1,100 @@
+// A lambda written after a method call goes to the method's last parameter, as it does
+// after a call to a function. The parameters in between take their defaults.
+
+class Box(val items) {
+  fun show(separator = ", ", prefix = "", transform = null) {
+    var out = prefix
+    for i in 0..<items.length {
+      if (i > 0) { out += separator }
+      out += transform == null ? str(items[i]) : str(transform(items[i]))
+    }
+    return out
+  }
+  fun each(vararg extra, action) {
+    for x in items { action(x, extra) }
+  }
+  fun twice(a, b = a, block) => block(a, b)
+  static fun build(size = 2, make) => Box(range(size).toList().map(make))
+}
+
+val box = Box([1, 2, 3])
+print(box.show())                               // expect: 1, 2, 3
+print(box.show { it * 10 })                     // expect: 10, 20, 30
+print(box.show("-") { it * 10 })                // expect: 10-20-30
+print(box.show("-", ">") { it + 1 })            // expect: >2-3-4
+print(box.show(prefix = "#") { it })            // expect: #1, 2, 3
+print(box.twice(4) { a, b -> a + b })           // expect: 8
+print(box.twice(4, 5) { a, b -> a + b })        // expect: 9
+
+// With a vararg parameter before it, the lambda is still the last one.
+box.each { x, extra -> write(x, extra, " ") }
+print()                                         // expect: 1[] 2[] 3[] 
+box.each("a") { x, extra -> write(x, extra, " ") }
+print()                                         // expect: 1["a"] 2["a"] 3["a"] 
+box.each("a", "b") { x, extra -> write(x, extra.length, " ") }
+print()                                         // expect: 12 22 32 
+
+// Static methods, extension functions and functions held in fields.
+print(Box.build { it * it }.show())             // expect: 0, 1
+print(Box.build(4) { it }.show())               // expect: 0, 1, 2, 3
+
+fun list.joined(separator = "+", transform = null) {
+  var out = ""
+  for i in 0..<length {
+    if (i > 0) { out += separator }
+    out += transform == null ? str(this[i]) : str(transform(this[i]))
+  }
+  return out
+}
+print([1, 2].joined())                          // expect: 1+2
+print([1, 2].joined { it * 2 })                 // expect: 2+4
+print([1, 2].joined("/") { it * 2 })            // expect: 2/4
+val maybe = null
+print(maybe?.joined { it })                     // expect: null
+
+class Holder {
+  var action = fun(scale = 1, block) => block() * scale
+}
+print(Holder().action { 7 })                    // expect: 7
+print(Holder().action(3) { 7 })                 // expect: 21
+
+// A built-in method takes the lambda as its last argument, as before.
+print([3, 1, 2].map { it * 2 })                 // expect: [6, 2, 4]
+
+// Optional parameters may come after a function parameter. When every parameter that has to
+// be given is there but the last of them, the lambda is that one.
+fun list.grouped(keySelector, valueTransform = null) {
+  val out = {:}
+  for item in this {
+    val key = keySelector(item)
+    if (out[key] == null) { out[key] = [] }
+    out[key].push(valueTransform == null ? item : valueTransform(item))
+  }
+  return out
+}
+print([1, 2, 3].grouped { it % 2 })                       // expect: {1: [1, 3], 0: [2]}
+print([1, 2, 3].grouped({ it % 2 }) { it * 10 })          // expect: {1: [10, 30], 0: [20]}
+fun folded(items, initial, operation, label = "sum") {
+  var result = initial
+  for item in items { result = operation(result, item) }
+  return "$label $result"
+}
+print(folded([1, 2], 10) { a, b -> a + b })               // expect: sum 13
+print(folded([1, 2], 10, label = "total") { a, b -> a + b })   // expect: total 13
+
+// The same through super.
+open class Base {
+  open fun render(indent = ">", body) => indent + body()
+}
+class Derived : Base {
+  override fun render(indent = ">>", body) => super.render { "[" + body() + "]" } + super.render("-") { "x" }
+}
+print(Derived().render { "content" })                     // expect: >[content]-x
+
+// A parameter with no default that the lambda skipped over is reported.
+fun list.needs(count, block) => block(count)
+try {
+  [1].needs { it }
+} catch (e) {
+  print(e.message)                              // expect: list.needs() is missing argument 'count'
+}

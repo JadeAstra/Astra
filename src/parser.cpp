@@ -1545,7 +1545,7 @@ ExprPtr Parser::postfix() {
             labelLambdas(*call);
             e = std::move(call);
         } else if (t.type == TokenType::LBrace && trailingLambdaNext() &&
-                   (e->kind == ExprKind::Name || e->kind == ExprKind::Member)) {
+                   (e->kind == ExprKind::Name || e->kind == ExprKind::Member || e->kind == ExprKind::Super)) {
             // `grid { ... }`, `items.forEach { ... }`: a call whose only argument is the lambda.
             advance();
             auto call = node<CallExpr>(t);

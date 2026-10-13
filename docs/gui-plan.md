@@ -2,7 +2,9 @@
 
 Status: agreed plan, every decision settled (section 8). Work proceeds one milestone at a
 time (section 7). M0, the two spikes, is done and accepted; what it found is in
-[m0-findings.md](m0-findings.md) and is folded in below. M1 is next.
+[m0-findings.md](m0-findings.md) and is folded in below. M1, the language, is done. M2, the
+standard library, is built; what was settled along the way is under "As built in M2" in 5.4.
+M3 is next.
 
 ## 1. Goal and ground rules
 
@@ -524,7 +526,7 @@ something else.
 | Bytes | `ByteArray` 8 times in the library (hex view, clipboard pictures), 86 in the apps | A `bytes` type for binary data, now that a string is text only. Described below the table. |
 | Lists and maps | 1,538 collection calls in the library, 728 in apps | Kotlin's names beside Astra's: `add`, `addAll`, `size`, `isEmpty`, `first`, `last`, `firstOrNull`, `any`, `all`, `none`, `forEach`, `forEachIndexed`, `mapNotNull`, `sumOf`, `maxOf`, `sortedBy`, `joinToString`, `indexOfFirst`, `getOrPut`, `getOrNull`, `subList`, `reversed`, `distinct`, `zip`, and so on; `listOf`, `mutableListOf`, `mapOf`, `emptyList`. |
 | Sets and deques | 113 / 16 | A set type; a deque or efficient removal at the front. |
-| Structural map keys | `HashMap<Pair<Int, Role>, Color>` in `Palette`, and elsewhere | Maps and sets that key a data class such as `Pair` by its contents; 17 places in the library and the apps use one. Whether a list may be a key, now that equal lists are `==`, is settled when maps are implemented. |
+| Structural map keys | `HashMap<Pair<Int, Role>, Color>` in `Palette`, and elsewhere | Maps and sets that key a data class such as `Pair` by its contents; 17 places in the library and the apps use one. A list is a key by its contents too (see "As built in M2" below). |
 | Numbers | `coerceIn`, `coerceAtLeast`, `coerceAtMost` (very common), `Int.MAX_VALUE`, `roundToInt` | Helpers and constants. |
 | `Regex` | 63 | Native class (N5). |
 | Files | `java.io.File` is in the public API (`onFilesDropped: (List<File>) -> Unit`, `largeTextView(file)`) | A `File(path)` object with `name`, `path`, `exists()`, `readText()`. Astra's built-in `File` is a holder of static functions under the same name, so it has to grow into this. |
@@ -571,6 +573,54 @@ own, `bytes`, standing where Kotlin has `ByteArray`:
   rewrites `ByteArray`.
 - An element is a number from 0 to 255. Storing anything outside that range is an error.
   A Kotlin `Byte` runs from -128 to 127, so this is one more entry for 5.3.
+
+**As built in M2 (2026-10-12).** What was settled while building it, and what is left to the
+porter:
+
+- **Where the library lives.** What Astra code can do for itself is written in Astra, as
+  extension functions and classes in `src/std/*.astra`, packed into `astra.exe` and loaded
+  before every program: the collection and string helpers, `Set`, `Deque`, `StringBuilder`,
+  `File`. They run as fast as the native ones (a `forEach` over a million items takes what
+  the native `each` takes), and unlike a native method that calls back into a lambda they
+  will be able to suspend (5.5). Native are the methods called most (`add`, `first`, `get`,
+  `coerceIn`), and what Astra cannot do: reading files, `format`, telling letters from digits.
+- **Map keys.** A list, a range, `bytes` and a data object are keys by what they hold; any
+  other object is a key as itself. That settles the question left open above: a list may be
+  a key, and an equal list finds the entry. A set tells its items apart the same way.
+- **A lambda after a call** goes to the last parameter and the parameters between take their
+  defaults, for methods and extension functions as for functions
+  (`joinToString { it.name }`). One exception lets a function parameter be followed by
+  optional ones, which Kotlin does with overloads: if every parameter that has to be given
+  is there but the last of them, the lambda is that one (`groupBy { key }`,
+  `groupBy({ key }) { value }`).
+- **Named arguments to built-in methods**, for the ones Kotlin code names:
+  `contains(x, ignoreCase = true)`, `indexOf(x, startIndex = n)`, `padStart(length = 3)`.
+- **`size`, `keys`, `values`, `entries`, `indices`, `lastIndex`, `first`/`last` of a range,
+  `absoluteValue`, `sign` and `code`** are read without brackets. `keys`, `values` and
+  `entries` are lists made on the spot, not views: `map.keys.removeAll { ... }` and
+  `map.values.remove(x)` change nothing and the porter rewrites them.
+- **`put` and `remove` on a map give the value that was there**, as in Kotlin (`remove` gave
+  `true` or `false` before).
+- **`orEmpty()` on `null` is an error**, because strings, lists and maps each have one and
+  `null` does not say which is meant. The porter writes `x ?: ""` or `x ?: []`.
+  `isNullOrEmpty()` is one function for all of them.
+- **One whole-number type.** `Int.maxValue` is Kotlin's 2147483647 so that a limit means the
+  same number, but arithmetic goes on past it instead of wrapping. `toLong` is `toInt`.
+- **Constants are camelCase** here too: `Math.pi`, `Int.maxValue`.
+- **`File`** reads and writes a whole file at a time, on the calling thread. Reading in
+  pieces and not blocking come with 5.5.
+- Upper and lower case, and which characters are letters, digits and spaces, come from
+  Windows for characters outside ASCII until the text engine brings its own tables (M4).
+- **The math functions stay in `Math`** (decided 2026-10-12): there is no bare `min`, `max`,
+  `abs` or `sqrt`. The porter writes `Math.min(a, b)` for Kotlin's `min(a, b)`, and so on
+  for the rest of `kotlin.math` (or `minOf`, `maxOf`, `absoluteValue`).
+- **Left to the porter**, because the names would not be Astra's: `println` is `print` and Kotlin's `print` is `write`; arrays are lists
+  (`IntArray(n)` is `List(n) { 0 }`); a `Comparator` is a function of two values;
+  `filterIsInstance<T>()` is `filter { it is T }`; a sequence is a list; and the bit
+  operations `shl`, `and`, `xor` are the operators `<<`, `&`, `^`.
+- `Regex` is still to come (N5).
+- A compiled `.astc` now carries the Astra-written library, about 85 KB, where it was a few
+  hundred bytes for a small program. A built `.exe` is 0.18 MB larger than before.
 
 ### 5.5 Threads and async I/O
 
@@ -831,6 +881,8 @@ committed to.
   with the full test suite, also under the sanitizer and the stress settings.
 - **Shown:** something that runs, to try by hand, with a short account of what was built,
   what turned out differently from this plan, and what that means for the milestones after.
+- **Versioned:** the version of `astra` goes up with each milestone: M1 is 0.1.0, M2 is
+  0.2.0, and so on. `astra --version` then says which milestone a build is.
 - **Accepted, or not:** the next milestone starts on a go-ahead. If the result is not good
   enough it is reworked first; if it changes what should come next, the plan is revised
   before going on.

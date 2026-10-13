@@ -1,0 +1,84 @@
+// The Kotlin names for strings. Every position counts characters.
+
+val s = "Hello, World"
+val accented = "naïve café"
+
+// Parts.
+print(s.substring(7), s.substring(0, 5), s.substring(7..11), accented.substring(6), accented.substring(0, 3))   // expect: World Hello World café naï
+print(s.substring(startIndex = 7, endIndex = 9), s.substring(12) == "")   // expect: Wo true
+try { s.substring(3, 99) } catch (e) { print(e.message) }    // expect: substring(3, 99) is out of range for a string of length 12
+try { s.substring(5, 2) } catch (e) { print(e.message) }     // expect: substring(5, 2) is out of range for a string of length 12
+print(s.take(5), s.take(99), s.takeLast(5), s.drop(7), s.dropLast(7), s.drop(99) == "", accented.takeLast(4))   // expect: Hello Hello, World World World Hello true café
+print(s.takeWhile { it != "," }, s.dropWhile { it != " " }, "abc".chunked(2), accented.chunked(4))   // expect: Hello  World ["ab", "c"] ["naïv", "e ca", "fé"]
+print("a.b.c".substringBefore("."), "a.b.c".substringAfter("."), "a.b.c".substringBeforeLast("."), "a.b.c".substringAfterLast("."))   // expect: a b.c a.b c
+print("abc".substringBefore("-"), "abc".substringAfter("-", "none"), "key = value".substringAfter(" = "))   // expect: abc none value
+print("prefix-body".removePrefix("prefix-"), "body.txt".removeSuffix(".txt"), "(x)".removeSurrounding("(", ")"), "'q'".removeSurrounding("'"), "abc".removePrefix("z"))   // expect: body body x q abc
+print(s.first(), s.last(), s.get(4), s.getOrNull(99), s.getOrNull(-1), "".firstOrNull(), "".lastOrNull(), accented.last())   // expect: H d o null null null null é
+print(s.first { it.isLowerCase() }, s.last { it.isUpperCase() }, s.firstOrNull { it.isDigit() })   // expect: e W null
+try { "".first() } catch (e) { print(e.message) }            // expect: first() of an empty string
+print(s.lastIndex, s.indices, s.size, "é".code, "A".code, 233.toChar(), 97.toChar())   // expect: 11 0..<12 12 233 65 é a
+
+// Finding. ignoreCase and startIndex go by name or by position.
+print(s.indexOf("o"), s.indexOf("o", 5), s.indexOf("o", startIndex = 9), s.lastIndexOf("o"), s.lastIndexOf("o", 7), s.indexOf("z"))   // expect: 4 8 -1 8 4 -1
+print(s.indexOf("WORLD"), s.indexOf("WORLD", ignoreCase = true), s.indexOf("o", 5, true), accented.indexOf("CAFÉ", ignoreCase = true), accented.indexOf("é"))   // expect: -1 7 8 6 9
+print(s.contains("World"), s.contains("world"), s.contains("world", ignoreCase = true), s.contains("WORLD", true), "lo" in s)   // expect: true false true true true
+print(s.startsWith("hello"), s.startsWith("hello", ignoreCase = true), s.endsWith("WORLD", true), s.endsWith("World"), "É".equals("é", ignoreCase = true))   // expect: false true true true true
+print("abc".equals("abc"), "abc".equals("ABC"), "abc".equals("ABC", ignoreCase = true), "abc".equals(5), "a".compareTo("b"), "b".compareTo("A", ignoreCase = true), "x".compareTo("x"))   // expect: true false true false -1 1 0
+print(s.indexOfFirst { it == "l" }, s.indexOfLast { it == "l" }, s.indexOfFirst { it.isDigit() })   // expect: 2 10 -1
+try { s.contains("x", wrong = true) } catch (e) { print(e.message) }   // expect: contains() has no parameter named 'wrong'
+
+// Changing.
+print(s.lowercase(), s.uppercase(), accented.uppercase(), "ÉCOLE".lowercase())   // expect: hello, world HELLO, WORLD NAÏVE CAFÉ école
+print(s.replace("o", "0"), s.replace("L", "_", ignoreCase = true), "Écoute école".replace("éco", "X", true), s.replaceFirst("l", "L"))   // expect: Hell0, W0rld He__o, Wor_d Xute Xle HeLlo, World
+print("ada".replaceFirstChar { it.uppercase() }, "".replaceFirstChar { it.uppercase() }, "abc".reversed(), accented.reversed())   // expect: Ada  cba éfac evïan
+print("7".padStart(3, "0"), "7".padEnd(3, "*") + "|", "abc".padStart(2), "é".padStart(3) + "|", "x".padStart(length = 3, padChar = "-"))   // expect: 007 7**| abc   é| --x
+print("  both  ".trim() + "|", "  left".trimStart() + "|", "right  ".trimEnd() + "|", "interstellar".commonPrefixWith("internet"))   // expect: both| left| right| inter
+
+// Empty and blank.
+print("".isEmpty(), " ".isEmpty(), "x".isNotEmpty(), " \t\n".isBlank(), " x ".isNotBlank(), "".isBlank())   // expect: true false true true true true
+val missing = null
+print(missing.isNullOrEmpty(), "".isNullOrEmpty(), "x".isNullOrEmpty(), missing.isNullOrBlank(), "  ".isNullOrBlank(), "x".orEmpty())   // expect: true true false true true x
+print("".ifEmpty { "none" }, "x".ifEmpty { "none" }, "  ".ifBlank { "blank" }, missing ?: "")   // expect: none x blank
+
+// Lines.
+print("one\ntwo\r\nthree".lines(), "".lines(), "a\n".lines())   // expect: ["one", "two", "three"] [""] ["a", ""]
+
+// Characters.
+print("a".isLetter(), "1".isLetter(), "é".isLetter(), "abc".isLetter(), "a1".isLetter(), "".isLetter())   // expect: true false true true false false
+print("7".isDigit(), "x".isDigit(), "a1".isLetterOrDigit(), "_".isLetterOrDigit(), " ".isWhitespace(), "\t".isWhitespace(), "x".isWhitespace())   // expect: true false true false true true false
+print("A".isUpperCase(), "a".isUpperCase(), "a".isLowerCase(), "É".isUpperCase(), "é".isLowerCase(), "1".isUpperCase())   // expect: true false true true true false
+print("a".uppercaseChar(), "Q".lowercaseChar(), "7".digitToInt(), "x".digitToIntOrNull(), "7".digitToInt() + 1)   // expect: A q 7 null 8
+print(s.count { it == "l" }, s.count(), s.any { it.isDigit() }, s.all { it.code < 128 }, s.none { it == "z" }, "".any(), "".none())   // expect: 3 12 false true true false true
+print("abc".map { it.code }, "a1b2".filter { it.isDigit() }, "a1b2".filterNot { it.isDigit() }, "héé".toList(), "aab".toSet())   // expect: [97, 98, 99] 12 ab ["h", "é", "é"] {"a", "b"}
+val seen = []
+"ab".forEach { seen.add(it) }
+"ab".forEachIndexed { i, c -> seen.add("$i$c") }
+print(seen)                                                  // expect: ["a", "b", "0a", "1b"]
+
+// To numbers.
+print("42".toInt() + 1, "-7".toInt(), "+3".toInt(), "ff".toInt(16), "101".toInt(2), "12".toLong(), "abc".toIntOrNull(), "".toIntOrNull(), "4.5".toIntOrNull())   // expect: 43 -7 3 255 5 12 null null null
+print("3.5".toDouble() * 2, "1e3".toDouble(), "2".toDouble(), "x".toDoubleOrNull(), "1.5".toFloat(), "zz".toFloatOrNull(), "z".toIntOrNull(36))   // expect: 7.0 1000.0 2.0 null 1.5 null 35
+try { "4x".toInt() } catch (e) { print(e.message) }          // expect: "4x" is not a whole number
+try { "".toDouble() } catch (e) { print(e.message) }         // expect: "" is not a number
+print("true".toBoolean(), "TRUE".toBoolean(), "yes".toBoolean(), 12.toString(), 255.toString(16), (-5).toString(2), 3.5.toString(), null.toString(), [1].toString())   // expect: true true false 12 ff -101 3.5 null [1]
+
+// format.
+print("%d items at %.2f each".format(3, 1.5), "%5d|%-5d|%05d".format(42, 42, 42), "%,d".format(1234567), "%+d %+d".format(5, -5))   // expect: 3 items at 1.50 each    42|42   |00042 1,234,567 +5 -5
+print("%s and %s".format("text", [1, 2]), "%10s|%-10s|".format("right", "left"), "%.3s".format("abcdef"), "%S".format("loud"))   // expect: text and [1, 2]      right|left      | abc LOUD
+print("%x %X %o".format(255, 255, 8), "%08.3f".format(3.14159), "%.0f".format(2.5), "%e".format(12345.678), "%c%c".format("é", 65))   // expect: ff FF 10 0003.142 2 1.234568e+04 éA
+print("%2\$s %1\$s".format("world", "hello"), "100%%".format(), "%b %b".format(true, null), "a%nb".format().length, "%,.2f".format(1234567.891))   // expect: hello world 100% true false 3 1,234,567.89
+try { "%d".format("x") } catch (e) { print(e.message) }      // expect: format: %d takes a whole number, not x; %f and %s take any number
+try { "%d %d".format(1) } catch (e) { print(e.message) }     // expect: format: the pattern asks for more values than the 1 given
+try { "%q".format(1) } catch (e) { print(e.message) }        // expect: format: '%q' is not a kind of item; use d, x, f, e, g, s, c or b, and %% for a percent sign
+
+// buildString and StringBuilder.
+print(buildString { append("a"); append(1).append(true); appendLine(); append([2]) }.lines())   // expect: ["a1true", "[2]"]
+val sb = StringBuilder()
+sb.append("Hello").append(", ").append("wörld")
+print(sb.length, sb.toString(), "$sb!", sb.isEmpty(), sb.isNotEmpty(), sb.lastIndex, sb[8], sb.get(0))   // expect: 12 Hello, wörld Hello, wörld! false true 11 ö H
+sb.insert(0, ">> ").deleteAt(sb.length - 1).appendLine("D").append(2.5)
+print(sb.toString().lines(), sb.length, sb.indexOf("w"), sb.contains("ör"), sb.endsWith("2.5"))   // expect: [">> Hello, wörlD", "2.5"] 19 10 true true
+sb.deleteRange(0, 3)
+sb.setLength(5)
+print(sb.toString(), sb.length)                              // expect: Hello 5
+print(sb.reverse().toString(), sb.substring(1, 3), sb.clear().length, StringBuilder("seed").append("!").toString())   // expect: olleH ll 0 seed!

@@ -1,0 +1,62 @@
+// Number helpers and constants, ranges, and the small functions of the standard library.
+
+// Keeping a number within bounds. The result is one of the three numbers, as it was.
+print(5.coerceIn(1, 10), (-3).coerceIn(1, 10), 99.coerceIn(1, 10), 5.coerceIn(1..3), 0.coerceIn(1..3))   // expect: 5 1 10 3 1
+print(2.5.coerceIn(0, 1), 0.5.coerceIn(0, 1), 7.coerceIn(0.5, 9.5), 5.coerceAtLeast(8), 5.coerceAtLeast(2), 5.coerceAtMost(3), 5.coerceAtMost(9.5))   // expect: 1 0.5 7 8 5 3 5
+print(5.coerceIn(minimumValue = 6, maximumValue = 8))        // expect: 6
+try { 5.coerceIn(10, 1) } catch (e) { print(e.message) }     // expect: coerceIn: the maximum 1 is less than the minimum 10
+try { 5.coerceAtLeast("x") } catch (e) { print(e.message) }  // expect: minimum must be a number, got string
+
+// Rounding and converting. A half rounds up; toInt drops what is after the point.
+print(2.4.roundToInt(), 2.5.roundToInt(), (-2.5).roundToInt(), (-2.6).roundToInt(), 7.roundToInt(), 1e10.roundToLong())   // expect: 2 3 -2 -3 7 10000000000
+print(2.9.toInt(), (-2.9).toInt(), 7.toInt(), 7.toDouble(), 7.toFloat(), 2.5.toLong(), type(7.toDouble()), type(2.9.toInt()))   // expect: 2 -2 7 7.0 7.0 2 float int
+print((-7).absoluteValue, 7.absoluteValue, (-2.5).absoluteValue, (-7).sign, 0.sign, 3.sign, (-0.5).sign)   // expect: 7 7 2.5 -1 0 1 -1.0
+print(2.pow(10), 2.pow(-1), 2.5.pow(2), 9.pow(0.5), (-7).mod(3), 7.mod(-3), 7.mod(3), 7.5.mod(2))   // expect: 1024 0.5 6.25 3.0 2 -2 1 1.5
+print(1.compareTo(2), 2.5.compareTo(2), 3.compareTo(3.0), 65.toChar(), 0x1F600.toChar().length)   // expect: -1 1 0 A 1
+print((0.0 / 0.0).isNaN(), 1.5.isNaN(), (1.0 / 0.0).isInfinite(), 1.isFinite(), (1.0 / 0.0).isFinite(), 3.isNaN())   // expect: true false true true false false
+
+// The limits Kotlin's types have. Astra's own whole numbers go on to Long's.
+print(Int.maxValue, Int.minValue, Long.maxValue, Long.minValue)   // expect: 2147483647 -2147483648 9223372036854775807 -9223372036854775808
+print(Int.maxValue + 1, Double.maxValue > 1e300, Double.minValue > 0, Double.minValue < 1e-300, Float.maxValue < 1e39)   // expect: 2147483648 true true true true
+print(Double.positiveInfinity > Double.maxValue, Double.negativeInfinity < -Double.maxValue, Double.nan.isNaN(), Double.nan == Double.nan)   // expect: true true true false
+var smallest = Int.maxValue
+for n in [5, 3, 8] { if (n < smallest) { smallest = n } }
+print(smallest)                                              // expect: 3
+
+// Math, with its constants in camelCase.
+print(Math.pi > 3.14159 and Math.pi < 3.1416, Math.e > 2.718 and Math.e < 2.7183, Math.atan2(1, 1) * 4 == Math.pi, Math.hypot(3, 4))   // expect: true true true 5.0
+print(Math.sign(-3), Math.sign(2.5), Math.trunc(-2.7), Math.log10(1000), Math.log2(8), Math.asin(1) * 2 == Math.pi, Math.acos(1), Math.atan(0))   // expect: -1 1.0 -2.0 3.0 3.0 true 0.0 0.0
+
+// Ordering any two values, and the largest and smallest of several.
+print(compareValues(1, 2), compareValues("b", "a"), compareValues(2, 2.0), compareValues(null, 1), compareValues(1, null), compareValues(null, null))   // expect: -1 1 0 -1 1 0
+print(maxOf(3, 9, 4), minOf(3, 9, 4), maxOf(1.5, 2), minOf("pear", "fig"), maxOf(7))   // expect: 9 3 2 fig 7
+try { compareValues(1, "a") } catch (e) { print(e.message) } // expect: cannot compare int and string
+
+// Ranges: first and last are read with or without brackets.
+val r = 1..5
+print(r.first, r.last, r.first(), r.last(), (10 downTo 1 step 3).last, (0..<10 step 4).last, r.size, r.isEmpty(), (5..<5).isEmpty(), r.isNotEmpty())   // expect: 1 5 1 5 1 8 5 false true true
+print(r.map { it * it }, r.filter { it % 2 == 1 }, r.sum(), r.sumOf { it * 2 }, r.count { it > 2 }, r.count(), r.any { it > 4 }, r.all { it > 1 }, r.none { it > 5 })   // expect: [1, 4, 9, 16, 25] [1, 3, 5] 15 30 3 5 true false true
+print(r.reversed(), r.toList(), r.toSet(), r.firstOrNull { it > 3 }, r.find { it > 9 }, r.mapNotNull { it > 3 ? it : null }, r.flatMap { [it, it] }.size)   // expect: [5, 4, 3, 2, 1] [1, 2, 3, 4, 5] {1, 2, 3, 4, 5} 4 null [4, 5] 10
+print(r.joinToString(), r.joinToString("") { it * 2 }, (1..3).associateWith { it * it }, (4..6).random() in 4..6)   // expect: 1, 2, 3, 4, 5 246810 {1: 1, 2: 4, 3: 9} true
+val collected = []
+r.forEach { collected.add(it) }
+repeat(3) { collected.add("r$it") }
+print(collected)                                             // expect: [1, 2, 3, 4, 5, "r0", "r1", "r2"]
+try { (5..<5).first() } catch (e) { print(e.message) }       // expect: first() of an empty range
+
+// Checks.
+require(1 < 2)
+check(true) { "never worked out" }
+try { require(1 > 2) } catch (e) { print(e.message) }        // expect: Failed requirement.
+try { require(1 > 2) { "one is not more than two" } } catch (e) { print(e.message) }   // expect: one is not more than two
+try { check(false) } catch (e) { print(e.message) }          // expect: Check failed.
+try { error("gave up") } catch (e) { print(e.message, e is Error) }   // expect: gave up true
+print(requireNotNull(5), checkNotNull("x"))                  // expect: 5 x
+try { requireNotNull(null) { "nothing there" } } catch (e) { print(e.message) }   // expect: nothing there
+
+// Every value has toString and equals; functions have invoke.
+print(5.toString() + "!", true.toString(), "s".toString(), [1, 2].toString(), {"a": 1}.toString(), null.toString())   // expect: 5! true s [1, 2] {"a": 1} null
+print(5.equals(5), 5.equals(6), null.equals(null), [1].equals([1]), 5.takeUnless { it > 3 }, 5.takeUnless { it > 9 }, "b".compareTo("a"), true.compareTo(false))   // expect: true false true true null 5 1 1
+val double = { n -> n * 2 }
+val maybe = null
+print(double.invoke(4), double?.invoke(5), maybe?.invoke(6))   // expect: 8 10 null

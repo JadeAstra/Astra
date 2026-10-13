@@ -50,7 +50,7 @@ val other = [1]
 other.push(other)
 print(loop == loop, loop == other)                       // expect: true false
 
-// As a key in a map, a list is still itself and nothing else.
+// As a key in a map a list goes by what it holds, as == does.
 val keyed = {:}
 keyed[a] = "first"
-print(keyed[a], keyed[b])                                // expect: first null
+print(keyed[a], keyed[b], keyed[[1, 2]], keyed.size)             // expect: first first null 1

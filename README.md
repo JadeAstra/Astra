@@ -128,6 +128,42 @@ val css = """
 """.trimIndent()
 ```
 
+**A string is text**: a sequence of characters, where a character is one Unicode code point.
+Every position counts characters, never bytes, so a string can be cut anywhere without
+cutting a character in half:
+
+```astra
+val s = "naïve café"
+s.length                 // 10
+s[2]                     // "ï": one character, as a string of length one
+s.substring(6)           // "café"
+s.indexOf("é")           // 9
+s.uppercase()            // "NAÏVE CAFÉ": all letters, not only the ASCII ones
+for c in s { ... }       // loops 10 times
+"é".code                 // 233, the number of the character; 233.toChar() goes back
+```
+
+There is no separate character type: `"a"` and `'a'` are both strings of length one, and
+`isLetter()`, `isDigit()`, `isWhitespace()`, `isUpperCase()` and `isLowerCase()` are asked of
+a string. A character outside the basic plane, such as an emoji, is one character. One made
+of several code points (a letter followed by a combining accent, a flag) counts as several.
+
+**`bytes` is for data that is not text**: a fixed number of bytes, each a number from 0 to
+255, that can be changed in place.
+
+```astra
+val b = bytes(16)                    // sixteen zeros
+val c = bytes([1, 2, 255])           // from a list; bytes(b) copies
+c[0] = 7                             // read and written by position
+c.size        c + b        c.slice(1, 3)        c.toList()        c.fill(0)
+"héllo".toBytes()                    // the text as UTF-8: 6 bytes
+c.decodeToString()                   // and back
+for byte in c { ... }
+File("photo.png").readBytes()        // files give and take bytes (see File)
+```
+
+Two `bytes` are `==` if they hold the same bytes. In a type it is written `bytes`.
+
 ### Keywords as names
 
 A keyword is only a keyword where it could be one. Where nothing but a name can come, it is
@@ -456,7 +492,19 @@ spinner(3, max = 20) { update(it) }
 pairs.map { (name, score) -> "$name: $score" }    // (a, b) takes an argument apart
 ```
 
-A lambda written after a call goes to the function's last parameter, whatever came before it.
+A lambda written after a call goes to the function's last parameter, whatever came before it,
+and the parameters in between take their defaults: `names.joinToString { it.upper() }` leaves
+the separator alone. This holds for functions, methods and extension functions alike. One
+case is different, so that a function can have optional parameters after a function
+parameter: when every parameter that has to be given is there but the last of them, the
+lambda is that one.
+
+```astra
+fun list.groupBy(keySelector, valueTransform = null) { ... }
+words.groupBy { it.length }                      // the lambda is keySelector
+words.groupBy({ it.length }) { it.upper() }      // keySelector, then valueTransform
+```
+
 In the condition of an `if`, `while` or `for` a `{` opens the body, so a call there that takes
 a lambda goes in parentheses: `if (items.any { it > 1 }) { ... }`. A parameter list may be
 broken after a comma. What tells a lambda from a map is what follows the brace: a key and a
@@ -1225,26 +1273,223 @@ top of a small native backend, so it is also the place to look for how something
 
 ## Standard library
 
+The names are Kotlin's where Kotlin has one, so that code ported from it reads the same;
+Astra's own shorter names (`push`, `upper`, `each`, `has`) are still there beside them. Part
+of the library is built into the runtime and the rest is written in Astra itself
+(`src/std/*.astra`), mostly as extension functions, and carried inside `astra.exe`.
+
 **Functions:** `print(...)`, `write(...)` (no newline), `input(prompt?)`, `len(x)`, `str(x)`,
 `int(x)`, `float(x)`, `type(x)`, `range(end)` / `range(start, end, step?)`,
-`assert(cond, message?)`, `clock()`, `args()`, `exit(code?)`, `chr(n)`, `ord(s)`
+`assert(cond, message?)`, `clock()`, `args()`, `exit(code?)`, `chr(n)`, `ord(s)`,
+`bytes(size | list)`, `with(object, lambda)`, `repeat(times) { index -> }`
 
-**Math:** `PI`, `E`, `sqrt`, `abs`, `floor`, `ceil`, `round`, `min`, `max`, `pow`, `sin`,
-`cos`, `tan`, `log`, `exp`, `random()`, `randomInt(lo, hi)`, `seed(n)`
+**Checks:** `require(condition) { message }`, `check(condition) { message }`,
+`requireNotNull(value)`, `checkNotNull(value)` and `error(message)` throw an `Error`. The
+message is a lambda, so it is only worked out when the check fails, and may be left out.
 
-**File:** `File.read(path)`, `File.write(path, text)`, `File.append(path, text)`,
-`File.exists(path)`
+**Math:** `pi`, `e`, `sqrt`, `abs`, `floor`, `ceil`, `round`, `trunc`, `sign`, `min`, `max`,
+`pow`, `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `atan2(y, x)`, `hypot(x, y)`, `log`,
+`log10`, `log2`, `exp`, `random()`, `randomInt(lo, hi)`, `seed(n)`
 
-| Type | Members |
+### Numbers
+
+| | |
 | --- | --- |
-| string | `length`, `upper`, `lower`, `trim`, `split(sep?)`, `contains`, `startsWith`, `endsWith`, `indexOf`, `slice(start, end?)`, `replace(from, to)`, `repeat(n)` |
-| list | `length`, `push(...)`, `pop`, `insert(i, x)`, `removeAt(i)`, `remove(x)`, `clear`, `contains`, `indexOf`, `slice(start?, end?)`, `join(sep?)`, `reverse`, `sort(compare?)`, `map(f)`, `filter(f)`, `reduce(f, initial)`, `each(f)`, `find(f)` |
-| map | `length`, `keys`, `values`, `entries`, `has(k)`, `get(k, default?)`, `remove(k)`, `clear` |
-| range | `start`, `end`, `step`, `length`, `toList`, `contains(n)` |
+| `n.coerceIn(low, high)`, `n.coerceIn(range)` | `n` if it lies between the two, else the nearer one |
+| `n.coerceAtLeast(low)`, `n.coerceAtMost(high)` | the same with one bound |
+| `x.roundToInt()` | the nearest whole number; a half goes up |
+| `x.toInt()`, `n.toDouble()` | drop what is after the point; make a fraction of a whole number |
+| `n.absoluteValue`, `n.sign` | read without brackets |
+| `n.pow(e)`, `n.mod(d)` | `mod` is never negative for a positive divisor: `(-1).mod(5)` is 4 |
+| `n.toString()`, `n.toString(16)`, `n.toChar()` | as text, in another base, as the character with that code |
+| `x.isNaN()`, `x.isInfinite()`, `x.isFinite()` | |
+| `compareValues(a, b)`, `maxOf(a, b, ...)`, `minOf(a, b, ...)` | order numbers or strings; `null` comes first |
 
-Lists and strings accept negative indexes (`xs[-1]`). Maps keep insertion order; a missing
-key reads as `null`. `sort` is stable; a comparator returns a negative, zero or positive
-number.
+Astra has one type for whole numbers (64 bits) and one for fractions, so `toLong`,
+`roundToLong` and `toFloat` are the same as `toInt`, `roundToInt` and `toDouble`. The limits
+Kotlin's types have are there under its names: `Int.maxValue` (2147483647), `Int.minValue`,
+`Long.maxValue`, `Long.minValue`, `Double.maxValue`, `Double.minValue`,
+`Double.positiveInfinity`, `Double.negativeInfinity`, `Double.nan`, and the same for `Float`.
+
+### Strings
+
+`length` (also `size`), `lastIndex`, `indices` and `code` are read without brackets.
+
+| | |
+| --- | --- |
+| Parts | `substring(start, end?)`, `substring(range)`, `slice(start, end?)`, `take(n)`, `takeLast(n)`, `drop(n)`, `dropLast(n)`, `takeWhile { }`, `dropWhile { }`, `substringBefore(d)`, `substringAfter(d)`, `substringBeforeLast(d)`, `substringAfterLast(d)`, `removePrefix(p)`, `removeSuffix(s)`, `removeSurrounding(p, s?)`, `chunked(n)`, `lines()`, `split(sep?)` |
+| Finding | `contains(s)`, `startsWith(s)`, `endsWith(s)`, `indexOf(s, startIndex?)`, `lastIndexOf(s)`, `indexOfFirst { }`, `indexOfLast { }`, `equals(s)`, `compareTo(s)`; all of these but the two with lambdas take `ignoreCase = true` |
+| Changing | `uppercase()`, `lowercase()` (`upper`, `lower`), `trim()`, `trimStart()`, `trimEnd()`, `trimIndent()`, `trimMargin()`, `replace(old, new, ignoreCase?)`, `replaceFirst(old, new)`, `replaceFirstChar { }`, `padStart(n, char?)`, `padEnd(n, char?)`, `repeat(n)`, `reversed()` |
+| Asking | `isEmpty()`, `isNotEmpty()`, `isBlank()`, `isNotBlank()`, `isNullOrEmpty()`, `isNullOrBlank()`, `ifEmpty { }`, `ifBlank { }`, `orEmpty()` |
+| Characters | `first()`, `last()`, `firstOrNull()`, `lastOrNull()`, `get(i)`, `getOrNull(i)`, `isLetter()`, `isDigit()`, `isLetterOrDigit()`, `isWhitespace()`, `isUpperCase()`, `isLowerCase()`, `digitToInt()`, `forEach { }`, `map { }`, `filter { }`, `any { }`, `all { }`, `none { }`, `count { }`, `toList()` |
+| Converting | `toInt(radix?)`, `toIntOrNull(radix?)`, `toDouble()`, `toDoubleOrNull()`, `toBoolean()`, `toBytes()`, `format(...)` |
+
+`substring` and `get` are errors for a position outside the string; `slice` and `s[i]` count
+a negative position from the end and `slice` clamps. `toInt()` is an error for text that is
+not a number, and `toIntOrNull()` gives `null`.
+
+`format` fills a pattern in, with the items of Kotlin's `String.format`:
+
+```astra
+"%d items at %.2f each".format(3, 1.5)     // 3 items at 1.50 each
+"%5d|%-5d|%05d".format(42, 42, 42)         //    42|42   |00042
+"%,d bytes, %x, %s".format(1234567, 255, [1, 2])   // 1,234,567 bytes, ff, [1, 2]
+```
+
+`%d` whole number, `%x %X %o` in another base, `%f %e %g` fraction, `%s` anything as `print`
+shows it, `%c` character, `%b` true or false, `%%` a percent sign, `%n` a line end. Between
+the `%` and the letter may come `-` (left-justify), `0` (pad with zeros), `+`, `,` (thousands
+separators), a width, `.` and a precision, and in front of those `2$` to pick a value by its
+position.
+
+**`StringBuilder`** puts a long text together a piece at a time, which `+=` on a string does
+slowly because each one copies the string:
+
+```astra
+val out = StringBuilder()
+for row in rows { out.append(row.name).append(": ").appendLine(row.total) }
+print(out.toString())
+
+val line = buildString { append("x = "); append(x) }    // the same in one expression
+```
+
+`append`, `appendLine`, `insert(i, x)`, `deleteAt(i)`, `deleteRange(from, to)`, `setLength(n)`,
+`reverse()`, `clear()`, `length`, `isEmpty()`, `toString()`.
+
+### Lists
+
+`size` (also `length`), `lastIndex` and `indices` are read without brackets.
+
+| | |
+| --- | --- |
+| Making | `[1, 2]`, `listOf(...)`, `mutableListOf(...)`, `emptyList()`, `listOfNotNull(...)`, `List(n) { index -> }`, `buildList { add(1) }` |
+| Adding and removing | `add(x)`, `add(i, x)`, `addAll(items)`, `addFirst(x)`, `remove(x)`, `removeAt(i)`, `removeFirst()`, `removeLast()`, `removeFirstOrNull()`, `removeLastOrNull()`, `removeAll { }`, `removeAll(items)`, `retainAll(...)`, `clear()`, `set(i, x)`, `fill(x)`; and `push(...)`, `pop()`, `insert(i, x)` |
+| Reading | `get(i)`, `getOrNull(i)`, `getOrElse(i) { }`, `first()`, `last()`, `firstOrNull()`, `lastOrNull()`, `single()`, `singleOrNull()`, each of those six also with a condition (`first { it > 2 }`), `find { }`, `findLast { }`, `contains(x)`, `containsAll(items)`, `indexOf(x)`, `lastIndexOf(x)`, `indexOfFirst { }`, `indexOfLast { }` |
+| Asking | `isEmpty()`, `isNotEmpty()`, `isNullOrEmpty()`, `any { }`, `all { }`, `none { }`, `count { }`, `ifEmpty { }` |
+| Going through | `forEach { }`, `forEachIndexed { index, item -> }`, `onEach { }`, `each { }`, `withIndex()` |
+| Another list | `map { }`, `mapIndexed { }`, `mapNotNull { }`, `flatMap { }`, `flatten()`, `filter { }`, `filterNot { }`, `filterNotNull()`, `filterIndexed { }`, `partition { }`, `take(n)`, `takeLast(n)`, `drop(n)`, `dropLast(n)`, `takeWhile { }`, `dropWhile { }`, `subList(from, to)`, `slice(start?, end?)`, `chunked(n)`, `windowed(n, step?)`, `zip(other)`, `zipWithNext()`, `distinct()`, `distinctBy { }`, `plus(x)`, `minus(x)`, `reversed()`, `toList()`, `toMutableList()` |
+| Order | `sorted()`, `sortedDescending()`, `sortedBy { }`, `sortedByDescending { }`, `sortedWith(comparator)` give a new list; `sort(comparator?)`, `sortBy { }`, `sortByDescending { }`, `sortWith(comparator)`, `sortDescending()`, `reverse()`, `shuffle()` change the list; `shuffled()`, `random()` |
+| A value | `sum()`, `sumOf { }`, `average()`, `max()`, `min()`, `maxOrNull()`, `minOrNull()`, `maxOf { }`, `minOf { }`, `maxBy { }`, `minBy { }`, `maxByOrNull { }`, `minByOrNull { }`, `fold(initial) { acc, item -> }`, `reduce { acc, item -> }`, `joinToString(separator?, prefix?, postfix?, limit?) { }`, `join(sep?)` |
+| A map or set | `associate { key to value }`, `associateBy { }`, `associateWith { }`, `groupBy { }`, `toMap()` (of pairs), `toSet()` |
+
+`get`, `set` and `subList` are errors for a position outside the list, and `getOrNull` gives
+`null` for one, also for a negative one; `xs[i]` and `slice` count a negative position from
+the end. `first()` and `max()` are errors on an empty list where `firstOrNull()` and
+`maxOrNull()` give `null`. `sort` is stable.
+
+A **comparator** is a function of two values that gives a negative number, zero or a positive
+one. `compareBy({ it.size }, { it.name })` orders by the first selector and then the second,
+`compareByDescending { }`, `naturalOrder()` and `reverseOrder()` make others, and a comparator
+has `thenBy { }`, `thenByDescending { }`, `then(other)` and `reversed()`.
+
+### Maps
+
+`size` (also `length`), `keys`, `values` and `entries` are read without brackets. `keys` and
+`values` are lists, made afresh each time; an entry has a `key` and a `value`, and can be
+taken apart: `for (name, age) in ages.entries { ... }`.
+
+| | |
+| --- | --- |
+| Making | `{"a": 1}`, `{:}`, `mapOf("a" to 1, ...)`, `mutableMapOf(...)`, `emptyMap()`, `buildMap { put(k, v) }` |
+| Reading | `map[key]`, `get(key, default?)`, `getValue(key)` (an error if it is not there), `getOrDefault(key, d)`, `getOrElse(key) { }`, `containsKey(key)`, `key in map`, `has(key)`, `containsValue(v)` |
+| Writing | `map[key] = v`, `put(key, v)` and `remove(key)` (both give what was there before), `set(key, v)`, `putAll(map or pairs)`, `getOrPut(key) { }`, `clear()` |
+| Asking | `isEmpty()`, `isNotEmpty()`, `isNullOrEmpty()`, `any { }`, `all { }`, `none { }`, `count { }` |
+| Going through | `forEach { entry -> }`, `forEach { (key, value) -> }`, `forEach { key, value -> }` |
+| A list | `map { }`, `mapNotNull { }`, `flatMap { }`, `toList()` (of pairs) |
+| Another map | `filter { }`, `filterNot { }`, `filterKeys { }`, `filterValues { }`, `mapValues { }`, `mapKeys { }`, `plus(pair or map)`, `minus(key)`, `toMap()`, `toMutableMap()` |
+
+Maps keep the order their keys were first added in; a missing key reads as `null`.
+
+**What may be a key.** Any value. Two keys are the same key when they are `==`: a number, a
+string or a boolean by its value (`1` and `1.0` are one key), and a list, a range, `bytes` or
+a data object by what it holds, so that an equal one finds the entry. Any other object is a
+key as itself.
+
+```astra
+data Cell(val row, val column)
+val colours = {:}
+colours[Cell(1, 2)] = "red"
+colours[Cell(1, 2)]                  // "red": an equal Cell is the same key
+colours[1 to "header"] = "grey"      // a Pair is a data object
+```
+
+A key should not be changed while it is in a map: a list that is added to after being used as
+a key is no longer found.
+
+### Sets and deques
+
+A **`Set`** holds each value once, in the order the values were first added, and tells values
+apart as a map tells keys apart.
+
+```astra
+val seen = Set()                     // or setOf(1, 2, 3), mutableSetOf(), items.toSet()
+if (seen.add(id)) { ... }            // add gives true if it was not there before
+id in seen        seen.remove(id)        seen.size
+a + b        a - b        a.union(b)        a.intersect(b)        a.subtract(b)
+setOf(1, 2) == setOf(2, 1)           // true: the same items, in any order
+```
+
+`add`, `addAll`, `remove`, `removeAll`, `retainAll`, `clear`, `contains`, `containsAll`,
+`isEmpty`, `isNotEmpty`, `size`, `first`, `last`, `toList`, `toSet`, and from a list's methods
+those that read: `forEach`, `map`, `filter`, `any`, `all`, `none`, `count`, `find`, `sum`,
+`sumOf`, `maxOf`, `minOf`, `sorted`, `sortedBy`, `joinToString`, `groupBy` and the like, each
+giving a list where a list's gives one. A `for` loop goes through the items as they were when
+it began, so the set may be changed inside it. A set prints as `{1, 2, 3}`.
+
+A **`Deque`** is a queue open at both ends. Adding and removing are quick at the front as
+well as the back, where a list is quick only at the back.
+
+```astra
+val queue = Deque()                  // or Deque(items)
+queue.addLast(job)
+val next = queue.removeFirst()       // removeFirstOrNull() when it may be empty
+queue.addFirst(urgent)        queue.removeLast()        queue.first()        queue.last()
+queue[0]        queue.size        queue.isEmpty()        for job in queue { ... }
+```
+
+### Ranges
+
+`start`, `end`, `step`, `first`, `last` and `size` are read without brackets. A range has
+`contains(n)`, `isEmpty()`, `toList()`, `reversed()`, `random()`, and the methods of a list
+that go through it: `forEach`, `map`, `filter`, `any`, `all`, `none`, `count`, `sum`, `sumOf`,
+`firstOrNull`, `joinToString`.
+
+### Files
+
+A **`File`** stands for a file or folder by its path. Making one touches nothing; the disk is
+looked at when something is asked of it.
+
+```astra
+val notes = File("notes.txt")
+if (notes.exists()) { print(notes.readText()) }
+notes.writeText("first\n")
+notes.appendText("second\n")
+for line in notes.readLines() { ... }
+
+val folder = File("out")
+folder.mkdirs()
+File(folder, "data.bin").writeBytes(bytes([1, 2, 3]))    // a file inside a folder
+for file in folder.listFiles() { print(file.name, file.length()) }
+```
+
+| | |
+| --- | --- |
+| The path | `path`, `name`, `extension`, `nameWithoutExtension`, `parent`, `parentFile`, `absolutePath`, `absoluteFile`, `resolve(child)` |
+| On disk | `exists()`, `isFile`, `isDirectory`, `length()`, `lastModified()`, `list()`, `listFiles()` |
+| Text | `readText()`, `readLines()`, `forEachLine { }`, `writeText(s)`, `appendText(s)` |
+| Bytes | `readBytes()`, `writeBytes(b)`, `appendBytes(b)` |
+| Changing | `delete()`, `deleteRecursively()`, `mkdirs()`, `renameTo(file)`, `copyTo(file, overwrite?)` |
+
+Text is read and written as UTF-8, and a path may hold any characters. Each call reads or
+writes the whole file. Two Files are `==` if their paths are the same text. The shorter
+`File.read(path)`, `File.write(path, text)`, `File.append(path, text)` and
+`File.exists(path)` work on a path without making a File.
+
+### Every value
+
+`toString()`, `equals(other)`, `compareTo(other)`, and the scope functions `let`, `also`,
+`apply`, `run`, `takeIf` and `takeUnless`. A function has `invoke(...)`, so that
+`callback?.invoke(x)` calls one that may be `null`.
 
 ## How it works
 
@@ -1263,7 +1508,8 @@ source ──lexer──▶ tokens ──parser──▶ AST ──compiler─�
 | `src/bytecode.*` | Instruction set, bytecode verifier, disassembler, `.astc` reader/writer |
 | `src/value.*` | Values and heap objects (strings, lists, maps, classes, closures...) |
 | `src/vm.*` | Interpreter loop, calls, exceptions, mark-and-sweep garbage collector |
-| `src/builtins.cpp` | Standard library |
+| `src/builtins.cpp`, `src/stdlib.cpp` | Standard library, the part built into the runtime |
+| `src/std/*.astra` | Standard library, the part written in Astra; packed into `astra.exe` by the build (`cmake/embed.cmake`) and loaded before every program |
 | `src/gui.cpp` | Native backend of the GUI library (Windows) |
 | `lib/gui.astra` | The GUI library: widgets, layout and events, written in Astra |
 | `src/main.cpp` | Command line, REPL and building standalone programs |
@@ -1301,8 +1547,13 @@ opportunity, which is slow but useful for finding memory bugs when changing the 
   a mismatch shows up when the offending line executes. Typed calls cost a little speed.
 - Loop variables cannot be typed, and the element types in `list<int>` or `(int) -> bool` are
   read but not checked.
-- Strings are UTF-8 byte strings: `length`, indexing and `slice` count bytes, while `for`
-  and `split("")` step through whole characters. `upper`/`lower` only change ASCII letters.
+- Which characters are letters, digits or spaces, and what their upper and lower case are,
+  is asked of Windows for characters outside ASCII. There are no regular expressions yet.
+- `keys`, `values` and `entries` of a map are lists made when they are asked for: changing
+  one does not change the map.
+- `orEmpty()` cannot be called on `null` itself, since strings, lists and maps each have one
+  and `null` does not say which is meant; write `text ?: ""` or `items ?: []`.
+- A compiled `.astc` file carries the Astra-written part of the standard library, about 85 KB.
 - `private` and the other access words are enforced for top-level declarations. On the members
   of a class they are accepted and change nothing yet.
 - A class declared inside another does not belong to one object of the outer class (there is
@@ -1312,13 +1563,12 @@ opportunity, which is slow but useful for finding memory bugs when changing the 
   properties. A class has one initializer: there are no secondary constructors.
 - `apply` and `run` are ordinary calls, so a plain `return` inside their lambda is an error;
   it works in `let`, `also` and `takeIf`.
-- A data object used as a map key is still looked up as itself, not by its fields.
 - An `object` is created where it is written, and top-level variables get their values in
   order (file by file for a folder), so one cannot be used by a statement that runs earlier.
 - Integer arithmetic wraps on overflow.
 - Bytecode files are verified when loaded, but that is a consistency check rather than a
   security sandbox. Run only `.astc` files you trust.
-- Standalone programs are about 0.9 MB each and have only been tried on Windows. They carry
+- Standalone programs are about 1.4 MB each and have only been tried on Windows. They carry
   no version information, and since they are unsigned Windows may ask for confirmation the
   first time one downloaded from the internet is run. The script inside is stored as
   bytecode, not encrypted.

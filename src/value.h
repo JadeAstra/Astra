@@ -13,7 +13,7 @@ class VM;
 struct FunctionProto;
 
 enum class ObjType : uint8_t {
-    String, List, Map, Range, Closure, Upvalue, Native, Class, Instance, BoundMethod, BoundNative, Iterator,
+    String, List, Map, Range, Closure, Upvalue, Native, Class, Instance, BoundMethod, BoundNative, Iterator, Bytes,
 };
 
 // Header shared by every garbage-collected object.
@@ -108,16 +108,48 @@ struct Value {
 
 uint32_t hashString(std::string_view s);
 
+// How many characters (Unicode code points) a piece of UTF-8 text holds.
+size_t countCharacters(std::string_view s);
+
+// A string is text: a sequence of characters, each one Unicode code point. It is kept as
+// UTF-8, and every position a program sees counts characters, never bytes.
 struct ObjString final : Obj {
     const std::string chars;
     const uint32_t hash;
-    explicit ObjString(std::string s) : Obj(ObjType::String), chars(std::move(s)), hash(hashString(chars)) {}
+    const size_t length;  // in characters
+
+    explicit ObjString(std::string s)
+        : Obj(ObjType::String), chars(std::move(s)), hash(hashString(chars)), length(countCharacters(chars)) {}
+
+    bool isAscii() const { return length == chars.size(); }
+
+    // The byte at which character `index` starts; `index` may be the length, for the end.
+    size_t byteAt(size_t index) const;
+    // The number of characters before byte `offset`, which is where a character starts.
+    size_t charAt(size_t offset) const;
+    // Character `index`, as the bytes that spell it.
+    std::string_view character(size_t index) const {
+        size_t begin = byteAt(index);
+        return std::string_view(chars).substr(begin, byteAt(index + 1) - begin);
+    }
+
+private:
+    // For text that is not all ASCII: where each character starts, and the end. Made the
+    // first time a position is asked for.
+    mutable std::vector<uint32_t> starts_;
+    void index() const;
 };
 
 // Language-level equality without operator overloading: numbers compare by value across
 // int and float, strings by content, everything else by identity.
 bool valuesEqual(const Value& a, const Value& b);
 size_t hashValue(const Value& v);
+
+// As keys of a map (and members of a set), lists, ranges, bytes and the objects of data
+// classes are told apart by what they hold, as == tells them: [1, 2] finds what [1, 2] stored.
+// A key must not be changed while it is in a map.
+bool keysEqual(const Value& a, const Value& b, int depth = 0);
+size_t keyHash(const Value& v, int depth = 0);
 
 // Shortest text that reads back as the same double, always recognisable as a float ("3.0").
 std::string formatFloat(double d);
@@ -186,10 +218,10 @@ public:
 
 private:
     struct Hash {
-        size_t operator()(const Value& v) const { return hashValue(v); }
+        size_t operator()(const Value& v) const { return keyHash(v); }
     };
     struct Eq {
-        bool operator()(const Value& a, const Value& b) const { return valuesEqual(a, b); }
+        bool operator()(const Value& a, const Value& b) const { return keysEqual(a, b); }
     };
 
     std::vector<Entry> entries_;
@@ -204,6 +236,12 @@ struct ObjList final : Obj {
 struct ObjMap final : Obj {
     ValueMap map;
     ObjMap() : Obj(ObjType::Map) {}
+};
+
+// Binary data: a fixed number of bytes, each a number from 0 to 255, that can be changed in place.
+struct ObjBytes final : Obj {
+    std::vector<uint8_t> data;
+    ObjBytes() : Obj(ObjType::Bytes) {}
 };
 
 struct ObjRange final : Obj {
@@ -250,6 +288,9 @@ struct NativeMethod {
     int minArgs = 0;
     int maxArgs = 0;
     NativeMethodFn fn = nullptr;
+    // What its parameters are called, for the methods that take arguments by name
+    // (`text.contains("a", ignoreCase = true)`); empty for the rest.
+    std::vector<std::string> params;
 };
 
 struct ObjClass;
@@ -370,6 +411,7 @@ inline ObjString* asString(Value v) { return static_cast<ObjString*>(v.as.obj); 
 inline ObjList* asList(Value v) { return static_cast<ObjList*>(v.as.obj); }
 inline ObjMap* asMap(Value v) { return static_cast<ObjMap*>(v.as.obj); }
 inline ObjRange* asRange(Value v) { return static_cast<ObjRange*>(v.as.obj); }
+inline ObjBytes* asBytes(Value v) { return static_cast<ObjBytes*>(v.as.obj); }
 inline ObjClosure* asClosure(Value v) { return static_cast<ObjClosure*>(v.as.obj); }
 inline ObjNative* asNative(Value v) { return static_cast<ObjNative*>(v.as.obj); }
 inline ObjClass* asClass(Value v) { return static_cast<ObjClass*>(v.as.obj); }

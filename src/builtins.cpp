@@ -1,6 +1,12 @@
 // The standard library: global functions, the Math and File classes, and the methods of
 // the built-in types.
 
+#ifdef _WIN32
+#define NOMINMAX
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#endif
+
 #include <algorithm>
 #include <cctype>
 #include <charconv>
@@ -11,20 +17,54 @@
 #include <functional>
 #include <iostream>
 
+#include "builtins.h"
 #include "compiler.h"
 #include "vm.h"
 
 namespace astra {
 
-namespace {
-
-// ---- Helpers ----
+// ---- Helpers (declared in builtins.h; stdlib.cpp uses them too) ----
 
 // Clamps a possibly negative position into [0, length], as slice() bounds.
 size_t clampPosition(int64_t position, size_t length) {
     int64_t n = static_cast<int64_t>(length);
     if (position < 0) position += n;
     return static_cast<size_t>(std::clamp<int64_t>(position, 0, n));
+}
+
+// Upper or lower case for all letters, not only the ASCII ones. The mapping is the
+// operating system's for now; the text engine brings Unicode data of our own (M4).
+std::string changeCase(const std::string& s, bool upper) {
+    bool ascii = true;
+    for (unsigned char c : s) ascii = ascii && c < 0x80;
+    if (ascii) {
+        std::string out = s;
+        for (char& c : out) {
+            if (upper && c >= 'a' && c <= 'z') c = static_cast<char>(c - 'a' + 'A');
+            if (!upper && c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
+        }
+        return out;
+    }
+#ifdef _WIN32
+    int wideLength = MultiByteToWideChar(CP_UTF8, 0, s.data(), static_cast<int>(s.size()), nullptr, 0);
+    std::wstring wide(static_cast<size_t>(wideLength), L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, s.data(), static_cast<int>(s.size()), wide.data(), wideLength);
+    const DWORD how = upper ? LCMAP_UPPERCASE : LCMAP_LOWERCASE;
+    int mappedLength = LCMapStringEx(LOCALE_NAME_INVARIANT, how, wide.data(), wideLength, nullptr, 0, nullptr, nullptr, 0);
+    std::wstring mapped(static_cast<size_t>(mappedLength), L'\0');
+    LCMapStringEx(LOCALE_NAME_INVARIANT, how, wide.data(), wideLength, mapped.data(), mappedLength, nullptr, nullptr, 0);
+    int length = WideCharToMultiByte(CP_UTF8, 0, mapped.data(), mappedLength, nullptr, 0, nullptr, nullptr);
+    std::string out(static_cast<size_t>(length), '\0');
+    WideCharToMultiByte(CP_UTF8, 0, mapped.data(), mappedLength, out.data(), length, nullptr, nullptr);
+    return out;
+#else
+    std::string out = s;
+    for (char& c : out) {
+        if (upper && c >= 'a' && c <= 'z') c = static_cast<char>(c - 'a' + 'A');
+        if (!upper && c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
+    }
+    return out;
+#endif
 }
 
 std::string_view trimmed(std::string_view s) {
@@ -92,7 +132,7 @@ std::vector<std::string> splitLines(const std::string& text) {
     return lines;
 }
 
-ObjList* newList(VM& vm, std::vector<Value> items = {}) {
+ObjList* newList(VM& vm, std::vector<Value> items) {
     ObjList* list = vm.alloc<ObjList>();
     list->items = std::move(items);
     vm.account(list->items.size() * sizeof(Value));
@@ -133,6 +173,8 @@ int64_t integerPower(int64_t base, int64_t exponent) {
     return static_cast<int64_t>(result);
 }
 
+namespace {
+
 // ---- Global functions ----
 
 void registerGlobals(VM& vm) {
@@ -163,7 +205,7 @@ void registerGlobals(VM& vm) {
 
     vm.defineNative("len", 1, 1, [](VM& vm, int, Value* args) -> Value {
         Value v = args[0];
-        if (v.isString()) return Value::integer(static_cast<int64_t>(asString(v)->chars.size()));
+        if (v.isString()) return Value::integer(static_cast<int64_t>(asString(v)->length));
         if (v.isObjType(ObjType::List)) return Value::integer(static_cast<int64_t>(asList(v)->items.size()));
         if (v.isObjType(ObjType::Map)) return Value::integer(static_cast<int64_t>(asMap(v)->map.size()));
         if (v.isObjType(ObjType::Range)) return Value::integer(asRange(v)->count());
@@ -278,8 +320,8 @@ void registerMath(VM& vm) {
                           Value::object(vm.alloc<ObjNative>(std::string("Math.") + name, minArgs, maxArgs, fn)));
     };
 
-    math->statics.set(vm.intern("PI"), Value::number(3.14159265358979323846));
-    math->statics.set(vm.intern("E"), Value::number(2.71828182845904523536));
+    math->statics.set(vm.intern("pi"), Value::number(3.14159265358979323846));
+    math->statics.set(vm.intern("e"), Value::number(2.71828182845904523536));
 
 #define ASTRA_MATH_UNARY(NAME, FN)                                           \
     def(NAME, 1, 1, [](VM& vm, int, Value* args) -> Value {                 \
@@ -291,6 +333,12 @@ void registerMath(VM& vm) {
     ASTRA_MATH_UNARY("tan", std::tan);
     ASTRA_MATH_UNARY("log", std::log);
     ASTRA_MATH_UNARY("exp", std::exp);
+    ASTRA_MATH_UNARY("log10", std::log10);
+    ASTRA_MATH_UNARY("log2", std::log2);
+    ASTRA_MATH_UNARY("asin", std::asin);
+    ASTRA_MATH_UNARY("acos", std::acos);
+    ASTRA_MATH_UNARY("atan", std::atan);
+    ASTRA_MATH_UNARY("trunc", std::trunc);
 #undef ASTRA_MATH_UNARY
 
     def("abs", 1, 1, [](VM& vm, int, Value* args) -> Value {
@@ -352,49 +400,22 @@ void registerMath(VM& vm) {
         return Value::null();
     });
 
+    def("atan2", 2, 2, [](VM& vm, int, Value* args) -> Value {
+        return Value::number(std::atan2(vm.toNumber(args[0], "Math.atan2() argument"), vm.toNumber(args[1], "Math.atan2() argument")));
+    });
+    def("hypot", 2, 2, [](VM& vm, int, Value* args) -> Value {
+        return Value::number(std::hypot(vm.toNumber(args[0], "Math.hypot() argument"), vm.toNumber(args[1], "Math.hypot() argument")));
+    });
+    def("sign", 1, 1, [](VM& vm, int, Value* args) -> Value {
+        if (args[0].isInt()) return Value::integer((args[0].as.i > 0) - (args[0].as.i < 0));
+        const double d = vm.toNumber(args[0], "Math.sign() argument");
+        return Value::number(d > 0 ? 1.0 : d < 0 ? -1.0 : d);
+    });
+
     vm.defineGlobal("Math", Value::object(math));
 }
 
 // ---- File ----
-
-void registerFile(VM& vm) {
-    ObjClass* file = vm.alloc<ObjClass>(vm.intern("File"));
-    auto def = [&](const char* name, int minArgs, int maxArgs, NativeFn fn) {
-        file->statics.set(vm.intern(name),
-                          Value::object(vm.alloc<ObjNative>(std::string("File.") + name, minArgs, maxArgs, fn)));
-    };
-
-    def("read", 1, 1, [](VM& vm, int, Value* args) -> Value {
-        const std::string& path = vm.toStr(args[0], "file path");
-        std::ifstream in(path, std::ios::binary);
-        if (!in) throw vm.runtimeError("cannot read file '" + path + "'");
-        std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-        return vm.str(std::move(text));
-    });
-
-    def("write", 2, 2, [](VM& vm, int, Value* args) -> Value {
-        const std::string& path = vm.toStr(args[0], "file path");
-        std::string text = vm.stringify(args[1]);
-        std::ofstream out(path, std::ios::binary | std::ios::trunc);
-        if (!out || !(out << text).flush()) throw vm.runtimeError("cannot write file '" + path + "'");
-        return Value::null();
-    });
-
-    def("append", 2, 2, [](VM& vm, int, Value* args) -> Value {
-        const std::string& path = vm.toStr(args[0], "file path");
-        std::string text = vm.stringify(args[1]);
-        std::ofstream out(path, std::ios::binary | std::ios::app);
-        if (!out || !(out << text).flush()) throw vm.runtimeError("cannot write file '" + path + "'");
-        return Value::null();
-    });
-
-    def("exists", 1, 1, [](VM& vm, int, Value* args) -> Value {
-        std::error_code ec;
-        return Value::boolean(std::filesystem::exists(vm.toStr(args[0], "file path"), ec));
-    });
-
-    vm.defineGlobal("File", Value::object(file));
-}
 
 // ---- String methods ----
 
@@ -402,17 +423,11 @@ void registerStringMethods(VM& vm) {
     const BuiltinType T = BuiltinType::String;
 
     vm.defineMethod(T, "upper", 0, 0, [](VM& vm, Value self, int, Value*) -> Value {
-        std::string s = asString(self)->chars;
-        for (char& c : s)
-            if (c >= 'a' && c <= 'z') c = static_cast<char>(c - 'a' + 'A');
-        return vm.str(std::move(s));
+        return vm.str(changeCase(asString(self)->chars, true));
     });
 
     vm.defineMethod(T, "lower", 0, 0, [](VM& vm, Value self, int, Value*) -> Value {
-        std::string s = asString(self)->chars;
-        for (char& c : s)
-            if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
-        return vm.str(std::move(s));
+        return vm.str(changeCase(asString(self)->chars, false));
     });
 
     vm.defineMethod(T, "trim", 0, 0, [](VM& vm, Value self, int, Value*) -> Value {
@@ -491,52 +506,13 @@ void registerStringMethods(VM& vm) {
         return Value::object(newList(vm, std::move(parts)));
     });
 
-    vm.defineMethod(T, "contains", 1, 1, [](VM& vm, Value self, int, Value* args) -> Value {
-        return Value::boolean(asString(self)->chars.find(vm.toStr(args[0], "search text")) != std::string::npos);
-    });
-
-    vm.defineMethod(T, "startsWith", 1, 1, [](VM& vm, Value self, int, Value* args) -> Value {
-        const std::string& s = asString(self)->chars;
-        const std::string& prefix = vm.toStr(args[0], "prefix");
-        return Value::boolean(s.compare(0, prefix.size(), prefix) == 0);
-    });
-
-    vm.defineMethod(T, "endsWith", 1, 1, [](VM& vm, Value self, int, Value* args) -> Value {
-        const std::string& s = asString(self)->chars;
-        const std::string& suffix = vm.toStr(args[0], "suffix");
-        return Value::boolean(s.size() >= suffix.size() &&
-                              s.compare(s.size() - suffix.size(), suffix.size(), suffix) == 0);
-    });
-
-    vm.defineMethod(T, "indexOf", 1, 1, [](VM& vm, Value self, int, Value* args) -> Value {
-        size_t at = asString(self)->chars.find(vm.toStr(args[0], "search text"));
-        return Value::integer(at == std::string::npos ? -1 : static_cast<int64_t>(at));
-    });
-
     vm.defineMethod(T, "slice", 1, 2, [](VM& vm, Value self, int argc, Value* args) -> Value {
-        const std::string& s = asString(self)->chars;
-        size_t begin = clampPosition(vm.toInt(args[0], "slice start"), s.size());
-        size_t end = argc > 1 ? clampPosition(vm.toInt(args[1], "slice end"), s.size()) : s.size();
-        return vm.str(begin < end ? s.substr(begin, end - begin) : std::string());
-    });
-
-    vm.defineMethod(T, "replace", 2, 2, [](VM& vm, Value self, int, Value* args) -> Value {
-        const std::string& s = asString(self)->chars;
-        const std::string& from = vm.toStr(args[0], "text to replace");
-        const std::string& to = vm.toStr(args[1], "replacement");
-        if (from.empty()) return self;
-
-        std::string result;
-        size_t begin = 0;
-        for (;;) {
-            size_t at = s.find(from, begin);
-            if (at == std::string::npos) break;
-            result.append(s, begin, at - begin);
-            result += to;
-            begin = at + from.size();
-        }
-        result.append(s, begin, std::string::npos);
-        return vm.str(std::move(result));
+        const ObjString* text = asString(self);
+        size_t begin = clampPosition(vm.toInt(args[0], "slice start"), text->length);
+        size_t end = argc > 1 ? clampPosition(vm.toInt(args[1], "slice end"), text->length) : text->length;
+        if (begin >= end) return vm.str(std::string());
+        size_t from = text->byteAt(begin);
+        return vm.str(text->chars.substr(from, text->byteAt(end) - from));
     });
 
     vm.defineMethod(T, "repeat", 1, 1, [](VM& vm, Value self, int, Value* args) -> Value {
@@ -703,10 +679,12 @@ void registerListMethods(VM& vm) {
         return Value::object(result);
     });
 
-    vm.defineMethod(T, "reduce", 2, 2, [](VM& vm, Value self, int, Value* args) -> Value {
+    // reduce(f, initial) starts from `initial`; reduce(f) starts from the first item.
+    vm.defineMethod(T, "reduce", 1, 2, [](VM& vm, Value self, int argc, Value* args) -> Value {
         ObjList* list = asList(self);
-        TempRoot accumulator(vm, args[1]);
-        for (size_t i = 0; i < list->items.size(); i++) {
+        if (argc < 2 && list->items.empty()) throw vm.runtimeError("reduce() of an empty list needs a starting value");
+        TempRoot accumulator(vm, argc > 1 ? args[1] : list->items[0]);
+        for (size_t i = argc > 1 ? 0 : 1; i < list->items.size(); i++) {
             Value pair[2] = {accumulator.get(), list->items[i]};
             accumulator.set(vm.call(args[0], 2, pair));
         }
@@ -753,10 +731,7 @@ void registerMapMethods(VM& vm) {
     });
 
     vm.defineMethod(T, "entries", 0, 0, [](VM& vm, Value self, int, Value*) -> Value {
-        std::vector<Value> pairs;
-        for (const ValueMap::Entry& entry : asMap(self)->map.entries())
-            if (entry.live) pairs.push_back(Value::object(newList(vm, {entry.key, entry.value})));
-        return Value::object(newList(vm, std::move(pairs)));
+        return vm.mapEntries(asMap(self));
     });
 
     vm.defineMethod(T, "has", 1, 1, [](VM&, Value self, int, Value* args) -> Value {
@@ -774,8 +749,13 @@ void registerMapMethods(VM& vm) {
         return argc > 1 ? args[1] : Value::null();
     });
 
+    // Gives the value that was there, or null.
     vm.defineMethod(T, "remove", 1, 1, [](VM&, Value self, int, Value* args) -> Value {
-        return Value::boolean(asMap(self)->map.remove(args[0]));
+        const Value* found = asMap(self)->map.find(args[0]);
+        if (found == nullptr) return Value::null();
+        Value removed = *found;
+        asMap(self)->map.remove(args[0]);
+        return removed;
     });
 
     vm.defineMethod(T, "clear", 0, 0, [](VM&, Value self, int, Value*) -> Value {
@@ -810,14 +790,96 @@ void registerRangeMethods(VM& vm) {
 
 }  // namespace
 
+// ---- bytes ----
+
+void registerBytes(VM& vm) {
+    // bytes(16): sixteen zeros. bytes([1, 2, 255]) or bytes(other): a copy.
+    vm.defineNative("bytes", 1, 1, [](VM& vm, int, Value* args) -> Value {
+        ObjBytes* made = vm.alloc<ObjBytes>();
+        Value from = args[0];
+        if (from.isInt()) {
+            if (from.as.i < 0) throw vm.runtimeError("bytes() cannot make a negative number of bytes");
+            made->data.assign(static_cast<size_t>(from.as.i), 0);
+        } else if (from.isObjType(ObjType::List)) {
+            for (Value item : asList(from)->items) {
+                if (!item.isInt() || item.as.i < 0 || item.as.i > 255)
+                    throw vm.runtimeError("a byte is a whole number from 0 to 255, not " + vm.stringify(item));
+                made->data.push_back(static_cast<uint8_t>(item.as.i));
+            }
+        } else if (from.isObjType(ObjType::Bytes)) {
+            made->data = asBytes(from)->data;
+        } else {
+            throw vm.runtimeError("bytes() takes a size, a list of numbers or other bytes, not a value of type " + vm.typeName(from) +
+                                  (from.isString() ? "; text becomes bytes with toBytes()" : ""));
+        }
+        vm.account(made->data.size());
+        return Value::object(made);
+    });
+
+    const BuiltinType T = BuiltinType::Bytes;
+
+    vm.defineMethod(T, "slice", 0, 2, [](VM& vm, Value self, int argc, Value* args) -> Value {
+        const std::vector<uint8_t>& data = asBytes(self)->data;
+        size_t begin = argc > 0 ? clampPosition(vm.toInt(args[0], "slice start"), data.size()) : 0;
+        size_t end = argc > 1 ? clampPosition(vm.toInt(args[1], "slice end"), data.size()) : data.size();
+        ObjBytes* part = vm.alloc<ObjBytes>();
+        if (begin < end) part->data.assign(data.begin() + static_cast<std::ptrdiff_t>(begin), data.begin() + static_cast<std::ptrdiff_t>(end));
+        vm.account(part->data.size());
+        return Value::object(part);
+    });
+
+    vm.defineMethod(T, "toList", 0, 0, [](VM& vm, Value self, int, Value*) -> Value {
+        std::vector<Value> items;
+        for (uint8_t b : asBytes(self)->data) items.push_back(Value::integer(b));
+        return Value::object(newList(vm, std::move(items)));
+    });
+
+    // The text these bytes spell in UTF-8.
+    vm.defineMethod(T, "decodeToString", 0, 0, [](VM& vm, Value self, int, Value*) -> Value {
+        const std::vector<uint8_t>& data = asBytes(self)->data;
+        return vm.str(std::string(data.begin(), data.end()));
+    });
+
+    vm.defineMethod(T, "fill", 1, 1, [](VM& vm, Value self, int, Value* args) -> Value {
+        int64_t value = vm.toInt(args[0], "byte");
+        if (value < 0 || value > 255) throw vm.runtimeError("a byte is a whole number from 0 to 255, not " + std::to_string(value));
+        std::vector<uint8_t>& data = asBytes(self)->data;
+        std::fill(data.begin(), data.end(), static_cast<uint8_t>(value));
+        return self;
+    });
+
+    vm.defineMethod(T, "indexOf", 1, 1, [](VM&, Value self, int, Value* args) -> Value {
+        const std::vector<uint8_t>& data = asBytes(self)->data;
+        if (args[0].isInt())
+            for (size_t i = 0; i < data.size(); i++)
+                if (data[i] == args[0].as.i) return Value::integer(static_cast<int64_t>(i));
+        return Value::integer(-1);
+    });
+
+    vm.defineMethod(T, "contains", 1, 1, [](VM&, Value self, int, Value* args) -> Value {
+        const std::vector<uint8_t>& data = asBytes(self)->data;
+        return Value::boolean(args[0].isInt() && std::find(data.begin(), data.end(), args[0].as.i) != data.end());
+    });
+
+    // Text as bytes, in UTF-8.
+    vm.defineMethod(BuiltinType::String, "toBytes", 0, 0, [](VM& vm, Value self, int, Value*) -> Value {
+        const std::string& s = asString(self)->chars;
+        ObjBytes* made = vm.alloc<ObjBytes>();
+        made->data.assign(s.begin(), s.end());
+        vm.account(made->data.size());
+        return Value::object(made);
+    });
+}
+
 void registerBuiltins(VM& vm) {
     registerGlobals(vm);
     registerMath(vm);
-    registerFile(vm);
     registerStringMethods(vm);
     registerListMethods(vm);
     registerMapMethods(vm);
     registerRangeMethods(vm);
+    registerBytes(vm);
+    registerStdlib(vm);
     registerGui(vm);
     registerSpike(vm);
 }

@@ -174,6 +174,10 @@ enum class Op : uint8_t {
     MarkAbstract,       //                                 class -> class
     // A member written `override` has to have something to take the place of.
     CheckOverride,      // u16 name, u8 flags              class -> class  (1: written override; 2: a field or property)
+    // Invoke, where the last argument is a lambda written after the call: it goes to the last
+    // parameter, and the parameters between the other arguments and it take their defaults.
+    InvokeTrailing,     // u16 name, u8 argc               receiver args... lambda -> result
+    SuperInvokeTrailing,  // u16 name, u8 argc             this args... lambda superclass -> result
 
     Count_,
 };
@@ -189,6 +193,7 @@ enum TypeId : uint8_t {
     kTypeMap,
     kTypeRange,
     kTypeFunction,
+    kTypeBytes,
     kTypeInstance,  // an instance of a particular class or of one of its subclasses
 };
 

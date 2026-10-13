@@ -41,6 +41,19 @@ struct Names {
     ObjString* toString;
     ObjString* message;
     ObjString* length;
+    ObjString* size;
+    ObjString* indices;
+    ObjString* lastIndex;
+    ObjString* keys;
+    ObjString* values;
+    ObjString* key;
+    ObjString* value;
+    ObjString* code;
+    ObjString* iterator;
+    ObjString* first;
+    ObjString* last;
+    ObjString* absoluteValue;
+    ObjString* sign;
     ObjString* start;
     ObjString* end;
     ObjString* step;
@@ -72,7 +85,7 @@ struct Names {
     ObjString* opBitNot;
 };
 
-enum class BuiltinType { String, List, Map, Range, Count_ };
+enum class BuiltinType { String, List, Map, Range, Bytes, Number, Count_ };
 
 class VM {
 public:
@@ -137,6 +150,10 @@ public:
     bool hasBuiltin(const std::string& name) const { return builtins_.count(name) != 0; }
     void defineNative(const std::string& name, int minArgs, int maxArgs, NativeFn fn);
     void defineMethod(BuiltinType type, const std::string& name, int minArgs, int maxArgs, NativeMethodFn fn);
+    // Says what the parameters of a built-in method are called, so that it takes them by name.
+    void nameParams(BuiltinType type, const std::string& method, std::initializer_list<const char*> params);
+    // Everything a list, map, string, range, bytes or object with an iterator() holds, in order.
+    void collect(Value iterable, std::vector<Value>& out);
 
     std::ostream* output;
     std::istream* input;
@@ -187,6 +204,7 @@ private:
     std::unordered_map<std::string, Value> builtins_;
     std::unordered_map<const ObjString*, NativeMethod> methods_[static_cast<int>(BuiltinType::Count_)];
     ObjClass* errorClass_ = nullptr;
+    ObjClass* mapEntryClass_ = nullptr;  // MapEntry, from the standard library: what a map's entries are
     ObjString* opNames_[static_cast<int>(Op::Count_)] = {};
 
     // Heap state
@@ -205,6 +223,8 @@ private:
     // `packed`: the arguments are already arranged one per parameter (see callNamed).
     bool callValue(Value callee, int argc, bool packed = false);
     void callClosure(ObjClosure* closure, int argc, bool packed = false);
+    void callTrailing(ObjClosure* closure, int argc);
+    bool callValueTrailing(Value callee, int argc);
     int packVarargs(const FunctionProto* proto, int argc);
 
     // Bare names passed as arguments that may be enum entries (ValueKind::EnumName), not yet
@@ -214,7 +234,8 @@ private:
     void rejectPendingNames(const Value* args, int argc);
     Value settleEnumName(Value pending, const ObjClass* type);
     bool callSpread(int named);
-    bool invoke(ObjString* name, int argc);
+    bool invoke(ObjString* name, int argc, bool trailing = false);
+    bool callNativeNamed(int positional, int named);
     bool scopeFunction(ObjString* name, int argc);
     bool callNamed(int positional, int named);
     void invokeOperator(Value receiver, ObjString* name, int argc);
@@ -224,11 +245,21 @@ private:
     Value callWithReceiver(Value receiver, ObjClosure* method);
     Value implicitReceiver(const CallFrame* frame, const Value* base, const ObjString* name) const;
     void ensureClassInit(ObjClass* cls);
+
+public:
+    // One entry of a map, as `map.entries` gives it: an object with a key and a value.
+    Value makeEntry(Value key, Value value);
+    Value mapEntries(ObjMap* map);
+    Value mapKeys(ObjMap* map);
+    Value mapValues(ObjMap* map);
+
+private:
     const Value* superMethod(Value super, Value self, const ObjString* name) const;
 
     // Extension functions on the built-in types, by TypeId; on null; and on every value.
     Table typeExtensions_[16];
     Table nullExtensions_;
+    Table nullExtensionOwners_;  // for each of those, the type it was declared on
     Table anyExtensions_;
     bool hasExtensions_ = false;
     const Value* findExtension(Value receiver, const ObjString* name) const;

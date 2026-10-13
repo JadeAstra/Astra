@@ -1,0 +1,84 @@
+// The Kotlin names for maps, and what may be a key.
+
+// Making maps.
+val ages = mapOf("ann" to 31, "bob" to 25, "cy" to 40)
+print(ages, mutableMapOf(), emptyMap(), hashMapOf(1 to 2))   // expect: {"ann": 31, "bob": 25, "cy": 40} {} {} {1: 2}
+print(buildMap { put("a", 1); put("b", 2) })                 // expect: {"a": 1, "b": 2}
+
+// size, keys, values and entries are read without brackets, as in Kotlin; with them they
+// still work.
+print(ages.size, ages.keys, ages.values, ages.keys(), ages.length)   // expect: 3 ["ann", "bob", "cy"] [31, 25, 40] ["ann", "bob", "cy"] 3
+val entry = ages.entries[0]
+print(entry, entry.key, entry.value, entry.toPair())         // expect: MapEntry(key="ann", value=31) ann 31 Pair(first="ann", second=31)
+for (name, age) in ages.entries { write(name, "=", age, " ") }
+print()                                                      // expect: ann=31 bob=25 cy=40
+
+// Reading.
+print(ages.containsKey("ann"), ages.containsKey("zed"), "bob" in ages, ages.containsValue(25), ages.containsValue(99))   // expect: true false true true false
+print(ages.get("ann"), ages["zed"], ages.getOrDefault("zed", 0), ages.getOrElse("zed") { -1 }, ages.getValue("cy"))   // expect: 31 null 0 -1 40
+try { ages.getValue("zed") } catch (e) { print(e.message) }  // expect: getValue: the map has no key zed
+print(ages.isEmpty(), ages.isNotEmpty(), {:}.isEmpty(), {:}.isNullOrEmpty(), ages.orEmpty().size, {:}.ifEmpty { ages }.size)   // expect: false true true true 3 3
+
+// Writing. put and remove give the value that was there.
+val m = mutableMapOf("a" to 1)
+print(m.put("a", 10), m.put("b", 2), m)                      // expect: 1 null {"a": 10, "b": 2}
+m.set("c", 3)
+m.putAll({"d": 4})
+m.putAll(["e" to 5, "a" to 11])
+print(m)                                                     // expect: {"a": 11, "b": 2, "c": 3, "d": 4, "e": 5}
+print(m.remove("b"), m.remove("b"), m.size)                  // expect: 2 null 4
+val cache = {:}
+var made = 0
+print(cache.getOrPut("k") { made += 1; "first" }, cache.getOrPut("k") { made += 1; "second" }, made, cache)   // expect: first first 1 {"k": "first"}
+val counts = {:}
+for word in ["a", "b", "a"] { counts[word] = counts.getOrDefault(word, 0) + 1 }
+val groups = {:}
+for n in 1..5 { groups.getOrPut(n % 2) { [] }.add(n) }
+print(counts, groups)                                        // expect: {"a": 2, "b": 1} {1: [1, 3, 5], 0: [2, 4]}
+
+// forEach takes an entry, an entry taken apart, or a key and a value.
+ages.forEach { write(it.key, " ") }
+ages.forEach { (name, age) -> write(age, " ") }
+ages.forEach { name, age -> write(name[0], age, " ") }
+print()                                                      // expect: ann bob cy 31 25 40 a31 b25 c40
+
+// Asking.
+print(ages.any { it.value > 35 }, ages.all { it.value > 30 }, ages.none { it.key == "zed" }, ages.count { it.value < 35 }, ages.count())   // expect: true false true 2 3
+print({:}.any(), ages.any(), {:}.none(), ages.firstOrNull { it.value < 30 }?.key, ages.maxByOrNull { it.value }.key, ages.minByOrNull { it.value }.key, ages.sumOf { it.value })   // expect: false true true bob cy bob 96
+
+// Making lists and other maps.
+print(ages.map { "${it.key}:${it.value}" }, ages.map { (name, age) -> age + 1 }, ages.mapNotNull { it.value > 30 ? it.key : null })   // expect: ["ann:31", "bob:25", "cy:40"] [32, 26, 41] ["ann", "cy"]
+print(ages.toList()[1], ages.flatMap { [it.key, it.value] }.size, ages.toList().toMap() == ages)   // expect: Pair(first="bob", second=25) 6 true
+print(ages.mapValues { it.value * 2 }, ages.mapKeys { it.key.upper() })   // expect: {"ann": 62, "bob": 50, "cy": 80} {"ANN": 31, "BOB": 25, "CY": 40}
+print(ages.filter { it.value > 30 }, ages.filterNot { it.value > 30 }, ages.filterKeys { it != "ann" }.size, ages.filterValues { it == 40 })   // expect: {"ann": 31, "cy": 40} {"bob": 25} 2 {"cy": 40}
+print(ages.plus("dee" to 9).size, ages.plus({"x": 1, "ann": 0})["ann"], ages.minus("ann").keys, ages.minus(["ann", "cy"]), ages.size)   // expect: 4 0 ["bob", "cy"] {"bob": 25} 3
+
+// toMap gives a copy.
+val copy = ages.toMutableMap()
+copy["new"] = 1
+print(ages.size, copy.size, ages.toMap() == ages, ages.toMap() === ages)   // expect: 3 4 true false
+
+// A list, a range, bytes and a data object are keys by what they hold: an equal one finds
+// the entry. Any other object is a key as itself.
+data Point(val x, val y)
+class Plain(val n)
+val grid = {:}
+grid[Point(1, 2)] = "a point"
+grid[[1, 2]] = "a list"
+grid[1 to "role"] = "a pair"
+grid[1..3] = "a range"
+grid[bytes([1, 2])] = "bytes"
+val plain = Plain(1)
+grid[plain] = "an object"
+print(grid[Point(1, 2)], grid[[1, 2]], grid[Pair(1, "role")], grid[1..3], grid[bytes([1, 2])])   // expect: a point a list a pair a range bytes
+print(grid[Point(2, 1)], grid[[2, 1]], grid[1..<3], grid[plain], grid[Plain(1)], grid.size)   // expect: null null null an object null 6
+print(grid.containsKey([1, 2]), Point(1, 2) in grid, grid.remove(Point(1, 2)), grid.size)   // expect: true true a point 5
+// Keys that hold keys.
+val nested = {:}
+nested[[Point(1, 2), [3]]] = "deep"
+print(nested[[Point(1, 2), [3]]], nested[[Point(1, 2), [4]]])   // expect: deep null
+// 1 and 1.0 are equal, so they are one key; "1" is another.
+val numbers = {1: "one"}
+numbers[1.0] = "uno"
+numbers["1"] = "text"
+print(numbers.size, numbers[1], numbers["1"])                // expect: 2 uno text

@@ -27,6 +27,11 @@ function Invoke-Astra([string[]]$AstraArgs, [string]$Program = $Astra) {
     $psi.RedirectStandardOutput = $true
     $psi.RedirectStandardError = $true
     $psi.CreateNoWindow = $true
+    # A test that writes files writes them here, not into the source tree.
+    $psi.WorkingDirectory = $tmp
+    # Programs write UTF-8, and the expectations in the test files are UTF-8 too.
+    $psi.StandardOutputEncoding = [System.Text.Encoding]::UTF8
+    $psi.StandardErrorEncoding = [System.Text.Encoding]::UTF8
 
     $process = [System.Diagnostics.Process]::Start($psi)
     $stdout = $process.StandardOutput.ReadToEndAsync()
@@ -63,7 +68,7 @@ function Compare-Run($run, [string[]]$expected, [string]$errorText, [int]$exitCo
 }
 
 function Get-Marker([string]$path, [string]$pattern) {
-    $match = Select-String -Path $path -Pattern $pattern | Select-Object -First 1
+    $match = Select-String -Path $path -Pattern $pattern -Encoding UTF8 | Select-Object -First 1
     if ($match) { return $match.Matches[0].Groups[1].Value.TrimEnd() }
     return ''
 }
@@ -72,7 +77,7 @@ $passed = 0
 $failures = @()
 
 foreach ($test in Get-ChildItem (Join-Path $PSScriptRoot '*.astra') | Sort-Object Name) {
-    $expected = @(Select-String -Path $test.FullName -Pattern '// expect: ?(.*)$' |
+    $expected = @(Select-String -Path $test.FullName -Pattern '// expect: ?(.*)$' -Encoding UTF8 |
         ForEach-Object { $_.Matches[0].Groups[1].Value })
     $runtimeError = Get-Marker $test.FullName '// expect runtime error: (.*)$'
     $compileError = Get-Marker $test.FullName '// expect compile error: (.*)$'

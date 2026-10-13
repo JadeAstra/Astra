@@ -24,6 +24,19 @@ VM::VM() : output(&std::cout), input(&std::cin), rng(std::random_device{}()) {
     names.toString = intern("toString");
     names.message = intern("message");
     names.length = intern("length");
+    names.size = intern("size");
+    names.indices = intern("indices");
+    names.lastIndex = intern("lastIndex");
+    names.keys = intern("keys");
+    names.values = intern("values");
+    names.key = intern("key");
+    names.value = intern("value");
+    names.code = intern("code");
+    names.iterator = intern("iterator");
+    names.first = intern("first");
+    names.last = intern("last");
+    names.absoluteValue = intern("absoluteValue");
+    names.sign = intern("sign");
     names.start = intern("start");
     names.end = intern("end");
     names.step = intern("step");
@@ -106,7 +119,25 @@ void VM::defineNative(const std::string& name, int minArgs, int maxArgs, NativeF
 }
 
 void VM::defineMethod(BuiltinType type, const std::string& name, int minArgs, int maxArgs, NativeMethodFn fn) {
-    methods_[static_cast<int>(type)][intern(name)] = NativeMethod{name, minArgs, maxArgs, fn};
+    methods_[static_cast<int>(type)][intern(name)] = NativeMethod{name, minArgs, maxArgs, fn, {}};
+}
+
+void VM::nameParams(BuiltinType type, const std::string& method, std::initializer_list<const char*> params) {
+    NativeMethod& native = methods_[static_cast<int>(type)].at(intern(method));
+    native.params.assign(params.begin(), params.end());
+}
+
+void VM::collect(Value iterable, std::vector<Value>& out) {
+    if (iterable.isObjType(ObjType::List)) {
+        const std::vector<Value>& items = asList(iterable)->items;
+        out.insert(out.end(), items.begin(), items.end());
+        return;
+    }
+    TempVector held(*this, out);
+    TempRoot iterator(*this, makeIterator(iterable));
+    ObjIterator* it = asIterator(iterator.get());
+    Value item;
+    while (iteratorNext(it, item)) out.push_back(item);
 }
 
 void VM::load(Program& program) {
@@ -130,6 +161,8 @@ Value VM::runModule(int index) {
         for (size_t i = 0; i < globals_.size(); i++) {
             if (program_->globalNames[i] == "Error" && globals_[i].isObjType(ObjType::Class))
                 errorClass_ = asClass(globals_[i]);
+            if (program_->globalNames[i] == "MapEntry" && globals_[i].isObjType(ObjType::Class) && mapEntryClass_ == nullptr)
+                mapEntryClass_ = asClass(globals_[i]);
         }
     }
     loaded_[static_cast<size_t>(index)] = true;
@@ -202,7 +235,15 @@ const Value* VM::findExtension(Value receiver, const ObjString* name) const {
     if (!hasExtensions_) return nullptr;
     const Value* found = nullptr;
     switch (receiver.kind) {
-        case ValueKind::Null: found = nullExtensions_.find(name); break;
+        case ValueKind::Null:
+            found = nullExtensions_.find(name);
+            // Two types each have one that takes null (string?.orEmpty, list?.orEmpty), and
+            // null does not say which is meant.
+            if (found != nullptr && !found->isObjType(ObjType::Closure))
+                throw const_cast<VM*>(this)->runtimeError(
+                    name->chars + "() is called on null, and more than one type has its own " + name->chars +
+                    "() that takes null, so there is no telling which is meant; use ?: to say what stands in for null");
+            break;
         case ValueKind::Bool: found = typeExtensions_[kTypeBool].find(name); break;
         case ValueKind::Int: found = typeExtensions_[kTypeInt].find(name); break;
         case ValueKind::Float: found = typeExtensions_[kTypeFloat].find(name); break;
@@ -212,6 +253,7 @@ const Value* VM::findExtension(Value receiver, const ObjString* name) const {
                 case ObjType::List: found = typeExtensions_[kTypeList].find(name); break;
                 case ObjType::Map: found = typeExtensions_[kTypeMap].find(name); break;
                 case ObjType::Range: found = typeExtensions_[kTypeRange].find(name); break;
+                case ObjType::Bytes: found = typeExtensions_[kTypeBytes].find(name); break;
                 case ObjType::Closure:
                 case ObjType::Native:
                 case ObjType::BoundMethod:
@@ -254,7 +296,11 @@ bool VM::hasMember(Value candidate, const ObjString* name) const {
     if (findNativeMethod(candidate, name) != nullptr || findExtension(candidate, name) != nullptr) return true;
     if (!candidate.isObj()) return false;
     const ObjType type = candidate.as.obj->type;
-    if (name == names.length) return type == ObjType::String || type == ObjType::List || type == ObjType::Map || type == ObjType::Range;
+    if (name == names.length || name == names.size)
+        return type == ObjType::String || type == ObjType::List || type == ObjType::Map || type == ObjType::Range ||
+               type == ObjType::Bytes;
+    if (name == names.indices || name == names.lastIndex) return type == ObjType::String || type == ObjType::List;
+    if (name == names.code) return type == ObjType::String;
     return type == ObjType::Range && (name == names.start || name == names.end || name == names.step);
 }
 
@@ -351,6 +397,7 @@ std::string VM::typeName(Value v) const {
         case ObjType::List: return "list";
         case ObjType::Map: return "map";
         case ObjType::Range: return "range";
+        case ObjType::Bytes: return "bytes";
         case ObjType::Closure:
         case ObjType::Native:
         case ObjType::BoundMethod:
@@ -454,6 +501,77 @@ void VM::callClosure(ObjClosure* closure, int argc, bool packed) {
     frame.closure = closure;
     frame.ip = proto->code.data();
     frame.base = base;
+}
+
+// A call whose last argument is a lambda written after the call, as in
+// `items.joinToString(", ") { it.name }`. The lambda belongs to the last parameter, so the
+// parameters between the other arguments and it are left to their defaults.
+//
+// One case is different, for functions that have optional parameters after a function
+// parameter, such as groupBy(keySelector, valueTransform = null). If the parameters that
+// have to be given are all there but the last of them, the lambda is that one:
+// `groupBy { it.size }` gives keySelector, and `groupBy({ it.size }) { it.name }` gives both.
+// (callNamed does the same for a call to a plain function.)
+void VM::callTrailing(ObjClosure* closure, int argc) {
+    const FunctionProto* proto = closure->proto;
+    const int arity = proto->arity;
+    const int vararg = proto->varargIndex;
+    // Nothing to move: the lambda is already where the last parameter is, there are too many
+    // arguments (reported as usual), or the last parameter gathers whatever is left.
+    if (vararg == arity - 1 || (vararg < 0 && argc >= arity)) {
+        callClosure(closure, argc);
+        return;
+    }
+    if (stackEnd_ - sp_ < arity + 1) throw runtimeError("stack overflow");
+
+    int given = argc - 1;
+    int target = arity - 1;
+    if (vararg < 0 && given == proto->requiredArgs() - 1) {
+        target = given;
+    } else if (given < proto->requiredArgs()) {
+        // The lambda may pass over parameters that have a default, and no others.
+        if (proto->paramNames.size() != static_cast<size_t>(arity)) checkArity(proto->name, proto->requiredArgs(), arity, argc);
+        throw runtimeError(proto->name + "() is missing argument '" + proto->paramNames[static_cast<size_t>(given)]->chars + "'");
+    }
+    if (target == given && vararg < 0) {
+        callClosure(closure, argc);  // already in its place; what follows takes its default
+        return;
+    }
+
+    TempRoot lambda(*this, sp_[-1]);
+    sp_--;
+    bool packed = false;
+    if (vararg >= 0) {
+        for (; given < vararg; given++) *sp_++ = Value::undefined();
+        const int extra = given - vararg;
+        if (pendingEnums_ > 0) rejectPendingNames(sp_ - extra, extra);
+        ObjList* list = alloc<ObjList>();
+        list->items.assign(sp_ - extra, sp_);
+        account(static_cast<size_t>(extra) * sizeof(Value));
+        sp_ -= extra;
+        *sp_++ = Value::object(list);
+        given = vararg + 1;
+        packed = true;
+    }
+    for (; given < target; given++) *sp_++ = Value::undefined();
+    *sp_++ = lambda.get();
+    callClosure(closure, arity, packed);
+}
+
+// callValue for such a call. Only a function written in Astra has parameters to look at; to
+// anything else the lambda is simply the last argument.
+bool VM::callValueTrailing(Value callee, int argc) {
+    if (callee.isObjType(ObjType::Closure)) {
+        callTrailing(asClosure(callee), argc);
+        return true;
+    }
+    if (callee.isObjType(ObjType::BoundMethod)) {
+        ObjBoundMethod* bound = asBoundMethod(callee);
+        sp_[-argc - 1] = bound->receiver;
+        callTrailing(bound->method, argc);
+        return true;
+    }
+    return callValue(callee, argc);
 }
 
 // Calls the value sitting below `argc` arguments on the stack. Returns true if a new frame
@@ -570,6 +688,7 @@ bool VM::callNamed(int positional, int named) {
             case ObjType::Native:
                 throw runtimeError("built-in function " + asNative(callee)->name + "() does not take named arguments");
             case ObjType::BoundNative:
+                if (!asBoundNative(callee)->method->params.empty()) return callNativeNamed(positional, named);
                 throw runtimeError("built-in method " + asBoundNative(callee)->method->name +
                                    "() does not take named arguments");
             default:
@@ -585,11 +704,12 @@ bool VM::callNamed(int positional, int named) {
     if (positional > arity && vararg < 0) checkArity(display(), proto->requiredArgs(), arity, positional + named);
 
     // The common case of a lambda after the call: every parameter before the last was given,
-    // so the lambda is simply the next argument.
-    if (named == 1 && vararg < 0 && positional + 1 == arity && asString(sp_[-2])->chars.empty()) {
+    // or all that have to be given but one, so the lambda is simply the next argument.
+    if (named == 1 && vararg < 0 && (positional + 1 == arity || positional == proto->requiredArgs() - 1) &&
+        asString(sp_[-2])->chars.empty()) {
         sp_[-2] = sp_[-1];
         sp_--;
-        return callValue(callee, arity);
+        return callValue(callee, positional + 1);
     }
 
     // Scratch space kept between calls. It is emptied back onto the stack before the callee
@@ -613,9 +733,14 @@ bool VM::callNamed(int positional, int named) {
 
         int index = -1;
         if (name->chars.empty()) {
-            // The lambda written after the call: it is the last parameter.
+            // The lambda written after the call: it is the last parameter, or the last of
+            // those that have to be given if that is the only one still missing (see callTrailing).
             if (arity == 0) throw runtimeError(display() + "() takes no arguments, so no lambda can follow the call");
             index = arity - 1;
+            const int required = proto->requiredArgs();
+            if (vararg < 0 && required > 0 && positional == required - 1 &&
+                arranged[static_cast<size_t>(required - 1)].kind == ValueKind::Undefined)
+                index = required - 1;
             name = proto->paramNames[static_cast<size_t>(index)];
         }
         for (int p = 0; index < 0 && p < arity; p++) {
@@ -648,6 +773,44 @@ bool VM::callNamed(int positional, int named) {
     return callValue(callee, arity, vararg >= 0);
 }
 
+// A built-in method called with arguments by name, as in text.contains("a", ignoreCase = true).
+// Only the methods that say what their parameters are called take them. A parameter that is
+// passed over on the way to a named one is given null, which such a method reads as left out.
+bool VM::callNativeNamed(int positional, int named) {
+    Value* first = sp_ - positional - 2 * named;
+    Value callee = first[-1];
+    const NativeMethod* method = asBoundNative(callee)->method;
+    const int count = static_cast<int>(method->params.size());
+    if (positional > count) checkArity(method->name, method->minArgs, method->maxArgs, positional + named);
+
+    std::vector<Value>& arranged = namedScratch_;
+    arranged.assign(static_cast<size_t>(count), Value::undefined());
+    for (int i = 0; i < positional; i++) arranged[static_cast<size_t>(i)] = first[i];
+    int given = positional;
+    const Value* pair = first + positional;
+    for (int i = 0; i < named; i++, pair += 2) {
+        if (!pair[0].isString()) throw runtimeError("invalid call");
+        const std::string& name = asString(pair[0])->chars;
+        int index = name.empty() ? count - 1 : -1;  // a lambda after the call is the last parameter
+        for (int p = 0; index < 0 && p < count; p++)
+            if (method->params[static_cast<size_t>(p)] == name) index = p;
+        if (index < 0) throw runtimeError(method->name + "() has no parameter named '" + name + "'");
+        if (arranged[static_cast<size_t>(index)].kind != ValueKind::Undefined)
+            throw runtimeError("argument '" + method->params[static_cast<size_t>(index)] + "' of " + method->name +
+                               "() is given more than once");
+        arranged[static_cast<size_t>(index)] = pair[1];
+        if (index + 1 > given) given = index + 1;
+    }
+
+    if (stackEnd_ - first < given) throw runtimeError("stack overflow");
+    for (int i = 0; i < given; i++) {
+        const Value& value = arranged[static_cast<size_t>(i)];
+        first[i] = value.kind == ValueKind::Undefined ? Value::null() : value;
+    }
+    sp_ = first + given;
+    return callValue(callee, given);
+}
+
 // A call whose positional arguments were gathered into a list because some were written
 // `*list`. The stack holds the callee, that list, then a (name, value) pair for each named
 // argument. The list is laid out as ordinary arguments and the call proceeds as usual.
@@ -665,14 +828,20 @@ bool VM::callSpread(int named) {
 }
 
 const NativeMethod* VM::findNativeMethod(Value receiver, const ObjString* name) const {
-    if (!receiver.isObj()) return nullptr;
     BuiltinType type;
-    switch (receiver.as.obj->type) {
-        case ObjType::String: type = BuiltinType::String; break;
-        case ObjType::List: type = BuiltinType::List; break;
-        case ObjType::Map: type = BuiltinType::Map; break;
-        case ObjType::Range: type = BuiltinType::Range; break;
-        default: return nullptr;
+    if (receiver.isNumber()) {
+        type = BuiltinType::Number;
+    } else if (!receiver.isObj()) {
+        return nullptr;
+    } else {
+        switch (receiver.as.obj->type) {
+            case ObjType::String: type = BuiltinType::String; break;
+            case ObjType::List: type = BuiltinType::List; break;
+            case ObjType::Map: type = BuiltinType::Map; break;
+            case ObjType::Range: type = BuiltinType::Range; break;
+            case ObjType::Bytes: type = BuiltinType::Bytes; break;
+            default: return nullptr;
+        }
     }
     const auto& table = methods_[static_cast<int>(type)];
     auto it = table.find(name);
@@ -680,7 +849,7 @@ const NativeMethod* VM::findNativeMethod(Value receiver, const ObjString* name) 
 }
 
 // Calls method `name` on the receiver sitting below `argc` arguments. Same result as callValue.
-bool VM::invoke(ObjString* name, int argc) {
+bool VM::invoke(ObjString* name, int argc, bool trailing) {
     Value receiver = sp_[-argc - 1];
 
     if (receiver.isObj()) {
@@ -689,23 +858,25 @@ bool VM::invoke(ObjString* name, int argc) {
             // A call goes to the method of that name. A field may share the name: reading it
             // gives the field, calling it runs the method.
             if (const Value* method = instance->cls->methods.find(name)) {
-                callClosure(asClosure(*method), argc);
+                if (trailing) callTrailing(asClosure(*method), argc);
+                else callClosure(asClosure(*method), argc);
                 return true;
             }
             if (const Value* field = instance->fields.find(name)) {
                 sp_[-argc - 1] = *field;
-                return callValue(*field, argc);
+                return trailing ? callValueTrailing(*field, argc) : callValue(*field, argc);
             }
             if (instance->cls->hasAccessors) {
                 // obj.property(args): call whatever the getter of the property returns.
                 if (const Value* getter = instance->cls->getters.find(name)) {
                     Value callee = callWithReceiver(receiver, asClosure(*getter));
                     sp_[-argc - 1] = callee;
-                    return callValue(callee, argc);
+                    return trailing ? callValueTrailing(callee, argc) : callValue(callee, argc);
                 }
             }
             if (const Value* extension = findExtension(receiver, name)) {
-                callClosure(asClosure(*extension), argc);
+                if (trailing) callTrailing(asClosure(*extension), argc);
+                else callClosure(asClosure(*extension), argc);
                 return true;
             }
             if (scopeFunction(name, argc)) return false;
@@ -717,7 +888,7 @@ bool VM::invoke(ObjString* name, int argc) {
             if (cls->staticInit != nullptr || (cls->super != nullptr && cls->super->staticInit != nullptr)) ensureClassInit(cls);
             if (const Value* member = cls->findStatic(name)) {
                 sp_[-argc - 1] = *member;
-                return callValue(*member, argc);
+                return trailing ? callValueTrailing(*member, argc) : callValue(*member, argc);
             }
             throw runtimeError("undefined static method '" + name->chars + "' on class " + cls->name->chars);
         }
@@ -726,7 +897,8 @@ bool VM::invoke(ObjString* name, int argc) {
     const NativeMethod* method = findNativeMethod(receiver, name);
     if (method == nullptr) {
         if (const Value* extension = findExtension(receiver, name)) {
-            callClosure(asClosure(*extension), argc);
+            if (trailing) callTrailing(asClosure(*extension), argc);
+            else callClosure(asClosure(*extension), argc);
             return true;
         }
         if (scopeFunction(name, argc)) return false;
@@ -791,6 +963,8 @@ bool VM::equals(Value a, Value b, int depth) {
     if (depth >= kMaxEqualsDepth) return false;
 
     switch (a.as.obj->type) {
+        case ObjType::Bytes:
+            return asBytes(a)->data == asBytes(b)->data;
         case ObjType::List: {
             const std::vector<Value>& x = asList(a)->items;
             const std::vector<Value>& y = asList(b)->items;
@@ -867,25 +1041,59 @@ Value VM::getProperty(Value obj, ObjString* name) {
                 throw runtimeError("undefined static member '" + name->chars + "' on class " + cls->name->chars);
             }
             case ObjType::String:
-                if (name == names.length) return Value::integer(static_cast<int64_t>(asString(obj)->chars.size()));
+                if (name == names.length || name == names.size) return Value::integer(static_cast<int64_t>(asString(obj)->length));
+                if (name == names.indices)
+                    return Value::object(alloc<ObjRange>(int64_t{0}, static_cast<int64_t>(asString(obj)->length), int64_t{1}, false));
+                if (name == names.lastIndex) return Value::integer(static_cast<int64_t>(asString(obj)->length) - 1);
+                if (name == names.code && asString(obj)->length > 0) {
+                    // The code point of a character (the first, if there are more).
+                    std::string_view first = asString(obj)->character(0);
+                    uint32_t cp = static_cast<unsigned char>(first[0]);
+                    if (first.size() == 2) cp &= 0x1F;
+                    else if (first.size() == 3) cp &= 0x0F;
+                    else if (first.size() >= 4) cp &= 0x07;
+                    for (size_t i = 1; i < first.size(); i++) cp = (cp << 6) | (static_cast<unsigned char>(first[i]) & 0x3F);
+                    return Value::integer(cp);
+                }
                 break;
             case ObjType::List:
-                if (name == names.length) return Value::integer(static_cast<int64_t>(asList(obj)->items.size()));
+                if (name == names.length || name == names.size) return Value::integer(static_cast<int64_t>(asList(obj)->items.size()));
+                if (name == names.indices)
+                    return Value::object(alloc<ObjRange>(int64_t{0}, static_cast<int64_t>(asList(obj)->items.size()), int64_t{1}, false));
+                if (name == names.lastIndex) return Value::integer(static_cast<int64_t>(asList(obj)->items.size()) - 1);
                 break;
             case ObjType::Map:
-                if (name == names.length) return Value::integer(static_cast<int64_t>(asMap(obj)->map.size()));
+                if (name == names.length || name == names.size) return Value::integer(static_cast<int64_t>(asMap(obj)->map.size()));
+                if (name == names.keys) return mapKeys(asMap(obj));
+                if (name == names.values) return mapValues(asMap(obj));
+                if (name == names.entries) return mapEntries(asMap(obj));
                 break;
             case ObjType::Range: {
                 ObjRange* range = asRange(obj);
                 if (name == names.start) return Value::integer(range->start);
                 if (name == names.end) return Value::integer(range->end);
                 if (name == names.step) return Value::integer(range->step);
-                if (name == names.length) return Value::integer(range->count());
+                if (name == names.length || name == names.size) return Value::integer(range->count());
+                // The numbers it starts and finishes on, when it holds any.
+                if (name == names.first && range->count() > 0) return Value::integer(range->start);
+                if (name == names.last && range->count() > 0)
+                    return Value::integer(range->start + (range->count() - 1) * range->step);
                 break;
             }
+            case ObjType::Bytes:
+                if (name == names.length || name == names.size) return Value::integer(static_cast<int64_t>(asBytes(obj)->data.size()));
+                break;
             default:
                 break;
         }
+    }
+
+    if (obj.isInt()) {
+        if (name == names.absoluteValue) return Value::integer(obj.as.i < 0 ? -obj.as.i : obj.as.i);
+        if (name == names.sign) return Value::integer((obj.as.i > 0) - (obj.as.i < 0));
+    } else if (obj.isFloat()) {
+        if (name == names.absoluteValue) return Value::number(std::fabs(obj.as.d));
+        if (name == names.sign) return Value::number(obj.as.d > 0 ? 1.0 : obj.as.d < 0 ? -1.0 : obj.as.d);
     }
 
     if (const NativeMethod* method = findNativeMethod(obj, name))
@@ -971,6 +1179,44 @@ void VM::nameEntry(ObjInstance* entry, ObjString* name, int ordinal) {
     entry->fields.set(names.entryOrdinal, Value::integer(ordinal));
     if (cls->getters.find(names.name) == nullptr) entry->fields.set(names.name, Value::object(name));
     if (cls->getters.find(names.ordinal) == nullptr) entry->fields.set(names.ordinal, Value::integer(ordinal));
+}
+
+Value VM::makeEntry(Value key, Value value) {
+    if (mapEntryClass_ == nullptr) {
+        ObjList* pair = alloc<ObjList>();
+        pair->items = {key, value};
+        return Value::object(pair);
+    }
+    ObjInstance* entry = alloc<ObjInstance>(mapEntryClass_);
+    entry->fields.set(names.key, key);
+    entry->fields.set(names.value, value);
+    account(96);
+    return Value::object(entry);
+}
+
+Value VM::mapEntries(ObjMap* map) {
+    ObjList* list = alloc<ObjList>();
+    TempRoot keep(*this, Value::object(list));
+    for (const ValueMap::Entry& entry : map->map.entries())
+        if (entry.live) list->items.push_back(makeEntry(entry.key, entry.value));
+    account(list->items.size() * sizeof(Value));
+    return Value::object(list);
+}
+
+Value VM::mapKeys(ObjMap* map) {
+    ObjList* list = alloc<ObjList>();
+    for (const ValueMap::Entry& entry : map->map.entries())
+        if (entry.live) list->items.push_back(entry.key);
+    account(list->items.size() * sizeof(Value));
+    return Value::object(list);
+}
+
+Value VM::mapValues(ObjMap* map) {
+    ObjList* list = alloc<ObjList>();
+    for (const ValueMap::Entry& entry : map->map.entries())
+        if (entry.live) list->items.push_back(entry.value);
+    account(list->items.size() * sizeof(Value));
+    return Value::object(list);
 }
 
 // Runs what works out a class's static values, if it has not run yet, superclasses first.
@@ -1065,16 +1311,25 @@ Value VM::getIndex(Value obj, Value index) {
                 return items[i];
             }
             case ObjType::String: {
-                const std::string& chars = asString(obj)->chars;
+                // One character, wherever it is: positions count characters, not bytes.
+                const ObjString* text = asString(obj);
                 size_t i;
-                if (!resolveIndex(toInt(index, "string index"), chars.size(), i))
+                if (!resolveIndex(toInt(index, "string index"), text->length, i))
                     throw runtimeError("string index " + std::to_string(index.as.i) + " is out of range (length " +
-                                       std::to_string(chars.size()) + ")");
-                return str(std::string(1, chars[i]));
+                                       std::to_string(text->length) + ")");
+                return str(std::string(text->character(i)));
             }
             case ObjType::Map: {
                 const Value* found = asMap(obj)->map.find(index);
                 return found != nullptr ? *found : Value::null();
+            }
+            case ObjType::Bytes: {
+                const std::vector<uint8_t>& data = asBytes(obj)->data;
+                size_t i;
+                if (!resolveIndex(toInt(index, "bytes index"), data.size(), i))
+                    throw runtimeError("bytes index " + std::to_string(index.as.i) + " is out of range (size " +
+                                       std::to_string(data.size()) + ")");
+                return Value::integer(data[i]);
             }
             default:
                 break;
@@ -1094,6 +1349,15 @@ void VM::setIndex(Value obj, Value index, Value value) {
     } else if (obj.isObjType(ObjType::Map)) {
         asMap(obj)->map.set(index, value);
         account(64);
+    } else if (obj.isObjType(ObjType::Bytes)) {
+        std::vector<uint8_t>& data = asBytes(obj)->data;
+        size_t i;
+        if (!resolveIndex(toInt(index, "bytes index"), data.size(), i))
+            throw runtimeError("bytes index " + std::to_string(index.as.i) + " is out of range (size " +
+                               std::to_string(data.size()) + ")");
+        if (!value.isInt() || value.as.i < 0 || value.as.i > 255)
+            throw runtimeError("a byte is a whole number from 0 to 255, not " + stringify(value));
+        data[i] = static_cast<uint8_t>(value.as.i);
     } else {
         throw runtimeError("cannot assign to an index of a value of type " + typeName(obj));
     }
@@ -1122,6 +1386,15 @@ bool VM::binarySlow(Op op) {
                 stringifyInto(joined, b, false, 0);
             }
             sp_[-2] = str(std::move(joined));
+            sp_--;
+            return false;
+        }
+        if (a.isObjType(ObjType::Bytes) && b.isObjType(ObjType::Bytes)) {
+            ObjBytes* joined = alloc<ObjBytes>();
+            joined->data = asBytes(a)->data;
+            joined->data.insert(joined->data.end(), asBytes(b)->data.begin(), asBytes(b)->data.end());
+            account(joined->data.size());
+            sp_[-2] = Value::object(joined);
             sp_--;
             return false;
         }
@@ -1176,6 +1449,7 @@ bool VM::matchesType(Value v, uint8_t type, const ObjClass* cls) const {
         case kTypeList: return v.isObjType(ObjType::List);
         case kTypeMap: return v.isObjType(ObjType::Map);
         case kTypeRange: return v.isObjType(ObjType::Range);
+        case kTypeBytes: return v.isObjType(ObjType::Bytes);
         case kTypeFunction:
             return v.isObjType(ObjType::Closure) || v.isObjType(ObjType::Native) ||
                    v.isObjType(ObjType::BoundMethod) || v.isObjType(ObjType::BoundNative);
@@ -1243,12 +1517,25 @@ Value VM::makeIterator(Value iterable) {
             case ObjType::List:
             case ObjType::Map:
             case ObjType::String:
+            case ObjType::Bytes:
                 return Value::object(alloc<ObjIterator>(iterable));
             case ObjType::Range: {
                 ObjIterator* it = alloc<ObjIterator>(iterable);
                 it->nextValue = asRange(iterable)->start;
                 it->remaining = asRange(iterable)->count();
                 return Value::object(it);
+            }
+            case ObjType::Instance: {
+                // An object can be looped over if it has an iterator() that gives something
+                // that can: a list, say, of what it holds.
+                const Value* method = asInstance(iterable)->cls->methods.find(names.iterator);
+                if (method == nullptr) break;
+                TempRoot bound(*this, Value::object(alloc<ObjBoundMethod>(iterable, asClosure(*method))));
+                Value inner = call(bound.get(), 0, nullptr);
+                if (inner.isObjType(ObjType::Instance))
+                    throw runtimeError("iterator() of " + typeName(iterable) + " has to give a list or another built-in collection");
+                TempRoot keep(*this, inner);
+                return makeIterator(inner);
             }
             default:
                 break;
@@ -1264,6 +1551,12 @@ bool VM::iteratorNext(ObjIterator* it, Value& out) {
             const std::vector<Value>& items = asList(source)->items;
             if (it->index >= items.size()) return false;
             out = items[it->index++];
+            return true;
+        }
+        case ObjType::Bytes: {
+            const std::vector<uint8_t>& data = asBytes(source)->data;
+            if (it->index >= data.size()) return false;
+            out = Value::integer(data[it->index++]);
             return true;
         }
         case ObjType::Range: {
@@ -1984,7 +2277,17 @@ void VM::run(int baseFrame) {
                         if (invoke(name, argc)) LOAD_FRAME();
                         break;
                     }
-                    case Op::SuperInvoke: {
+                    case Op::InvokeTrailing: {
+                        ObjString* name = asString(consts[READ_U16()]);
+                        int argc = READ_U8();
+                        GC_SAFE_POINT();
+                        SAVE_IP();
+                        if (invoke(name, argc, true)) LOAD_FRAME();
+                        break;
+                    }
+                    case Op::SuperInvoke:
+                    case Op::SuperInvokeTrailing: {
+                        const bool trailing = static_cast<Op>(ip[-1]) == Op::SuperInvokeTrailing;
                         ObjString* name = asString(consts[READ_U16()]);
                         int argc = READ_U8();
                         GC_SAFE_POINT();
@@ -1998,7 +2301,8 @@ void VM::run(int baseFrame) {
                             throw runtimeError("undefined method '" + name->chars + "' in superclass " +
                                                asClass(super)->name->chars);
                         SAVE_IP();
-                        callClosure(asClosure(*method), argc);
+                        if (trailing) callTrailing(asClosure(*method), argc);
+                        else callClosure(asClosure(*method), argc);
                         LOAD_FRAME();
                         break;
                     }
@@ -2199,7 +2503,16 @@ void VM::run(int baseFrame) {
                         } else {
                             typeExtensions_[id].set(name, function);
                         }
-                        if (type & kTypeNullable) nullExtensions_.set(name, function);
+                        if (type & kTypeNullable) {
+                            // Remembered with the type it is for: a second type declaring the
+                            // same name leaves a call on null with no answer (see findExtension).
+                            Value owner = id == kTypeInstance ? Value::object(asClass(sp_[0])) : Value::integer(id);
+                            const Value* before = nullExtensionOwners_.find(name);
+                            const bool same = before == nullptr || (before->isInt() && owner.isInt() ? before->as.i == owner.as.i
+                                                                    : before->isObj() && owner.isObj() && before->as.obj == owner.as.obj);
+                            nullExtensions_.set(name, same ? function : Value::boolean(false));
+                            if (before == nullptr) nullExtensionOwners_.set(name, owner);
+                        }
                         hasExtensions_ = true;
                         break;
                     }
@@ -2473,6 +2786,7 @@ void VM::run(int baseFrame) {
                     }
 
                     case Op::IterInit:
+                        SAVE_IP();
                         sp_[-1] = makeIterator(sp_[-1]);
                         break;
                     case Op::DefaultArg: {
@@ -2621,6 +2935,18 @@ void VM::stringifyInto(std::string& out, Value v, bool quote, int depth) {
             return;
         }
 
+        case ObjType::Bytes: {
+            const std::vector<uint8_t>& data = asBytes(v)->data;
+            out += "bytes[";
+            for (size_t i = 0; i < data.size() && i < 32; i++) {
+                if (i > 0) out += ", ";
+                out += std::to_string(data[i]);
+            }
+            if (data.size() > 32) out += ", ... " + std::to_string(data.size() - 32) + " more";
+            out += ']';
+            return;
+        }
+
         case ObjType::Range: {
             ObjRange* range = asRange(v);
             out += std::to_string(range->start);
@@ -2708,6 +3034,7 @@ void VM::collectGarbage() {
     for (const Value& global : globals_) markValue(global);
     for (const Table& table : typeExtensions_) markTable(table);
     markTable(nullExtensions_);
+    markTable(nullExtensionOwners_);
     markTable(anyExtensions_);
     for (const auto& builtin : builtins_) markValue(builtin.second);
     for (const Value& root : tempRoots) markValue(root);
@@ -2715,6 +3042,7 @@ void VM::collectGarbage() {
     for (const std::vector<Value>* values : tempVectors)
         for (const Value& value : *values) markValue(value);
     markObject(errorClass_);
+    markObject(mapEntryClass_);
     for (const TypeConstraint& declared : globalTypes_) markObject(declared.cls);
 
     while (!gray_.empty()) {
@@ -2769,6 +3097,9 @@ void VM::blacken(Obj* obj) {
         }
         case ObjType::Range:
             liveBytes_ += sizeof(ObjRange);
+            break;
+        case ObjType::Bytes:
+            liveBytes_ += sizeof(ObjBytes) + static_cast<ObjBytes*>(obj)->data.capacity();
             break;
         case ObjType::Closure: {
             ObjClosure* closure = static_cast<ObjClosure*>(obj);

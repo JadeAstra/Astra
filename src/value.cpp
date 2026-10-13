@@ -65,6 +65,91 @@ size_t hashValue(const Value& v) {
     }
 }
 
+namespace {
+const int kMaxKeyDepth = 32;
+
+// The objects whose contents make them what they are as a key.
+bool hasContentKey(const Value& v) {
+    if (!v.isObj()) return false;
+    switch (v.as.obj->type) {
+        case ObjType::List:
+        case ObjType::Range:
+        case ObjType::Bytes: return true;
+        case ObjType::Instance: return asInstance(v)->cls->isData;
+        default: return false;
+    }
+}
+}  // namespace
+
+bool keysEqual(const Value& a, const Value& b, int depth) {
+    if (!hasContentKey(a) || !hasContentKey(b) || depth >= kMaxKeyDepth) return valuesEqual(a, b);
+    if (a.as.obj == b.as.obj) return true;
+    if (a.as.obj->type != b.as.obj->type) return false;
+    switch (a.as.obj->type) {
+        case ObjType::List: {
+            const std::vector<Value>& x = asList(a)->items;
+            const std::vector<Value>& y = asList(b)->items;
+            if (x.size() != y.size()) return false;
+            for (size_t i = 0; i < x.size(); i++)
+                if (!keysEqual(x[i], y[i], depth + 1)) return false;
+            return true;
+        }
+        case ObjType::Range: {
+            const ObjRange* x = asRange(a);
+            const ObjRange* y = asRange(b);
+            return x->start == y->start && x->end == y->end && x->step == y->step && x->inclusive == y->inclusive;
+        }
+        case ObjType::Bytes:
+            return asBytes(a)->data == asBytes(b)->data;
+        case ObjType::Instance: {
+            const ObjInstance* x = asInstance(a);
+            const ObjInstance* y = asInstance(b);
+            if (x->cls != y->cls) return false;
+            for (const ObjString* part : x->cls->components) {
+                const Value* left = x->fields.find(part);
+                const Value* right = y->fields.find(part);
+                if (!keysEqual(left != nullptr ? *left : Value::null(), right != nullptr ? *right : Value::null(), depth + 1))
+                    return false;
+            }
+            return true;
+        }
+        default:
+            return false;
+    }
+}
+
+size_t keyHash(const Value& v, int depth) {
+    if (!hasContentKey(v) || depth >= kMaxKeyDepth) return hashValue(v);
+    auto mix = [](size_t seed, size_t next) { return seed ^ (next + 0x9e3779b97f4a7c15ULL + (seed << 6) + (seed >> 2)); };
+    switch (v.as.obj->type) {
+        case ObjType::List: {
+            size_t h = 17;
+            for (const Value& item : asList(v)->items) h = mix(h, keyHash(item, depth + 1));
+            return h;
+        }
+        case ObjType::Range: {
+            const ObjRange* r = asRange(v);
+            return mix(mix(std::hash<int64_t>()(r->start), std::hash<int64_t>()(r->end)), std::hash<int64_t>()(r->step) + (r->inclusive ? 1 : 0));
+        }
+        case ObjType::Bytes: {
+            size_t h = 31;
+            for (uint8_t b : asBytes(v)->data) h = h * 131 + b;
+            return h;
+        }
+        case ObjType::Instance: {
+            const ObjInstance* instance = asInstance(v);
+            size_t h = std::hash<const void*>()(instance->cls);
+            for (const ObjString* part : instance->cls->components) {
+                const Value* field = instance->fields.find(part);
+                h = mix(h, field != nullptr ? keyHash(*field, depth + 1) : 0);
+            }
+            return h;
+        }
+        default:
+            return hashValue(v);
+    }
+}
+
 std::string formatFloat(double d) {
     if (std::isnan(d)) return "nan";
     if (std::isinf(d)) return d < 0 ? "-inf" : "inf";
@@ -137,6 +222,32 @@ void Table::addMissing(const Table& other) {
     for (uint32_t i = 0; i < other.capacity_; i++)
         if (other.entries_[i].key != nullptr && find(other.entries_[i].key) == nullptr)
             set(other.entries_[i].key, other.entries_[i].value);
+}
+
+size_t countCharacters(std::string_view s) {
+    size_t count = 0;
+    for (unsigned char c : s) count += (c & 0xC0) != 0x80;  // every byte that is not a continuation
+    return count;
+}
+
+void ObjString::index() const {
+    if (!starts_.empty()) return;
+    starts_.reserve(length + 1);
+    for (size_t i = 0; i < chars.size(); i++)
+        if ((static_cast<unsigned char>(chars[i]) & 0xC0) != 0x80) starts_.push_back(static_cast<uint32_t>(i));
+    starts_.push_back(static_cast<uint32_t>(chars.size()));
+}
+
+size_t ObjString::byteAt(size_t at) const {
+    if (isAscii()) return at;
+    index();
+    return starts_[at < starts_.size() ? at : starts_.size() - 1];
+}
+
+size_t ObjString::charAt(size_t offset) const {
+    if (isAscii()) return offset;
+    index();
+    return static_cast<size_t>(std::lower_bound(starts_.begin(), starts_.end(), static_cast<uint32_t>(offset)) - starts_.begin());
 }
 
 // ---- ValueMap ----
