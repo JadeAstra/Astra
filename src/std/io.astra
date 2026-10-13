@@ -1,0 +1,377 @@
+// ---- Streams, processes and sockets ----
+// Reading and writing a piece at a time, programs started from this one, and connections
+// over the network. The names are Java's, which is what Kotlin code uses.
+//
+// Anything here that waits (a read, an accept, waitFor) is written as an ordinary call:
+//   - on a thread it blocks that thread, and the other threads go on;
+//   - in a flow on the main thread the flow is set aside meanwhile, and the event loop goes
+//     on, so a window stays live;
+//   - on the main thread outside a flow it blocks the main thread.
+// The work is done by the built-in __io (io.cpp).
+
+// Thrown when reading, writing, connecting or starting a program goes wrong.
+class IOException(message) : Error(message)
+
+// Something to read from: a file, what a process writes, a socket. Text is UTF-8.
+class InputStream {
+  private val handle
+
+  fun init(handle) {
+    this.handle = handle
+  }
+
+  // Up to `count` bytes as soon as there are any; null at the end.
+  fun read(count = 65536) => __io.read(handle, count)
+
+  // Everything up to the end, as bytes or as text.
+  fun readBytes() => __io.readAll(handle)
+  fun readAllBytes() => __io.readAll(handle)
+  fun readText() => __io.readAll(handle).decodeToString()
+
+  // The next line without its line end; null at the end.
+  fun readLine() => __io.readLine(handle)
+
+  // The lines that are left.
+  fun readLines() {
+    val lines = []
+    while (true) {
+      val line = __io.readLine(handle)
+      if (line == null) { break }
+      lines.add(line)
+    }
+    return lines
+  }
+
+  fun lines() => readLines()
+
+  fun forEachLine(action) {
+    while (true) {
+      val line = __io.readLine(handle)
+      if (line == null) { break }
+      action(line)
+    }
+  }
+
+  // Runs the block on the lines and closes the stream afterwards.
+  fun useLines(block) {
+    try {
+      return block(readLines())
+    } finally {
+      close()
+    }
+  }
+
+  fun close() {
+    __io.close(handle)
+  }
+
+  get isOpen() => __io.isOpen(handle)
+
+  // Runs the block on this stream and closes it afterwards, whatever happens.
+  fun use(block) {
+    try {
+      return block(this)
+    } finally {
+      close()
+    }
+  }
+
+  // Kotlin wraps a stream to read text from it; here the stream reads text itself.
+  fun bufferedReader(charset = null) => this
+  fun reader(charset = null) => this
+  fun buffered() => this
+}
+
+// Something to write to: a file, what a process reads, a socket. A write returns when the
+// system has taken all of it, so flush() has nothing left to do.
+class OutputStream {
+  private val handle
+
+  fun init(handle) {
+    this.handle = handle
+  }
+
+  // Text, or bytes. Anything else is written as print would show it.
+  fun write(data) {
+    __io.write(handle, data)
+  }
+
+  fun print(value) {
+    __io.write(handle, str(value))
+  }
+
+  fun println(value = "") {
+    __io.write(handle, str(value) + "\n")
+  }
+
+  fun newLine() {
+    __io.write(handle, "\n")
+  }
+
+  fun append(value) {
+    __io.write(handle, str(value))
+    return this
+  }
+
+  fun flush() {
+  }
+
+  fun close() {
+    __io.close(handle)
+  }
+
+  get isOpen() => __io.isOpen(handle)
+
+  fun use(block) {
+    try {
+      return block(this)
+    } finally {
+      close()
+    }
+  }
+
+  fun bufferedWriter(charset = null) => this
+  fun writer(charset = null) => this
+  fun printWriter(charset = null) => this
+  fun buffered() => this
+}
+
+// ---- Processes ----
+
+// A program started from this one.
+//
+//   val process = ProcessBuilder("git", "status").directory(folder).start()
+//   for line in process.inputStream.readLines() { print(line) }
+//   print("exit code", process.waitFor())
+//
+// inputStream is what the program writes, errorStream what it writes as errors, and
+// outputStream what it reads. Each is null when it was sent somewhere other than a pipe.
+class Process {
+  private val handle
+  val outputStream
+  val inputStream
+  val errorStream
+
+  fun init(handles) {
+    this.handle = handles[0]
+    this.outputStream = handles[1] == null ? null : OutputStream(handles[1])
+    this.inputStream = handles[2] == null ? null : InputStream(handles[2])
+    this.errorStream = handles[3] == null ? null : InputStream(handles[3])
+  }
+
+  // Waits for the program to end and gives its exit code. With a time limit it gives true
+  // if the program ended in that time and false if it is still running.
+  fun waitFor(timeout = null, unit = null) {
+    if (timeout == null) { return __io.processWait(handle) }
+    return __io.processWait(handle, TimeUnit.toMillis(timeout, unit)) != null
+  }
+
+  // The exit code of a program that has ended.
+  fun exitValue() {
+    val code = __io.processWait(handle, 0)
+    if (code == null) { throw Error("the process has not ended yet") }
+    return code
+  }
+
+  get isAlive() => __io.processAlive(handle)
+  fun pid() => __io.processId(handle)
+
+  // Ends the program now.
+  fun destroy() {
+    __io.processKill(handle)
+  }
+
+  fun destroyForcibly() {
+    __io.processKill(handle)
+    return this
+  }
+
+  // -- This program --
+
+  // What started this program: the path of its executable and, when it is a script run by
+  // astra, the script. ProcessBuilder(Process.currentCommand() + ["--second"]) starts it again.
+  static fun currentCommand() => __io.selfCommand()
+  static fun currentPid() => __io.currentPid()
+}
+
+// Says how a program is to be started, then starts it.
+class ProcessBuilder {
+  // Where a stream of the new program goes, for redirectInput, redirectOutput and redirectError.
+  static {
+    val pipe = "pipe"           // this program reads or writes it (the default)
+    val inherit = "inherit"     // the same place as this program's own
+    val discard = "discard"     // nowhere
+  }
+
+  private var parts
+  private var folder = null
+  private var input = "pipe"
+  private var output = "pipe"
+  private var error = "pipe"
+  private val variables = {:}
+
+  // ProcessBuilder("git", "status") or ProcessBuilder(["git", "status"]).
+  fun init(vararg command) {
+    this.parts = command.size == 1 and command[0] is list ? command[0].toList() : command
+  }
+
+  fun command() => parts
+
+  // The folder the program starts in; this program's own if none is given.
+  fun directory(folder) {
+    this.folder = folder is File ? folder.path : folder
+    return this
+  }
+
+  // Changes to the environment the program gets, which is otherwise this program's: a map
+  // to put names and values in. A value of null takes the name out.
+  fun environment() => variables
+
+  // Sends what the program writes as errors to the same place as its ordinary output.
+  fun redirectErrorStream(merge = true) {
+    error = merge ? "merge" : "pipe"
+    return this
+  }
+
+  // Each takes ProcessBuilder.pipe, .inherit or .discard, or a File to read from or write to.
+  fun redirectInput(source) {
+    input = source is File ? "<" + source.path : source
+    return this
+  }
+
+  fun redirectOutput(target) {
+    output = target is File ? ">" + target.path : target
+    return this
+  }
+
+  fun redirectError(target) {
+    error = target is File ? ">" + target.path : target
+    return this
+  }
+
+  // All three streams go where this program's own go.
+  fun inheritIO() {
+    input = "inherit"
+    output = "inherit"
+    error = "inherit"
+    return this
+  }
+
+  fun start() {
+    if (parts.isEmpty()) { throw Error("ProcessBuilder has no program to start") }
+    return Process(__io.spawn(parts, folder, input, output, error, variables))
+  }
+}
+
+// ---- Sockets ----
+
+// One end of a TCP connection.
+//
+//   val socket = Socket("example.org", 80)
+//   socket.outputStream.write("GET / HTTP/1.0\r\n\r\n")
+//   print(socket.inputStream.readLine())
+//   socket.close()
+class Socket {
+  private var handle = null
+  private var input = null
+  private var output = null
+  private var readLimit = 0
+
+  // Socket(host, port) connects at once; Socket() waits for connect().
+  fun init(host = null, port = null) {
+    if (host != null) { connect(host, port) }
+  }
+
+  // With a time limit in milliseconds, gives up when it runs out.
+  fun connect(host, port, timeout = null) {
+    if (handle != null) { throw IOException("the socket is already connected") }
+    adopt(__io.connect(host, port, timeout))
+    return this
+  }
+
+  // Takes over a connection the system has already made.
+  fun adopt(connection) {
+    handle = connection
+    input = InputStream(connection)
+    output = OutputStream(connection)
+    if (readLimit > 0) { __io.socketTimeout(handle, readLimit) }
+    return this
+  }
+
+  private fun connected() {
+    if (handle == null) { throw IOException("the socket is not connected") }
+    return handle
+  }
+
+  get inputStream() { connected(); return input }
+  get outputStream() { connected(); return output }
+  fun getInputStream() => inputStream
+  fun getOutputStream() => outputStream
+
+  get isConnected() => handle != null
+  get isClosed() => handle != null and !__io.isOpen(handle)
+  get localPort() => __io.socketInfo(connected())[0]
+  get remoteAddress() => __io.socketInfo(connected())[1]
+  get port() => __io.socketInfo(connected())[2]
+
+  // How long a read waits before it fails, in milliseconds; 0 for as long as it takes.
+  get soTimeout() => readLimit
+  set soTimeout(millis) {
+    readLimit = millis
+    if (handle != null) { __io.socketTimeout(handle, millis) }
+  }
+
+  // Says that nothing more will be written: the other side reads the end.
+  fun shutdownOutput() {
+    __io.shutdownOutput(connected())
+  }
+
+  fun close() {
+    if (handle != null) { __io.close(handle) }
+  }
+
+  fun use(block) {
+    try {
+      return block(this)
+    } finally {
+      close()
+    }
+  }
+}
+
+// A socket that waits for connections to this machine.
+//
+//   val server = ServerSocket(8080)
+//   while (true) {
+//     val client = server.accept()          // a Socket
+//     thread { serve(client) }
+//   }
+//
+// Port 0 lets the system pick a free one (see localPort). With no address it takes
+// connections from anywhere; "127.0.0.1" keeps it to programs on this machine.
+class ServerSocket {
+  private val handle
+
+  fun init(port = 0, backlog = 50, bindAddress = null) {
+    this.handle = __io.listen(port, bindAddress, backlog)
+  }
+
+  get localPort() => __io.socketInfo(handle)[0]
+  get isClosed() => !__io.isOpen(handle)
+
+  // Waits for a connection and gives it.
+  fun accept() => Socket().adopt(__io.accept(handle))
+
+  // Stops listening. A thread waiting in accept() gets an IOException.
+  fun close() {
+    __io.close(handle)
+  }
+
+  fun use(block) {
+    try {
+      return block(this)
+    } finally {
+      close()
+    }
+  }
+}

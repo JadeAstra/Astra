@@ -48,6 +48,7 @@ private:
 
     void endStatement();
     void skipSemicolons();
+    void skipAnnotations();
 
     StmtPtr declaration();
     TypeAnnotation optionalType();

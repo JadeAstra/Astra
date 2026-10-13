@@ -1,0 +1,29 @@
+// `@Volatile` in front of a variable is accepted and changes nothing: one thread runs Astra
+// code at a time, so a variable is always seen whole by the others. `suspend` in front of a
+// function is accepted in the same way.
+
+@Volatile var busy = false
+@Volatile private var progress : float = 0.0
+
+class Job(@Volatile var name : string) {
+  @Volatile private var done = false
+  @Volatile var note : string = ""
+
+  suspend fun finish() { done = true }
+  private suspend fun helper() => 1
+  fun isDone() => done
+}
+
+val job = Job("render")
+val worker = thread {
+  busy = true
+  progress = 0.5
+  job.finish()
+  job.note = "from the thread"
+}
+worker.join()
+print(busy, progress, job.isDone(), job.note, job.name)      // expect: true 0.5 true from the thread render
+
+suspend fun twice(x) => x * 2
+val typed : suspend (int) -> int = { it + 1 }
+print(twice(4), typed(4))                                    // expect: 8 5

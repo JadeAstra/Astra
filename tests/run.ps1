@@ -4,6 +4,7 @@
 #   // expect: <line>                  the next line of standard output
 #   // expect runtime error: <text>    the program fails (exit code 70) and reports <text>
 #   // expect compile error: <text>    compilation fails (exit code 65) and reports <text>
+#   // expect error output: <text>     the program finishes normally, having reported <text>
 #
 # One more check at the end covers the --icon option of `astra build`.
 
@@ -89,7 +90,10 @@ foreach ($test in Get-ChildItem (Join-Path $PSScriptRoot '*.astra') | Sort-Objec
         $results['script'] = Compare-Run (Invoke-Astra @($test.FullName)) @() $compileError 65
         $results['compiled'] = Compare-Run (Invoke-Astra @('build', $test.FullName, '-o', $bytecode)) @() $compileError 65
     } else {
+        # `// expect error output: <text>`: the program goes on to its end, having reported <text>
+        # (an error that ended one of its threads, say).
         $errorText = $runtimeError
+        if (-not $errorText) { $errorText = Get-Marker $test.FullName '// expect error output: (.*)$' }
         $exitCode = if ($runtimeError) { 70 } else { 0 }
         $results['script'] = Compare-Run (Invoke-Astra @($test.FullName)) $expected $errorText $exitCode
 

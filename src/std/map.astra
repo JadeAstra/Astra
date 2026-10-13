@@ -27,6 +27,16 @@ fun map.putAll(from) {
 fun map?.orEmpty() => this == null ? {:} : this
 fun map.ifEmpty(defaultValue) => this.size == 0 ? defaultValue() : this
 
+// forEach { entry -> }, forEach { (key, value) -> } or forEach { key, value -> }: the function
+// says which it wants by how many parameters it has.
+fun map.forEach(action) {
+  if (__flow.arity(action) == 2) {
+    for entry in this.entries { action(entry.key, entry.value) }
+  } else {
+    for entry in this.entries { action(entry) }
+  }
+}
+
 // -- Asking about the entries --
 
 fun map.any(predicate = null) {

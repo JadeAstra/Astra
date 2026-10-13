@@ -1,0 +1,104 @@
+// Workers: a second copy of the runtime on a thread and core of its own, running a script of
+// its own (tests/workers/echo.astra). The two share nothing and exchange copied messages.
+
+// What a worker sends arrives on the event loop, whenever it comes. These make the test read
+// top to bottom: next(worker) is the worker's next message, waited for if it is not there yet.
+val arrived = {:}          // worker -> the messages that have come and not been looked at
+val awaited = {:}          // worker -> the continuation of a flow that is waiting for one
+
+fun listenTo(worker) {
+  arrived[worker] = Deque()
+  worker.onMessage = { message ->
+    val waiting = awaited.remove(worker)
+    if (waiting == null) { arrived[worker].addLast(message) } else { waiting.resume(message) }
+  }
+  return worker
+}
+
+suspend fun next(worker) {
+  if (arrived[worker].isNotEmpty()) { return arrived[worker].removeFirst() }
+  return suspendCoroutine { c -> awaited[worker] = c }
+}
+
+suspend fun failureOf(worker) => suspendCoroutine { c -> worker.onError = { text -> c.resume(text) } }
+suspend fun endOf(worker) {
+  while (worker.isAlive) { delay(5) }
+}
+
+print(Worker.parent)                                         // expect: null
+
+startCoroutine {
+  val echo = listenTo(Worker("workers/echo.astra"))
+  print(echo.path, echo.isAlive, next(echo))                 // expect: workers/echo.astra true ready, in a worker: true
+  // A daemon worker does not keep the program alive. This one is left running to the end.
+  val idle = listenTo(Worker("workers/echo.astra", isDaemon = true))
+  print(next(idle))                                          // expect: ready, in a worker: true
+
+  // Every kind of value a message can hold comes back as it was sent.
+  for value in [42, 2.5, "naïve", true, null, bytes([1, 255]), [1, [2, "three"]], {"k": {"deep": [null]}, 7: 8}] {
+    echo.post(value)
+    print(next(echo))
+  }
+  // expect: ["int", 42]
+  // expect: ["float", 2.5]
+  // expect: ["string", "naïve"]
+  // expect: ["bool", true]
+  // expect: ["null", null]
+  // expect: ["bytes", bytes[1, 255]]
+  // expect: ["list", [1, [2, "three"]]]
+  // expect: ["map", {"k": {"deep": [null]}, 7: 8}]
+
+  // A message is a copy: what the worker does to it does not reach the original.
+  val original = ["keep", 1]
+  echo.post(original)
+  print(next(echo), original)                                // expect: 1 ["keep", 1]
+  original.add(2)
+  echo.post(original)
+  print(next(echo), original)                                // expect: 2 ["keep", 1, 2]
+
+  // What cannot be copied is refused where it is sent.
+  class Point(val x, val y)
+  try { echo.post(Point(1, 2)) } catch (e) { print(e.message) }
+  // expect: a message to or from a worker can hold numbers, strings, booleans, null, bytes, and lists and maps of those, not a value of type Point: the two share no objects
+  try { echo.post([{ 1 }]) } catch (e) { print(e.message.endsWith("not a value of type function: the two share no objects")) }   // expect: true
+
+  // A worker has an event loop, threads and flows of its own.
+  echo.post("inside")
+  print(next(echo))                                          // expect: a flow and a thread inside the worker: 42, on its loop: true
+
+  // close() in the worker ends it once it has nothing left to do.
+  echo.post("close")
+  print(next(echo))                                          // expect: closing after 12 messages
+  endOf(echo)
+  print(echo.isAlive, echo.post("too late"))                 // expect: false false
+
+  // Several at once: each has a core to itself, so four take about as long as one.
+  val pool = (1..4).map { listenTo(Worker("workers/echo.astra")) }
+  pool.forEach { next(it) }
+  pool.forEach { it.post({"primes": 20000}) }
+  print(pool.map { next(it) })                               // expect: [2262, 2262, 2262, 2262]
+
+  // An error that nothing catches ends the worker and is told to the program.
+  pool[0].post("fail")
+  print(failureOf(pool[0]).lines().first())                  // expect: Error: the worker was asked to fail
+  endOf(pool[0])
+  print(pool[0].isAlive, pool[1].isAlive)                    // expect: false true
+
+  // A worker that will not stop is stopped.
+  pool[1].post("spin")
+  print(next(pool[1]))                                       // expect: spinning
+  pool[1].terminate()
+  endOf(pool[1])
+  print(pool[1].isAlive)                                     // expect: false
+
+  // The script has to be named in the call itself, so that it is built into the program.
+  val name = "workers/echo.astra"
+  try { Worker(name) } catch (e) { print(e.message) }
+  // expect: a worker's script is named by a string written in the call itself, as in Worker("physics.astra"), so that the script is built into the program
+
+  pool[2].post("close")
+  pool[3].terminate()
+  endOf(pool[2])
+  endOf(pool[3])
+  print("done; the daemon worker is still there:", idle.isAlive)   // expect: done; the daemon worker is still there: true
+}

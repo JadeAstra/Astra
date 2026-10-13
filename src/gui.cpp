@@ -717,8 +717,26 @@ void registerNatives(VM& vm) {
     def("run", 0, 0, [](VM& vm, int, Value*) -> Value {
         initialize(vm);
         vm.output->flush();
+        // A message that does nothing, to wake this loop when the runtime's has work.
+        static DWORD loopThread = 0;
+        loopThread = GetCurrentThreadId();
+        vm.onLoopWake = [] { PostThreadMessageW(loopThread, WM_NULL, 0, 0); };
         MSG message;
         while (g.openWindows > 0 && !g.hasThrow && !g.hasExit) {
+            // The runtime's own loop runs inside this one: what threads and workers have posted,
+            // and the timers of EventLoop.
+            vm.runEventLoop(false);
+            if (g.openWindows == 0) break;
+            if (!PeekMessageW(&message, nullptr, 0, 0, PM_NOREMOVE)) {
+                // Nothing to handle: the program's other threads run while this one waits, for
+                // a message or until the runtime's loop has something to do.
+                const int64_t due = vm.millisUntilLoopWork();
+                if (due == 0) continue;
+                LockReleased released(vm);
+                MsgWaitForMultipleObjectsEx(0, nullptr, due < 0 ? INFINITE : static_cast<DWORD>(std::min<int64_t>(due, 0x7FFFFFFF)), QS_ALLINPUT,
+                                            MWMO_INPUTAVAILABLE);
+                continue;
+            }
             if (GetMessageW(&message, nullptr, 0, 0) <= 0) break;
             // Tab, Enter and Escape get their usual meaning inside our windows.
             HWND root = GetAncestor(message.hwnd, GA_ROOT);

@@ -14,6 +14,7 @@ struct FunctionProto;
 
 enum class ObjType : uint8_t {
     String, List, Map, Range, Closure, Upvalue, Native, Class, Instance, BoundMethod, BoundNative, Iterator, Bytes,
+    Fiber,  // a flow: a function that can set itself aside (ObjFiber, in vm.h)
 };
 
 // Header shared by every garbage-collected object.
@@ -260,6 +261,8 @@ struct ObjUpvalue final : Obj {
     Value* location;
     Value closed;
     ObjUpvalue* nextOpen = nullptr;
+    // While it is open and points into the stack of a flow: that flow, which has to outlive it.
+    Obj* owner = nullptr;
     explicit ObjUpvalue(Value* slot) : Obj(ObjType::Upvalue), location(slot) {}
 };
 

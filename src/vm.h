@@ -1,8 +1,15 @@
 #pragma once
 
+#include <atomic>
+#include <chrono>
+#include <condition_variable>
 #include <cstddef>
 #include <cstdint>
+#include <deque>
+#include <functional>
 #include <iosfwd>
+#include <memory>
+#include <mutex>
 #include <random>
 #include <string>
 #include <string_view>
@@ -33,6 +40,108 @@ struct CallFrame {
     ObjClosure* closure;
     const uint8_t* ip;
     Value* base;  // slot 0: the receiver in methods, the callee itself otherwise
+    // The call's result is not wanted: what was under it on the stack is the result instead.
+    // This is how `apply` and `also` give back the value they were called on.
+    bool dropResult;
+};
+
+// A catch block that is waiting for an error.
+struct Handler {
+    int frameIndex;
+    Value* stackTop;
+    const uint8_t* ip;
+};
+
+struct ObjFiber;
+
+// What belongs to one line of execution: its value stack, the calls in progress and their
+// catch blocks. Every thread has one, and so has every flow. The VM works on the one that is
+// running through members of its own (sp_, frames_ and so on); the others keep their state
+// here until it is their turn.
+struct Context {
+    Value* stack = nullptr;
+    Value* stackEnd = nullptr;
+    Value* sp = nullptr;
+    CallFrame* frames = nullptr;
+    int frameCount = 0;
+    int maxFrames = 0;
+    std::vector<Handler> handlers;
+    ObjUpvalue* openUpvalues = nullptr;
+    int nativeDepth = 0;
+    Value* nativeBase = nullptr;
+    Context* parent = nullptr;  // the one waiting for this one to finish or be set aside
+    ObjFiber* fiber = nullptr;  // the flow this is the stack of; null for a thread's own
+
+    Context(size_t stackSize, int frameLimit);
+    ~Context();
+    Context(const Context&) = delete;
+    Context& operator=(const Context&) = delete;
+    void release();  // gives the memory back; the context is finished with
+};
+
+// A flow: a function running on a stack of its own, so that it can be set aside in the
+// middle of a call and taken up again later (Kotlin's coroutine). See threads.cpp.
+enum class FiberState : uint8_t { Fresh, Running, Suspended, Done };
+
+struct ObjFiber final : Obj {
+    static constexpr size_t kStackSize = 1 << 16;
+    static constexpr int kMaxFrames = 4000;
+
+    Context context;
+    FiberState state = FiberState::Fresh;
+    Value entry;                  // the function it runs
+    Value* pendingSlot = nullptr; // where the call it is waiting in will leave its result
+    int64_t waitToken = 0;        // the wait it is at, or was last at
+    int64_t resumedToken = -1;    // the last wait an answer has been given for
+    int64_t waitingAt = 0;        // the wait it is set aside at; 0 if it is set aside for something else
+    bool hasEarly = false;        // an answer came before the flow got as far as waiting
+    bool earlyOk = false;
+    Value early;
+
+    explicit ObjFiber(Value function) : Obj(ObjType::Fiber), context(kStackSize, kMaxFrames), entry(function) {
+        context.fiber = this;
+    }
+};
+
+inline ObjFiber* asFiber(Value v) { return static_cast<ObjFiber*>(v.as.obj); }
+
+// Thrown by a built-in function to set the running flow aside. It passes through the
+// interpreter loop untouched, leaving the flow's calls as they are, to where the flow was
+// started or last taken up.
+struct FiberSuspend {};
+
+// Thrown at a safe point in a worker that has been told to stop. Like FiberSuspend it is not
+// an Astra error: no catch block sees it, and it ends whatever the worker was doing.
+struct WorkerStop {};
+
+struct WorkerLink;  // worker.cpp: what a worker and the program that started it share
+
+// One operating-system thread that runs Astra code.
+struct ThreadState {
+    Context base;
+    Context* current;  // the innermost context running on this thread
+    int nesting = 0;   // how many flows are running inside one another on it
+
+    // The thread's temporaries, while another thread has the lock (see VM::tempRoots).
+    std::vector<Value> tempRoots;
+    std::vector<const std::vector<Value>*> tempVectors;
+
+    int64_t id = 0;
+    std::string name;
+    bool daemon = false;
+    bool finished = false;
+    Value function;  // what it runs
+    Value self;      // the Thread object a program holds, if one was made for it
+    std::atomic<bool> interrupted{false};
+    std::vector<ThreadState*> joiners;
+
+    // park() and unpark(): how a thread waits for something another thread will do.
+    std::mutex parkMutex;
+    std::condition_variable parkCv;
+    bool parkToken = false;
+    bool notified = false;  // set by notify() for a thread in wait()
+
+    ThreadState(size_t stackSize, int frameLimit) : base(stackSize, frameLimit), current(&base) {}
 };
 
 // Interned names the VM looks up by pointer.
@@ -89,8 +198,11 @@ enum class BuiltinType { String, List, Map, Range, Bytes, Number, Count_ };
 
 class VM {
 public:
-    VM();
+    // `worker`: this VM is a worker's, running beside the one that started it. It has no
+    // windows: what belongs to the one user interface stays with the main program.
+    explicit VM(bool worker = false);
     ~VM();
+    bool isWorker() const { return isWorker_; }
     VM(const VM&) = delete;
     VM& operator=(const VM&) = delete;
 
@@ -138,6 +250,8 @@ public:
     // ---- Helpers for native code ----
 
     AstraThrow runtimeError(const std::string& message);
+    // An error of a class the standard library declares (IOException, say), by its name.
+    AstraThrow errorOf(const char* className, const std::string& message);
     std::string stringify(Value v);  // as print() shows it
     std::string repr(Value v);       // with strings quoted
     std::string typeName(Value v) const;
@@ -161,34 +275,194 @@ public:
     std::mt19937_64 rng;
     Names names{};
 
+    // The temporaries of the thread that is running (see TempRoot). Each thread has its own;
+    // they change places with these when the lock changes hands.
     std::vector<Value> tempRoots;
 
     // Values that native code needs kept alive for the rest of the program.
     std::vector<Value> pinned;
     std::vector<const std::vector<Value>*> tempVectors;
 
-private:
-    struct Handler {
-        int frameIndex;
-        Value* stackTop;
-        const uint8_t* ip;
-    };
+    // ---- Threads, the event loop and flows (threads.cpp) ----
+    //
+    // Threads share one heap, and one of them runs Astra code at a time: whichever holds the
+    // lock. A thread gives the lock up at a safe point when another has waited long enough,
+    // and around anything that blocks.
 
+    // Starts a thread that calls `function`. Returns its id.
+    int64_t startThread(Value function, Value self, const std::string& name, bool daemon);
+    ThreadState* currentThread() const { return thread_; }
+    ThreadState* findThread(int64_t id) const;
+    bool onLoopThread() const { return thread_ == &mainThread_; }
+    // Waits for a thread to finish; false if `timeoutMs` (negative: no limit) ran out first.
+    bool joinThread(int64_t id, int64_t timeoutMs);
+    void interruptThread(int64_t id);
+
+    // Gives up the lock, with this thread's state put away, and takes it back. Between the
+    // two the thread must not touch the VM or any object.
+    void releaseLock();
+    void acquireLock(ThreadState* thread);
+    // Blocks the calling thread until unpark(), an interrupt or the time limit (negative:
+    // none), with the lock released meanwhile. Wake-ups can come early: callers re-check.
+    void park(int64_t timeoutMs);
+    void unpark(ThreadState* thread);
+
+    // An object used as a lock (`synchronized`), with wait and notify as Java has them.
+    void monitorEnter(Value lock);
+    void monitorExit(Value lock);
+    bool monitorTryEnter(Value lock);
+    int monitorWait(Value lock, int64_t timeoutMs);  // 0 notified, 1 timed out, 2 interrupted
+    void monitorNotify(Value lock, bool all);
+    bool monitorHeld(Value lock) const;
+
+    // The event loop: tasks posted from any thread and timers, run on the main thread.
+    void post(Value task);
+    int64_t addTimer(Value task, int64_t delayMs, int64_t periodMs);
+    void cancelTimer(int64_t id);
+    // Something to do on the loop thread, handed over by a thread that does not hold the
+    // lock (a worker finishing a read, say). `pendingJobs` counts work that will post one.
+    void postNative(std::function<void(VM&)> work);
+    void jobStarted() { pendingJobs_++; }
+    void jobFinished() { pendingJobs_--; }
+    // Runs what is ready. With `wait`, goes on until there is nothing left to wait for: no
+    // task, no timer, no work in progress and no thread that is not a daemon.
+    void runEventLoop(bool wait);
+    // True if threads are still running, in which case the process has to end without
+    // taking the VM apart under them.
+    bool threadsAlive() const { return threads_.size() > 1 || pendingJobs_ > 0 || liveWorkers_ > 0; }
+    // How long until the next timer is due, in milliseconds: 0 if something is ready now,
+    // -1 if there is nothing to wait for. For a loop of another kind (a window's) that
+    // has to wake up in time to call runEventLoop(false).
+    int64_t millisUntilLoopWork();
+    // Called, from whatever thread, when the loop has been given something to do.
+    std::atomic<void (*)()> onLoopWake{nullptr};
+
+    // ---- Workers (worker.cpp) ----
+    // A worker is a second VM on a thread of its own, with a heap and a lock of its own, so
+    // it runs at the same time as this one, on another core. The two share nothing and
+    // exchange messages, which are copied.
+
+    // The program as bytes, for a worker to load its own copy from. Set by whoever loaded it.
+    std::function<std::string()> programImage;
+    // In a worker: the link to the program that started it.
+    std::shared_ptr<WorkerLink> workerLink;
+    // In a worker: the object its messages are delivered to (Worker.parent).
+    Value workerSelf;
+    // The Worker objects of the workers this VM has started, by id.
+    std::unordered_map<int64_t, Value> workerObjects;
+    std::unordered_map<int64_t, std::shared_ptr<WorkerLink>> workerLinks;
+    int64_t nextWorkerId = 1;
+    void workerStarted() { liveWorkers_++; }
+    void workerEnded() { liveWorkers_--; }
+    // Asks this VM, from another thread, to stop what it is doing: every one of its threads
+    // gets a WorkerStop at its next safe point.
+    void requestStop();
+
+    // For a built-in function that ends by calling an Astra function: sets that call going
+    // in its own place, so that the function runs as part of the program rather than inside
+    // the built-in (where it could not be set aside). The built-in returns what this returns.
+    // `receiver` becomes the object the function runs on.
+    Value tailCallOn(Value receiver, Value function);
+
+    // Flows.
+    ObjFiber* currentFiber() const { return context_->fiber; }
+    // Starts or takes up a flow, giving it `value` as the result of what it was waiting for
+    // (or, with `ok` false, raising it there as an error). Returns when the flow finishes or
+    // is set aside again; an error the flow does not catch comes out of this call.
+    void runFiber(ObjFiber* fiber, bool ok, Value value);
+    // Whether a built-in function called now could set the running flow aside.
+    bool canSuspend() const { return context_->fiber != nullptr && nativeDepth_ == 0 && nativeBase_ != nullptr; }
+    // Sets the running flow aside: does not return. The flow goes on when runFiber is called.
+    [[noreturn]] void suspendFiber();
+
+    // Runs `work`, which blocks and must not touch the VM, and gives what `finish` makes of
+    // it. In a flow on the loop thread the flow is set aside while a worker thread does the
+    // work, and the loop stays live; anywhere else the calling thread waits, with the lock
+    // released. A built-in function has to return what this returns straight away.
+    Value blocking(std::function<void()> work, std::function<Value(VM&)> finish);
+
+    // Called for an error that nothing caught on a thread other than the main one.
+    std::function<void(VM&, AstraThrow&, const std::string& threadName)> onThreadError;
+    // Called when exit() is used on such a thread.
+    std::function<void(int code)> onThreadExit;
+
+private:
     static constexpr size_t kStackSize = 1 << 20;
     static constexpr int kMaxFrames = 20000;
+    static constexpr size_t kThreadStackSize = 1 << 18;
+    static constexpr int kThreadMaxFrames = 8000;
     static constexpr int kMaxNativeDepth = 200;
+    static constexpr int kMaxFlowNesting = 60;
     static constexpr size_t kMinHeap = 4 * 1024 * 1024;
 
-    // Execution state
+    // Execution state: that of the context that is running (see Context).
     Value* stack_;
     Value* stackEnd_;
     Value* sp_;
-    std::vector<CallFrame> frames_;
+    CallFrame* frames_;
     int frameCount_ = 0;
+    int maxFrames_ = 0;
     std::vector<Handler> handlers_;
     ObjUpvalue* openUpvalues_ = nullptr;
     int nativeDepth_ = 0;
+    Value* nativeBase_ = nullptr;  // under the arguments of the built-in function being called
+    Context* context_ = nullptr;
     std::vector<Value> namedScratch_;  // see callNamed
+
+    void saveContext();
+    void loadContext(Context* context);
+    void markContext(const Context& context);
+
+    // Threads
+    ThreadState mainThread_{kStackSize, kMaxFrames};
+    ThreadState* thread_ = &mainThread_;  // the one holding the lock
+    std::vector<ThreadState*> threads_;   // all that are running, the main one first
+    int64_t nextThreadId_ = 1;
+    std::mutex lockMutex_;
+    std::condition_variable lockFree_;
+    std::condition_variable lockTaken_;
+    bool lockHeld_ = true;
+    uint64_t lockSwitches_ = 0;
+    std::atomic<int> lockWaiters_{0};
+    std::atomic<bool> attention_{false};  // a safe point has something to do besides collecting
+    bool threadStress_ = false;           // ASTRA_THREAD_STRESS: change threads at every safe point
+    void safePoint();
+    void yieldLock();
+    void threadMain(ThreadState* thread);
+
+    struct Monitor {
+        ThreadState* owner = nullptr;
+        int count = 0;
+        std::vector<ThreadState*> entering;
+        std::vector<ThreadState*> waiting;
+    };
+    std::unordered_map<const Obj*, Monitor> monitors_;
+    Monitor& heldMonitor(Value lock, const char* what);
+
+    // The event loop
+    struct Timer {
+        int64_t id;
+        std::chrono::steady_clock::time_point due;
+        int64_t periodMs;
+        Value task;
+    };
+    std::deque<Value> loopTasks_;
+    std::vector<Timer> timers_;
+    int64_t nextTimerId_ = 1;
+    int pendingJobs_ = 0;
+    std::mutex loopMutex_;
+    std::condition_variable loopCv_;
+    bool loopWake_ = false;
+    std::deque<std::function<void(VM&)>> nativeTasks_;
+    void wakeLoop();
+    std::vector<ObjFiber*> waitingFibers_;  // flows set aside until work in progress is done
+    bool isWorker_ = false;
+    int liveWorkers_ = 0;
+    std::atomic<bool> stopRequested_{false};
+
+    // Worker threads for work that blocks (see blocking()).
+    struct Workers;
+    std::shared_ptr<Workers> workers_;
 
     // Program state
     Program* program_ = nullptr;
@@ -236,7 +510,7 @@ private:
     bool callSpread(int named);
     bool invoke(ObjString* name, int argc, bool trailing = false);
     bool callNativeNamed(int positional, int named);
-    bool scopeFunction(ObjString* name, int argc);
+    int scopeFunction(ObjString* name, int argc);
     bool callNamed(int positional, int named);
     void invokeOperator(Value receiver, ObjString* name, int argc);
     Value callNative(const std::string& name, int minArgs, int maxArgs, int argc);
@@ -305,6 +579,20 @@ private:
     void sweep();
 };
 
+// For a built-in function that is about to block: gives up the lock for as long as this
+// object lives. Nothing of the VM, and no object, may be touched meanwhile.
+class LockReleased {
+public:
+    explicit LockReleased(VM& vm) : vm_(vm), thread_(vm.currentThread()) { vm_.releaseLock(); }
+    ~LockReleased() { vm_.acquireLock(thread_); }
+    LockReleased(const LockReleased&) = delete;
+    LockReleased& operator=(const LockReleased&) = delete;
+
+private:
+    VM& vm_;
+    ThreadState* thread_;
+};
+
 // Keeps a value alive while native code calls back into the VM.
 class TempRoot {
 public:
@@ -334,6 +622,11 @@ private:
 };
 
 void registerBuiltins(VM& vm);
+void registerThreads(VM& vm);  // threads.cpp: threads, locks, the event loop and flows
+void registerIo(VM& vm);       // io.cpp: streams, processes and sockets
+void registerWorkers(VM& vm);  // worker.cpp: isolated workers
+// What started this program (see __io.selfCommand): set by main before the program runs.
+void setSelfCommand(std::vector<std::string> command);
 
 // The native half of the GUI library (lib/gui.astra). Defined in gui.cpp.
 void registerGui(VM& vm);

@@ -2,9 +2,10 @@
 
 Status: agreed plan, every decision settled (section 8). Work proceeds one milestone at a
 time (section 7). M0, the two spikes, is done and accepted; what it found is in
-[m0-findings.md](m0-findings.md) and is folded in below. M1, the language, is done. M2, the
-standard library, is built; what was settled along the way is under "As built in M2" in 5.4.
-M3 is next.
+[m0-findings.md](m0-findings.md) and is folded in below. M1, the language, and M2, the
+standard library, are done. M3, threads and async I/O, is built; what was settled along the
+way is under "As built in M3" in 5.5 (and "As built in M2" in 5.4). M3.5, parallel
+sections, is next, and M4 after it.
 
 ## 1. Goal and ground rules
 
@@ -705,6 +706,47 @@ What is added, in dependency order:
    the first real use would be Snips' evaluator, which is self-contained, takes values and
    returns a value, and wants a hard kill for a script that never reaches a checkpoint.
 
+7. **Parallel sections** (added 2026-10-13; milestone M3.5). Several cores running Astra code
+   on the same objects at the same time, for the one shape of work where that is safe: many
+   items, each worked on by itself.
+
+   ```astra
+   balls.parallelStream().forEach { it.move(width, height, steps) }
+   val totals = orders.parallelStream().map { priceOf(it) }.toList()
+   ```
+
+   Threads take turns and workers copy; this does neither. The items are dealt out to the
+   cores, and for the length of the section the runtime holds each core to what the program
+   is promising:
+   - **A core owns the items it was dealt**, and whatever those items alone hold, and
+     whatever it creates. It may change those.
+   - **Everything else can be read and not changed**: the variables the lambda sees, other
+     objects, globals. A write to something the core does not own is an error that names
+     it, raised there. It is never a damaged list or a crash. So `{ it.move() }` runs on
+     every core, and `{ it.move(); moved.add(it) }` is refused the first time it runs.
+   - **A result comes back by being returned**: `map`, `filter`, `sumOf`, `count`, `any`,
+     `all`, `minOf`, `maxOf` put the cores' answers together on the calling thread.
+   - **Numbers in bulk are shared by slice.** `bytes`, and a buffer of numbers to be added
+     with it, can be dealt out in pieces that do not overlap, each owned by one core. That
+     is what filling the points of a picture for the graphics card needs, or painting a
+     picture band by band.
+   - Inside a section there is no waiting: no lock, no I/O, no setting a flow aside. Those
+     are errors there. The section itself is an ordinary call that returns when every core
+     has finished, with the first error if there was one.
+
+   What it takes underneath: the interpreter's working state, which exists once today and is
+   handed from thread to thread, becomes one per core; objects made in a section are kept on
+   the core's own list and joined to the rest at the end, and the collector waits for the
+   end; every instruction that writes to an object asks who owns it, which costs nothing
+   outside a section and one comparison inside; and each built-in function is marked as
+   safe to run on several cores or not, the rest being errors in a section.
+
+   What it is not for: work that is quick for each item and few in number is faster left
+   alone, since starting the cores has a cost. And it does not draw. Moving the 5000 balls
+   of the example is 0.6 ms of a 26 ms frame; the rest is the old library drawing circles
+   one call at a time, which no core can share. In Jade the graphics card draws them all in
+   one call, and what the cores are for is working out the numbers it is given.
+
 Rules for Jade, the same as JadeUI's:
 
 - The tree, layout, painting and events belong to the UI thread, the one running the loop.
@@ -718,6 +760,94 @@ Rules for Jade, the same as JadeUI's:
 
 Tested as the collector is: a stress setting that switches threads at every safe point, run
 over the whole suite.
+
+**As built in M3 (2026-10-13).** All six points: workers (point 6) were planned for M10 and
+were brought forward. What was settled while building it:
+
+- **Execution contexts.** A `Context` holds one line of execution: its value stack, its
+  calls and their catch blocks. Each thread has one and each flow has one. The interpreter
+  keeps working through members of the VM, as before, and a context's state is moved in and
+  out when it starts and stops running, so the instruction loop is no slower for it.
+- **The lock.** One thread runs Astra code at a time. A thread that has waited 5 ms asks the
+  one running to give way, which it does at its next safe point; a thread that blocks lets
+  go at once. `ASTRA_THREAD_STRESS=1` changes threads at every safe point. A list or a map is
+  never seen half changed, and the `Atomic...` classes need no lock of their own: a method
+  with no call in it runs in one piece.
+- **Flows have no thread and no stack of the machine's**: a flow is a context, and setting
+  it aside means leaving the instruction loop with its calls still in place. So a flow
+  cannot be set aside from inside a built-in function that has called back into the
+  program, as this plan foresaw. To leave few such places:
+  - every method of a list, map, string or range that takes a function is now written in
+    Astra, `map`, `filter`, `each`, `find`, `reduce`, `first { }` and `forEach` included;
+  - `apply`, `run`, `also`, `let` and `with` set the block going as a call of the program's
+    own instead of calling it from inside themselves;
+  - what is left is the comparison function of `sort`, a property's getter, `toString()`
+    when something is printed, `==` when a collection compares its items, `iterator()`, and
+    the initial values of fields. A flow that tries to wait there gets an error saying so.
+- **Kotlin's coroutine names**, and nothing above them: `startCoroutine` (as a method of a
+  function, and as a function taking the lambda), `suspendCoroutine`, `Continuation`,
+  `Result`, `EmptyCoroutineContext`, `runCatching`. Snips' `Flows.kt` ports line for line,
+  and is in the tests in that form. `suspend` is accepted in front of `fun` and in a function
+  type. Added on top: `delay(ms)` and `future.await()`.
+- **Where a flow goes on.** On whichever thread resumes it, there and then, as in Kotlin
+  without a dispatcher. What the runtime itself resumes (the end of a read, a `delay`, an
+  awaited future) it resumes on the main thread, from the event loop.
+- **One event loop**, the `EventLoop` object: `post`, `after`, `every`, `run`,
+  `isLoopThread`. It starts when the script ends. In M5 the window's messages are waited for
+  in the same place the loop waits now, so there is one loop and not two.
+- **Errors nothing catches.** In the script or in a task of the loop: the program ends, with
+  the report and exit code it had before. On another thread: that thread ends, with the
+  report, and the program goes on, as in Kotlin. In a flow: the error goes to whoever was
+  running it, unless it was started with a completion.
+- **One set of I/O functions** (`VM::blocking`): on a thread the call blocks with the lock
+  released; in a flow on the main thread a worker thread does the waiting and the flow is
+  set aside. `File`'s whole-file calls go the same way, and a file can now also be read and
+  written a piece at a time.
+- **Java's names for threads and I/O**, since that is what the apps are written in:
+  `Thread`, `synchronized`, `Executors`, `Future`, `CountDownLatch`, `AtomicInteger`,
+  `ProcessBuilder`, `Process`, `Socket`, `ServerSocket`, `InputStream`, `OutputStream`,
+  `IOException`, `InterruptedException`, `TimeoutException`. Where they differ:
+  - `Future` is also what Kotlin code calls `CompletableFuture` (it has `complete`);
+  - a stream reads and writes text itself, so `bufferedReader()` and `bufferedWriter()`
+    give the stream back;
+  - `wait`, `notify` and `notifyAll` are methods of `Lock`, not of every object, though any
+    object can be the lock of a `synchronized`;
+  - a time limit is a number and a `TimeUnit`, with its names in camelCase
+    (`TimeUnit.seconds`), and milliseconds when no unit is given;
+  - `LinkedBlockingQueue` is `BlockingQueue`; `ConcurrentHashMap` and the synchronized
+    collections are plain maps, lists and sets, which the lock already keeps whole.
+- **`@Volatile` is accepted** and means nothing. Any other annotation is an error, so that
+  one with a meaning (`@Synchronized`) is not passed over in silence.
+- **`return` inside `synchronized { }`** is `return@synchronized`, because it is a call and
+  not expanded in place as `let` is. If the apps turn out to return from it often, it can be
+  expanded in place too.
+- **For a program to talk to a copy of itself**, as Snips does for a second launch:
+  `Process.currentCommand()` is what started it. `flush()` sends on what has been printed,
+  which matters when another program is reading it.
+- **Workers** as point 6 describes them, with these particulars:
+  - the script is named by a string in the call (`Worker("physics.astra")`) and compiled
+    into the program there, as a module with names of its own, so that a built executable
+    carries its workers; the worker loads its own copy of the whole program and runs that
+    one module;
+  - in the worker, the program that started it is `Worker.parent` (`onMessage`, `post`,
+    `close`);
+  - `terminate()` stops the worker at its next safe point, not by killing its thread: the
+    two runtimes share the process's memory allocator, and a thread killed inside it would
+    take the program with it. A worker stuck inside one built-in call is not stopped until
+    the call returns;
+  - a worker is a daemon or not, like a thread; it has no windows;
+  - measured: four workers do four jobs in the time one takes, and a message of 25,000
+    numbers takes about 0.3 ms each way.
+- **The old `gui` library's `App.run()`** now waits with the lock released and runs this loop
+  inside its own, so threads, workers and `EventLoop` work in a program with a window. That
+  is the shape M5 gives Jade's loop.
+- **Not built:** fetching a URL (point 5 names it; the milestone does not, and none of the
+  three apps' background work in the table above needs it); the three I/O kinds are on
+  Windows only.
+- **What it cost:** `map` and `filter` now run Astra code instead of C++ and are slower for
+  it (over a million items, `map` takes 40 ms where it took 26, `filter` 39 where it took
+  31); a plain loop and everything else are as fast as before. An error inside the lambda
+  shows one more line in its trace, the library function's.
 
 ### 5.6 Not needed
 
@@ -882,7 +1012,7 @@ committed to.
 - **Shown:** something that runs, to try by hand, with a short account of what was built,
   what turned out differently from this plan, and what that means for the milestones after.
 - **Versioned:** the version of `astra` goes up with each milestone: M1 is 0.1.0, M2 is
-  0.2.0, and so on. `astra --version` then says which milestone a build is.
+  0.2.0, M3 is 0.3.0, and so on. `astra --version` then says which milestone a build is.
 - **Accepted, or not:** the next milestone starts on a go-ahead. If the result is not good
   enough it is reworked first; if it changes what should come next, the plan is revised
   before going on.
@@ -923,9 +1053,19 @@ the window loop is built on the runtime's loop rather than beside it. Ends with 
 program that runs a child process and reads its output without blocking while a second thread
 updates shared state, and a flow that asks two questions in turn through callbacks, all
 passing under thread-switch stress. Isolated workers (5.5, point 6) are
-not part of this milestone: the execution contexts are built so that a second VM can run
-beside the first, and workers themselves are scheduled with M10, where Snips is the first to
-want them.
+not part of this milestone as planned: the execution contexts are built so that a second VM
+can run beside the first, and workers themselves were scheduled with M10, where Snips is the
+first to want them. (They were built with M3 after all; see "As built in M3" in 5.5.)
+
+**M3.5. Parallel sections.** Section 5.5, point 7: `parallelStream()` on lists and ranges
+with `forEach`, `map`, `filter` and the reductions; ownership checked on every write;
+`bytes` dealt out in slices. In this order: one interpreter state per core; allocation and
+collection around a section; the ownership check; the built-in functions sorted into safe
+and not; the stream methods. Ends with the bounce example moving its balls with one line
+changed and nothing else; a heavier piece of work (each item taking milliseconds) shown to
+go faster by about the number of cores; a lambda that writes to a shared list getting the
+error; and the whole suite under the sanitizer and the stress settings, with a new setting
+that runs every `forEach`, `map` and `filter` of the standard library as a parallel section.
 
 **M4. Text engine.** Section 4, "The text engine". It needs no window: it reads font files
 and produces numbers and pictures, so it is built and tested on its own, with its output
@@ -1003,7 +1143,7 @@ font metrics will need new numbers: no other font engine measures text exactly a
 | D7 | `return` inside a lambda literal. | Kotlin's rule. In a lambda given to `let`, `also`, `apply`, `run` or `takeIf` a bare `return` leaves the enclosing function; in any other lambda literal it is a compile error; `return@label` leaves just the lambda (5.1). |
 | D8 | `{}` in an expression. | The empty lambda, as in Kotlin. The empty map is written `{:}`; map literals with entries are unchanged (5.3). |
 | D9 | `WindowSpec` and `Jade.windowOpener`. | `WindowSpec` is folded into `Window(...)`, the one way to make a window. `Jade.windowOpener` stays as the replaceable object that `show()` uses to realise a window, so tests can still put a fake in its place. `exitOnClose` defaults to false for a window with an owner (6.1). |
-| D10 | The thread model. | Both of two kinds. Threads share one heap, with one running Astra code at a time, so thread code ports as written. Isolated workers, each a separate VM exchanging copied messages, give real parallelism and a hard kill; they are added after threads (5.5). Fully parallel shared-heap threads are not planned. |
+| D10 | The thread model. | Both of two kinds. Threads share one heap, with one running Astra code at a time, so thread code ports as written. Isolated workers, each a separate VM exchanging copied messages, give real parallelism and a hard kill; they are added after threads (5.5). Threads that run fully in parallel on one heap are not planned; parallel sections (5.5, point 7) give several cores to work on separate items, with ownership checked, and that is as far as it goes (revised 2026-10-13). |
 | D11 | How code waits without blocking. | Kotlin's model: suspending functions, called like any other, running on fibers. No `async` or `await` keywords. One set of I/O functions that block on a background thread and suspend inside a flow (5.5). |
 | D12 | How far to commit. | One milestone at a time: build it, test it, and move to the next only when the result is accepted (section 7). |
 | D13 | Namespaces, and an app class with a Jade name. | One namespace per folder, as with Kotlin packages. A folder's own names win over imported ones, and a library never sees the names of the program that imports it (5.1). |

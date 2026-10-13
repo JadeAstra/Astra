@@ -1,0 +1,47 @@
+// A worker for tests/workers.astra: it answers what it is sent.
+var count = 0
+val seen = []          // its own: the program that started it has no way to reach this
+
+fun primesUpTo(limit) {
+  var found = 0
+  for n in 2..limit {
+    var prime = true
+    var d = 2
+    while (d * d <= n) {
+      if (n % d == 0) { prime = false; break }
+      d += 1
+    }
+    if (prime) { found += 1 }
+  }
+  return found
+}
+
+Worker.parent.onMessage = { message ->
+  count += 1
+  if (message == "close") {
+    Worker.parent.post("closing after $count messages")
+    Worker.parent.close()
+  } else if (message == "fail") {
+    throw Error("the worker was asked to fail")
+  } else if (message == "spin") {
+    Worker.parent.post("spinning")
+    while (true) { count += 1 }
+  } else if (message == "inside") {
+    // A worker has threads, an event loop and flows of its own.
+    startCoroutine {
+      delay(5)
+      val answer = Future.supplyAsync { 6 * 7 }.await()
+      Worker.parent.post("a flow and a thread inside the worker: $answer, on its loop: ${EventLoop.isLoopThread}")
+    }
+  } else if (message is map and message.containsKey("primes")) {
+    Worker.parent.post(primesUpTo(message["primes"]))
+  } else if (message is list and message.size > 0 and message[0] == "keep") {
+    seen.add(message)
+    message.add("changed in the worker")
+    Worker.parent.post(seen.size)
+  } else {
+    Worker.parent.post([type(message), message])
+  }
+}
+
+Worker.parent.post("ready, in a worker: ${Worker.parent != null}")

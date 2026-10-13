@@ -1,0 +1,9 @@
+// An error that nothing catches in a task of the event loop ends the program, as one in the
+// script itself does.
+EventLoop.post { print("first task") }
+EventLoop.after(5) { throw Error("the timer failed") }
+EventLoop.after(200) { print("never reached") }
+print("script end")
+// expect: script end
+// expect: first task
+// expect runtime error: Uncaught Error: the timer failed

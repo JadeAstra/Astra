@@ -1,0 +1,158 @@
+// Streams, processes and sockets. The program starts copies of itself to have something
+// known to talk to: with an argument it plays the part of the other program.
+
+if (args().contains("echo")) {
+  // Answers each line it reads, until it is told to stop.
+  print("ready")
+  while (true) {
+    val line = input()                // input() sends on what has been printed first
+    if (line == null or line == "quit") { break }
+    print("echo: " + line.uppercase())
+  }
+  exit(7)
+}
+if (args().contains("slow")) {
+  // Says something, then nothing for a while, then something more.
+  print("first")
+  flush()
+  Thread.sleep(150)
+  print("second")
+  exit(0)
+}
+
+// ---- File streams: a piece at a time ----
+val file = File("io-streams-test.txt")
+file.outputStream().use { out ->
+  out.println("one")
+  out.write("two\n")
+  out.write(bytes([116, 104, 114, 101, 101]))
+}
+val stream = file.inputStream()
+print(stream.readLine(), stream.read(2), stream.isOpen)      // expect: one bytes[116, 119] true
+print(stream.readText() == "o\nthree", stream.readLine(), stream.read())   // expect: true null null
+stream.close()
+print(stream.isOpen)                                         // expect: false
+try { stream.readLine() } catch (e : IOException) { print(e.message, e is Error) }   // expect: the stream is closed true
+file.outputStream(append = true).use { it.newLine(); it.append("four").append(4) }
+print(file.bufferedReader().use { it.readLines() }, file.inputStream().use { it.readBytes().size })   // expect: ["one", "two", "three", "four4"] 19
+val seen = []
+file.reader().use { it.forEachLine { line -> seen.add(line.length) } }
+print(seen, file.inputStream().useLines { it.size }, file.delete())   // expect: [3, 3, 5, 5] 4 true
+try { File("no-such-folder/x.txt").inputStream() } catch (e : IOException) { print(e.message.startsWith("cannot read file 'no-such-folder/x.txt'")) }   // expect: true
+try { File("no-such-file.txt").readText() } catch (e : IOException) { print(e.message) }   // expect: cannot read file 'no-such-file.txt'
+
+// ---- A process, read to its end ----
+val listing = ProcessBuilder("cmd", "/c", "echo out& echo err 1>&2").start()
+print(listing.inputStream.readLines(), listing.errorStream.readText().trim(), listing.waitFor(), listing.isAlive, listing.exitValue())   // expect: ["out"] err 0 false 0
+// Its error output can go the same way as its ordinary output, or nowhere.
+val merged = ProcessBuilder(["cmd", "/c", "echo out& echo err 1>&2"]).redirectErrorStream(true).start()
+print(merged.inputStream.readLines().map { it.trim() }, merged.errorStream)   // expect: ["out", "err"] null
+val quiet = ProcessBuilder("cmd", "/c", "echo out& echo err 1>&2").redirectError(ProcessBuilder.discard).redirectOutput(ProcessBuilder.discard).start()
+print(quiet.inputStream, quiet.errorStream, quiet.waitFor())   // expect: null null 0
+// The exit code, the folder it starts in, and its environment.
+print(ProcessBuilder("cmd", "/c", "exit 3").start().waitFor())   // expect: 3
+val folder = File("io streams folder")
+folder.mkdirs()
+val inFolder = ProcessBuilder("cmd", "/c", "cd").directory(folder).start()
+print(inFolder.inputStream.readText().trim().endsWith("io streams folder"), folder.delete())   // expect: true true
+val builder = ProcessBuilder("cmd", "/c", "echo %ASTRA_TEST_VALUE%")
+builder.environment()["ASTRA_TEST_VALUE"] = "from the parent"
+print(builder.start().inputStream.readText().trim())         // expect: from the parent
+// To and from a file.
+val saved = File("io-streams-out.txt")
+ProcessBuilder("cmd", "/c", "echo kept").redirectOutput(saved).start().waitFor()
+val finder = ProcessBuilder("cmd", "/c", "findstr k").redirectInput(saved).start()
+print(saved.readText().trim(), finder.inputStream.readText().trim(), finder.waitFor())   // expect: kept kept 0
+print(saved.delete())                                        // expect: true
+try { ProcessBuilder("no-such-program-xyz").start() } catch (e : IOException) { print(e.message.startsWith("cannot start 'no-such-program-xyz'")) }   // expect: true
+
+// ---- A conversation over a process's pipes ----
+val echo = ProcessBuilder(Process.currentCommand() + ["echo"]).start()
+print(echo.inputStream.readLine(), echo.isAlive, echo.pid() != Process.currentPid())   // expect: ready true true
+for word in ["hello", "naïve café", "with \"quotes\" and  spaces"] {
+  echo.outputStream.println(word)
+  print(echo.inputStream.readLine())
+}
+// expect: echo: HELLO
+// expect: echo: NAÏVE CAFÉ
+// expect: echo: WITH "QUOTES" AND  SPACES
+print(echo.waitFor(20, TimeUnit.milliseconds), echo.isAlive)   // expect: false true
+echo.outputStream.println("quit")
+print(echo.waitFor(), echo.inputStream.readLine(), echo.isAlive)   // expect: 7 null false
+// A process that will not end by itself is ended.
+val endless = ProcessBuilder(Process.currentCommand() + ["echo"]).start()
+endless.inputStream.readLine()
+endless.destroy()
+print(endless.waitFor(5, TimeUnit.seconds), endless.isAlive)   // expect: true false
+
+// ---- Sockets ----
+val server = ServerSocket(0, bindAddress = "127.0.0.1")
+val port = server.localPort
+val serving = thread(name = "server") {
+  // Each connection gets its lines back, numbered, until it says "bye".
+  for n in 1..2 {
+    val client = server.accept()
+    var count = 0
+    while (true) {
+      val line = client.inputStream.readLine()
+      if (line == null or line == "bye") { break }
+      count += 1
+      client.outputStream.println("$n.$count $line")
+    }
+    client.close()
+  }
+  server.close()
+}
+print(port > 0, server.isClosed)                             // expect: true false
+val first = Socket("127.0.0.1", port)
+first.outputStream.println("alpha")
+first.outputStream.println("βeta")
+print(first.inputStream.readLine(), first.inputStream.readLine(), first.remoteAddress, first.port == port, first.isConnected)   // expect: 1.1 alpha 1.2 βeta 127.0.0.1 true true
+first.outputStream.println("bye")
+print(first.inputStream.readLine(), first.isClosed)          // expect: null false
+first.close()
+print(first.isClosed)                                        // expect: true
+val second = Socket()
+second.connect("localhost", port, 2000)
+second.getOutputStream().write("gamma\n")
+print(second.getInputStream().readLine())                    // expect: 2.1 gamma
+second.close()
+serving.join()
+print(server.isClosed)                                       // expect: true
+try { Socket("127.0.0.1", port) } catch (e : IOException) { print(e.message.startsWith("cannot connect to 127.0.0.1:")) }   // expect: true
+try { Socket().inputStream } catch (e : IOException) { print(e.message) }   // expect: the socket is not connected
+// Closing a socket that a thread is waiting on gets the thread out.
+val idle = ServerSocket(0, bindAddress = "127.0.0.1")
+var acceptError = null
+val accepting = thread { try { idle.accept() } catch (e : IOException) { acceptError = e.message } }
+Thread.sleep(30)
+idle.close()
+accepting.join()
+print(acceptError)                                           // expect: the socket is closed
+// A read that has waited too long gives up.
+val silent = ServerSocket(0, bindAddress = "127.0.0.1")
+val patient = Socket("127.0.0.1", silent.localPort)
+patient.soTimeout = 30
+try { patient.inputStream.readLine() } catch (e : IOException) { print(e.message) }   // expect: the read timed out
+patient.close()
+silent.close()
+
+// ---- The same calls in a flow ----
+// On the main thread a read would stop the event loop. In a flow it sets the flow aside
+// instead, and the loop goes on: the timer keeps ticking while the flow waits for the line.
+var ticks = 0
+val ticker = EventLoop.every(5) { ticks += 1 }
+startCoroutine {
+  val slow = ProcessBuilder(Process.currentCommand() + ["slow"]).start()
+  val before = ticks
+  val lines = [slow.inputStream.readLine(), slow.inputStream.readLine(), slow.inputStream.readLine()]
+  print(lines, "the loop went on:", ticks - before > 3, "exit code", slow.waitFor())
+  val note = File("io-streams-flow.txt")
+  note.writeText("written and read in a flow")
+  print(note.readText(), note.delete())
+  ticker.cancel()
+}
+print("the script has ended")
+// expect: the script has ended
+// expect: ["first", "second", null] the loop went on: true exit code 0
+// expect: written and read in a flow true

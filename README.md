@@ -1282,7 +1282,7 @@ of the library is built into the runtime and the rest is written in Astra itself
 **Functions:** `print(...)`, `write(...)` (no newline), `input(prompt?)`, `len(x)`, `str(x)`,
 `int(x)`, `float(x)`, `type(x)`, `range(end)` / `range(start, end, step?)`,
 `assert(cond, message?)`, `clock()`, `args()`, `exit(code?)`, `chr(n)`, `ord(s)`,
-`bytes(size | list)`, `with(object, lambda)`, `repeat(times) { index -> }`
+`bytes(size | list)`, `with(object, lambda)`, `repeat(times) { index -> }`, `flush()`
 
 **Checks:** `require(condition) { message }`, `check(condition) { message }`,
 `requireNotNull(value)`, `checkNotNull(value)` and `error(message)` throw an `Error`. The
@@ -1492,6 +1492,259 @@ writes the whole file. Two Files are `==` if their paths are the same text. The 
 `apply`, `run`, `takeIf` and `takeUnless`. A function has `invoke(...)`, so that
 `callback?.invoke(x)` calls one that may be `null`.
 
+## Doing several things at once
+
+A program has four ways of having more than one thing in hand: **threads**, which share
+everything and take turns; the **event loop**, which runs small tasks one after another on
+the main thread; **flows**, functions that can stop in the middle to wait for something and
+go on later without holding a thread; and **workers**, which share nothing and run on other
+cores. Reading and writing are written the same way in all three.
+`examples\watch.astra` and `examples\questions.astra` use them together.
+
+**When a program ends.** A program is over when its script has run to the end, every thread
+that is not a daemon has finished, and the event loop has nothing left to wait for: no task,
+no timer that has not been cancelled, no reading or writing still going on. An error that
+nothing catches ends the program if it happens in the script or in a task of the event loop;
+on another thread it ends that thread, with a report, and the program goes on.
+
+### Threads
+
+```astra
+val worker = Thread({ load(file) }, "loader")    // or Thread("loader") { load(file) }
+worker.isDaemon = true            // a daemon does not keep the program alive
+worker.start()
+worker.join()                     // waits for it; join(500) for half a second at most
+
+thread(name = "saver") { save() }                 // makes one and starts it
+Thread.sleep(250)
+Thread.currentThread().name
+```
+
+Threads share everything: a variable or an object is the same one on every thread. One
+thread runs Astra code at a time, and they change places at calls and at the ends of loop
+bodies. So a thread never sees a list or a map half changed, and a race between threads can
+give a wrong answer but cannot damage the program; but two steps that belong together are
+not done as one unless a lock makes them so. Astra code does not get faster on several cores.
+What runs side by side is the waiting: a thread that is reading, sleeping or waiting for a
+lock leaves the others free.
+
+| | |
+| --- | --- |
+| `Thread` | `Thread(task, name?)`, `start()`, `join(millis?)`, `isAlive`, `isDaemon`, `name`, `interrupt()`, `isInterrupted`; a class may extend it and override `run()` |
+| on the running thread | `Thread.currentThread()`, `Thread.sleep(ms)`, `Thread.interrupted()`, `Thread.yield()` |
+| `synchronized(lock) { }` | runs the block holding `lock`, which may be any object; no other thread is inside a `synchronized` on the same object meanwhile |
+| `Lock` | `lock()`, `unlock()`, `tryLock()`, `withLock { }`, and `wait(millis?)`, `notify()`, `notifyAll()` for waiting until another thread has changed something |
+| `AtomicInteger`, `AtomicBoolean`, `AtomicReference` | `get()`, `set(v)`, `incrementAndGet()`, `getAndAdd(n)`, `compareAndSet(expected, v)` and the like, each done in one piece |
+| `BlockingQueue(capacity?)` | `put(x)`, `take()` (waits for an item), `offer(x)`, `poll(timeout?)`, `peek()`, `size` |
+| `CountDownLatch(n)` | `countDown()`, `await(timeout?, unit?)` |
+
+```astra
+val jobs = BlockingQueue()
+val results = []
+val lock = Lock()
+val workers = (1..3).map { thread { while (true) { val job = jobs.take(); if (job == null) { break }
+                                                     val done = job(); synchronized(lock) { results.add(done) } } } }
+```
+
+**Interrupting.** `thread.interrupt()` marks a thread. If it is waiting (in `sleep`, `join`,
+`wait`, a queue), the wait ends with an `InterruptedException`; if it is working, it finds out
+when it asks `Thread.currentThread().isInterrupted`. That is how a task that runs too long is
+stopped: it checks now and then.
+
+**Executors** keep threads that take tasks from a queue. A task gives a `Future`:
+
+```astra
+val pool = Executors.newFixedThreadPool(4)        // or newSingleThreadExecutor(), newCachedThreadPool()
+val total = pool.submit { sum(numbers) }
+total.get()                               // waits for the result
+total.get(2, TimeUnit.seconds)            // TimeoutException if it takes longer
+total.cancel(true)                        // and interrupt the thread working on it
+pool.shutdown()                           // its threads keep the program alive until then
+```
+
+`get()` throws `ExecutionException` (with the task's error as `cause`) if the task failed and
+`CancellationException` if it was cancelled. A `Future()` can also be made and completed by
+hand (`complete(value)`, `completeExceptionally(error)`), `whenComplete { value, error -> }`
+is told when it is done, and `Future.supplyAsync { ... }` runs a function on a thread of its
+own. A time limit is a number and a `TimeUnit` (`milliseconds`, `seconds`, `minutes`...), and
+milliseconds if no unit is given. Each of the factory functions takes a function that makes
+the thread for a task, for naming them or making them daemons:
+`Executors.newSingleThreadExecutor { work -> Thread(work, "saver").apply { isDaemon = true } }`.
+
+`return` inside the block of `synchronized` or `withLock` is `return@synchronized value`, as
+in any lambda that is not `let`, `also` or `takeIf`.
+
+### The event loop
+
+```astra
+EventLoop.post { refresh() }                  // run this on the main thread, soon; from any thread
+val tick = EventLoop.every(1000) { print("tick") }
+EventLoop.after(5500) { tick.cancel() }       // once, after a time
+EventLoop.isLoopThread
+```
+
+There is one loop, on the main thread. It starts when the script has run to its end, and
+runs the posted tasks and the timers one at a time. `post` is how a thread hands a result to
+the main thread, which is where a window's contents will have to be changed from. A script
+that has something to do after the loop is idle calls `EventLoop.run()` itself.
+
+### Flows
+
+A flow is a function that can set itself aside in the middle of a call and be taken up again
+later, where it was. Code that asks one thing and then another, each answered through a
+callback, reads from top to bottom:
+
+```astra
+// Something that answers later: prompt returns at once, and calls back with the answer.
+suspend fun ask(question) => suspendCoroutine { continuation ->
+  dialog.prompt(question) { answer -> continuation.resume(answer) }
+}
+
+startCoroutine {
+  val name = ask("Name?")                 // the flow is set aside here until the answer comes
+  val colour = ask("Favourite colour, $name?")
+  save(name, colour)
+}
+```
+
+- `startCoroutine { ... }` starts a flow. It runs at once, as far as the first place it has
+  to wait, and then `startCoroutine` returns.
+- `suspendCoroutine { continuation -> ... }` sets the flow aside and hands the block a
+  continuation. Calling `continuation.resume(value)` gives the flow its answer and takes it up
+  again, there and then; `resumeWithException(error)` raises an error in it instead. A
+  continuation is resumed once. If it is resumed before the block has returned, the flow just
+  goes on.
+- A function that may set a flow aside is called like any other: there is no `await` at the
+  call. `suspend` in front of `fun` says so to the reader and changes nothing.
+- A flow holds no thread while it waits, and is not tied to one: it goes on, on whichever
+  thread resumes it. `delay(ms)` waits without holding the main thread, and
+  `future.await()` waits for work done on a thread.
+- These are Kotlin's names, and code written on `kotlin.coroutines` ports as it is:
+  `block.startCoroutine(Continuation { result -> ... })` tells a completion how the flow
+  turned out, as a `Result` (`isSuccess`, `getOrNull()`, `exceptionOrNull()`, `getOrThrow()`);
+  `runCatching { ... }` makes one. Without a completion, an error the flow does not catch
+  goes to whoever was running it: the caller of `startCoroutine`, or of the `resume` that
+  took it up.
+
+A flow can be set aside anywhere in the program's own code, however many calls deep,
+including inside a lambda given to `map`, `forEach`, `apply`, `with` and the rest of the
+library. It cannot be set aside inside a built-in function that is calling back into the
+program, of which few are left: the comparison function of `sort`, a property's getter, an
+object's `toString()`. Trying is an error that says so. On a thread that is not running a
+flow, a suspending function simply waits on that thread; on the main thread outside a flow
+it is an error, because the main thread waiting would stop the loop that brings the answer.
+
+### Workers
+
+A worker is a second copy of the runtime, on a thread of its own, running a script of its
+own. Unlike a thread it runs at the same time as the program that started it, on another
+core: four workers do four jobs in the time one takes. The price is that a worker shares
+nothing with the program, not a variable and not an object. The two exchange messages, and
+a message is copied.
+
+```astra
+// In the program:
+val worker = Worker("primes.astra")              // the script, next to this file
+worker.onMessage = { count -> print("the worker found", count) }
+worker.post({"upTo": 100000})
+
+// In primes.astra. Worker.parent is the program that started it.
+Worker.parent.onMessage = { job -> Worker.parent.post(countPrimes(job["upTo"])) }
+```
+
+- **The script** is named by a string written in the call itself. It is compiled into the
+  program there, so a program built into an executable takes its workers with it. Its names
+  are its own: it does not see the program's functions and variables, nor clash with them.
+  It can `import` what it needs, as any file can.
+- **A message** can hold numbers, strings, booleans, `null`, `bytes`, and lists and maps of
+  those. Anything else is refused where it is sent. What arrives is a copy: changing it does
+  nothing to the original.
+- **Messages arrive on the event loop** of the side they are sent to, one at a time, in the
+  order they were sent. A worker has an event loop, threads and flows of its own.
+- `worker.terminate()` stops a worker whatever it is doing, at its next call or loop round.
+  In the worker, `Worker.parent.close()` says it is finished. `worker.isAlive` asks.
+- **An error** that nothing catches in a worker ends that worker. The program is told through
+  `worker.onError = { description -> ... }`, and without one the error is reported as an
+  uncaught error is.
+- A worker keeps the program alive until it ends, unless it was made as
+  `Worker("script.astra", isDaemon = true)`.
+- A worker has no windows: what belongs to the user interface stays with the main program.
+
+Copying has a cost, which decides what a worker is good for. Work that takes much longer
+than its data takes to copy gains a core. Work that is quick for each item, on many items,
+does not: moving five thousand balls takes 0.6 ms, and so does copying them to a worker and
+back.
+
+### Streams, processes and sockets
+
+Anything here that waits is an ordinary call, and the same one everywhere:
+
+- on a thread it blocks that thread, and the others go on;
+- in a flow on the main thread it sets the flow aside, and the event loop goes on;
+- on the main thread outside a flow it blocks the main thread.
+
+That holds for a `File`'s `readText`, `writeText` and the like as well.
+
+**Streams** read and write a piece at a time. Text is UTF-8.
+
+```astra
+File("log.txt").inputStream().use { input ->          // use closes it afterwards
+  while (true) { val line = input.readLine(); if (line == null) { break }; handle(line) }
+}
+File("out.txt").outputStream(append = true).use { it.println("one more line") }
+```
+
+| | |
+| --- | --- |
+| `InputStream` | `readLine()` (null at the end), `readLines()`, `forEachLine { }`, `readText()`, `read(count?)` (bytes; null at the end), `readBytes()`, `close()`, `use { }` |
+| `OutputStream` | `write(text or bytes)`, `print(x)`, `println(x)`, `newLine()`, `flush()`, `close()`, `use { }` |
+| `File` | `inputStream()`, `outputStream(append?)`, and under Kotlin's other names `bufferedReader()`, `bufferedWriter()`, `printWriter()` |
+
+`print` to another program or to a file is sent on in pieces; `flush()` sends what has been
+printed so far.
+
+**A process** is another program started from this one:
+
+```astra
+val git = ProcessBuilder("git", "status", "--short").directory(project).start()
+for line in git.inputStream.readLines() { print(line) }     // what it writes
+print("exit code", git.waitFor())
+
+val python = ProcessBuilder("python", "-u", "server.py").redirectErrorStream().start()
+python.outputStream.println("{\"cmd\": \"ping\"}")          // what it reads
+print(python.inputStream.readLine())
+python.destroy()
+```
+
+`inputStream` is what the program writes, `errorStream` what it writes as errors, and
+`outputStream` what it reads. Before `start()`: `directory(folder)`, `environment()` (a map of
+changes), `redirectErrorStream()` (errors go with the ordinary output), and
+`redirectInput`, `redirectOutput`, `redirectError`, each taking a `File` or
+`ProcessBuilder.pipe`, `.inherit` or `.discard`; `inheritIO()` for all three. After:
+`waitFor()` (the exit code), `waitFor(timeout, unit)` (true if it ended in time), `isAlive`,
+`exitValue()`, `pid()`, `destroy()`. `Process.currentCommand()` is what started this program,
+so that it can start another of itself.
+
+**Sockets** are TCP connections:
+
+```astra
+val socket = Socket("example.org", 80)                     // or Socket().connect(host, port, timeoutMs)
+socket.outputStream.write("GET / HTTP/1.0\r\nHost: example.org\r\n\r\n")
+print(socket.inputStream.readLine())
+socket.close()
+
+val server = ServerSocket(8080, bindAddress = "127.0.0.1")   // port 0: the system picks one, see localPort
+while (true) {
+  val client = server.accept()                             // a Socket
+  thread { serve(client) }
+}
+```
+
+`inputStream`, `outputStream`, `close()`, `isClosed`, `localPort`, `remoteAddress`, `port`,
+`soTimeout` (how long a read waits, in milliseconds), `shutdownOutput()`. Closing a socket or
+a stream that a thread is waiting on gets that thread out, with an `IOException`, which is
+what every failure to read, write, connect or start a program is.
+
 ## How it works
 
 ```
@@ -1510,6 +1763,9 @@ source ──lexer──▶ tokens ──parser──▶ AST ──compiler─�
 | `src/value.*` | Values and heap objects (strings, lists, maps, classes, closures...) |
 | `src/vm.*` | Interpreter loop, calls, exceptions, mark-and-sweep garbage collector |
 | `src/builtins.cpp`, `src/stdlib.cpp` | Standard library, the part built into the runtime |
+| `src/threads.cpp` | Threads and the lock they share, locks for programs, the event loop, flows |
+| `src/io.cpp` | Streams, processes and sockets |
+| `src/worker.cpp` | Workers: a second runtime on its own thread, and the copying of messages |
 | `src/std/*.astra` | Standard library, the part written in Astra; packed into `astra.exe` by the build (`cmake/embed.cmake`) and loaded before every program |
 | `src/gui.cpp` | Native backend of the GUI library (Windows) |
 | `lib/gui.astra` | The GUI library: widgets, layout and events, written in Astra |
@@ -1537,6 +1793,12 @@ executes every test three ways (from source, from a compiled `.astc`, and built 
 `.exe`) and expects the same result from each. A last check builds a program with `--icon`
 and looks for the icon in the result.
 
+`// expect error output:` is for a program that finishes normally having reported an error
+(one that ended a thread, say).
+
+Setting `ASTRA_THREAD_STRESS=1` makes the threads of a program change places at every
+opportunity, which is how the code that threads share is tested.
+
 Setting the environment variable `ASTRA_GC_STRESS=1` makes the VM collect garbage at every
 opportunity, which is slow but useful for finding memory bugs when changing the VM.
 
@@ -1562,8 +1824,14 @@ opportunity, which is slow but useful for finding memory bugs when changing the 
 - `if` always needs its braces, also as a value: `if wide { 200 } else { 100 }`.
 - Extension functions are not scoped to the file that imports them, and there are no extension
   properties. A class has one initializer: there are no secondary constructors.
-- `apply` and `run` are ordinary calls, so a plain `return` inside their lambda is an error;
-  it works in `let`, `also` and `takeIf`.
+- `apply`, `run`, `synchronized` and `withLock` are ordinary calls, so a plain `return` inside
+  their lambda is an error; it works in `let`, `also` and `takeIf`.
+- Streams, processes and sockets are there on Windows only. There is no way yet to fetch a URL.
+- Astra code that shares its objects does not run on several cores at once: threads take
+  turns, and workers, which do run side by side, share nothing.
+- The old `gui` library draws one shape at a call, which is what limits an animation of
+  thousands of shapes: no thread or worker can draw for it. `examples\gui_bounce.astra` and
+  `examples\gui_bounce_workers.astra` show it, the second with the moving done on other cores.
 - An `object` is created where it is written, and top-level variables get their values in
   order (file by file for a folder), so one cannot be used by a statement that runs earlier.
 - Integer arithmetic wraps on overflow.

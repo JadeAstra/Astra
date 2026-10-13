@@ -1,0 +1,71 @@
+// ---- Workers ----
+// A worker is a second copy of the runtime, on a thread of its own, running a script of its
+// own. Unlike a thread it runs at the same time as the program that started it, on another
+// core: that is what it is for. The price is that the two share nothing, not a variable and
+// not an object. They exchange messages, and a message is copied.
+//
+// In the program:
+//
+//   val worker = Worker("primes.astra")         // the script, next to this file
+//   worker.onMessage = { result -> print("the worker found", result) }
+//   worker.post({"upTo": 100000})
+//
+// In primes.astra, where Worker.parent is the program that started it:
+//
+//   Worker.parent.onMessage = { job -> Worker.parent.post(countPrimes(job["upTo"])) }
+//
+// A message can hold numbers, strings, booleans, null, bytes, and lists and maps of those.
+// Messages arrive on the event loop of the side they are sent to, one at a time.
+// The work is done by the built-in __worker (worker.cpp).
+class Worker {
+  // In a worker: the program that started it. Null in a program that is not a worker.
+  static val parent = __worker.inWorker() ? WorkerParent() : null
+
+  // Called with each message the worker sends, on this program's event loop.
+  var onMessage = null
+  // Called with a description of an error that ended the worker. Without one, it is reported
+  // as an uncaught error is.
+  var onError = null
+
+  private var id
+
+  // The path is written in the call itself, as a string: the script is then compiled into
+  // the program, and a program built into an executable takes its workers with it.
+  // A worker keeps the program alive until it ends, unless it is a daemon.
+  fun init(script, isDaemon = false) {
+    id = __worker.start(script, this, isDaemon)
+  }
+
+  // The script it runs, as the call named it.
+  get path() => __worker.path(id)
+
+  // Sends a copy of the message. False if the worker has ended.
+  fun post(message) => __worker.post(id, message)
+
+  // Stops the worker, whatever it is doing: at its next call or loop round.
+  fun terminate() {
+    __worker.terminate(id)
+  }
+
+  get isAlive() => __worker.isAlive(id)
+}
+
+// What a worker sees of the program that started it.
+class WorkerParent {
+  // Called with each message the program sends, on the worker's event loop.
+  var onMessage = null
+
+  fun init() {
+    __worker.attach(this)
+  }
+
+  // Sends a copy of the message to the program.
+  fun post(message) {
+    __worker.send(message)
+  }
+
+  // Says that the worker is finished: it ends once what it is doing is done.
+  fun close() {
+    __worker.close()
+  }
+}

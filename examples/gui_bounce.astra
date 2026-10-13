@@ -1,15 +1,20 @@
-// Animation: balls bouncing around a canvas, redrawn sixty times a second.
-// Click the canvas to add a ball; Space pauses.
+// Animation: thousands of balls bouncing around a canvas, moved and drawn by one loop.
+// Click the canvas to add a hundred more; Space pauses.
+//
+// gui_bounce_workers.astra is the same thing with the moving done on other cores.
 import gui.*
 
+val startingBalls = 50000
+
 class Ball(var x : number, var y : number, var dx : number, var dy : number, val radius : number, val color : int) {
-  fun move(width : number, height : number) {
-    x += dx
-    y += dy
-    if x < radius or x > width - radius { dx = -dx }
-    if y < radius or y > height - radius { dy = -dy }
-    x = x.coerceIn(radius, Math.max(radius, width - radius))
-    y = y.coerceIn(radius, Math.max(radius, height - radius))
+  // Moves on by `steps` sixtieths of a second, turning back at the edges.
+  fun move(width : number, height : number, steps : number) {
+    x += dx * steps
+    y += dy * steps
+    if x < radius { x = radius; dx = dx.absoluteValue }
+    if x > width - radius { x = Math.max(radius, width - radius); dx = -dx.absoluteValue }
+    if y < radius { y = radius; dy = dy.absoluteValue }
+    if y > height - radius { y = Math.max(radius, height - radius); dy = -dy.absoluteValue }
   }
 }
 
@@ -17,31 +22,46 @@ val palette = [Color.red, Color.blue, Color.green, Color.orange, Color.purple, C
 val balls = []
 
 fun addBall(x : number, y : number) {
-  val speed = 2 + Math.random() * 4
+  val speed = 1 + Math.random() * 3
   val angle = Math.random() * 2 * Math.pi
-  balls.add(Ball(x, y, Math.cos(angle) * speed, Math.sin(angle) * speed,
-                 10 + Math.randomInt(0, 14), palette[balls.size % palette.size]))
+  balls.add(Ball(x, y, Math.cos(angle) * speed, Math.sin(angle) * speed, 3 + Math.randomInt(0, 4), palette[balls.size % palette.size]))
 }
 
-val window = Window("Bounce", 520, 400, padding = 0, spacing = 0)
+val window = Window("Bounce", 780, 580, padding = 0, spacing = 0)
 val canvas = window.canvas(fill = true)
-val status = window.label("  Click to add a ball. Space pauses.")
+val status = window.label("")
 
 var paused = false
-canvas.onMouseDown = { x, y, button -> addBall(x, y) }
+canvas.onMouseDown = { x, y, button -> repeat(100) { addBall(x, y) } }
 canvas.onKeyDown = { key -> if key == "Space" { paused = !paused } }
 
+var last = clock()
+var frames = 0
+var measuredAt = clock()
+var rate = "measuring..."
+
+// One frame: move every ball by the time that has really passed, then draw them all.
 fun frame() {
   val (width, height) = canvas.size()
+  val now = clock()
+  val steps = Math.min((now - last) * 60, 6)       // in sixtieths of a second
+  last = now
   if !paused {
-    balls.forEach { it.move(width, height) }
+    for ball in balls { ball.move(width, height, steps) }
   }
   canvas.clear(0x202830)
-  balls.forEach { canvas.fillCircle(it.x, it.y, it.radius, it.color) }
-  status.text = "  ${balls.size} balls" + (paused ? " (paused)" : "") + ". Click to add one; Space pauses."
+  for ball in balls { canvas.fillCircle(ball.x, ball.y, ball.radius, ball.color) }
+
+  frames += 1
+  if now - measuredAt >= 1 {
+    rate = "%.0f frames a second".format(frames / (now - measuredAt))
+    frames = 0
+    measuredAt = now
+  }
+  status.text = "  ${balls.size} balls: $rate" + (paused ? " (paused)" : "") + ". Click for more; Space pauses."
 }
 
-for i in 0..5000 { addBall(100 + i * 60, 80 + i * 40) }
+repeat(startingBalls) { addBall(Math.random() * 760, Math.random() * 520) }
 window.show()
 canvas.focus()
 App.every(16, frame)

@@ -60,6 +60,7 @@ fun repeat(times, action) {
 fun any?.toString() => str(this)
 fun any?.equals(other) => this == other
 fun any.compareTo(other) => compareValues(this, other)
+fun any?.takeIf(predicate) => predicate(this) ? this : null
 fun any?.takeUnless(predicate) => predicate(this) ? null : this
 
 // For a string, a list, a map or a set that may be null. It is one function for all of them,

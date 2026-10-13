@@ -8,12 +8,32 @@
 
 namespace astra {
 
-VM::VM() : output(&std::cout), input(&std::cin), rng(std::random_device{}()) {
-    stack_ = static_cast<Value*>(std::malloc(kStackSize * sizeof(Value)));
-    if (stack_ == nullptr) throw std::bad_alloc();
-    stackEnd_ = stack_ + kStackSize;
-    sp_ = stack_;
-    frames_.resize(kMaxFrames);
+namespace {
+
+// Counts a call from a built-in function back into the interpreter, and puts back the
+// record of where that built-in's own arguments are when the call returns.
+struct NativeCallGuard {
+    int& depth;
+    Value*& base;
+    Value* const saved;
+    NativeCallGuard(int& d, Value*& b) : depth(d), base(b), saved(b) { depth++; }
+    ~NativeCallGuard() {
+        depth--;
+        base = saved;
+    }
+};
+
+}  // namespace
+
+VM::VM(bool worker) : output(&std::cout), input(&std::cin), rng(std::random_device{}()), isWorker_(worker) {
+    // The thread that makes the VM is its main thread, and holds the lock from the start.
+    mainThread_.name = "main";
+    mainThread_.id = nextThreadId_++;
+    threads_.push_back(&mainThread_);
+    loadContext(&mainThread_.base);
+
+    if (const char* stress = std::getenv("ASTRA_THREAD_STRESS"); stress != nullptr && *stress != '\0' && *stress != '0')
+        threadStress_ = true;
 
     if (const char* stress = std::getenv("ASTRA_GC_STRESS"); stress != nullptr && *stress != '\0' && *stress != '0') {
         gcStress_ = true;
@@ -92,7 +112,6 @@ VM::~VM() {
         delete obj;
         obj = next;
     }
-    std::free(stack_);
 }
 
 // ---- Strings ----
@@ -194,11 +213,7 @@ void VM::resetState() {
 Value VM::call(Value callee, int argc, const Value* args) {
     if (nativeDepth_ >= kMaxNativeDepth || stackEnd_ - sp_ < argc + 1) throw runtimeError("stack overflow");
 
-    struct DepthGuard {
-        int& depth;
-        explicit DepthGuard(int& d) : depth(d) { depth++; }
-        ~DepthGuard() { depth--; }
-    } guard(nativeDepth_);
+    NativeCallGuard guard(nativeDepth_, nativeBase_);
 
     int base = frameCount_;
     *sp_++ = callee;
@@ -212,11 +227,7 @@ Value VM::callOn(Value receiver, Value callee, int argc, const Value* args) {
     if (!callee.isObjType(ObjType::Closure)) return call(callee, argc, args);
     if (nativeDepth_ >= kMaxNativeDepth || stackEnd_ - sp_ < argc + 1) throw runtimeError("stack overflow");
 
-    struct DepthGuard {
-        int& depth;
-        explicit DepthGuard(int& d) : depth(d) { depth++; }
-        ~DepthGuard() { depth--; }
-    } guard(nativeDepth_);
+    NativeCallGuard guard(nativeDepth_, nativeBase_);
 
     int base = frameCount_;
     *sp_++ = receiver;  // slot 0, where a method has `this`
@@ -318,11 +329,7 @@ Value VM::implicitReceiver(const CallFrame* frame, const Value* base, const ObjS
 Value VM::callWithReceiver(Value receiver, ObjClosure* method) {
     if (nativeDepth_ >= kMaxNativeDepth || stackEnd_ - sp_ < 1) throw runtimeError("stack overflow");
 
-    struct DepthGuard {
-        int& depth;
-        explicit DepthGuard(int& d) : depth(d) { depth++; }
-        ~DepthGuard() { depth--; }
-    } guard(nativeDepth_);
+    NativeCallGuard guard(nativeDepth_, nativeBase_);
 
     int base = frameCount_;
     *sp_++ = receiver;
@@ -343,6 +350,19 @@ AstraThrow VM::runtimeError(const std::string& message) {
         t.value = Value::object(error);
     }
     return t;
+}
+
+AstraThrow VM::errorOf(const char* className, const std::string& message) {
+    // The first global of that name is the standard library's, which is loaded first.
+    for (size_t i = 0; program_ != nullptr && i < globals_.size(); i++) {
+        if (!globals_[i].isObjType(ObjType::Class) || program_->globalNames[i] != className) continue;
+        ObjInstance* error = alloc<ObjInstance>(asClass(globals_[i]));
+        error->fields.set(names.message, str(message));
+        AstraThrow thrown;
+        thrown.value = Value::object(error);
+        return thrown;
+    }
+    return runtimeError(message);
 }
 
 std::vector<std::string> VM::captureTrace() const {
@@ -404,6 +424,7 @@ std::string VM::typeName(Value v) const {
         case ObjType::BoundNative: return "function";
         case ObjType::Class: return "class";
         case ObjType::Instance: return asInstance(v)->cls->name->chars;
+        case ObjType::Fiber: return "flow";
         case ObjType::Upvalue:
         case ObjType::Iterator: return "internal";
     }
@@ -485,7 +506,7 @@ void VM::callClosure(ObjClosure* closure, int argc, bool packed) {
         checkArity(proto->name, proto->requiredArgs(), proto->arity, argc);
 
     Value* base = sp_ - argc - 1;
-    if (frameCount_ == kMaxFrames || stackEnd_ - base < proto->maxStack) throw runtimeError("stack overflow");
+    if (frameCount_ == maxFrames_ || stackEnd_ - base < proto->maxStack) throw runtimeError("stack overflow");
 
     if (pendingEnums_ > 0) {
         // A bare name may only arrive at a parameter that could make an enum entry of it.
@@ -498,6 +519,7 @@ void VM::callClosure(ObjClosure* closure, int argc, bool packed) {
     for (int missing = argc; missing < proto->arity; missing++) *sp_++ = Value::undefined();
 
     CallFrame& frame = frames_[static_cast<size_t>(frameCount_++)];
+    frame.dropResult = false;
     frame.closure = closure;
     frame.ip = proto->code.data();
     frame.base = base;
@@ -588,7 +610,9 @@ bool VM::callValue(Value callee, int argc, bool packed) {
                 ObjNative* native = asNative(callee);
                 checkArity(native->name, native->minArgs, native->maxArgs, argc);
                 if (pendingEnums_ > 0) rejectPendingNames(sp_ - argc, argc);
+                nativeBase_ = sp_ - argc - 1;
                 Value result = native->fn(*this, argc, sp_ - argc);
+                if (result.kind == ValueKind::Undefined) return true;  // it set a call going in its place (tailCallOn)
                 sp_ -= argc + 1;
                 *sp_++ = result;
                 return false;
@@ -637,6 +661,7 @@ bool VM::callValue(Value callee, int argc, bool packed) {
                 const NativeMethod* method = bound->method;
                 checkArity(method->name, method->minArgs, method->maxArgs, argc);
                 if (pendingEnums_ > 0) rejectPendingNames(sp_ - argc, argc);
+                nativeBase_ = sp_ - argc - 1;
                 Value result = method->fn(*this, bound->receiver, argc, sp_ - argc);
                 sp_ -= argc + 1;
                 *sp_++ = result;
@@ -879,7 +904,7 @@ bool VM::invoke(ObjString* name, int argc, bool trailing) {
                 else callClosure(asClosure(*extension), argc);
                 return true;
             }
-            if (scopeFunction(name, argc)) return false;
+            if (const int done = scopeFunction(name, argc)) return done == 2;
             throw runtimeError("undefined method '" + name->chars + "' on " + instance->cls->name->chars);
         }
 
@@ -901,35 +926,77 @@ bool VM::invoke(ObjString* name, int argc, bool trailing) {
             else callClosure(asClosure(*extension), argc);
             return true;
         }
-        if (scopeFunction(name, argc)) return false;
+        if (const int done = scopeFunction(name, argc)) return done == 2;
         throw runtimeError("undefined method '" + name->chars + "' on a value of type " + typeName(receiver));
     }
     checkArity(method->name, method->minArgs, method->maxArgs, argc);
     if (pendingEnums_ > 0) rejectPendingNames(sp_ - argc, argc);
+    nativeBase_ = sp_ - argc - 1;
     Value result = method->fn(*this, receiver, argc, sp_ - argc);
     sp_ -= argc + 1;
     *sp_++ = result;
     return false;
 }
 
+Value VM::tailCallOn(Value receiver, Value function) {
+    if (!function.isObjType(ObjType::Closure)) throw runtimeError("expected a function written in Astra, got a value of type " + typeName(function));
+    // The built-in's own call goes: the receiver takes the place it was called at, and the
+    // function is called there with nothing else.
+    TempRoot keep(*this, function);
+    sp_ = nativeBase_;
+    *sp_++ = receiver;
+    callClosure(asClosure(function), 0);
+    return Value::undefined();
+}
+
 // x.let { }, x.also { }, x.apply { } and x.run { } on any value that has no method of its own
 // by that name. `let` and `also` hand the value to the block as its argument; `apply` and
 // `run` run the block on the value. `also` and `apply` give the value back, the others the
-// block's result. (Spike: these are ordinary calls here. The plan has the compiler expand
-// them in place, which is also what lets a `return` inside them leave the enclosing function.)
-bool VM::scopeFunction(ObjString* name, int argc) {
-    if (argc != 1) return false;
+// block's result. (Written with a lambda, let and also are expanded in place by the compiler
+// and never get here.)
+//
+// The block is called as part of the program, not from inside this function, so that a flow
+// can be set aside in it. Returns 0 if `name` is not one of these, 1 if the result is on the
+// stack, and 2 if a call has been set going.
+int VM::scopeFunction(ObjString* name, int argc) {
+    if (argc != 1) return 0;
     const std::string& n = name->chars;
-    bool onReceiver = n == "apply" || n == "run";
-    if (!onReceiver && n != "let" && n != "also" && n != "takeIf") return false;
+    const bool onReceiver = n == "apply" || n == "run";
+    if (!onReceiver && n != "let" && n != "also") return 0;
 
-    Value receiver = sp_[-2], block = sp_[-1];  // both stay on the stack while the block runs
-    Value result = onReceiver ? callOn(receiver, block, 0, nullptr) : call(block, 1, &receiver);
-    if (n == "apply" || n == "also") result = receiver;
-    if (n == "takeIf") result = result.truthy() ? receiver : Value::null();
-    sp_ -= 2;
-    *sp_++ = result;
-    return true;
+    const Value receiver = sp_[-2], block = sp_[-1];
+    if (n == "let") {
+        // block(receiver), in the place of the two.
+        sp_[-2] = block;
+        sp_[-1] = receiver;
+        return callValue(block, 1) ? 2 : 1;
+    }
+    if (!block.isObjType(ObjType::Closure)) {
+        // Something that is not a function written in Astra is simply called.
+        Value result = n == "also" ? call(block, 1, &receiver) : call(block, 0, nullptr);
+        if (n != "run") result = receiver;
+        sp_ -= 2;
+        *sp_++ = result;
+        return 1;
+    }
+    if (n == "run") {
+        // The block runs on the receiver, and its result takes the receiver's place.
+        sp_--;
+        callClosure(asClosure(block), 0);
+        return 2;
+    }
+    if (n == "apply") {
+        // The same, on a second copy of the receiver, and the block's result is dropped.
+        sp_[-1] = receiver;
+        callClosure(asClosure(block), 0);
+    } else {
+        // also: block(receiver), and the result is dropped.
+        if (stackEnd_ - sp_ < 1) throw runtimeError("stack overflow");
+        *sp_++ = receiver;
+        callClosure(asClosure(block), 1);
+    }
+    frames_[static_cast<size_t>(frameCount_ - 1)].dropResult = true;
+    return 2;
 }
 
 // What == means: numbers and strings by value; lists, maps and ranges by what they hold,
@@ -1604,6 +1671,7 @@ ObjUpvalue* VM::captureUpvalue(Value* slot) {
     if (upvalue != nullptr && upvalue->location == slot) return upvalue;
 
     ObjUpvalue* created = alloc<ObjUpvalue>(slot);
+    created->owner = context_->fiber;
     created->nextOpen = upvalue;
     if (previous == nullptr) openUpvalues_ = created;
     else previous->nextOpen = created;
@@ -1616,6 +1684,7 @@ void VM::closeUpvalues(Value* last) {
         ObjUpvalue* upvalue = openUpvalues_;
         upvalue->closed = *upvalue->location;
         upvalue->location = &upvalue->closed;
+        upvalue->owner = nullptr;
         openUpvalues_ = upvalue->nextOpen;
         upvalue->nextOpen = nullptr;
     }
@@ -1649,9 +1718,10 @@ void VM::run(int baseFrame) {
     (ip += 4, static_cast<int32_t>(static_cast<uint32_t>(ip[-4]) | (static_cast<uint32_t>(ip[-3]) << 8) | \
                                    (static_cast<uint32_t>(ip[-2]) << 16) | (static_cast<uint32_t>(ip[-1]) << 24)))
 
-#define GC_SAFE_POINT()                                \
-    do {                                               \
-        if (bytesAllocated_ > nextGC_) collectGarbage(); \
+// Where the collector may run, and where a thread gives way to another.
+#define GC_SAFE_POINT()                                                                    \
+    do {                                                                                   \
+        if (bytesAllocated_ > nextGC_ || attention_.load(std::memory_order_relaxed)) safePoint(); \
     } while (0)
 
 #define ARITHMETIC(op, intExpr, floatExpr)                                \
@@ -2364,7 +2434,7 @@ void VM::run(int baseFrame) {
                         // Drop the catch blocks of a function that returned from inside a try.
                         while (!handlers_.empty() && handlers_.back().frameIndex >= frameCount_) handlers_.pop_back();
                         sp_ = base;
-                        *sp_++ = result;
+                        if (!frame->dropResult) *sp_++ = result;
                         if (frameCount_ == baseFrame) return;
                         LOAD_FRAME();
                         break;
@@ -3016,6 +3086,10 @@ void VM::stringifyInto(std::string& out, Value v, bool quote, int depth) {
             return;
         }
 
+        case ObjType::Fiber:
+            out += "<flow>";
+            return;
+
         case ObjType::Upvalue:
         case ObjType::Iterator:
             out += "<internal>";
@@ -3028,9 +3102,28 @@ void VM::stringifyInto(std::string& out, Value v, bool quote, int depth) {
 void VM::collectGarbage() {
     liveBytes_ = 0;
 
+    // The context that is running, whose state is in the VM's own members...
     for (Value* slot = stack_; slot < sp_; slot++) markValue(*slot);
     for (int i = 0; i < frameCount_; i++) markObject(frames_[static_cast<size_t>(i)].closure);
     for (ObjUpvalue* upvalue = openUpvalues_; upvalue != nullptr; upvalue = upvalue->nextOpen) markObject(upvalue);
+    markObject(context_->fiber);
+    // ...and every other one that a thread is in the middle of: the contexts under the
+    // running one, and those of the threads that are waiting for the lock or blocked.
+    for (const ThreadState* thread : threads_) {
+        for (const Context* context = thread->current; context != nullptr; context = context->parent)
+            if (context != context_) markContext(*context);
+        markValue(thread->function);
+        markValue(thread->self);
+        if (thread == thread_) continue;  // its temporaries are the VM's, marked below
+        for (const Value& root : thread->tempRoots) markValue(root);
+        for (const std::vector<Value>* values : thread->tempVectors)
+            for (const Value& value : *values) markValue(value);
+    }
+    for (ObjFiber* fiber : waitingFibers_) markObject(fiber);
+    markValue(workerSelf);
+    for (const auto& worker : workerObjects) markValue(worker.second);
+    for (const Value& task : loopTasks_) markValue(task);
+    for (const Timer& timer : timers_) markValue(timer.task);
     for (const Value& global : globals_) markValue(global);
     for (const Table& table : typeExtensions_) markTable(table);
     markTable(nullExtensions_);
@@ -3054,6 +3147,13 @@ void VM::collectGarbage() {
     sweep();
     bytesAllocated_ = liveBytes_;
     nextGC_ = gcStress_ ? 0 : std::max(liveBytes_ * 2, kMinHeap);
+}
+
+void VM::markContext(const Context& context) {
+    for (const Value* slot = context.stack; slot < context.sp; slot++) markValue(*slot);
+    for (int i = 0; i < context.frameCount; i++) markObject(context.frames[i].closure);
+    for (ObjUpvalue* upvalue = context.openUpvalues; upvalue != nullptr; upvalue = upvalue->nextOpen) markObject(upvalue);
+    markObject(context.fiber);
 }
 
 void VM::markObject(Obj* obj) {
@@ -3110,7 +3210,20 @@ void VM::blacken(Obj* obj) {
         case ObjType::Upvalue: {
             ObjUpvalue* upvalue = static_cast<ObjUpvalue*>(obj);
             liveBytes_ += sizeof(ObjUpvalue);
-            markValue(*upvalue->location);
+            // While it is open its variable lives on a stack. If that is the stack of a flow,
+            // the flow is kept, and marks the stack itself if it has been set aside.
+            if (upvalue->owner != nullptr) markObject(upvalue->owner);
+            else markValue(*upvalue->location);
+            break;
+        }
+        case ObjType::Fiber: {
+            ObjFiber* fiber = static_cast<ObjFiber*>(obj);
+            liveBytes_ += sizeof(ObjFiber) + ObjFiber::kStackSize;
+            markValue(fiber->entry);
+            markValue(fiber->early);
+            // One that is running is marked as a context of the thread it is running on;
+            // what this object holds of its stack is out of date until it is set aside.
+            if (fiber->state == FiberState::Suspended) markContext(fiber->context);
             break;
         }
         case ObjType::Native:
@@ -3190,6 +3303,7 @@ void VM::sweep() {
             link = &obj->next;
         } else {
             *link = obj->next;
+            if (!monitors_.empty()) monitors_.erase(obj);  // it was locked and then forgotten
             delete obj;
         }
     }

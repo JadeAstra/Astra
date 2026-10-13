@@ -1,0 +1,44 @@
+// A flow that asks two questions in turn. The questions are answered through callbacks, as
+// a dialog in a window would answer: asking returns at once and the answer comes later. The
+// flow is written top to bottom all the same, with no callback inside a callback.
+//
+// Type an answer and press Enter for each question.
+
+// ---- Something that asks and answers later ----
+// A thread reads what is typed, and hands each line to whoever asked, on the main thread.
+val waiting = BlockingQueue()
+
+// Asks a question. `done` is called with the answer, later, on the main thread.
+fun prompt(question, done) {
+  write(question + " ")
+  flush()
+  waiting.put(done)
+}
+
+thread(name = "reader", isDaemon = true) {
+  while (true) {
+    val done = waiting.take()
+    val line = input()
+    EventLoop.post { done(line == null ? "" : line.trim()) }
+  }
+}
+
+// ---- The same, as a function a flow can simply call ----
+// suspendCoroutine sets the flow aside and hands over a continuation; resuming it gives the
+// flow its answer and takes it up again where it was.
+suspend fun ask(question) => suspendCoroutine { continuation ->
+  prompt(question) { answer -> continuation.resume(answer) }
+}
+
+// ---- While it waits, the program is not stuck ----
+var beats = 0
+val heart = EventLoop.every(100) { beats += 1 }
+
+startCoroutine {
+  val name = ask("What is your name?")
+  val colour = ask("And your favourite colour, ${name.ifBlank { "stranger" }}?")
+  heart.cancel()
+  print()
+  print("Hello, ${name.ifBlank { "stranger" }}. ${colour.ifBlank { "No colour" }.replaceFirstChar { it.uppercase() }} it is.")
+  print("While you were typing, the event loop ran $beats times.")
+}

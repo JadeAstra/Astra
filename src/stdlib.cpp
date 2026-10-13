@@ -16,6 +16,7 @@
 #include <filesystem>
 #include <fstream>
 #include <limits>
+#include <memory>
 
 #include "builtins.h"
 #include "vm.h"
@@ -63,13 +64,6 @@ int compareValues(VM& vm, Value a, Value b) {
     }
     if (a.isBool() && b.isBool()) return static_cast<int>(a.as.b) - static_cast<int>(b.as.b);
     throw vm.runtimeError("cannot compare " + vm.typeName(a) + " and " + vm.typeName(b));
-}
-
-// How many parameters a function takes, where that can be told.
-int parameterCount(Value function) {
-    if (function.isObjType(ObjType::Closure)) return asClosure(function)->proto->arity;
-    if (function.isObjType(ObjType::BoundMethod)) return asBoundMethod(function)->method->proto->arity;
-    return 1;
 }
 
 int64_t integerPower(int64_t base, int64_t exponent) {
@@ -705,25 +699,6 @@ AstraThrow outOfRange(VM& vm, const char* what, Value index, size_t size) {
     return vm.runtimeError(std::string(what) + ": index " + vm.stringify(index) + " is out of range (size " + std::to_string(size) + ")");
 }
 
-// first, last and their ...OrNull forms: the item at one end, or with a condition the
-// nearest to that end that meets it.
-Value endItem(VM& vm, Value self, int argc, Value* args, bool fromStart, const char* name, bool orNull) {
-    ObjList* list = asList(self);
-    if (!given(argc, args, 0)) {
-        if (!list->items.empty()) return fromStart ? list->items.front() : list->items.back();
-        if (orNull) return Value::null();
-        throw vm.runtimeError(std::string(name) + "() of an empty list");
-    }
-    for (size_t n = 0; n < list->items.size(); n++) {
-        const size_t i = fromStart ? n : list->items.size() - 1 - n;
-        TempRoot item(vm, list->items[i]);
-        Value candidate = item.get();
-        if (vm.call(args[0], 1, &candidate).truthy()) return item.get();
-    }
-    if (orNull) return Value::null();
-    throw vm.runtimeError(std::string(name) + "(): no item of the list meets the condition");
-}
-
 void registerListMethods(VM& vm) {
     const BuiltinType T = BuiltinType::List;
 
@@ -763,19 +738,6 @@ void registerListMethods(VM& vm) {
     });
     vm.defineMethod(T, "isNotEmpty", 0, 0, [](VM&, Value self, int, Value*) -> Value {
         return Value::boolean(!asList(self)->items.empty());
-    });
-
-    vm.defineMethod(T, "first", 0, 1, [](VM& vm, Value self, int argc, Value* args) -> Value {
-        return endItem(vm, self, argc, args, true, "first", false);
-    });
-    vm.defineMethod(T, "last", 0, 1, [](VM& vm, Value self, int argc, Value* args) -> Value {
-        return endItem(vm, self, argc, args, false, "last", false);
-    });
-    vm.defineMethod(T, "firstOrNull", 0, 1, [](VM& vm, Value self, int argc, Value* args) -> Value {
-        return endItem(vm, self, argc, args, true, "firstOrNull", true);
-    });
-    vm.defineMethod(T, "lastOrNull", 0, 1, [](VM& vm, Value self, int argc, Value* args) -> Value {
-        return endItem(vm, self, argc, args, false, "lastOrNull", true);
     });
 
     vm.defineMethod(T, "get", 1, 1, [](VM& vm, Value self, int, Value* args) -> Value {
@@ -927,27 +889,6 @@ void registerMapMethods(VM& vm) {
     vm.defineMethod(T, "toMap", 0, 0, copy);
     vm.defineMethod(T, "toMutableMap", 0, 0, copy);
 
-    // forEach { entry -> } or forEach { key, value -> }: the function says which by how
-    // many parameters it has.
-    vm.defineMethod(T, "forEach", 1, 1, [](VM& vm, Value self, int, Value* args) -> Value {
-        ObjMap* map = asMap(self);
-        const bool pairs = parameterCount(args[0]) == 2;
-        // By index, and looked at afresh each time round: the function may change the map.
-        for (size_t i = 0; i < map->map.entries().size(); i++) {
-            if (!map->map.entries()[i].live) continue;
-            Value pair[2] = {map->map.entries()[i].key, map->map.entries()[i].value};
-            TempRoot key(vm, pair[0]);
-            TempRoot value(vm, pair[1]);
-            if (pairs) {
-                vm.call(args[0], 2, pair);
-            } else {
-                TempRoot entry(vm, vm.makeEntry(pair[0], pair[1]));
-                Value argument = entry.get();
-                vm.call(args[0], 1, &argument);
-            }
-        }
-        return Value::null();
-    });
 }
 
 // ---- Ranges ----
@@ -1023,21 +964,55 @@ size_t lastNameStart(std::string_view path) {
     return at;
 }
 
-std::string readWhole(VM& vm, const std::string& path) {
-    std::ifstream in(toPath(path), std::ios::binary);
-    if (!in) throw vm.runtimeError("cannot read file '" + path + "'");
-    return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+// A whole file read or written in one go. The work itself touches nothing of the VM, so it
+// can be done with the lock released, or by a worker while a flow is set aside (VM::blocking).
+struct FileJob {
+    std::string path;
+    std::string data;
+    std::string error;
+};
+
+void readWhole(FileJob& job) {
+    std::ifstream in(toPath(job.path), std::ios::binary);
+    if (!in) {
+        job.error = "cannot read file '" + job.path + "'";
+        return;
+    }
+    job.data.assign((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
 }
 
-void writeWhole(VM& vm, const std::string& path, const char* data, size_t size, bool append) {
-    std::ofstream out(toPath(path), std::ios::binary | (append ? std::ios::app : std::ios::trunc));
-    if (!out || !out.write(data, static_cast<std::streamsize>(size)).flush()) throw vm.runtimeError("cannot write file '" + path + "'");
+void writeWhole(FileJob& job, bool append) {
+    std::ofstream out(toPath(job.path), std::ios::binary | (append ? std::ios::app : std::ios::trunc));
+    if (!out || !out.write(job.data.data(), static_cast<std::streamsize>(job.data.size())).flush()) job.error = "cannot write file '" + job.path + "'";
 }
 
-const std::vector<uint8_t>& bytesArgument(VM& vm, Value v) {
-    if (!v.isObjType(ObjType::Bytes))
-        throw vm.runtimeError("writeBytes takes bytes, not a value of type " + vm.typeName(v) + (v.isString() ? "; text is written with writeText" : ""));
-    return asBytes(v)->data;
+Value readFile(VM& vm, Value path, bool asBytes) {
+    auto job = std::make_shared<FileJob>();
+    job->path = vm.toStr(path, "file path");
+    return vm.blocking([job] { readWhole(*job); }, [job, asBytes](VM& vm) -> Value {
+        if (!job->error.empty()) throw vm.errorOf("IOException", job->error);
+        if (!asBytes) return vm.str(std::move(job->data));
+        ObjBytes* made = vm.alloc<ObjBytes>();
+        made->data.assign(job->data.begin(), job->data.end());
+        vm.account(made->data.size());
+        return Value::object(made);
+    });
+}
+
+Value writeFile(VM& vm, Value path, Value content, bool bytesOnly, bool append) {
+    auto job = std::make_shared<FileJob>();
+    job->path = vm.toStr(path, "file path");
+    if (content.isObjType(ObjType::Bytes)) {
+        job->data.assign(asBytes(content)->data.begin(), asBytes(content)->data.end());
+    } else if (bytesOnly) {
+        throw vm.runtimeError("writeBytes takes bytes, not a value of type " + vm.typeName(content) + (content.isString() ? "; text is written with writeText" : ""));
+    } else {
+        job->data = vm.stringify(content);
+    }
+    return vm.blocking([job, append] { writeWhole(*job, append); }, [job](VM& vm) -> Value {
+        if (!job->error.empty()) throw vm.errorOf("IOException", job->error);
+        return Value::null();
+    });
 }
 
 // What the File class (src/std/file.astra) is built on. The name starts with two
@@ -1048,34 +1023,12 @@ void registerFiles(VM& vm) {
         file->statics.set(vm.intern(name), Value::object(vm.alloc<ObjNative>(std::string("File.") + name, minArgs, maxArgs, fn)));
     };
 
-    def("read", 1, 1, [](VM& vm, int, Value* args) -> Value { return vm.str(readWhole(vm, vm.toStr(args[0], "file path"))); });
-    def("write", 2, 2, [](VM& vm, int, Value* args) -> Value {
-        const std::string text = vm.stringify(args[1]);
-        writeWhole(vm, vm.toStr(args[0], "file path"), text.data(), text.size(), false);
-        return Value::null();
-    });
-    def("append", 2, 2, [](VM& vm, int, Value* args) -> Value {
-        const std::string text = vm.stringify(args[1]);
-        writeWhole(vm, vm.toStr(args[0], "file path"), text.data(), text.size(), true);
-        return Value::null();
-    });
-    def("readBytes", 1, 1, [](VM& vm, int, Value* args) -> Value {
-        const std::string data = readWhole(vm, vm.toStr(args[0], "file path"));
-        ObjBytes* made = vm.alloc<ObjBytes>();
-        made->data.assign(data.begin(), data.end());
-        vm.account(made->data.size());
-        return Value::object(made);
-    });
-    def("writeBytes", 2, 2, [](VM& vm, int, Value* args) -> Value {
-        const std::vector<uint8_t>& data = bytesArgument(vm, args[1]);
-        writeWhole(vm, vm.toStr(args[0], "file path"), reinterpret_cast<const char*>(data.data()), data.size(), false);
-        return Value::null();
-    });
-    def("appendBytes", 2, 2, [](VM& vm, int, Value* args) -> Value {
-        const std::vector<uint8_t>& data = bytesArgument(vm, args[1]);
-        writeWhole(vm, vm.toStr(args[0], "file path"), reinterpret_cast<const char*>(data.data()), data.size(), true);
-        return Value::null();
-    });
+    def("read", 1, 1, [](VM& vm, int, Value* args) -> Value { return readFile(vm, args[0], false); });
+    def("write", 2, 2, [](VM& vm, int, Value* args) -> Value { return writeFile(vm, args[0], args[1], false, false); });
+    def("append", 2, 2, [](VM& vm, int, Value* args) -> Value { return writeFile(vm, args[0], args[1], false, true); });
+    def("readBytes", 1, 1, [](VM& vm, int, Value* args) -> Value { return readFile(vm, args[0], true); });
+    def("writeBytes", 2, 2, [](VM& vm, int, Value* args) -> Value { return writeFile(vm, args[0], args[1], true, false); });
+    def("appendBytes", 2, 2, [](VM& vm, int, Value* args) -> Value { return writeFile(vm, args[0], args[1], true, true); });
 
     def("exists", 1, 1, [](VM& vm, int, Value* args) -> Value {
         std::error_code ec;

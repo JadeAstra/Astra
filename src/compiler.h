@@ -84,8 +84,11 @@ private:
     void loadFolder(const std::string& folder, const std::string& displayPath, const std::string& file, const Node& at,
                     std::vector<int>& modules);
 
+    // `into`: the namespace the file's names go in, if not that of its folder.
     FunctionProto* compileUnit(const std::string& source, const std::string& name, const std::string& directory,
-                               const std::string& fileKey, bool repl);
+                               const std::string& fileKey, bool repl, Namespace* into = nullptr);
+    // The script of a worker, compiled into the program. Returns its module index.
+    int loadWorker(const std::string& path, const std::string& fromDirectory, const std::string& file, const Node& at);
     int loadModule(const std::string& path, const std::string& displayPath, const std::string& file, const Node* at);
 
     // Loads what an `import` names: a file, or every file of a folder. Gives the modules to

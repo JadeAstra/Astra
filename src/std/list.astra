@@ -1,6 +1,86 @@
 // ---- Lists ----
-// The methods a list has besides the built-in ones (add, first, map, filter, sort and so on,
-// which are in builtins.cpp and stdlib.cpp).
+// The methods a list has besides the built-in ones (add, get, slice, sort and so on, which
+// are in builtins.cpp and stdlib.cpp). Every method that takes a function is written here:
+// the function then runs as part of the program, and a flow can be set aside inside it.
+
+// -- The oldest ones --
+
+fun list.map(transform) {
+  val out = []
+  for item in this { out.add(transform(item)) }
+  return out
+}
+
+fun list.filter(predicate) {
+  val out = []
+  for item in this {
+    if (predicate(item)) { out.add(item) }
+  }
+  return out
+}
+
+fun list.each(action) {
+  for item in this { action(item) }
+}
+
+fun list.find(predicate) {
+  for item in this {
+    if (predicate(item)) { return item }
+  }
+  return null
+}
+
+// reduce(operation, initial) starts from `initial`; reduce(operation) from the first item.
+fun list.reduce(operation, vararg initial) {
+  if (initial.length == 0 and this.length == 0) { throw Error("reduce() of an empty list needs a starting value") }
+  var result = initial.length > 0 ? initial[0] : this[0]
+  for index in (initial.length > 0 ? 0 : 1)..<this.length { result = operation(result, this[index]) }
+  return result
+}
+
+// -- The item at one end, or with a condition the nearest to that end that meets it --
+
+fun list.first(predicate = null) {
+  if (predicate == null) {
+    if (this.length == 0) { throw Error("first() of an empty list") }
+    return this[0]
+  }
+  for item in this {
+    if (predicate(item)) { return item }
+  }
+  throw Error("first(): no item of the list meets the condition")
+}
+
+fun list.firstOrNull(predicate = null) {
+  if (predicate == null) { return this.length == 0 ? null : this[0] }
+  for item in this {
+    if (predicate(item)) { return item }
+  }
+  return null
+}
+
+fun list.last(predicate = null) {
+  if (predicate == null) {
+    if (this.length == 0) { throw Error("last() of an empty list") }
+    return this[this.length - 1]
+  }
+  var index = this.length - 1
+  while (index >= 0) {
+    if (predicate(this[index])) { return this[index] }
+    index -= 1
+  }
+  throw Error("last(): no item of the list meets the condition")
+}
+
+fun list.lastOrNull(predicate = null) {
+  if (predicate == null) { return this.length == 0 ? null : this[this.length - 1] }
+  var index = this.length - 1
+  while (index >= 0) {
+    if (index < this.length and predicate(this[index])) { return this[index] }
+    index -= 1
+  }
+  return null
+}
 
 // -- Going through the items --
 

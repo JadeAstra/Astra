@@ -652,6 +652,24 @@ private:
                (name.visibility == GlobalName::Internal && owner.library == ns_->library);
     }
 
+    // Worker("physics.astra"): the script is compiled into the program here, and the path
+    // in the call is replaced by one that says which module it became (see worker.cpp).
+    const LiteralExpr* workerLiteral_ = nullptr;
+    std::string workerSpec_;
+
+    void noteWorkerScript(const CallExpr& e) {
+        if (e.callee->kind != ExprKind::Name || static_cast<const NameExpr&>(*e.callee).name != "Worker") return;
+        if (e.args.empty() || e.args[0]->kind != ExprKind::Literal || !e.names[0].empty()) return;
+        const auto& literal = static_cast<const LiteralExpr&>(*e.args[0]);
+        if (literal.type != LiteralExpr::Type::String) return;
+        // Only the standard library's Worker: a class of the program's own by that name is left alone.
+        auto builtin = session_.builtins_->names.find("Worker");
+        if (builtin == session_.builtins_->names.end() || findGlobal("Worker", e, true) != &builtin->second) return;
+        const int module = session_.loadWorker(literal.stringValue, directory_, file_, literal);
+        workerLiteral_ = &literal;
+        workerSpec_ = std::string(1, '\x01') + std::to_string(module) + '\x01' + literal.stringValue;
+    }
+
     // Whether `name` is a built-in that only the standard library's own source may use.
     bool libraryOnly(const std::string& name) const {
         return name.size() > 2 && name[0] == '_' && name[1] == '_' && ns_ != session_.builtins_ && session_.vm_.hasBuiltin(name);
@@ -2781,7 +2799,15 @@ private:
                     case LiteralExpr::Type::Bool: emit(e.boolValue ? Op::True : Op::False); break;
                     case LiteralExpr::Type::Int: emit(Op::Const, intConstant(e.intValue)); break;
                     case LiteralExpr::Type::Float: emit(Op::Const, floatConstant(e.floatValue)); break;
-                    case LiteralExpr::Type::String: emit(Op::Const, stringConstant(e.stringValue)); break;
+                    case LiteralExpr::Type::String:
+                        if (&e == workerLiteral_) {
+                            // The path in Worker("..."): the call is given where the script is.
+                            emit(Op::Const, stringConstant(workerSpec_));
+                            workerLiteral_ = nullptr;
+                        } else {
+                            emit(Op::Const, stringConstant(e.stringValue));
+                        }
+                        break;
                 }
                 break;
             }
@@ -2915,6 +2941,7 @@ private:
             case ExprKind::Call: {
                 const auto& e = static_cast<const CallExpr&>(expr);
                 int argc = static_cast<int>(e.args.size());
+                noteWorkerScript(e);
                 // A lambda after the call belongs to the last parameter, which only the
                 // function being called knows the position of.
                 if (compileScopeCall(e)) {
@@ -3585,15 +3612,55 @@ void CompilerSession::predeclare(Namespace& ns, const std::string& fileKey, cons
 }
 
 FunctionProto* CompilerSession::compileUnit(const std::string& source, const std::string& name,
-                                            const std::string& directory, const std::string& fileKey, bool repl) {
+                                            const std::string& directory, const std::string& fileKey, bool repl,
+                                            Namespace* into) {
     Lexer lexer(source, name);
     std::vector<Token> tokens = lexer.scan();
     Parser parser(tokens, name);
     std::vector<StmtPtr> statements = parser.parseProgram();
-    Namespace* ns = namespaceOf(directory);
+    Namespace* ns = into != nullptr ? into : namespaceOf(directory);
     predeclare(*ns, fileKey, name, statements, repl);
     ModuleCompiler compiler(*this, name, directory == "<builtin>" ? "" : directory, ns, fileKey);
     return compiler.compile(statements, repl);
+}
+
+// The script named in `Worker("physics.astra")`, looked for next to the file that names it.
+// It becomes a module of the program that only a worker runs, so that a program built into
+// an executable carries its workers with it. Its names are its own: the rest of the program
+// neither sees them nor clashes with them, as befits code that shares nothing with it.
+int CompilerSession::loadWorker(const std::string& path, const std::string& fromDirectory, const std::string& file,
+                                const Node& at) {
+    std::error_code ec;
+    fs::path candidate = fs::path(fromDirectory.empty() ? "." : fromDirectory) / fs::path(path);
+    if (!fs::is_regular_file(candidate, ec)) candidate += ".astra";
+    if (!fs::is_regular_file(candidate, ec))
+        throw CompileError(file, at.line, at.col, "cannot find the worker's script '" + path + "' next to this file");
+    const fs::path canonical = fs::weakly_canonical(candidate, ec);
+    const std::string key = "<worker>" + canonical.string();
+
+    auto found = modules_.find(key);
+    if (found != modules_.end()) return found->second;
+    std::string source;
+    if (!readFile(canonical.string(), source)) throw CompileError(file, at.line, at.col, "cannot read '" + path + "'");
+
+    int index = static_cast<int>(program.modules.size());
+    if (index > 0xFFFF) throw CompileError(file, at.line, at.col, "too many modules");
+    program.modules.push_back(nullptr);
+    modules_[key] = index;
+    std::unique_ptr<Namespace>& ns = namespaces_[key];
+    if (ns == nullptr) {
+        ns = std::make_unique<Namespace>();
+        ns->directory = canonical.parent_path().string();
+        ns->library = "<program>";
+    }
+    try {
+        program.modules[static_cast<size_t>(index)] =
+            compileUnit(source, canonical.filename().string(), canonical.parent_path().string(), key, false, ns.get());
+    } catch (...) {
+        modules_.erase(key);
+        throw;
+    }
+    return index;
 }
 
 // `file` and `at` say where the import was written, for error messages; `at` is null for

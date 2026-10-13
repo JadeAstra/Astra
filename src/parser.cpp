@@ -121,8 +121,22 @@ const Token& Parser::expectName(const char* what) {
     return expect(TokenType::Identifier, what);
 }
 
+// `@Volatile` in front of a declaration is accepted and means nothing: with one thread
+// running Astra code at a time, a variable is always seen whole by the others. No other
+// annotation is part of the language, and one that would mean something is not passed over.
+void Parser::skipAnnotations() {
+    while (check(TokenType::At) && peekNext().type == TokenType::Identifier) {
+        if (peekNext().text != "Volatile")
+            throw error(peek(), "annotations are not part of Astra: '@" + peekNext().text +
+                                    "' has to be written out as code. Only @Volatile is accepted, and means nothing");
+        advance();
+        advance();
+    }
+}
+
 StmtPtr Parser::declaration() {
     DepthGuard guard(*this);
+    skipAnnotations();
     switch (peek().type) {
         case TokenType::Identifier: {
             // `let x = 1` would otherwise fail with a puzzling message about a missing line break.
@@ -136,8 +150,11 @@ StmtPtr Parser::declaration() {
             // Who may see a declaration: `private` its file, `internal` its library, and
             // otherwise everyone. `public`, `open` and `final` are accepted and change nothing.
             const bool makesAbstract = word.text == "abstract" || word.text == "sealed";
+            // `suspend fun` marks a function that may set a flow aside. Any function may, so the
+            // word says so to the reader and changes nothing.
             const bool modifier = word.text == "private" || word.text == "internal" || word.text == "public" ||
-                                  word.text == "open" || word.text == "final" || makesAbstract;
+                                  word.text == "open" || word.text == "final" || makesAbstract ||
+                                  (word.text == "suspend" && (after.type == TokenType::Fun || after.type == TokenType::Identifier));
             const bool declares = after.type == TokenType::Val || after.type == TokenType::Var || after.type == TokenType::Fun ||
                                   after.type == TokenType::Class || after.type == TokenType::Identifier;
             if (modifier && declares && !after.newlineBefore) {
@@ -249,6 +266,10 @@ TypeAnnotation Parser::typeExpression() {
     TypeAnnotation type;
     type.line = peek().line;
     type.col = peek().col;
+    // `suspend () -> unit`: a function type, said to be of a function that may set a flow aside.
+    if (check(TokenType::Identifier) && peek().text == "suspend" &&
+        (peekNext().type == TokenType::LParen || peekNext().type == TokenType::Identifier))
+        advance();
 
     // What was between the parentheses, for telling `(int) -> bool` from `(int)`.
     int inside = 0;
@@ -440,6 +461,7 @@ StmtPtr Parser::classDeclaration(bool isEnum, bool isInterface, const Token* ano
         s->hasHeader = true;
         while (!check(TokenType::RParen)) {
             // Kotlin's modifiers in front of a header field: `override` is noted, the rest accepted.
+            skipAnnotations();
             bool overrides = false;
             while (check(TokenType::Identifier) &&
                    (peekNext().type == TokenType::Val || peekNext().type == TokenType::Var || peekNext().type == TokenType::Identifier) &&
@@ -708,6 +730,7 @@ void Parser::fieldAccessors(VarStmt& field) {
 // One declaration in a class body. `inStatic` is set inside a `static { ... }` block, where
 // every declaration is a static member.
 void Parser::classMember(ClassStmt& s, bool inStatic) {
+    skipAnnotations();
     if (!inStatic && word("static") && peekNext().type == TokenType::LBrace) {
         advance();
         advance();
@@ -727,7 +750,7 @@ void Parser::classMember(ClassStmt& s, bool inStatic) {
     for (; check(TokenType::Identifier) && !peekNext().newlineBefore &&
            (peek().text == "private" || peek().text == "internal" || peek().text == "public" || peek().text == "protected" ||
             peek().text == "override" || peek().text == "open" || peek().text == "final" || peek().text == "abstract" ||
-            peek().text == "sealed") &&
+            peek().text == "sealed" || peek().text == "suspend") &&
            (peekNext().type == TokenType::Val || peekNext().type == TokenType::Var || peekNext().type == TokenType::Fun ||
             peekNext().type == TokenType::Class || peekNext().type == TokenType::Identifier);
          advance()) {

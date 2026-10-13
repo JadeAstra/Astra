@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 # The version goes up with each milestone of docs/gui-plan.md: M1 is 0.1.0, M2 is 0.2.0.
-project(Astra VERSION 0.2.0 LANGUAGES CXX)
+project(Astra VERSION 0.3.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -36,6 +36,9 @@ add_executable(astra
   src/vm.cpp
   src/builtins.cpp
   src/stdlib.cpp
+  src/threads.cpp
+  src/io.cpp
+  src/worker.cpp
   src/gui.cpp
   src/main.cpp
   # M0 spike: an OpenGL window and a text engine of our own, as the `Spike` class.
@@ -44,7 +47,7 @@ add_executable(astra
   src/spike/glwin.cpp
 )
 if(WIN32)
-  target_link_libraries(astra PRIVATE opengl32)
+  target_link_libraries(astra PRIVATE opengl32 ws2_32)
 endif()
 
 target_compile_definitions(astra PRIVATE ASTRA_VERSION="${PROJECT_VERSION}")

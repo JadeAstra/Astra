@@ -118,6 +118,48 @@ void reportUncaught(VM& vm, AstraThrow& thrown) {
     reportFatal(report);
 }
 
+void reportThreadError(VM& vm, AstraThrow& thrown, const std::string& threadName) {
+    thrown.trace.push_back("in thread " + threadName);
+    reportUncaught(vm, thrown);
+}
+
+// Runs a loaded program to its end: the script itself, then the event loop for as long as
+// there is something for it to wait for (a timer, work in progress, a thread that is not a
+// daemon). Returns the exit code.
+int runProgram(VM& vm, Program& program, int entry) {
+    vm.onThreadError = reportThreadError;
+    // A worker has a VM of its own, and loads its own copy of the program from these bytes.
+    vm.programImage = [&program] {
+        std::ostringstream image(std::ios::binary);
+        writeProgram(program, image);
+        return image.str();
+    };
+    vm.onThreadExit = [](int code) {
+        std::cout.flush();
+        std::cerr.flush();
+        std::_Exit(code);
+    };
+
+    int code = 0;
+    try {
+        vm.runModule(entry);
+        vm.runEventLoop(true);
+    } catch (AstraThrow& thrown) {
+        reportUncaught(vm, thrown);
+        code = kExitRuntimeError;
+    } catch (const AstraExit& exit) {
+        code = exit.code;
+    }
+    // A daemon thread, or a worker still waiting in a read, cannot be left running while the
+    // VM is taken apart under it: the process ends here instead.
+    if (vm.threadsAlive()) {
+        std::cout.flush();
+        std::cerr.flush();
+        std::_Exit(code);
+    }
+    return code;
+}
+
 // ---- Programs built into an executable ----
 //
 // `astra build --exe` makes a copy of this executable with the compiled program attached to
@@ -185,15 +227,8 @@ int runBundled(const std::filesystem::path& exe, std::vector<std::string> script
     }
 
     vm.load(program);
-    try {
-        vm.runModule(program.entry);
-    } catch (AstraThrow& thrown) {
-        reportUncaught(vm, thrown);
-        return kExitRuntimeError;
-    } catch (const AstraExit& exit) {
-        return exit.code;
-    }
-    return 0;
+    setSelfCommand({exe.string()});
+    return runProgram(vm, program, program.entry);
 }
 
 #ifdef _WIN32
@@ -312,15 +347,8 @@ int runFile(const std::string& path, std::vector<std::string> scriptArgs) {
     if (int failed = loadProgram(path, vm, session, program, sessionOwner, programOwner)) return failed;
 
     vm.load(*program);
-    try {
-        vm.runModule(program->entry);
-    } catch (AstraThrow& thrown) {
-        reportUncaught(vm, thrown);
-        return kExitRuntimeError;
-    } catch (const AstraExit& exit) {
-        return exit.code;
-    }
-    return 0;
+    setSelfCommand({executablePath().string(), std::filesystem::absolute(path).string()});
+    return runProgram(vm, *program, program->entry);
 }
 
 int buildFile(const std::string& path, std::string outPath, bool asExecutable, bool windowed,
@@ -514,6 +542,7 @@ int repl() {
         try {
             Value result = vm.runModule(module);
             if (!result.isNull()) std::cout << vm.repr(result) << "\n";
+            vm.runEventLoop(false);  // whatever has been posted and is ready, without waiting
         } catch (AstraThrow& thrown) {
             reportUncaught(vm, thrown);
         } catch (const AstraExit& exit) {

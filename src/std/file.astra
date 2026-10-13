@@ -97,6 +97,19 @@ class File {
 
   fun readBytes() => __file.readBytes(this.path)
 
+  // A piece at a time: a stream to read the file from, and one to write it to. Close each
+  // when it is done with, or let use { } do it: file.inputStream().use { it.readLine() }
+  fun inputStream() => InputStream(__io.open(this.path, "r"))
+  fun outputStream(append = false) => OutputStream(__io.open(this.path, append ? "a" : "w"))
+  fun bufferedReader(charset = null) => inputStream()
+  fun reader(charset = null) => inputStream()
+  fun bufferedWriter(charset = null) => outputStream()
+  fun writer(charset = null) => outputStream()
+  fun printWriter(charset = null) => outputStream()
+
+  // Runs the block on the file's lines.
+  fun useLines(block) => block(readLines())
+
   fun writeText(text) { __file.write(this.path, text) }
   fun appendText(text) { __file.append(this.path, text) }
   fun writeBytes(data) { __file.writeBytes(this.path, data) }

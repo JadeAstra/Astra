@@ -1,0 +1,71 @@
+// The part of gui_bounce_workers that moves the balls. It is not run by itself:
+// gui_bounce_workers starts several copies of it as workers, each on a core of its own, each
+// with a share of the balls.
+//
+// A worker shares nothing with the program that started it. It is told things in messages
+// (how big the canvas is, to add balls, to pause) and, when it is asked, says where its
+// balls are.
+
+class Ball(var x : number, var y : number, var dx : number, var dy : number, val radius : number) {
+  // Moves on by `steps` sixtieths of a second, turning back at the edges.
+  fun move(width : number, height : number, steps : number) {
+    x += dx * steps
+    y += dy * steps
+    if x < radius { x = radius; dx = dx.absoluteValue }
+    if x > width - radius { x = Math.max(radius, width - radius); dx = -dx.absoluteValue }
+    if y < radius { y = radius; dy = dy.absoluteValue }
+    if y > height - radius { y = Math.max(radius, height - radius); dy = -dy.absoluteValue }
+  }
+}
+
+val balls = []
+var width = 760.0
+var height = 520.0
+var paused = false
+var moves = 0          // how often the balls have been moved since the program last asked
+
+// Makes `count` balls at (x, y), or anywhere if no place is given, and tells the program how
+// big each one is. Where they are it hears when it asks.
+fun add(count : int, x, y) {
+  val radii = []
+  repeat(count) {
+    val speed = 1 + Math.random() * 3
+    val angle = Math.random() * 2 * Math.pi
+    val radius = 3 + Math.randomInt(0, 4)
+    balls.add(Ball(x ?: Math.random() * width, y ?: Math.random() * height, Math.cos(angle) * speed, Math.sin(angle) * speed, radius))
+    radii.add(radius)
+  }
+  Worker.parent.post({"added": radii})
+}
+
+Worker.parent.onMessage = { message ->
+  if (message.containsKey("size")) {
+    width = message["size"][0]
+    height = message["size"][1]
+  }
+  if (message.containsKey("paused")) { paused = message["paused"] }
+  if (message.containsKey("add")) { add(message["add"], message["x"], message["y"]) }
+  if (message.containsKey("where")) {
+    // All the places in one list, x then y for each ball.
+    val places = []
+    for ball in balls {
+      places.add(ball.x)
+      places.add(ball.y)
+    }
+    Worker.parent.post({"at": places, "moves": moves})
+    moves = 0
+  }
+}
+
+// Sixty times a second, whatever the program is busy with: move every ball. It measures how
+// long it really was since last time, so that the balls keep their speed whatever the timer does.
+var last = clock()
+EventLoop.every(16) {
+  val now = clock()
+  val elapsed = Math.min((now - last) * 60, 6)
+  last = now
+  if !paused {
+    for ball in balls { ball.move(width, height, elapsed) }
+    moves += 1
+  }
+}

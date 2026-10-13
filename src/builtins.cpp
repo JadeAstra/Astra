@@ -192,11 +192,23 @@ void registerGlobals(VM& vm) {
         return Value::null();
     });
 
+    // Sends on whatever print and write have gathered. Output to a file or to another program
+    // is otherwise sent in pieces, and at the latest when the program ends.
+    vm.defineNative("flush", 0, 0, [](VM& vm, int, Value*) -> Value {
+        vm.output->flush();
+        return Value::null();
+    });
+
     vm.defineNative("input", 0, 1, [](VM& vm, int argc, Value* args) -> Value {
         if (argc > 0) *vm.output << vm.stringify(args[0]);
         vm.output->flush();
         std::string line;
-        if (!std::getline(*vm.input, line)) return Value::null();
+        bool got;
+        {
+            LockReleased released(vm);  // other threads go on while this one waits for a line
+            got = static_cast<bool>(std::getline(*vm.input, line));
+        }
+        if (!got) return Value::null();
         if (!line.empty() && line.back() == '\r') line.pop_back();
         // Text piped in on Windows often starts with a UTF-8 byte order mark.
         if (line.compare(0, 3, "\xEF\xBB\xBF") == 0) line.erase(0, 3);
@@ -270,6 +282,8 @@ void registerGlobals(VM& vm) {
 
     // with(obj) { ... }: runs the block on obj, so that the names in it are obj's members.
     vm.defineNative("with", 2, 2, [](VM& vm, int, Value* args) -> Value {
+        // The block is set going in place of this call, not run from inside it.
+        if (args[1].isObjType(ObjType::Closure)) return vm.tailCallOn(args[0], args[1]);
         return vm.callOn(args[0], args[1], 0, nullptr);
     });
 
@@ -653,62 +667,8 @@ void registerListMethods(VM& vm) {
         return self;
     });
 
-    vm.defineMethod(T, "map", 1, 1, [](VM& vm, Value self, int, Value* args) -> Value {
-        ObjList* list = asList(self);
-        ObjList* result = newList(vm);
-        TempRoot keepAlive(vm, Value::object(result));
-        for (size_t i = 0; i < list->items.size(); i++) {
-            Value item = list->items[i];
-            result->items.push_back(vm.call(args[0], 1, &item));
-        }
-        vm.account(result->items.size() * sizeof(Value));
-        return Value::object(result);
-    });
-
-    vm.defineMethod(T, "filter", 1, 1, [](VM& vm, Value self, int, Value* args) -> Value {
-        ObjList* list = asList(self);
-        ObjList* result = newList(vm);
-        TempRoot keepAlive(vm, Value::object(result));
-        for (size_t i = 0; i < list->items.size(); i++) {
-            Value item = list->items[i];
-            // Stored before the call so the item stays reachable even if the callback drops it from the list.
-            result->items.push_back(item);
-            if (!vm.call(args[0], 1, &item).truthy()) result->items.pop_back();
-        }
-        vm.account(result->items.size() * sizeof(Value));
-        return Value::object(result);
-    });
-
-    // reduce(f, initial) starts from `initial`; reduce(f) starts from the first item.
-    vm.defineMethod(T, "reduce", 1, 2, [](VM& vm, Value self, int argc, Value* args) -> Value {
-        ObjList* list = asList(self);
-        if (argc < 2 && list->items.empty()) throw vm.runtimeError("reduce() of an empty list needs a starting value");
-        TempRoot accumulator(vm, argc > 1 ? args[1] : list->items[0]);
-        for (size_t i = argc > 1 ? 0 : 1; i < list->items.size(); i++) {
-            Value pair[2] = {accumulator.get(), list->items[i]};
-            accumulator.set(vm.call(args[0], 2, pair));
-        }
-        return accumulator.get();
-    });
-
-    vm.defineMethod(T, "each", 1, 1, [](VM& vm, Value self, int, Value* args) -> Value {
-        ObjList* list = asList(self);
-        for (size_t i = 0; i < list->items.size(); i++) {
-            Value item = list->items[i];
-            vm.call(args[0], 1, &item);
-        }
-        return Value::null();
-    });
-
-    vm.defineMethod(T, "find", 1, 1, [](VM& vm, Value self, int, Value* args) -> Value {
-        ObjList* list = asList(self);
-        for (size_t i = 0; i < list->items.size(); i++) {
-            TempRoot item(vm, list->items[i]);
-            Value candidate = item.get();
-            if (vm.call(args[0], 1, &candidate).truthy()) return item.get();
-        }
-        return Value::null();
-    });
+    // map, filter, reduce, each and find are in src/std/list.astra: a function given to a
+    // method written in Astra runs as part of the program, where a flow can be set aside.
 }
 
 // ---- Map methods ----
@@ -880,8 +840,14 @@ void registerBuiltins(VM& vm) {
     registerRangeMethods(vm);
     registerBytes(vm);
     registerStdlib(vm);
-    registerGui(vm);
-    registerSpike(vm);
+    registerThreads(vm);
+    registerIo(vm);
+    registerWorkers(vm);
+    // Windows belong to the main program: a worker has none.
+    if (!vm.isWorker()) {
+        registerGui(vm);
+        registerSpike(vm);
+    }
 }
 
 }  // namespace astra
