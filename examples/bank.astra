@@ -16,20 +16,20 @@ class Account(val owner : string, var balance : number = 0) {
   fun deposit(amount : number) : Account {
     if amount <= 0 { throw Error("a deposit has to be more than nothing") }
     balance += amount
-    history.push(Entry(paidIn, amount))        // the parameter is a Kind, so the bare name will do
+    history.add(Entry(paidIn, amount))         // the parameter is a Kind, so the bare name will do
     return this
   }
 
   fun withdraw(amount : number) : Account {
     if amount > balance { throw InsufficientFunds(amount, balance) }
     balance -= amount
-    history.push(Entry(paidOut, amount))
+    history.add(Entry(paidOut, amount))
     return this
   }
 
-  fun total(kind : Kind) => history.filter { it.kind == kind }.reduce({ sum, entry -> sum + entry.amount }, 0)
+  fun total(kind : Kind) => history.filter { it.kind == kind }.sumOf { it.amount }
 
-  override fun toString() => "$owner: $balance"
+  override fun toString() => "%-6s %7.2f".format(owner, balance)
 }
 
 // One bank, so an object rather than a class.
@@ -77,8 +77,8 @@ attempt("deposit -5") { Bank.find("ada").deposit(-5) }
 attempt("deposit \"ten\"") { Bank.find("ada").deposit("ten") }
 
 print(attempts, "attempts")
-for owner in Bank.accounts {
-  val account = Bank.find(owner)
+for account in (Bank.accounts.values.sortedByDescending { it.balance }) {
   print(account, "- paid in ${account.total(paidIn)}, paid out ${account.total(paidOut)}")
-  account.history.each { print("   ", it) }
+  account.history.forEach { print("   ", it) }
 }
+print("in the bank altogether:", Bank.accounts.values.sumOf { it.balance })

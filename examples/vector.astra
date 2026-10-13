@@ -41,6 +41,16 @@ val velocity = Vec2(1.5, -0.5)
 for step in 1..4 { position += velocity }
 print("after 4 steps:", position)
 
+// A data object is a map key, and an item of a set, by what it holds: an equal vector finds
+// the entry. Here, the squares a walk has been through.
+val visited = Set()
+var here = Vec2.zero
+for move in [Vec2(1, 0), Vec2(0, 1), Vec2(-1, 0), Vec2(0, -1), Vec2(1, 0)] {
+  visited.add(here)
+  here += move
+}
+print("visited", visited.size, "squares:", visited.joinToString(" "), "- back at the start:", Vec2(0, 0) in visited)
+
 // Types are enforced: a vector cannot be added to a plain number.
 try {
   print(a + 1)

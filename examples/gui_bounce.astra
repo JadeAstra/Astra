@@ -8,8 +8,8 @@ class Ball(var x : number, var y : number, var dx : number, var dy : number, val
     y += dy
     if x < radius or x > width - radius { dx = -dx }
     if y < radius or y > height - radius { dy = -dy }
-    x = Math.max(radius, Math.min(x, width - radius))
-    y = Math.max(radius, Math.min(y, height - radius))
+    x = x.coerceIn(radius, Math.max(radius, width - radius))
+    y = y.coerceIn(radius, Math.max(radius, height - radius))
   }
 }
 
@@ -19,8 +19,8 @@ val balls = []
 fun addBall(x : number, y : number) {
   val speed = 2 + Math.random() * 4
   val angle = Math.random() * 2 * Math.pi
-  balls.push(Ball(x, y, Math.cos(angle) * speed, Math.sin(angle) * speed,
-                  10 + Math.randomInt(0, 14), palette[balls.length % palette.length]))
+  balls.add(Ball(x, y, Math.cos(angle) * speed, Math.sin(angle) * speed,
+                 10 + Math.randomInt(0, 14), palette[balls.size % palette.size]))
 }
 
 val window = Window("Bounce", 520, 400, padding = 0, spacing = 0)
@@ -34,11 +34,11 @@ canvas.onKeyDown = { key -> if key == "Space" { paused = !paused } }
 fun frame() {
   val (width, height) = canvas.size()
   if !paused {
-    for ball in balls { ball.move(width, height) }
+    balls.forEach { it.move(width, height) }
   }
   canvas.clear(0x202830)
-  for ball in balls { canvas.fillCircle(ball.x, ball.y, ball.radius, ball.color) }
-  status.text = "  ${balls.length} balls" + (paused ? " (paused)" : "") + ". Click to add one; Space pauses."
+  balls.forEach { canvas.fillCircle(it.x, it.y, it.radius, it.color) }
+  status.text = "  ${balls.size} balls" + (paused ? " (paused)" : "") + ". Click to add one; Space pauses."
 }
 
 for i in 0..5000 { addBall(100 + i * 60, 80 + i * 40) }

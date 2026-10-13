@@ -1277,6 +1277,7 @@ The names are Kotlin's where Kotlin has one, so that code ported from it reads t
 Astra's own shorter names (`push`, `upper`, `each`, `has`) are still there beside them. Part
 of the library is built into the runtime and the rest is written in Astra itself
 (`src/std/*.astra`), mostly as extension functions, and carried inside `astra.exe`.
+`exampleswords.astra` puts a good part of it to work on a piece of text.
 
 **Functions:** `print(...)`, `write(...)` (no newline), `input(prompt?)`, `len(x)`, `str(x)`,
 `int(x)`, `float(x)`, `type(x)`, `range(end)` / `range(start, end, step?)`,

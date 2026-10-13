@@ -14,9 +14,9 @@ val fahrenheit = fahrenheitRow.textBox("68.0", width = 120)
 val status = window.label("Type a temperature in either box.")
 
 // The number in `text`, or null if it is not one.
-fun parse(text : string) : float? => try { float(text) } catch (e) { null }
+fun parse(text : string) : float? => text.trim().toDoubleOrNull()
 
-fun rounded(value : number) : string => str(Math.round(value * 10) / 10.0)
+fun rounded(value : number) : string => "%.1f".format(value)
 
 // Puts what was typed, converted, into the other box.
 fun show(text : string, other, convert : (float) -> number) {

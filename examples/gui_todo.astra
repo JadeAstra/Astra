@@ -27,8 +27,8 @@ fun refresh() {
   list.setItems(tasks)
   if selected in 0..<tasks.length { list.selectedIndex = selected }
 
-  val remaining = tasks.filter { !it.done }.length
-  summary.text = "$remaining of ${tasks.length} left"
+  val remaining = tasks.count { !it.done }
+  summary.text = "$remaining of ${tasks.size} left"
   val hasSelection = list.selectedIndex >= 0
   toggleButton.enable(hasSelection)
   removeButton.enable(hasSelection)
@@ -36,8 +36,8 @@ fun refresh() {
 
 addButton.onClick = {
   val title = input.text.trim()
-  if title != "" {
-    tasks.push(Task(title))
+  if title.isNotEmpty() {
+    tasks.add(Task(title))
     input.text = ""
     refresh()
   }

@@ -8,7 +8,7 @@ interface Drawable {
 abstract class Shape(val name : string) : Drawable {
   static {
     var made = 0
-    fun round2(x : number) : float => Math.round(x * 100) / 100.0
+    fun round2(x : number) : string => "%.2f".format(x)
   }
 
   init { made += 1 }                         // runs for every shape that is made
@@ -42,14 +42,14 @@ fun Shape.describe() => when (this) {
 
 val shapes = [Circle(1.5), Rect(3, 4.5), Square(2)]
 for shape in shapes { print(shape) }
-shapes.each { print("  ", it.describe(), "-", it.outline()) }
+shapes.forEach { print("  ", it.describe(), "-", it.outline()) }
 
-val largest = shapes.reduce({ best, shape -> shape.area() > best.area() ? shape : best }, shapes[0])
+val largest = shapes.maxBy { it.area() }
 print("largest is the ${largest.name};", Shape.made, "shapes were made")
 print("squares are rectangles:", shapes[2] is Rect, "- circles are not:", shapes[0] is Rect)
 
-shapes.sort { a, b -> a.area() - b.area() }
-print("by area:", shapes.map { it.name }.join(" < "))
+print("by area:", shapes.sortedBy { it.area() }.joinToString(" < ") { it.name })
+print("total area: %.1f, of which rectangles: %.1f".format(shapes.sumOf { it.area() }, shapes.filter { it is Rect }.sumOf { it.area() }))
 
 // An abstract class is never made itself.
 try { Shape("blob") } catch (e) { print(e.message) }

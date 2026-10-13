@@ -1,0 +1,71 @@
+// The standard library at work on some text: strings counted in characters, lists and maps
+// with Kotlin's names, a set, a deque, format, StringBuilder, and a file written and read back.
+
+val text = """
+    The café was naïve about its coffee. The coffee was good; the café was full.
+    A queue formed: first the regulars, then the curious, then everyone else.
+""".trimIndent()
+
+// A string is text: every position counts characters, not bytes.
+val first = text.lines().first()
+print("first line: ${first.length} characters, ${first.toBytes().size} bytes as UTF-8")
+print("it starts \"${first.take(8)}\" and ends \"${first.takeLast(5)}\"")
+print("'café' is at", text.indexOf("café"), "and, ignoring case, 'THE' at", text.indexOf("THE", ignoreCase = true))
+
+// Words: split on anything that is not a letter, drop what is empty, lower the case.
+val words = text.map { it.isLetter() ? it : " " }.joinToString("").split(" ")
+    .filter { it.isNotEmpty() }
+    .map { it.lowercase() }
+print()
+print(words.size, "words,", words.toSet().size, "different ones")
+
+// Counting them: a map from word to count, then the most frequent first.
+val counts = {:}
+for word in words { counts[word] = counts.getOrDefault(word, 0) + 1 }
+val ranked = counts.entries.sortedWith(compareByDescending { it.value }.thenBy { it.key })
+for (word, count) in ranked.take(4) {
+  print("%-8s %2d  %s".format(word, count, "#".repeat(count)))
+}
+
+// Grouping, and working values out of the groups.
+val byLength = words.distinct().groupBy { it.length }
+val longest = byLength.keys.max()
+print()
+print("longest (${longest} letters):", byLength[longest].sorted().joinToString())
+print("average length: %.2f".format(words.sumOf { it.length }.toDouble() / words.size))
+print("with an accent:", words.filter { word -> word.any { it.code > 127 } }.distinct())
+
+// A set tells what has been seen; a list, a pair or a data object can be an item or a key.
+data Bigram(val first, val second)
+val pairs = Set()
+val repeated = Set()
+for (a, b) in words.zipWithNext() {
+  if (!pairs.add(Bigram(a, b))) { repeated.add("$a $b") }
+}
+print("pairs of words that come up twice:", repeated.sorted())
+
+// A deque is quick at both ends: here a window of the last three words.
+val recent = Deque()
+var widest = ""
+for word in words {
+  recent.addLast(word)
+  if (recent.size > 3) { recent.removeFirst() }
+  val window = recent.joinToString(" ")
+  if (window.length > widest.length) { widest = window }
+}
+print("the longest three words in a row: \"$widest\"")
+
+// StringBuilder puts a long text together a piece at a time.
+val report = StringBuilder()
+report.appendLine("word,count")
+ranked.forEach { report.append(it.key).append(",").appendLine(it.value) }
+
+// A File is a path; the disk is touched when something is asked of it.
+val file = File("words-report.csv")
+file.writeText(report.toString())
+val rows = file.readLines().drop(1).map { it.split(",") }
+print()
+print("${file.name}: ${file.length()} bytes, ${rows.size} rows; the last is", rows.last())
+print("total from the file:", rows.sumOf { it[1].toInt() }, "- and from the list:", words.size)
+file.delete()
+print("deleted:", !file.exists())

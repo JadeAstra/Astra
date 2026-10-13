@@ -6,7 +6,7 @@ val window = Window("Paint", 560, 420)
 val tools = window.row()
 var color = Color.black
 var thickness = 3
-for (name, shade) in [["Black", Color.black], ["Red", Color.red], ["Green", Color.green], ["Blue", Color.blue]] {
+for (name, shade) in mapOf("Black" to Color.black, "Red" to Color.red, "Green" to Color.green, "Blue" to Color.blue).entries {
   tools.button(name, { color = shade }, width = 70)
 }
 val thick = tools.checkBox("Thick", onChange = { on -> thickness = on ? 9 : 3 })
