@@ -1,0 +1,92 @@
+// What the keyboard and the pointer do, as a window is told of it: nothing decided, nothing
+// routed. Which widget a press belongs to, what a double click is and what a shortcut does
+// are the toolkit's to work out from these. The names are JadeUI's.
+
+enum PointerButton { left, right, middle, back, forward, other }
+
+// The keys held with a key or a press. `shortcut` is the key that commands go with: Ctrl
+// here, the command key on a Mac.
+class Modifiers {
+  val shift
+  val ctrl
+  val alt
+  val meta
+  val shortcut
+
+  fun init(shift = false, ctrl = false, alt = false, meta = false, shortcut = null) {
+    this.shift = shift
+    this.ctrl = ctrl
+    this.alt = alt
+    this.meta = meta
+    this.shortcut = shortcut ?: ctrl
+  }
+
+  static val none = Modifiers()
+
+  // As the native layer counts them: 1 shift, 2 ctrl, 4 alt, 8 meta.
+  static fun ofBits(bits) => bits == 0 ? Modifiers.none : Modifiers(bits & 1 != 0, bits & 2 != 0, bits & 4 != 0, bits & 8 != 0)
+  get bits() => (shift ? 1 : 0) | (ctrl ? 2 : 0) | (alt ? 4 : 0) | (meta ? 8 : 0)
+
+  op ==(other) => other is Modifiers and other.bits == bits and other.shortcut == shortcut
+  fun hashCode() => bits
+  override fun toString() {
+    val held = []
+    if (shift) { held.add("shift") }
+    if (ctrl) { held.add("ctrl") }
+    if (alt) { held.add("alt") }
+    if (meta) { held.add("meta") }
+    return "Modifiers(" + held.joinToString("+") + ")"
+  }
+}
+
+// The keys of a keyboard, by where they are, not by what the layout in use prints on them:
+// `KeyCode.q` is the key at the top left of the letters, which a French keyboard calls A.
+// The letter the layout gives it comes with the event.
+enum KeyCode {
+  a, b, c, d, e, f, g, h, i, j, k, l, m, n, o, p, q, r, s, t, u, v, w, x, y, z,
+  digit0, digit1, digit2, digit3, digit4, digit5, digit6, digit7, digit8, digit9,
+  f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12, f13, f14, f15, f16, f17, f18, f19, f20, f21, f22, f23, f24, f25,
+  space, apostrophe, comma, minus, period, slash, semicolon, equal, leftBracket, backslash, rightBracket, graveAccent,
+  escape, enter, tab, backspace, insert, delete, right, left, down, up, pageUp, pageDown, home, end,
+  capsLock, scrollLock, numLock, printScreen, pause, menu,
+  numpad0, numpad1, numpad2, numpad3, numpad4, numpad5, numpad6, numpad7, numpad8, numpad9,
+  numpadDecimal, numpadDivide, numpadMultiply, numpadSubtract, numpadAdd, numpadEnter, numpadEqual,
+  shiftLeft, controlLeft, altLeft, metaLeft, shiftRight, controlRight, altRight, metaRight,
+  unknown;
+
+  private static val byName = {:}
+  // The key the native layer calls by this name.
+  static fun named(name) {
+    if (KeyCode.byName.isEmpty()) {
+      for (key in KeyCode.entries) { KeyCode.byName[key.name] = key }
+    }
+    return KeyCode.byName[name] ?: KeyCode.unknown
+  }
+}
+
+// What the pointer looks like over a part of a window.
+enum CursorKind { default, resizeH, resizeV, text, hand, move, resizeNwse, resizeNesw, crosshair }
+
+// What is done with the pointer itself: left alone, hidden over the window, or hidden and
+// held in place with its movements reported without end (for looking around a 3D view).
+enum CursorMode { normal, hidden, locked }
+
+// One thing the keyboard or the pointer did. Positions are in layout units from the top
+// left corner of what the window draws on.
+interface RawInput {
+  data PointerDown(val x, val y, val button, val mods, val clicks = 1) : RawInput
+  data PointerUp(val x, val y, val button, val mods) : RawInput
+  // `dx`, `dy`: how far it moved since the last time. `buttons`: the ones held, as a set.
+  data PointerMove(val x, val y, val dx, val dy, val buttons, val mods) : RawInput
+  // One click of a wheel is 1.0; up and to the left are positive.
+  data Wheel(val x, val y, val dx, val dy, val mods) : RawInput
+  // `letter`: what the key types in the layout in use, in upper case ("A", "7"), or null.
+  data KeyDown(val key, val mods, val repeat = false, val letter = null) : RawInput
+  data KeyUp(val key, val mods, val letter = null) : RawInput
+  // What was typed, after the layout and any composing: one or more characters.
+  data Text(val text) : RawInput
+  // The pointer came over the window, or left it.
+  data Hover(val inside) : RawInput
+  // The window has the keyboard, or has lost it.
+  data Focus(val focused) : RawInput
+}

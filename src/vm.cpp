@@ -433,6 +433,7 @@ std::string VM::typeName(Value v) const {
         case ObjType::Class: return "class";
         case ObjType::Instance: return asInstance(v)->cls->name->chars;
         case ObjType::Fiber: return "flow";
+        case ObjType::Resource: return static_cast<const ObjResource*>(v.as.obj)->kind;
         case ObjType::Upvalue:
         case ObjType::Iterator: return "internal";
     }
@@ -3158,6 +3159,10 @@ void VM::stringifyInto(std::string& out, Value v, bool quote, int depth) {
             out += "<flow>";
             return;
 
+        case ObjType::Resource:
+            out += std::string("<") + static_cast<const ObjResource*>(v.as.obj)->kind + ">";
+            return;
+
         case ObjType::Upvalue:
         case ObjType::Iterator:
             out += "<internal>";
@@ -3284,6 +3289,9 @@ void VM::blacken(Obj* obj) {
             else markValue(*upvalue->location);
             break;
         }
+        case ObjType::Resource:
+            liveBytes_ += sizeof(ObjResource);
+            break;
         case ObjType::Fiber: {
             ObjFiber* fiber = static_cast<ObjFiber*>(obj);
             liveBytes_ += sizeof(ObjFiber) + ObjFiber::kStackSize;

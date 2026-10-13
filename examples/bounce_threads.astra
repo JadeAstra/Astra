@@ -1,19 +1,19 @@
-// Animation with threads: thousands of balls bouncing around a canvas. Background threads
+// Animation with threads: tens of thousands of balls bouncing around a window. Background threads
 // move the balls, each its own share of them, and the main thread only draws.
-// Click the canvas to add a hundred more; Space pauses.
+// Click to add a hundred more; Space pauses.
 //
 // One thread runs Astra code at a time, so four threads do not move the balls four times as
 // fast. What they give is that the moving does not wait for the drawing: each thread goes
 // round as often as it gets a turn, up to sixty times a second, whatever a frame costs.
 //
-// gui_bounce.astra is the same thing in one loop, and gui_bounce_workers.astra with the
+// bounce.astra is the same thing in one loop, and bounce_workers.astra with the
 // moving done on other cores.
-import gui.*
+import Jade.*
 
 val startingBalls = 50000
 val threadCount = 4
 
-class Ball(var x : number, var y : number, var dx : number, var dy : number, val radius : number, val color : int) {
+class Ball(var x : number, var y : number, var dx : number, var dy : number, val radius : number, val color) {
   // Moves on by `steps` sixtieths of a second, turning back at the edges.
   fun move(width : number, height : number, steps : number) {
     x += dx * steps
@@ -25,7 +25,7 @@ class Ball(var x : number, var y : number, var dx : number, var dy : number, val
   }
 }
 
-val palette = [Color.red, Color.blue, Color.green, Color.orange, Color.purple, Color.cyan, Color.pink]
+val palette = [Color.red, Color.blue, Color.green, Color.orange, Color(160, 60, 200), Color.cyan, Color.pink]
 
 // What the threads share. Each thread moves the balls of one group. A list is never seen
 // half changed, so a ball can be added to a group while its thread is going through it.
@@ -64,12 +64,15 @@ for group in groups {
 }
 
 // ---- The window, on the main thread ----
-val window = Window("Bounce", 780, 580, padding = 0, spacing = 0)
-val canvas = window.canvas(fill = true)
-val status = window.label("")
+val window = NativeWindow("Bounce", 780, 580)
+val background = Color(0x202830)
+val statusFont = Font("Segoe UI", Font.plain, 12)
+val statusHeight = 24
 
-canvas.onMouseDown = { x, y, button -> repeat(100) { addBall(x, y) } }
-canvas.onKeyDown = { key -> if key == "Space" { paused = !paused } }
+window.onInput = { event ->
+  if event is RawInput.PointerDown { repeat(100) { addBall(event.x, event.y) } }
+  if event is RawInput.KeyDown and event.key == KeyCode.space and !event.repeat { paused = !paused }
+}
 
 var frames = 0
 var measuredAt = clock()
@@ -77,12 +80,18 @@ var rates = "measuring..."
 
 // Draws the balls where the threads have put them.
 fun frame() {
-  val (w, h) = canvas.size()
+  val canvas = window.canvas()
+  val w = canvas.width
+  val h = canvas.height - statusHeight
   width = w
   height = h
-  canvas.clear(0x202830)
+  canvas.color = background
+  canvas.fillRect(0, 0, w, h)
   for group in groups {
-    for ball in group { canvas.fillCircle(ball.x, ball.y, ball.radius, ball.color) }
+    for ball in group {
+      canvas.color = ball.color
+      canvas.fillOval(ball.x - ball.radius, ball.y - ball.radius, 2 * ball.radius, 2 * ball.radius)
+    }
   }
 
   // Once a second: how many frames were drawn, and how often each thread moved its balls.
@@ -94,11 +103,25 @@ fun frame() {
     frames = 0
     measuredAt = now
   }
-  status.text = "  $ballCount balls on $threadCount threads: $rates" + (paused ? " (paused)" : "") + ". Click for more; Space pauses."
+  val status = "$ballCount balls on $threadCount threads: $rates" + (paused ? " (paused)" : "") + ". Click for more; Space pauses."
+  canvas.color = Color(0x101418)
+  canvas.fillRect(0, h, w, statusHeight)
+  canvas.color = Color(0xC9D1D9)
+  canvas.font = statusFont
+  canvas.drawString(status, 8, h + 16)
+  window.present()
 }
 
+
 repeat(startingBalls) { addBall(Math.random() * width, Math.random() * height) }
+// While an edge is dragged the window is drawn at every size it passes through, not only
+// when the timer next comes round.
+window.onResize = { width, height -> frame() }
 window.show()
-canvas.focus()
-App.every(16, frame)
-App.run()
+// Sixty times a second, or as often as the screen shows a new picture. When the window
+// is closed the timer is called off, and with nothing left to wait for the program ends.
+val timer = EventLoop.every(16, frame)
+window.onCloseRequest = {
+  timer.cancel()
+  window.close()
+}

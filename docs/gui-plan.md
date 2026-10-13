@@ -6,8 +6,9 @@ time (section 7). M0, the two spikes, is done and accepted; what it found is in
 standard library, are done. M3, threads and async I/O, is built; what was settled along the
 way is under "As built in M3" in 5.5 (and "As built in M2" in 5.4). M3.5, parallel
 sections, is built too (5.5, point 7). M4, the text engine, has its first part built
-("As built in M4, part one" in section 4); its second part goes alongside M5 to M8. M5 is
-next.
+("As built in M4, part one" in section 4); its second part goes alongside M5 to M8. M5,
+the native layer and the types from the JDK, is built ("As built in M5" in section 4), and
+the old `gui` library is gone. M6 is next.
 
 ## 1. Goal and ground rules
 
@@ -349,6 +350,93 @@ of 1.5.
   is on a screen (M5).
 - Reading the names of all installed fonts takes about a tenth of a second the first time
   a program uses a font. If that shows at start-up, the answer is a small cache file.
+
+#### As built in M5
+
+Tier N1 is built, in `src/jade` (about 2,700 lines of C++) and `lib/Jade` (three files of
+Astra), and the old `gui` library is gone with its backend, examples and test (section 3,
+point 4).
+
+**The parts.** `platform.h` is the interface that is written once for each system: a window
+with an OpenGL context, the events it receives, cursors, the clipboard, waiting. `platform_win.cpp`
+is the one for Windows, written directly against Win32 and WGL. `render` draws: one shader
+program, shapes sent to the card as one small record each (76 bytes) and drawn instanced,
+the two glyph atlases (coverage, and colour for emoji), and surfaces. `api.cpp` is the
+built-in `__jade`, where layout units become device pixels. In `lib/Jade`: `Native.astra`
+(`NativeWindow`, `Surface`, `NativeCanvas`, `Native`), `Input.astra` (`RawInput`, `KeyCode`,
+`PointerButton`, `Modifiers`, `CursorKind`, `CursorMode`, ported from JadeUI's own types)
+and `Awt.astra` (the JDK's names).
+
+**Where it differs from what this section said.**
+
+- **One OpenGL context, not one for each window.** A single context is made current on
+  whichever window is being shown; every window has the same pixel format. The effect is
+  the one the share group was for (textures and the glyph atlas are common to all windows)
+  with less to keep in step, and the framebuffers and the vertex state, which a share group
+  does not share, exist once.
+- **Everything is drawn into surfaces; a window is shown by copying its surface to the
+  screen.** Nothing is drawn straight to a window. That is what makes the picture with no
+  window the same picture, and the window's retained picture comes for free.
+- **Clipping is done in the shader**, from a clip rectangle that travels with each shape,
+  not with the scissor rectangle. A thousand widgets each with a clip of its own are still
+  one batch; the scissor would have ended the batch at every widget.
+- **Colours are kept multiplied by their alpha** on every surface, which is what lets one
+  surface be drawn onto another correctly. They are divided again when a surface is read.
+- **Polygons are rasterised by the text engine** into the glyph atlas and kept by shape, so
+  the arrows and marks a toolkit draws again and again cost one quad each after the first.
+- **Layout units become pixels at one place**, `api.cpp`: a position is multiplied by the
+  scale and rounded, so that at 150% the edges of rectangles and straight lines are still
+  on pixel edges and neighbours still meet. Text is drawn with the font made for that
+  scale, by the rule of section 4, point 8.
+- **The window's events come through the runtime's own event loop** (`VM::loopPump`,
+  `loopWait`): there is no second loop, a showing window keeps the program going the way a
+  pending timer does, and while Windows runs its own loop (an edge being dragged) a timer
+  keeps the program's tasks going.
+- **A surface is collected.** A new kind of value, a resource, tells the native layer when
+  the collector finds it unreachable; the surface is then deleted from the drawing thread.
+  What a surface takes on the card counts towards the next collection.
+- **`BufferedImage` is in two places**, memory and the card, each brought up to date from
+  the other when it is asked for after the other changed. Its `createGraphics()` comes with
+  tier N3; until then `canvas()` gives the toolkit's canvas on it.
+- **The libraries that come with Astra may use the hidden built-ins** (`__jade`, `__text`):
+  the rule that kept them to the standard library now lets in the `lib` folder beside
+  `astra.exe`, and nothing else.
+
+**To be known when porting.** As the key of a map, a `Color`, a `Font` or a `Rectangle` is
+itself and not its value: the one such map in JadeUI's root package, the cache of font
+metrics, is keyed by a string here. `Font.deriveFont(12f)` is written `deriveFont(12.0)`:
+a whole number is a style and a decimal a size, which is how Java tells them apart too.
+
+**Checked.** Every operation of the canvas is drawn on a surface and read back pixel by
+pixel in the tests, the rectangles, lines and text also at scales of 1.5 and 2: what `fillRect` and `drawRect` cover, both
+ends of a line, the corners of a rounded rectangle, the area of an oval and of a triangle,
+clipping through two levels of sub-canvas, and text, which comes out of the card as the
+same pixels the engine draws by itself to within 3 in 255. Windows are tested without
+showing one: size, scale, the picture, and every kind of event sent through the path real
+ones take, each key by name. A window on the screen was tried by a script that posts it
+mouse and key messages, resizes it, and asks Windows for its picture: it draws, redraws at
+the new size, echoes the events and closes. Fifty thousand balls are moved and drawn at 41
+frames a second in one loop, 57 with the moving in a parallel section; the old library drew
+five thousand at 35.
+
+**Not tried, or not there.**
+
+- A second screen of another density, the locked pointer under a real mouse, and files
+  dropped from Explorer: the code is there and nobody has done it.
+- Dragging a window by hand was the first thing tried once the examples were built, and it
+  hung them: while Windows runs its own loop for a drag, the program's timers are run from
+  a timer inside it, and that ran "whatever is due", which for an animation whose frame
+  takes longer than its period is for ever. It now runs for a moment at a time
+  (`VM::runEventLoop` with a budget) and gives Windows its turn back. A test puts a window
+  into that state with a frame always due and requires a close request to arrive
+  meanwhile; it fails with the old code. The test and the scripts here say the drag has
+  begun by posting the message Windows sends; the drag loop itself is entered only by a
+  real mouse.
+- Any graphics driver but this machine's (an NVIDIA card). Intel graphics, virtual machines
+  and Remote Desktop are the risk section 9 names, and still are.
+- Scripted answers for file dialogs wait for the dialogs themselves (tier N2).
+- No test shows a window: the suite runs unattended, three ways, under the sanitizer, and
+  should not put windows on the screen of whoever is at the machine.
 
 Testing support belongs in N1 from the start: hidden windows that render to an offscreen
 surface, synthetic raw events fed through the same path as real ones, an in-memory clipboard
@@ -1003,7 +1091,8 @@ were brought forward. What was settled while building it:
    dialog calls removed; `swing()` and `SwingContent` removed; the backend modules' classes
    are not ported; `JadeHostProvider` and `JadeHostSpec` removed, since there is one kind of
    window, nothing to choose between, and no provider to hand a spec to (no app uses
-   either); extensions on built-in types become functions.
+   either); extensions on built-in types become functions; a `Color`, `Font` or `Rectangle`
+   as the key of a map is itself, not its value (as built in M5).
 
 ### 6.1 `Window` replaces `JadeHost`, `JadeWindow` and `WindowSpec`
 
@@ -1207,7 +1296,8 @@ saved as images and compared. In two parts, so that the window work is not held 
 
 **M5. Native tier N1 and the compat types.** The old `gui` library is deleted here (section
 3, point 4). Ends with a script that opens a window, draws text and shapes, echoes raw
-events, and renders the same picture to a PNG with no window.
+events, and renders the same picture to a PNG with no window. (Built: `examples/window.astra`
+is that script; see "As built in M5" in section 4.)
 
 **M6. Core, part one.** `Jade.kt` (types, events, capability interfaces, `Palette`,
 `elide`), `Canvas.kt` (`Canvas`, `RecordingCanvas`, `DrawOp`), `JadeComponent.kt`

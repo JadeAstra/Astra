@@ -1,5 +1,5 @@
-// The part of gui_bounce_workers that moves the balls. It is not run by itself:
-// gui_bounce_workers starts several copies of it as workers, each on a core of its own, each
+// The part of bounce_workers that moves the balls. It is not run by itself:
+// bounce_workers starts several copies of it as workers, each on a core of its own, each
 // with a share of the balls.
 //
 // A worker shares nothing with the program that started it. It is told things in messages

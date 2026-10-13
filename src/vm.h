@@ -332,7 +332,9 @@ public:
     void jobFinished() { pendingJobs_--; }
     // Runs what is ready. With `wait`, goes on until there is nothing left to wait for: no
     // task, no timer, no work in progress and no thread that is not a daemon.
-    void runEventLoop(bool wait);
+    // Without `wait` it returns when nothing is ready, or, given a budget in milliseconds,
+    // once that long has passed and at least one thing has been run.
+    void runEventLoop(bool wait, int64_t budgetMs = -1);
     // True if threads are still running, in which case the process has to end without
     // taking the VM apart under them.
     bool threadsAlive() const { return threads_.size() > 1 || pendingJobs_ > 0 || liveWorkers_ > 0; }
@@ -342,6 +344,12 @@ public:
     int64_t millisUntilLoopWork();
     // Called, from whatever thread, when the loop has been given something to do.
     std::atomic<void (*)()> onLoopWake{nullptr};
+    // For a program with windows, whose events come through the same loop. `loopPump`
+    // handles the window system's events that are waiting, calling into the program for
+    // each. `loopWait` waits, with the lock released, for one to arrive or for onLoopWake,
+    // for at most that many milliseconds (-1: for as long as it takes).
+    void (*loopPump)(VM&) = nullptr;
+    void (*loopWait)(int64_t) = nullptr;
 
     // ---- Parallel sections (parallel.cpp) ----
     // Several cores running Astra code on the same objects at the same time. Each core has a
@@ -687,8 +695,8 @@ void registerText(VM& vm);     // text/api.cpp: fonts, text and pictures
 // What started this program (see __io.selfCommand): set by main before the program runs.
 void setSelfCommand(std::vector<std::string> command);
 
-// The native half of the GUI library (lib/gui.astra). Defined in gui.cpp.
-void registerGui(VM& vm);
+// The native layer of the Jade library (lib/Jade): windows, events and drawing. jade/api.cpp.
+void registerJade(VM& vm);
 void registerSpike(VM& vm);  // M0 spike: the `Spike` class (src/spike/glwin.cpp)
 
 }  // namespace astra

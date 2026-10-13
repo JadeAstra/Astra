@@ -670,9 +670,12 @@ private:
         workerSpec_ = std::string(1, '\x01') + std::to_string(module) + '\x01' + literal.stringValue;
     }
 
-    // Whether `name` is a built-in that only the standard library's own source may use.
+    // Whether `name` is a built-in that only the standard library's own source may use, and
+    // the libraries that come with Astra (the lib folder beside it), which are written on
+    // such built-ins: Jade on __jade.
     bool libraryOnly(const std::string& name) const {
-        return name.size() > 2 && name[0] == '_' && name[1] == '_' && ns_ != session_.builtins_ && session_.vm_.hasBuiltin(name);
+        return name.size() > 2 && name[0] == '_' && name[1] == '_' && ns_ != session_.builtins_ && ns_->library == "<program>" &&
+               session_.vm_.hasBuiltin(name);
     }
 
     // What a bare name means at the top level, if anything declares it: a private name of this
@@ -3811,7 +3814,7 @@ Namespace* CompilerSession::importModule(const std::string& path, const std::str
     places.push_back(fs::path(fromDirectory));
     for (const std::string& library : libraryPaths) places.push_back(fs::path(library));
 
-    // A file never imports itself: a script called gui.astra that says `import "gui"` means
+    // A file never imports itself: a script called Shapes.astra that says `import Shapes` means
     // the library, so the importing file is passed over.
     std::error_code ec;
     fs::path self = fs::weakly_canonical(fs::path(fromDirectory) / fs::path(file), ec);

@@ -439,10 +439,17 @@ void VM::cancelTimer(int64_t id) {
     wakeLoop();
 }
 
-void VM::runEventLoop(bool wait) {
+void VM::runEventLoop(bool wait, int64_t budgetMs) {
     if (thread_ != &mainThread_) throw runtimeError("the event loop runs on the main thread only");
+    // Without waiting, and with a budget: what is ready is run until the time is up, and one
+    // thing at least. A timer whose task takes longer than its period is always due, so
+    // "until nothing is due" alone would never come back.
+    const Clock::time_point deadline = Clock::now() + std::chrono::milliseconds(std::max<int64_t>(budgetMs, 0));
+    bool ranOne = false;
     for (;;) {
         if (stopRequested_.load()) throw WorkerStop{};
+        if (!wait && budgetMs >= 0 && ranOne && Clock::now() >= deadline) return;
+        ranOne = true;
         // What a worker thread has handed over: the end of a read, say, with a flow to take up.
         std::function<void(VM&)> native;
         {
@@ -456,6 +463,9 @@ void VM::runEventLoop(bool wait) {
             native(*this);
             continue;
         }
+
+        // Windows' events: all that are waiting, then one of the loop's own tasks, in turn.
+        if (loopPump != nullptr) loopPump(*this);
 
         if (!loopTasks_.empty()) {
             TempRoot task(*this, loopTasks_.front());
@@ -483,6 +493,24 @@ void VM::runEventLoop(bool wait) {
         if (!haveTimer && pendingJobs_ == 0 && !working) return;
 
         ThreadState* me = thread_;
+        if (loopWait != nullptr) {
+            // With windows, the wait is for the window system: an event ends it, and so does
+            // onLoopWake, which whoever gives the loop work calls.
+            int64_t millis = -1;
+            if (haveTimer) millis = std::max<int64_t>(0, std::chrono::duration_cast<std::chrono::milliseconds>(due - Clock::now()).count() + 1);
+            bool waiting = true;
+            {
+                std::lock_guard<std::mutex> hold(loopMutex_);
+                if (loopWake_ || !nativeTasks_.empty()) waiting = false;
+                loopWake_ = false;
+            }
+            if (waiting) {
+                releaseLock();
+                loopWait(millis);
+                acquireLock(me);
+            }
+            continue;
+        }
         releaseLock();
         {
             std::unique_lock<std::mutex> hold(loopMutex_);

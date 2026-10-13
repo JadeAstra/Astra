@@ -1,0 +1,93 @@
+// Animation: tens of thousands of balls bouncing around a window, moved by every core of the
+// machine at once and drawn by one loop. Click to add a hundred more; Space pauses.
+//
+// This is bounce.astra with one line changed: the loop that moves the balls is a parallel
+// section. Each core moves its share of the balls, the balls themselves and not copies of
+// them, which is allowed because moving a ball changes that ball and nothing else.
+// (bounce_threads.astra and bounce_workers.astra do the same with threads and with workers.)
+import Jade.*
+
+val startingBalls = 50000
+
+class Ball(var x : number, var y : number, var dx : number, var dy : number, val radius : number, val color) {
+  // Moves on by `steps` sixtieths of a second, turning back at the edges.
+  fun move(width : number, height : number, steps : number) {
+    x += dx * steps
+    y += dy * steps
+    if x < radius { x = radius; dx = dx.absoluteValue }
+    if x > width - radius { x = Math.max(radius, width - radius); dx = -dx.absoluteValue }
+    if y < radius { y = radius; dy = dy.absoluteValue }
+    if y > height - radius { y = Math.max(radius, height - radius); dy = -dy.absoluteValue }
+  }
+}
+
+val palette = [Color.red, Color.blue, Color.green, Color.orange, Color(160, 60, 200), Color.cyan, Color.pink]
+val balls = []
+
+fun addBall(x : number, y : number) {
+  val speed = 1 + Math.random() * 30
+  val angle = Math.random() * 2 * Math.pi
+  balls.add(Ball(x, y, Math.cos(angle) * speed, Math.sin(angle) * speed, 3 + Math.randomInt(0, 4), palette[balls.size % palette.size]))
+}
+
+val window = NativeWindow("Bounce", 780, 580)
+val background = Color(0x202830)
+val statusFont = Font("Segoe UI", Font.plain, 12)
+val statusHeight = 24
+
+var paused = false
+window.onInput = { event ->
+  if event is RawInput.PointerDown { repeat(100) { addBall(event.x, event.y) } }
+  if event is RawInput.KeyDown and event.key == KeyCode.space and !event.repeat { paused = !paused }
+}
+
+var last = clock()
+var frames = 0
+var measuredAt = clock()
+var rate = "measuring..."
+
+// One frame: move every ball by the time that has really passed, then draw them all.
+fun frame() {
+  val canvas = window.canvas()
+  val width = canvas.width
+  val height = canvas.height - statusHeight
+  val now = clock()
+  val steps = Math.min((now - last) * 60, 6)       // in sixtieths of a second
+  last = now
+  if !paused {
+    balls.parallelStream().forEach { it.move(width, height, steps) }      // the one line
+  }
+  canvas.color = background
+  canvas.fillRect(0, 0, width, height)
+  for ball in balls {
+    canvas.color = ball.color
+    canvas.fillOval(ball.x - ball.radius, ball.y - ball.radius, 2 * ball.radius, 2 * ball.radius)
+  }
+
+  frames += 1
+  if now - measuredAt >= 1 {
+    rate = "%.0f frames a second, moved on ${availableProcessors()} cores".format(frames / (now - measuredAt))
+    frames = 0
+    measuredAt = now
+  }
+  val status = "${balls.size} balls: $rate" + (paused ? " (paused)" : "") + ". Click for more; Space pauses."
+  canvas.color = Color(0x101418)
+  canvas.fillRect(0, height, width, statusHeight)
+  canvas.color = Color(0xC9D1D9)
+  canvas.font = statusFont
+  canvas.drawString(status, 8, height + 16)
+  window.present()
+}
+
+repeat(startingBalls) { addBall(Math.random() * 760, Math.random() * 520) }
+// While an edge is dragged the window is drawn at every size it passes through, not only
+// when the timer next comes round.
+window.onResize = { width, height -> frame() }
+window.show()
+// Sixty times a second, or as often as the screen shows a new picture. When the window
+// is closed the timer is called off, and with nothing left to wait for the program ends.
+val timer = EventLoop.every(16, frame)
+window.onCloseRequest = {
+  timer.cancel()
+  window.close()
+}

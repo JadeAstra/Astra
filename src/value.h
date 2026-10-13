@@ -16,6 +16,7 @@ struct FunctionProto;
 enum class ObjType : uint8_t {
     String, List, Map, Range, Closure, Upvalue, Native, Class, Instance, BoundMethod, BoundNative, Iterator, Bytes,
     Fiber,  // a flow: a function that can set itself aside (ObjFiber, in vm.h)
+    Resource,  // something the runtime holds for a program that is not made of values
 };
 
 // Header shared by every garbage-collected object.
@@ -260,6 +261,19 @@ struct ObjMap final : Obj {
 struct ObjBytes final : Obj {
     std::vector<uint8_t> data;
     ObjBytes() : Obj(ObjType::Bytes) {}
+};
+
+// Something the runtime holds for a program that is not made of values: a picture on the
+// graphics card, say. A program can only keep it and hand it back. When the collector finds
+// it unreachable, `release` is called with its number, on whichever thread is collecting.
+struct ObjResource final : Obj {
+    const char* const kind;
+    const int64_t id;
+    void (*const release)(int64_t);
+    ObjResource(const char* k, int64_t i, void (*r)(int64_t)) : Obj(ObjType::Resource), kind(k), id(i), release(r) {}
+    ~ObjResource() override {
+        if (release != nullptr) release(id);
+    }
 };
 
 struct ObjRange final : Obj {

@@ -67,7 +67,7 @@ std::filesystem::path executablePath() {
 #endif
 }
 
-// Where bundled libraries such as gui.astra live: a "lib" folder beside the executable, and
+// Where the libraries that come with Astra, such as Jade, live: a "lib" folder beside the executable, and
 // nowhere else, so that a folder someone else can write to is never searched.
 std::vector<std::string> libraryPaths() {
     std::filesystem::path exe = executablePath();
@@ -542,7 +542,7 @@ int repl() {
         try {
             Value result = vm.runModule(module);
             if (!result.isNull()) std::cout << vm.repr(result) << "\n";
-            vm.runEventLoop(false);  // whatever has been posted and is ready, without waiting
+            vm.runEventLoop(false, 50);  // whatever has been posted and is ready, without waiting
         } catch (AstraThrow& thrown) {
             reportUncaught(vm, thrown);
         } catch (const AstraExit& exit) {

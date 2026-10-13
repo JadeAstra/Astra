@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
 # The version goes up with each milestone of docs/gui-plan.md: M1 is 0.1.0, M2 is 0.2.0,
-# M3.5 is 0.3.5, M4 is 0.4.0.
-project(Astra VERSION 0.4.0 LANGUAGES CXX)
+# M3.5 is 0.3.5, M4 is 0.4.0, M5 is 0.5.0.
+project(Astra VERSION 0.5.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -41,7 +41,11 @@ add_executable(astra
   src/io.cpp
   src/worker.cpp
   src/parallel.cpp
-  src/gui.cpp
+  # Jade's native layer: windows, events and drawing with OpenGL (docs/gui-plan.md, section 4).
+  src/jade/platform_win.cpp
+  src/jade/gl.cpp
+  src/jade/render.cpp
+  src/jade/api.cpp
   # The text engine (docs/gui-plan.md, section 4), and pictures.
   src/text/face.cpp
   src/text/cff.cpp
@@ -61,12 +65,12 @@ add_executable(astra
   src/spike/glwin.cpp
 )
 if(WIN32)
-  target_link_libraries(astra PRIVATE opengl32 ws2_32)
+  target_link_libraries(astra PRIVATE opengl32 ws2_32 shell32)
 endif()
 
 target_compile_definitions(astra PRIVATE ASTRA_VERSION="${PROJECT_VERSION}")
 
-# astra looks for libraries such as gui.astra only in the lib folder beside itself, so every
+# astra looks for libraries such as Jade only in the lib folder beside itself, so every
 # build puts a copy of lib/ next to the executable.
 add_custom_target(astra_lib ALL
   COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/lib" "$<TARGET_FILE_DIR:astra>/lib"

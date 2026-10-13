@@ -1,23 +1,23 @@
-// Animation on several cores: tens of thousands of balls bouncing around a canvas. The balls
+// Animation on several cores: tens of thousands of balls bouncing around a window. The balls
 // are moved by workers, each with a share of them and a core of its own, and this program
-// only draws. Click the canvas to add a hundred more; Space pauses.
+// only draws. Click to add a hundred more; Space pauses.
 //
 // Threads would not do here: they take turns at running Astra code. A worker is a second
 // copy of the runtime, so the moving and the drawing really happen at the same time. The
 // workers run bounce_worker.astra. They move their balls sixty times a second whatever this
 // program is doing, and say where the balls are whenever it asks, which is once a frame.
 //
-// gui_bounce.astra is the same thing in one loop on one core, and gui_bounce_threads.astra
+// bounce.astra is the same thing in one loop on one core, and bounce_threads.astra
 // with threads.
-import gui.*
+import Jade.*
 
 val startingBalls = 50000
 val workerCount = 3
-val palette = [Color.red, Color.blue, Color.green, Color.orange, Color.purple, Color.cyan, Color.pink]
+val palette = [Color.red, Color.blue, Color.green, Color.orange, Color(160, 60, 200), Color.cyan, Color.pink]
 
 // What this program knows of one worker's balls: how big each is, told once when it is made,
 // and where each was when the worker last said (x then y for each, in one list).
-class Share(val worker : Worker, val color : int) {
+class Share(val worker : Worker, val number : int) {
   val radii = []
   var places = []
   var moves = 0          // how often the worker has moved its balls since this was last looked at
@@ -26,7 +26,7 @@ class Share(val worker : Worker, val color : int) {
 
 val shares = (0..<workerCount).map { n ->
   // A daemon: the workers do not keep the program going once the window is closed.
-  val share = Share(Worker("bounce_worker.astra", isDaemon = true), palette[n % palette.size])
+  val share = Share(Worker("bounce_worker.astra", isDaemon = true), n)
   share.worker.onMessage = { message ->
     if (message.containsKey("added")) { share.radii.addAll(message["added"]) }
     if (message.containsKey("at")) {
@@ -47,14 +47,15 @@ fun addBalls(count : int, x = null, y = null) {
 }
 
 // ---- The window ----
-val window = Window("Bounce", 780, 580, padding = 0, spacing = 0)
-val canvas = window.canvas(fill = true)
-val status = window.label("")
+val window = NativeWindow("Bounce", 780, 580)
+val background = Color(0x202830)
+val statusFont = Font("Segoe UI", Font.plain, 12)
+val statusHeight = 24
 
 var paused = false
-canvas.onMouseDown = { x, y, button -> addBalls(100, x, y) }
-canvas.onKeyDown = { key ->
-  if key == "Space" {
+window.onInput = { event ->
+  if event is RawInput.PointerDown { addBalls(100, event.x, event.y) }
+  if event is RawInput.KeyDown and event.key == KeyCode.space and !event.repeat {
     paused = !paused
     shares.forEach { it.worker.post({"paused": paused}) }
   }
@@ -68,20 +69,29 @@ var rates = "measuring..."
 
 // Draws the balls where the workers last said they were, and asks where they are now.
 fun frame() {
-  val (w, h) = canvas.size()
+  val canvas = window.canvas()
+  val w = canvas.width
+  val h = canvas.height - statusHeight
   if w != width or h != height {
     width = w
     height = h
     shares.forEach { it.worker.post({"size": [w, h]}) }
   }
 
-  canvas.clear(0x202830)
+  canvas.color = background
+  canvas.fillRect(0, 0, w, h)
   var count = 0
   for share in shares {
     val places = share.places
     val radii = share.radii
     val known = Math.min(places.size / 2, radii.size)
-    for i in 0..<known { canvas.fillCircle(places[2 * i], places[2 * i + 1], radii[i], share.color) }
+    for i in 0..<known {
+      // Colours go round by the ball's place among all the balls, as in the other versions,
+      // not by which worker moves it.
+      canvas.color = palette[(i * workerCount + share.number) % palette.size]
+      val radius = radii[i]
+      canvas.fillOval(places[2 * i] - radius, places[2 * i + 1] - radius, 2 * radius, 2 * radius)
+    }
     count += known
     // One request at a time: a worker is never sent more than this program can draw.
     if !share.asked {
@@ -100,11 +110,25 @@ fun frame() {
     frames = 0
     measuredAt = now
   }
-  status.text = "  $count balls on $workerCount workers: $rates" + (paused ? " (paused)" : "") + ". Click for more; Space pauses."
+  val status = "$count balls on $workerCount workers: $rates" + (paused ? " (paused)" : "") + ". Click for more; Space pauses."
+  canvas.color = Color(0x101418)
+  canvas.fillRect(0, h, w, statusHeight)
+  canvas.color = Color(0xC9D1D9)
+  canvas.font = statusFont
+  canvas.drawString(status, 8, h + 16)
+  window.present()
 }
 
+
 addBalls(startingBalls)
+// While an edge is dragged the window is drawn at every size it passes through, not only
+// when the timer next comes round.
+window.onResize = { width, height -> frame() }
 window.show()
-canvas.focus()
-App.every(16, frame)
-App.run()
+// Sixty times a second, or as often as the screen shows a new picture. When the window
+// is closed the timer is called off, and with nothing left to wait for the program ends.
+val timer = EventLoop.every(16, frame)
+window.onCloseRequest = {
+  timer.cancel()
+  window.close()
+}

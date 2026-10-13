@@ -57,12 +57,12 @@ error, or whatever the script passes to `exit()`.
 
 ```
 astra build examples\bank.astra --exe                        makes examples\bank.exe
-astra build examples\gui_todo.astra --windowed -o Todo.exe   a GUI app with no console window
+astra build examples\bounce.astra --windowed -o Bounce.exe   a GUI app with no console window
 astra build app.astra --windowed --icon app.ico              app.exe, with an icon of its own
 ```
 
 The result is one file holding the Astra runtime and the compiled script with everything it
-imports, the `gui` library included. It needs neither `astra.exe`, the sources nor `lib` to
+imports, the `Jade` library included. It needs neither `astra.exe`, the sources nor `lib` to
 run, so it can be copied to another machine as it is.
 
 A built program runs as its own process, named after its file: `Todo.exe` is listed as
@@ -1173,7 +1173,7 @@ A library is a folder directly inside `lib`, with everything below it, so `Jade`
 a program count as one library.
 
 An import is looked for next to the importing file, then in the `lib` folder beside
-`astra.exe`, and nowhere else. That is where bundled libraries such as `gui` live, so
+`astra.exe`, and nowhere else. That is where the libraries that come with Astra, such as `Jade`, live, so
 `astra.exe` and its `lib` folder belong together when astra is copied somewhere.
 
 **Order.** Within a file, and across the files of a folder that is imported as a whole, the
@@ -1185,91 +1185,177 @@ and statements, runs in the order written, and for a folder file by file in alph
 order: a top-level variable can be used by a function at any time, but not by a statement
 that runs before the variable's own line.
 
-## GUI
+## Windows and drawing: Jade
 
-`import gui.*` gives a program windows, buttons, text boxes, lists and a canvas to draw on.
-It uses the native controls of Windows and works only there.
+`import Jade.*` gives a program windows to draw in. **Jade is Astra's GUI library, and it is
+being built**: what is there today is its native layer, the part that opens windows, reports
+what the keyboard and the pointer do, and draws. The widgets (buttons, text fields, lists,
+menus, dialogs) are written on top of it and come next; the plan is in `docs\gui-plan.md`.
+
+A window is a plain window of the system's with nothing in it but what the program draws,
+and everything is drawn by the graphics card, with OpenGL. Text comes from Astra's own text
+engine (below), so it measures and looks the same wherever the same font file is. Windows
+only so far, on OpenGL 3.3 or later.
 
 ```astra
-import gui.*
+import Jade.*
 
-val window = Window("Counter")
-var count = 0
+val window = NativeWindow("Hello", 400, 200)
 
-val label = window.label("Count: 0", width = 240)
-val buttons = window.row()
-buttons.button("Add one", fun() {
-  count += 1
-  label.text = "Count: $count"
-})
-buttons.button("Reset", fun() {
-  count = 0
-  label.text = "Count: 0"
-})
+fun paint() {
+  val canvas = window.canvas()
+  canvas.color = Color.white
+  canvas.fillRect(0, 0, canvas.width, canvas.height)
+  canvas.color = Color(47, 129, 247)
+  canvas.fillRoundRect(20, 20, 160, 60, 16, 16)
+  canvas.color = Color.black
+  canvas.font = Font("Segoe UI", Font.bold, 20)
+  canvas.drawString("Hello", 40, 58)
+  window.present()                 // shows what has been drawn
+}
 
+window.onResize = { width, height -> paint() }
+window.onInput = { event -> if event is RawInput.KeyDown and event.key == KeyCode.escape { window.close() } }
+paint()
 window.show()
-App.run()          // handles events until the window is closed
 ```
 
-**Layout.** Nothing is positioned by hand. A `Window` is a column: each widget you add goes
-below the last. `row()` and `column()` add a nested row or column, and return it so that you
-can add widgets to it. A widget made with `fill = true` takes the spare space of its row or
-column (a list that should grow with the window, a text box that should use the rest of a
-line), and `spacer()` is empty space that does the same. Layout is redone when the window is
-resized. `Window("Title", width, height)` fixes the starting size; without a size the window
-fits its contents.
+There is no loop to write. A program with a window showing goes on until its windows are
+closed: the window's events come through the same event loop as `EventLoop`'s tasks and
+timers (see "Doing several things at once"), which is also how an animation is made:
+`EventLoop.every(16) { ... }`. Windows and drawing belong to the main thread; a thread or a
+worker hands its result over with `EventLoop.post`.
 
-**Widgets.** Each of these is a method of a window, row or column, and returns the widget:
+`examples\window.astra` draws every kind of shape and echoes the events it receives, and
+with `picture` on its command line draws the same picture into a PNG with no window at all.
+`examples\bounce.astra` animates fifty thousand balls.
 
-| Method | Widget | Notable members |
-| --- | --- | --- |
-| `label(text)` | `Label` | `text` |
-| `button(text, onClick)` | `Button` | `onClick`, `click()`, `makeDefault()` (Enter clicks it) |
-| `checkBox(text, checked, onChange)` | `CheckBox` | `checked`, `onChange(on)` |
-| `textBox(text, onChange)` | `TextBox` | `text`, `onChange(text)` |
-| `textArea(text, onChange)` | `TextArea` | the same, for several lines |
-| `listBox(items, onSelect)` | `ListBox` | `add(item)`, `setItems(list)`, `remove(index)`, `clear()`, `selectedIndex`, `selected`, `count`, `onSelect(index, item)` |
-| `canvas(width, height)` | `Canvas` | see below |
+**Units.** Everything a program gives and gets is in layout units: the pixels of an
+ordinary screen. On a dense screen a window has a `scale` (1.5, 2) and draws that many of
+the screen's pixels to the unit; edges still fall on pixel edges and text is drawn at the
+screen's own size. A program's numbers do not change.
 
-Names without parentheses are properties, read and assigned like fields: `label.text = "Done"`,
-`if box.checked { ... }`, `list.selectedIndex = 0`. All widgets have `text`, `enable(on)`,
-`disable()` and `focus()`, and take
-`width =` (and where it makes sense `height =` and `fill =`) as named arguments. Handlers are
-ordinary functions; pass one when creating the widget or assign it later
-(`button.onClick = fun() { ... }`).
+### A window
 
-**Windows.** `show()`, `close()`, the `title` property, `size()`, `setSize(width, height)`,
-`saveImage(path)`, and the handlers `onClose` (return `false` to keep the window open),
-`onResize(width, height)` and `onEscape`.
+`NativeWindow(title = "", width = 900, height = 640, resizable = true, dialog = false,
+owner = null)` makes one, not yet shown. The size is of what can be drawn on. An `owner` is
+a window this one belongs to and stays in front of.
 
-**Canvas.** A surface that keeps what is drawn on it:
+| | |
+| --- | --- |
+| `show()`, `hide()`, `close()`, `toFront()`, `requestAttention()` | |
+| `isOpen`, `isVisible`, `isFocused` | |
+| `title`, `width`, `height`, `size`, `scale`, `setSize(w, h)` | |
+| `position`, `setPosition(x, y)` | where it is on the screen, in the screen's pixels |
+| `setLimits(minWidth, minHeight, maxWidth, maxHeight)`, `resizable` | how far it can be dragged; 0 is no limit |
+| `setIcon(picture)` | for the title bar and the task bar; a built program's own icon is used otherwise |
+| `cursor` | a `CursorKind`: `default`, `text`, `hand`, `move`, `crosshair`, `resizeH`, `resizeV`, `resizeNwse`, `resizeNesw` |
+| `cursorMode` | `CursorMode.normal`, `hidden`, or `locked` (hidden and held, its movements reported without end) |
+| `canvas()` | something to draw on the window's picture with |
+| `present()` | shows what has been drawn |
+| `snapshot()` | the window's picture as a `Picture`, whether or not it is showing |
 
-```astra
-val canvas = window.canvas(400, 300)
-canvas.clear(Color.white)
-canvas.fillRect(10, 10, 80, 50, Color.blue)
-canvas.circle(200, 150, 40, Color.red, 3)          // centre, radius, colour, line width
-canvas.line(0, 0, 400, 300)
-canvas.drawText(10, 270, "hello", Color.black, 16)
+**A window keeps its picture.** The program draws when something changes, as much or as
+little as has changed, and calls `present()`. When the system wants the picture again (the
+window was covered and is not any more) the window shows it by itself. At a change of size
+the picture keeps what it showed, with any new part clear, and the program hears of the new
+size (`onResize`) and draws again. A program that animates draws from `onResize` as well as
+from its timer, so that the window is filled at every size it passes through while an edge
+is dragged.
 
-canvas.onMouseDown = fun(x, y, button) { canvas.fillCircle(x, y, 5, Color.green) }
-canvas.onKeyDown = fun(key) { if key == "Space" { canvas.clear() } }
-```
+What happens to a window arrives through functions the program sets:
 
-Drawing methods: `clear`, `line`, `rect`, `fillRect`, `ellipse`, `fillEllipse`, `circle`,
-`fillCircle`, `drawText`, plus `size()` and `saveImage(path)`. Colours are `0xRRGGBB` numbers;
-`Color` has the common ones (`Color.red`) and `Color.rgb(r, g, b)`. Handlers: `onMouseDown`,
-`onMouseUp`, `onMouseMove`, `onKeyDown`, `onKeyUp`, `onResize`. A canvas receives keys once it
-has been clicked or given `focus()`.
+| | |
+| --- | --- |
+| `onInput = { event -> }` | a `RawInput`: see below |
+| `onResize = { width, height -> }` | it has another size: draw it again and `present()` |
+| `onScaleChanged = { scale -> }` | it is now on a screen of another density |
+| `onCloseRequest = { }` | the user asked for it to close. With no function set, it closes |
+| `onFilesDropped = { paths, x, y -> }` | |
 
-**App.** `App.run()` runs the program's event loop and returns when every window is closed.
-`App.quit()` closes them all. `App.after(ms, action)` runs a function once, `App.every(ms,
-action)` runs it repeatedly (use it for animation), and `App.cancel(timer)` stops either.
-`App.alert(message)` and `App.confirm(message)` show message boxes.
+An error raised inside one of these is not lost in the system's code: it is reported and
+ends the program like any other.
 
-The examples `gui_counter`, `gui_temperature`, `gui_todo`, `gui_paint` and `gui_bounce` show
-each of these in a complete program. The library itself is `lib/gui.astra`, written in Astra on
-top of a small native backend, so it is also the place to look for how something works.
+**Raw input** is what the keyboard and the pointer did, with nothing decided: which widget
+a press belongs to and what a double click is are for the toolkit to work out.
+
+| | |
+| --- | --- |
+| `RawInput.PointerDown(x, y, button, mods)`, `PointerUp(x, y, button, mods)` | `button` is a `PointerButton`: `left`, `right`, `middle`, `back`, `forward` |
+| `RawInput.PointerMove(x, y, dx, dy, buttons, mods)` | `buttons`: the ones held, as a set |
+| `RawInput.Wheel(x, y, dx, dy, mods)` | one click of a wheel is 1.0; up and left are positive |
+| `RawInput.KeyDown(key, mods, repeat, letter)`, `KeyUp(key, mods, letter)` | |
+| `RawInput.Text(text)` | what was typed, after the keyboard's layout |
+| `RawInput.Hover(inside)`, `RawInput.Focus(focused)` | the pointer came or went; the window has the keyboard or lost it |
+
+A key is a `KeyCode`, named for where the key is and not for what the layout prints on it
+(`KeyCode.a` ... `z`, `digit0` ... `digit9`, `f1` ... `f25`, `enter`, `escape`, `space`,
+`left`, `pageUp`, `numpad0`, `shiftLeft`, and the rest): the same key on every keyboard,
+which is what a game wants. `letter` is what the key types in the layout in use, in upper
+case, which is what a shortcut wants: Ctrl+Z is the key whose letter is `"Z"`. `mods` is a
+`Modifiers` with `shift`, `ctrl`, `alt`, `meta`, and `shortcut` for the key commands go with.
+
+`Native` has what belongs to no window: `Native.clipboardText` (read and set),
+`Native.doubleClickTime`, `Native.screenScale`, `Native.nanoTime()`, and
+`Native.isAvailable` and `Native.problem()` for a machine with no OpenGL to draw with.
+
+### The canvas
+
+`window.canvas()`, `surface.canvas()` and `image.canvas()` give a canvas. Its operations are
+the ones of JadeUI's canvas, with the meanings they have in Java:
+
+| | |
+| --- | --- |
+| `color`, `font` | a `Color` and a `Font`, for what is drawn next |
+| `fillRect(x, y, w, h)` | covers `w` by `h` units |
+| `drawRect(x, y, w, h)` | an outline one unit thick, covering `w + 1` by `h + 1` |
+| `fillRoundRect`, `drawRoundRect(x, y, w, h, arcW, arcH)` | corners rounded by an arc that wide and high |
+| `fillOval`, `drawOval(x, y, w, h)` | the oval that fits the box |
+| `drawLine(x1, y1, x2, y2)` | both ends covered |
+| `drawPolyline`, `drawPolygon`, `fillPolygon(xs, ys, n = xs.size)` | through the points of two lists |
+| `drawString(text, x, y)` | starting at `x` with the baseline at `y`; returns the width |
+| `drawImage(image, x, y)`, `drawImage(image, x, y, w, h, alpha = 1.0)` | a `BufferedImage` or a `Surface`, at its size or scaled, as see-through as `alpha` |
+| `clearRect(x, y, w, h)` | makes pixels clear again |
+| `measure(text, font)` | a `TextMetrics`: `width`, `ascent`, `descent`, `height` |
+| `sub(x, y, width, height)` | a canvas for a part: its (0, 0) is at (x, y), and nothing it draws lands outside |
+| `width`, `height`, `visibleBounds`, `deviceScaleX` | |
+
+Straight lines and rectangles sit on pixel edges and are sharp; curves and slanted lines
+have smoothed edges. A see-through colour (`Color(255, 0, 0, 128)`) lies over what is there.
+
+A **`Surface(width, height, scale = 1)`** is a picture on the graphics card that is drawn
+on and drawn from: what a widget keeps of itself so as not to draw it again, and what a
+test reads back. `canvas()`, `toPicture()`, `save(path)`, `upload(picture)`,
+`Surface.of(picture)`, `dispose()`. One that nothing refers to any more is given back by
+the collector.
+
+### The types from the JDK
+
+JadeUI's API uses a handful of Java's types, and Jade has them under the same names with
+the members JadeUI and its apps use. Constants are in camelCase like every other:
+
+- **`Color(r, g, b)`, `Color(r, g, b, a)`, `Color(0xRRGGBB)`, `Color(0xAARRGGBB, true)`**:
+  `red`, `green`, `blue`, `alpha`, `rgb`, `brighter()`, `darker()`, `withAlpha(a)`;
+  `Color.white`, `black`, `red`, `green`, `blue`, `yellow`, `cyan`, `magenta`, `orange`,
+  `pink`, `gray`, `lightGray`, `darkGray`; `Color.decode("#RRGGBB")`, `Color.getHSBColor`,
+  `Color.HSBtoRGB`, `Color.RGBtoHSB`.
+- **`Font(name, style, size)`** with `Font.plain`, `Font.bold`, `Font.italic`: `name`,
+  `style`, `size`, `family`, `isBold`, `isItalic`, `deriveFont(style)`, `deriveFont(size)`,
+  `deriveFont(style, size)` (a whole number is a style and a decimal one a size, as in Java).
+  `"Dialog"`, `"SansSerif"`, `"Serif"` and `"Monospaced"` are the system's own fonts.
+- **`FontMetrics(font, scale = 1)`**: `stringWidth(text)`, `charWidth(c)`, `ascent`,
+  `descent`, `leading`, `height`. On a dense screen the numbers are the screen's divided by
+  the scale and rounded up, so text always fits the room measured for it.
+- **`Rectangle`, `Point`, `Dimension`, `Insets`**, which can be changed in place as in Java.
+  `Rectangle` has `contains`, `intersects`, `intersection`, `union`, `translate`, `grow`,
+  `setBounds`, `isEmpty`.
+- **`BufferedImage(width, height, type = BufferedImage.typeIntArgb)`**: `getRGB(x, y)`,
+  `setRGB(x, y, argb)`, `getSubimage`, `canvas()` to draw on it, `toPicture()`,
+  `BufferedImage.fromPicture(picture)`. It lives both in memory and on the graphics card,
+  and each is brought up to date from the other only when it is asked for.
+
+As the key of a map these compare by being the same object, not by value: key a map by
+`color.rgb` or by a string, not by a `Color` or a `Font`.
 
 ## Standard library
 
@@ -1813,7 +1899,7 @@ what every failure to read, write, connect or start a program is.
 Astra reads font files, measures text and draws it into pictures with code of its own. The
 system is asked for one thing only: which font files are installed. Everything else comes
 out of the files, so the same font file gives the same numbers and the same pixels on every
-machine. This is the text engine the `Jade` GUI library will draw with; it needs no window.
+machine. This is the text engine `Jade` draws with; it needs no window.
 
 ```astra
 val font = TextFont("Segoe UI", 14, bold = true)
@@ -1958,8 +2044,10 @@ source ──lexer──▶ tokens ──parser──▶ AST ──compiler─�
 | `src/text/engine.*`, `api.cpp` | A font at a size: the measuring rule, hinting, drawing; the built-in the library is written on |
 | `src/image/png.*` | PNG files, with the compression they use |
 | `src/std/*.astra` | Standard library, the part written in Astra; packed into `astra.exe` by the build (`cmake/embed.cmake`) and loaded before every program |
-| `src/gui.cpp` | Native backend of the GUI library (Windows) |
-| `lib/gui.astra` | The GUI library: widgets, layout and events, written in Astra |
+| `src/jade/platform.h`, `platform_win.cpp` | Jade's native layer, the part written per system: a window, its events, the clipboard |
+| `src/jade/render.*`, `gl.*` | Drawing with OpenGL: one small record for each shape, the glyph atlas, pictures on the card |
+| `src/jade/api.cpp` | The built-in the Jade library is written on; where layout units become pixels |
+| `lib/Jade/*.astra` | The Jade library: so far its native layer and the types it takes from the JDK |
 | `src/main.cpp` | Command line, REPL and building standalone programs |
 
 Every function is checked by the verifier before it can run, whether it came from the
@@ -2000,8 +2088,8 @@ opportunity, which is slow but useful for finding memory bugs when changing the 
 
 ## Limitations
 
-- The GUI library is Windows-only, and covers the basic widgets: there are no menus, images,
-  combo boxes, sliders or tabs yet.
+- Jade has its native layer so far: windows, raw input and drawing. There are no widgets yet,
+  and no file dialogs or pictures other than PNG. It is Windows-only and needs OpenGL 3.3.
 - Types are checked while the program runs (only literals are checked at compile time), so
   a mismatch shows up when the offending line executes. Typed calls cost a little speed.
 - Loop variables cannot be typed, and the element types in `list<int>` or `(int) -> bool` are
@@ -2033,11 +2121,10 @@ opportunity, which is slow but useful for finding memory bugs when changing the 
 - Streams, processes and sockets are there on Windows only. There is no way yet to fetch a URL.
 - Astra code runs on several cores at once only in a parallel section, on the items of one
   list, or in workers, which share nothing. Threads take turns.
-- The old `gui` library draws one shape at a call, which is what limits an animation of
-  thousands of shapes: no thread, worker or parallel section can draw for it. Four examples
-  show it: `gui_bounce.astra` moves and draws in one loop, `gui_bounce_parallel.astra` moves
-  the balls in a parallel section (one line different), `gui_bounce_threads.astra` on
-  background threads, and `gui_bounce_workers.astra` in workers.
+- Drawing is done from the main thread only: no thread, worker or parallel section can draw.
+  Four examples animate fifty thousand balls: `bounce.astra` moves and draws them in one loop,
+  `bounce_parallel.astra` moves them in a parallel section (one line different),
+  `bounce_threads.astra` on background threads, and `bounce_workers.astra` in workers.
 - An `object` is created where it is written, and top-level variables get their values in
   order (file by file for a folder), so one cannot be used by a statement that runs earlier.
 - Integer arithmetic wraps on overflow.

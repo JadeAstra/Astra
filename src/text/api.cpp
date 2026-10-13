@@ -126,6 +126,9 @@ std::string tagName(uint32_t tag) {
 
 }  // namespace
 
+// For the drawing code of the native layer, which is handed fonts by the same numbers.
+std::shared_ptr<text::Font> textFontOf(VM& vm, Value v) { return fontOf(vm, v); }
+
 void registerText(VM& vm) {
     ObjClass* lib = vm.alloc<ObjClass>(vm.intern("text"));
     auto def = [&](const char* name, int minArgs, int maxArgs, NativeFn fn) {

@@ -847,7 +847,7 @@ void registerBuiltins(VM& vm) {
     registerText(vm);
     // Windows belong to the main program: a worker has none.
     if (!vm.isWorker()) {
-        registerGui(vm);
+        registerJade(vm);
         registerSpike(vm);
     }
 
@@ -857,7 +857,7 @@ void registerBuiltins(VM& vm) {
                                         "removeFirst", "removeLast", "removeFirstOrNull", "removeLastOrNull", "fill"});
     vm.markMutating(BuiltinType::Map, {"remove", "clear", "put", "set"});
     vm.markMutating(BuiltinType::Bytes, {"fill"});
-    for (const char* global : {"__thread", "__loop", "__io", "__file", "__worker", "GuiBackend", "Spike", "input", "exit"})
+    for (const char* global : {"__thread", "__loop", "__io", "__file", "__worker", "Spike", "input", "exit"})
         vm.markNotParallel(global);
     vm.markNotParallel("__flow", {"arity"});      // how many parameters a function has: map.forEach asks
     vm.markNotParallel("__parallel", {"cores"});

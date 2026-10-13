@@ -1,0 +1,227 @@
+// Windows of Jade's native layer, without showing one: a window that is never shown still
+// has its picture, its size and its events, and events made up here go the way real ones do.
+import Jade.*
+
+fun attempt(block) {
+  try { block(); return "no error" } catch (e) { return e.message }
+}
+
+// -- A window: its size is of what can be drawn on, in layout units --
+val window = NativeWindow("First", 320, 200, scale = 1)
+print(window, window.isOpen, window.isVisible, window.title, window.width, window.height, window.scale, window.size)   // expect: NativeWindow(First) true false First 320 200 1.0 Dimension(320 x 200)
+window.title = "Renamed"
+window.setTitle("Renamed twice")
+print(window.title, window.resizable, window.cursor, window.cursorMode)   // expect: Renamed twice true default normal
+
+// -- Its picture: drawn on, kept, and read back, with nothing on the screen --
+val canvas = window.canvas()
+print(canvas.width, canvas.height, canvas.deviceScaleX, canvas.visibleBounds)   // expect: 320 200 1.0 Rectangle(0, 0, 320 x 200)
+canvas.color = Color.white
+canvas.fillRect(0, 0, 320, 200)
+canvas.color = Color.red
+canvas.fillRect(10, 10, 50, 40)
+canvas.color = Color.black
+canvas.font = Font("Segoe UI", Font.bold, 20)
+canvas.drawString("a window", 80, 40)
+window.present()                       // not showing: nothing to show it on, and no harm
+val shot = window.snapshot()
+print(shot, shot.get(10, 10) == 0xFFFF0000, shot.get(59, 49) == 0xFFFF0000, shot.get(60, 49) == 0xFFFFFFFF, shot.inkBox(0xFFFFFFFF)[0], shot.inkBox(0xFFFFFFFF)[2] > 100)   // expect: Picture(320 x 200) true true true 10 true
+// The picture is kept: another canvas draws over what is there.
+window.canvas().fillRect(0, 0, 2, 2)
+print(window.snapshot().get(1, 1) == 0xFF000000, window.snapshot().get(10, 10) == 0xFFFF0000)   // expect: true true
+
+// -- Events: what the system would send, sent here, arrives as the toolkit's types --
+val seen = []
+window.onInput = { event -> seen.add(event) }
+val shiftCtrl = Modifiers(shift = true, ctrl = true)
+window.send(RawInput.PointerMove(30, 40, 0, 0, setOf(), Modifiers.none))
+window.send(RawInput.PointerDown(30, 40, PointerButton.left, Modifiers.none))
+window.send(RawInput.PointerMove(35, 44, 0, 0, setOf(PointerButton.left), shiftCtrl))
+window.send(RawInput.PointerUp(35, 44, PointerButton.left, Modifiers.none))
+window.send(RawInput.PointerDown(1, 2, PointerButton.right, Modifiers(alt = true)))
+window.send(RawInput.PointerDown(1, 2, PointerButton.forward, Modifiers.none))
+for (event in seen) { print(event) }
+// expect: Hover(inside=true)
+// expect: PointerMove(x=30, y=40, dx=0.0, dy=0.0, buttons={}, mods=Modifiers())
+// expect: PointerDown(x=30, y=40, button=left, mods=Modifiers(), clicks=1)
+// expect: PointerMove(x=35, y=44, dx=0.0, dy=0.0, buttons={left}, mods=Modifiers(shift+ctrl))
+// expect: PointerUp(x=35, y=44, button=left, mods=Modifiers())
+// expect: PointerDown(x=1, y=2, button=right, mods=Modifiers(alt), clicks=1)
+// expect: PointerDown(x=1, y=2, button=forward, mods=Modifiers(), clicks=1)
+print(seen[1] is RawInput.PointerMove, seen[2].button == PointerButton.left, seen[3].buttons.contains(PointerButton.left), seen[3].mods.shortcut, seen[5].mods.alt)   // expect: true true true true true
+seen.clear()
+window.send(RawInput.Wheel(100, 50, 0, -3, Modifiers.none))
+window.send(RawInput.Wheel(100, 50, 1.5, 0, Modifiers(shift = true)))
+window.send(RawInput.KeyDown(KeyCode.a, shiftCtrl, false, "A"))
+window.send(RawInput.KeyDown(KeyCode.a, shiftCtrl, true, "A"))
+window.send(RawInput.KeyUp(KeyCode.a, Modifiers.none, "A"))
+window.send(RawInput.KeyDown(KeyCode.pageUp, Modifiers.none))
+window.send(RawInput.KeyDown(KeyCode.numpadEnter, Modifiers.none))
+window.send(RawInput.Text("é"))
+window.send(RawInput.Text("😀"))
+window.send(RawInput.Focus(true))
+window.send(RawInput.Focus(false))
+window.send(RawInput.Hover(false))
+for (event in seen) { print(event) }
+// expect: Wheel(x=100, y=50, dx=0.0, dy=-3.0, mods=Modifiers())
+// expect: Wheel(x=100, y=50, dx=1.5, dy=0.0, mods=Modifiers(shift))
+// expect: KeyDown(key=a, mods=Modifiers(shift+ctrl), repeat=false, letter="A")
+// expect: KeyDown(key=a, mods=Modifiers(shift+ctrl), repeat=true, letter="A")
+// expect: KeyUp(key=a, mods=Modifiers(), letter="A")
+// expect: KeyDown(key=pageUp, mods=Modifiers(), repeat=false, letter=null)
+// expect: KeyDown(key=numpadEnter, mods=Modifiers(), repeat=false, letter=null)
+// expect: Text(text="é")
+// expect: Text(text="😀")
+// expect: Focus(focused=true)
+// expect: Focus(focused=false)
+// expect: Hover(inside=false)
+print(seen[2].key == KeyCode.a, seen[2].letter, seen[3].repeat, seen[5].key.name, seen[7].text.length)   // expect: true A true pageUp 1
+// Every key goes through under its own name.
+var keys = 0
+window.onInput = { event -> if (event is RawInput.KeyDown) { keys += event.key.ordinal } }
+var sum = 0
+for (key in KeyCode.entries) {
+  window.send(RawInput.KeyDown(key, Modifiers.none))
+  sum += key.ordinal
+}
+print(keys == sum, sum)   // expect: true 7021
+window.onInput = null
+window.send(RawInput.Text("nobody is listening"))      // no harm
+
+// Files dropped, and a close request.
+val dropped = []
+window.onFilesDropped = { paths, x, y -> dropped.add([paths, x, y]) }
+window.sendFilesDropped(["C:/a.txt", "D:/b c.png"], 12, 34)
+print(dropped)   // expect: [[["C:/a.txt", "D:/b c.png"], 12, 34]]
+var asked = 0
+window.onCloseRequest = { asked += 1 }
+window.sendCloseRequest()
+print(asked, window.isOpen)   // expect: 1 true
+
+// -- An error in a handler is not lost: it comes out where the event was sent --
+window.onInput = { event -> throw Error("the handler failed on " + event.text) }
+print(attempt { window.send(RawInput.Text("this")) })   // expect: the handler failed on this
+window.onInput = null
+print(attempt { window.send("not an event") })           // expect: not an event a window can be sent: not an event
+
+// -- Another size: the picture keeps what it showed, as much as fits, and the new part is clear --
+val kept = NativeWindow("Kept", 260, 140, scale = 1)
+val kc = kept.canvas()
+kc.color = Color.red
+kc.fillRect(0, 0, 260, 140)
+kept.setSize(320, 200)                     // nobody draws at the new size
+val grown = kept.snapshot()
+print(grown, grown.get(259, 139) == 0xFFFF0000, grown.get(0, 0) == 0xFFFF0000, grown.get(260, 139), grown.get(259, 140), grown.inkBox())   // expect: Picture(320 x 200) true true 0 0 [0, 0, 260, 140]
+kept.setSize(220, 100)
+val shrunk = kept.snapshot()
+print(shrunk, shrunk.get(219, 99) == 0xFFFF0000, shrunk.inkBox())   // expect: Picture(220 x 100) true [0, 0, 220, 100]
+kept.close()
+
+// -- And the program is told of the new size from inside the call, to draw it again --
+val sizes = []
+window.onResize = { width, height ->
+  sizes.add([width, height])
+  val c = window.canvas()
+  c.color = Color.blue
+  c.fillRect(0, 0, width, height)
+}
+window.setSize(400, 260)
+print(sizes, window.width, window.height, window.snapshot(), window.snapshot().get(399, 259) == 0xFF0000FF)   // expect: [[400, 260]] 400 260 Picture(400 x 260) true
+window.setLimits(100, 80, 600, 500)
+window.setPosition(40, 50)
+print(window.position, window.resizable)   // expect: Point(40, 50) true
+window.resizable = false
+window.cursor = CursorKind.hand
+window.cursor = CursorKind.text
+window.cursorMode = CursorMode.hidden
+window.cursorMode = CursorMode.normal
+val icon = Picture(16, 16, 0xFF2F81F7)
+window.setIcon(icon)
+print(window.resizable, window.cursor, window.cursorMode, window.isFocused)   // expect: false text normal false
+
+// -- A window on a dense screen: more pixels, the same units --
+val dense = NativeWindow("Dense", 200, 100, scale = 2)
+print(dense.width, dense.height, dense.scale, dense.deviceWidth, dense.deviceHeight, dense.snapshot())   // expect: 200 100 2.0 400 200 Picture(400 x 200)
+val dc = dense.canvas()
+dc.color = Color.red
+dc.fillRect(10, 10, 20, 20)
+print(dense.snapshot().inkBox(), dc.deviceScaleX)   // expect: [20, 20, 40, 40] 2.0
+// Where the pointer is comes in units, whatever the screen has to the unit.
+val places = []
+dense.onInput = { event -> if (event is RawInput.PointerDown) { places.add([event.x, event.y]) } }
+dense.send(RawInput.PointerDown(150, 75, PointerButton.left, Modifiers.none))
+print(places)   // expect: [[150, 75]]
+val fractional = NativeWindow("One and a half", 100, 60, scale = 1.5)
+print(fractional.width, fractional.height, fractional.deviceWidth, fractional.deviceHeight)   // expect: 100 60 150 90
+
+// -- A window that belongs to another, and several at once --
+val child = NativeWindow("Child", 120, 90, resizable = false, dialog = true, owner = window, scale = 1)
+print(child.isOpen, child.width, child.height, child.resizable)   // expect: true 120 90 false
+val cc = child.canvas()
+cc.color = Color.green
+cc.fillRect(0, 0, 120, 90)
+print(child.snapshot().get(5, 5) == 0xFF00FF00, window.snapshot().get(5, 5) == 0xFF0000FF, dense.snapshot().get(30, 30) == 0xFFFF0000)   // expect: true true true
+
+// -- Closing: for good, and once is enough --
+child.close()
+child.close()
+print(child.isOpen, child.isVisible, attempt { child.width }, attempt { child.canvas() })   // expect: false false the window has been closed the window has been closed
+// With no handler for it, a close request closes the window.
+dense.onCloseRequest = null
+dense.sendCloseRequest()
+print(dense.isOpen, fractional.isOpen)   // expect: false true
+fractional.close()
+
+// -- The clipboard (one of the program's own here, so that the system's is left alone) --
+Native.useOwnClipboard()
+print(Native.clipboardText == "")   // expect: true
+Native.clipboardText = "copied: é 中 😀"
+print(Native.clipboardText, Native.clipboardText.length)   // expect: copied: é 中 😀 13
+Native.clipboardText = 42
+print(Native.clipboardText)   // expect: 42
+
+// -- The clock, and what the system says of itself --
+val before = Native.nanoTime()
+Thread.sleep(20)
+val passed = Native.nanoTime() - before
+print(passed >= 15000000, passed < 5000000000, Native.doubleClickTime > 50, Native.doubleClickTime < 5000, Native.screenScale >= 1)   // expect: true true true true true
+
+// -- A window being dragged, with an animation running whose frame takes longer than its
+// timer's period, so that a frame is always due. While the drag lasts the system runs a loop
+// of its own and the program's timers are run from inside it: they must not keep it from
+// getting its turn back, or the window stops answering (it did, once). Here a close request
+// is put in the queue during such a drag, and has to arrive while the frames go on.
+val dragged = NativeWindow("Dragged", 100, 80, scale = 1)
+var frame = 0
+var closeSeenAt = -1
+dragged.onCloseRequest = { closeSeenAt = frame }
+var animation = null
+animation = EventLoop.every(1) {
+  frame += 1
+  Thread.sleep(4)                                        // longer than the period
+  if (frame == 3) { dragged.postForTest("moveBegan") }
+  if (frame == 6) { dragged.postForTest("close") }
+  if (frame == 40) {
+    animation.cancel()
+    dragged.postForTest("moveEnded")
+    print("the close request arrived during the drag:", closeSeenAt >= 6 and closeSeenAt < 20)   // expect: the close request arrived during the drag: true
+    dragged.close()
+    startLast()
+  }
+}
+
+// -- Timers and tasks of the event loop run with windows open, and the program ends by
+// itself when the script is done: a window that was never shown keeps nothing going --
+var ticks = 0
+fun startLast() {
+  var timer = null
+  timer = EventLoop.every(5) {
+    ticks += 1
+    if (ticks == 3) {
+      timer.cancel()
+      print("three ticks, and the window is still open:", window.isOpen)   // expect: three ticks, and the window is still open: true
+      window.close()
+      print("closed:", !window.isOpen)   // expect: closed: true
+    }
+  }
+}

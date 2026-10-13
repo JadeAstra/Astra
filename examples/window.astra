@@ -1,0 +1,171 @@
+// A window drawn by Jade's native layer: shapes and text drawn with OpenGL, and the raw
+// events the window receives, echoed as they arrive.
+//
+//   astra examples/window.astra             opens the window; close it to end
+//   astra examples/window.astra picture     draws the same picture into window.png, with no window
+//   astra examples/window.astra 5           closes by itself after 5 seconds
+//
+// Move the pointer, click, turn the wheel, type, drop a file on it, resize it: each event
+// is printed and shown in the window. Escape closes it.
+import Jade.*
+
+val events = []          // the last few events, newest last
+var pointerX = 320
+var pointerY = 300
+var held = false
+
+val title = Font("Segoe UI", Font.bold, 22)
+val body = Font("Segoe UI", Font.plain, 13)
+val small = Font("Segoe UI", Font.plain, 11)
+val mono = Font("Monospaced", Font.plain, 12)
+
+val paper = Color(0xF6F8FA)
+val ink = Color(0x1B1F23)
+val faint = Color(0x6A737D)
+val accent = Color(0x2F81F7)
+
+// The whole picture, on whatever canvas it is given: a window's or a surface's.
+fun paint(canvas) {
+  val w = canvas.width
+  val h = canvas.height
+  canvas.color = paper
+  canvas.fillRect(0, 0, w, h)
+
+  canvas.color = ink
+  canvas.font = title
+  canvas.drawString("Jade's native layer", 20, 36)
+  canvas.font = body
+  canvas.color = faint
+  canvas.drawString("${w} by ${h} units, ${canvas.deviceScaleX} pixels to the unit. 中文, Ελληνικά and 😀 come from other fonts.", 20, 58)
+
+  // Shapes: filled and outlined, solid and see-through.
+  var x = 20
+  canvas.color = accent
+  canvas.fillRect(x, 76, 70, 50)
+  canvas.color = ink
+  canvas.drawRect(x, 76, 70, 50)
+  x += 90
+  canvas.color = Color(0x2DA44E)
+  canvas.fillRoundRect(x, 76, 70, 50, 20, 20)
+  canvas.color = ink
+  canvas.drawRoundRect(x, 76, 70, 50, 20, 20)
+  x += 90
+  canvas.color = Color(0xD29922)
+  canvas.fillOval(x, 76, 70, 50)
+  canvas.color = ink
+  canvas.drawOval(x, 76, 70, 50)
+  x += 90
+  canvas.color = Color(0xCF222E)
+  canvas.fillPolygon([x, x + 70, x + 35], [126, 126, 76])
+  canvas.color = ink
+  canvas.drawPolygon([x, x + 70, x + 35], [126, 126, 76])
+  x += 90
+  for (i in 0..<6) {
+    canvas.color = Color(0x8250DF).withAlpha(255 - i * 40)
+    canvas.drawLine(x, 76 + i * 10, x + 70, 126 - i * 10)
+  }
+  x += 90
+  for (i in 0..<4) {
+    canvas.color = Color(47, 129, 247, 90)
+    canvas.fillOval(x + i * 14, 76 + i * 4, 40, 40)
+  }
+
+  // A part of the canvas with its own corner and its own edges: what is drawn past them is cut.
+  val inner = canvas.sub(20, 144, w - 40, 26)
+  inner.color = Color.white
+  inner.fillRect(0, 0, inner.width, inner.height)
+  inner.color = Color(0xD0D7DE)
+  inner.drawRect(0, 0, inner.width - 1, inner.height - 1)
+  inner.color = ink
+  inner.font = mono
+  inner.drawString("a sub-canvas clips: " + "the quick brown fox jumps over the lazy dog. ".repeat(6), 8, 18)
+
+  // The events.
+  canvas.font = small
+  canvas.color = faint
+  canvas.drawString("RAW EVENTS (the last ${events.size})", 20, 196)
+  canvas.font = mono
+  canvas.color = ink
+  var y = 216
+  for (event in events) {
+    canvas.drawString(event, 20, y)
+    y += 17
+  }
+
+  // Where the pointer is.
+  canvas.color = held ? Color(0xCF222E) : accent
+  canvas.drawLine(pointerX - 12, pointerY, pointerX + 12, pointerY)
+  canvas.drawLine(pointerX, pointerY - 12, pointerX, pointerY + 12)
+  canvas.drawOval(pointerX - 7, pointerY - 7, 14, 14)
+}
+
+fun note(text) {
+  events.add(text)
+  while (events.size > 11) { events.removeFirst() }
+}
+
+val arguments = args()
+if (arguments.contains("picture")) {
+  // The same picture with nothing on the screen: drawn on a surface and read back.
+  note("PointerDown(x=120, y=96, button=left, mods=Modifiers(), clicks=1)")
+  note("KeyDown(key=a, mods=Modifiers(shift), repeat=false, letter=A)")
+  note("Text(text=A)")
+  val surface = Surface(640, 420)
+  paint(surface.canvas())
+  surface.save("window.png")
+  print("drew ${surface.width} by ${surface.height} with ${Native.describe()}; saved as window.png")
+} else {
+  val window = NativeWindow("Jade's native layer", 640, 420)
+  window.setLimits(360, 300)
+
+  fun redraw() {
+    paint(window.canvas())
+    window.present()
+  }
+
+  window.onInput = { event ->
+    when (event) {
+      is RawInput.PointerMove -> {
+        pointerX = event.x
+        pointerY = event.y
+        // Over the shapes the pointer is a hand, over the clipped line a text cursor.
+        window.cursor = event.y >= 76 and event.y < 126 ? CursorKind.hand : (event.y >= 144 and event.y < 170 ? CursorKind.text : CursorKind.default)
+      }
+      is RawInput.PointerDown -> { held = true }
+      is RawInput.PointerUp -> { held = false }
+      is RawInput.KeyDown -> {
+        if (event.key == KeyCode.escape) { window.close() }
+        if (event.letter == "V" and event.mods.shortcut) { note("clipboard: " + Native.clipboardText.take(60)) }
+      }
+      else -> {}
+    }
+    // Movements are too many to print; everything else is echoed.
+    if (event !is RawInput.PointerMove) {
+      print(event)
+      note(str(event))
+    }
+    if (window.isOpen) { redraw() }
+  }
+  window.onResize = { width, height ->
+    print("resized to $width by $height")
+    redraw()
+  }
+  window.onScaleChanged = { scale -> print("now $scale pixels to the unit") }
+  window.onFilesDropped = { paths, x, y ->
+    print("dropped at $x, $y: $paths")
+    note("dropped: " + paths.joinToString(", "))
+    redraw()
+  }
+
+  redraw()
+  window.show()
+  print("showing a window of ${window.width} by ${window.height} at scale ${window.scale}; ${Native.describe()}")
+
+  // A number on the command line closes the window after that many seconds.
+  val seconds = arguments.firstOrNull { it.toFloatOrNull() != null }
+  if (seconds != null) {
+    EventLoop.after(int(float(seconds) * 1000)) {
+      if (window.isOpen) { window.close() }
+    }
+  }
+}
