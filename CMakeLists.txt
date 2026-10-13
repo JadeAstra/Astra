@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
 # The version goes up with each milestone of docs/gui-plan.md: M1 is 0.1.0, M2 is 0.2.0,
-# M3.5 is 0.3.5.
-project(Astra VERSION 0.3.5 LANGUAGES CXX)
+# M3.5 is 0.3.5, M4 is 0.4.0.
+project(Astra VERSION 0.4.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -42,6 +42,18 @@ add_executable(astra
   src/worker.cpp
   src/parallel.cpp
   src/gui.cpp
+  # The text engine (docs/gui-plan.md, section 4), and pictures.
+  src/text/face.cpp
+  src/text/cff.cpp
+  src/text/variation.cpp
+  src/text/raster.cpp
+  src/text/color.cpp
+  src/text/bitmaps.cpp
+  src/text/system.cpp
+  src/text/fonts.cpp
+  src/text/engine.cpp
+  src/text/api.cpp
+  src/image/png.cpp
   src/main.cpp
   # M0 spike: an OpenGL window and a text engine of our own, as the `Spike` class.
   src/spike/font.cpp

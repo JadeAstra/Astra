@@ -1808,6 +1808,126 @@ while (true) {
 a stream that a thread is waiting on gets that thread out, with an `IOException`, which is
 what every failure to read, write, connect or start a program is.
 
+## Fonts, text and pictures
+
+Astra reads font files, measures text and draws it into pictures with code of its own. The
+system is asked for one thing only: which font files are installed. Everything else comes
+out of the files, so the same font file gives the same numbers and the same pixels on every
+machine. This is the text engine the `Jade` GUI library will draw with; it needs no window.
+
+```astra
+val font = TextFont("Segoe UI", 14, bold = true)
+val page = Picture(font.width("Hello") + 20, font.height + 20, Picture.white)
+page.drawText("Hello", 10, 10 + font.ascent, font)
+page.save("hello.png")
+```
+
+`examples\text_page.astra` draws a page in several fonts and sizes and saves it as a PNG.
+
+**Measuring and drawing go by one rule.** A character's width is its width in the font,
+scaled to the size and rounded to a whole pixel. A text's width is the sum of its
+characters' widths, and each character is drawn where the widths before it add up to. So
+`width("abc")` is exactly where `"abc"` ends when drawn, `offsets(text)` are exactly where
+its characters start, and a caret placed by measuring sits on the text. Nothing is nudged
+between particular pairs of letters (no kerning) and letters are not joined into ligatures.
+
+**On a dense screen** a font is made with a scale: `TextFont("Segoe UI", 12, scale = 2)`.
+Its numbers are then in the screen's own pixels, which is where the rounding has to happen:
+at 2x a character may be 13 pixels wide, which is 6.5 of the layout's units, and a line of
+them stays as tight as the font means it to be. A size in the layout's units is the number
+divided by the scale.
+
+### Fonts
+
+| | |
+| --- | --- |
+| `Fonts.families()` | every installed family's name |
+| `Fonts.has(family)` | whether one is installed |
+| `Fonts.find(family, weight = 400, italic = false)` | the typeface of a family nearest to a style, or `null` |
+| `Fonts.typefaces(family = null)` | the typefaces of a family, or all of them |
+| `Fonts.fallback(character, weight = 400, italic = false)` | a typeface that has a character |
+| `Fonts.load(path, index = 0)` | a font from a file that is not installed, or from `bytes` |
+| `Fonts.count(path)` | how many fonts a file holds (a `.ttc` holds several) |
+
+A family is asked for by name, in any case. `"SansSerif"`, `"Serif"` and `"Monospaced"` (and
+Java's `"Dialog"`) are the system's own font of each kind, and several names separated by
+commas mean the first that is installed. Weights are 100 to 900: 400 is regular, 700 bold.
+The nearest the family has is chosen, a lighter one for a light weight and a heavier one for
+a bold. `"Segoe UI Semibold"`, the name such a font has in programs that know only four
+styles, finds it too.
+
+A `Typeface` is one font of a family: `family`, `style`, `fullName`, `weight`, `stretch`,
+`isItalic`, `isMonospace`, `isSymbol`, `isVariable`, `hasCubicOutlines`, `hasColor`,
+`glyphCount`, `unitsPerEm`, `path`, `index`, `axes`, `has(character)`, `glyph(character)`,
+`advance(glyph, weight?)`, `outline(glyph, weight?)` and `font(size, ...)`. A character is a
+one-character string or its number.
+
+What is read: TrueType and OpenType files and collections (`.ttf`, `.otf`, `.ttc`); both
+kinds of outline, the quadratic curves of `.ttf` fonts and the cubic ones of `.otf` fonts,
+which are a small program for each glyph; and variable fonts of both kinds, where one file
+holds every weight and each glyph's outline and width are worked out for the weight asked for.
+
+### A font at a size
+
+```astra
+TextFont("Consolas", 13)                      // by family
+TextFont("Segoe UI", 12, bold = true, italic = true)
+TextFont("Bahnschrift", 20, weight = 350)     // any weight, where the font has it
+TextFont(Fonts.load("my.ttf"), 16)            // a typeface of your own
+TextFont("Segoe UI", 12, scale = 1.5)         // for a screen at 150%
+```
+
+A family that is not installed gives the system's sans-serif font (`family` says which was
+used). A style the family lacks is made up: a bold by thickening, an italic by slanting. A
+variable font with a cut for each size (an "optical size") is set to the one for the size.
+
+| | |
+| --- | --- |
+| `ascent`, `descent`, `leading`, `height` | the line: above the baseline, below it, between lines, and all three |
+| `xHeight`, `capHeight` | the height of a small letter and of a capital |
+| `width(text)`, `charWidth(character)` | by the rule above |
+| `offsets(text)` | where each character starts and where the last ends |
+| `typefaceFor(character)` | the typeface a character is drawn from |
+| `glyphBox(character)` | what its shape takes up: `[left, top, width, height, isColor, advance]` |
+| `typeface`, `family`, `size`, `scale`, `weight`, `isBold`, `isItalic`, `derive(size, scale)` | |
+
+**A character the font lacks is taken from a font that has it**: Chinese in a line of Segoe
+UI comes from the system's Chinese font, an emoji from its emoji font, each measured and
+drawn by the same rule. One that no installed font has is drawn as the font's "missing" box.
+
+**Hinting** is a rule of Astra's own, not the programs fonts carry: the baseline, the height
+of small letters and the height of capitals are put on pixel edges, so the flat tops and
+bottoms of letters are sharp at small sizes. Nothing is moved sideways, which is why widths
+do not depend on it. `hinting = false` turns it off.
+
+**Colour emoji** are drawn in their own colours, in both formats Windows' emoji font has
+(flat layers, and the newer one with gradients) and in the picture formats other systems'
+emoji fonts use (`CBDT`, `sbix`), whose pictures are scaled to the size.
+
+Measuring may be done from threads and inside a parallel section.
+
+### Pictures
+
+A `Picture` is `width` by `height` pixels. A colour is one number, `0xAARRGGBB`: `0xFF000000`
+is black, `0x80FF0000` a half-clear red, and `Picture.rgb(red, green, blue, alpha = 255)`
+makes one. `pixels` is the picture itself as `bytes`, four for each pixel (red, green, blue,
+alpha), top row first, so a program can work on it directly, in a parallel section too
+(`pixels.parallelChunks`).
+
+| | |
+| --- | --- |
+| `Picture(width, height, color = clear)` | a picture of one colour |
+| `Picture.load(path \| bytes)`, `save(path)`, `toPng()` | PNG files, read and written |
+| `get(x, y)`, `set(x, y, color)` | one pixel |
+| `fill(color)`, `fillRect(x, y, w, h, color)` | sets pixels |
+| `blendRect(x, y, w, h, color)` | lays a colour over what is there |
+| `drawText(text, x, y, font, color = black)` | a line of text starting at `x` with its baseline at `y`; returns its width |
+| `draw(other, x, y)` | lays another picture over this one |
+| `crop(x, y, w, h)`, `copy()`, `==`, `inkBox(background)` | |
+
+PNG is read in every kind the format has (grey, palette, colour, with or without alpha, 1 to
+16 bits, interlaced) and written compressed; a picture comes back from its file exactly.
+
 ## How it works
 
 ```
@@ -1830,6 +1950,13 @@ source ──lexer──▶ tokens ──parser──▶ AST ──compiler─�
 | `src/io.cpp` | Streams, processes and sockets |
 | `src/worker.cpp` | Workers: a second runtime on its own thread, and the copying of messages |
 | `src/parallel.cpp` | Parallel sections: an interpreter for each core on one heap, and who owns what |
+| `src/text/face.*` | A font file read: names, the character map, widths, quadratic outlines |
+| `src/text/cff.*`, `variation.*` | Cubic outlines (a program for each glyph); variable fonts |
+| `src/text/color.*`, `bitmaps.*` | Colour emoji: layers and paints, and the kind that are pictures |
+| `src/text/raster.*` | An outline turned into an antialiased picture |
+| `src/text/fonts.*`, `system.cpp` | The fonts there are, matching and fallback; the one file written per system (which font files are installed) |
+| `src/text/engine.*`, `api.cpp` | A font at a size: the measuring rule, hinting, drawing; the built-in the library is written on |
+| `src/image/png.*` | PNG files, with the compression they use |
 | `src/std/*.astra` | Standard library, the part written in Astra; packed into `astra.exe` by the build (`cmake/embed.cmake`) and loaded before every program |
 | `src/gui.cpp` | Native backend of the GUI library (Windows) |
 | `lib/gui.astra` | The GUI library: widgets, layout and events, written in Astra |
@@ -1860,6 +1987,10 @@ and looks for the icon in the result.
 `// expect error output:` is for a program that finishes normally having reported an error
 (one that ended a thread, say).
 
+The tests of fonts and text use fonts every Windows since 10 has, and test what must hold
+whatever the version of a font: that drawing lands where measuring says, not particular
+numbers. The PNG pictures in `tests\png.astra` were written by Windows' own PNG writer.
+
 Setting `ASTRA_THREAD_STRESS=1` makes the threads of a program change places at every
 opportunity, which is how the code that threads share is tested. `ASTRA_CORES=n` gives
 parallel sections `n` cores whatever the machine has.
@@ -1881,7 +2012,7 @@ opportunity, which is slow but useful for finding memory bugs when changing the 
   one does not change the map.
 - `orEmpty()` cannot be called on `null` itself, since strings, lists and maps each have one
   and `null` does not say which is meant; write `text ?: ""` or `items ?: []`.
-- A compiled `.astc` file carries the Astra-written part of the standard library, about 85 KB.
+- A compiled `.astc` file carries the Astra-written part of the standard library, about 160 KB.
 - `private` and the other access words are enforced for top-level declarations. On the members
   of a class they are accepted and change nothing yet.
 - A class declared inside another does not belong to one object of the outer class (there is
@@ -1891,6 +2022,14 @@ opportunity, which is slow but useful for finding memory bugs when changing the 
   properties. A class has one initializer: there are no secondary constructors.
 - `apply`, `run`, `synchronized` and `withLock` are ordinary calls, so a plain `return` inside
   their lambda is an error; it works in `let`, `also` and `takeIf`.
+- Text is one glyph for each character, left to right. Scripts whose letters join or change
+  places (Arabic, Hebrew's direction, Devanagari, Thai's marks) and emoji made of several
+  characters are not laid out yet: that is the second part of the text engine.
+- The styles a variable font names along axes other than weight ("Sitka Display",
+  "Bahnschrift Condensed") are not families: the weight and the cut for the size are what is
+  set. Emoji drawn as SVG are not read. The first use of fonts in a program reads the names
+  of all installed ones, about a tenth of a second.
+- Pictures are read and written as PNG only.
 - Streams, processes and sockets are there on Windows only. There is no way yet to fetch a URL.
 - Astra code runs on several cores at once only in a parallel section, on the items of one
   list, or in workers, which share nothing. Threads take turns.
@@ -1904,7 +2043,7 @@ opportunity, which is slow but useful for finding memory bugs when changing the 
 - Integer arithmetic wraps on overflow.
 - Bytecode files are verified when loaded, but that is a consistency check rather than a
   security sandbox. Run only `.astc` files you trust.
-- Standalone programs are about 1.4 MB each and have only been tried on Windows. They carry
+- Standalone programs are about 2 MB each and have only been tried on Windows. They carry
   no version information, and since they are unsigned Windows may ask for confirmation the
   first time one downloaded from the internet is run. The script inside is stored as
   bytecode, not encrypted.

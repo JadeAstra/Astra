@@ -683,6 +683,7 @@ void registerThreads(VM& vm);  // threads.cpp: threads, locks, the event loop an
 void registerIo(VM& vm);       // io.cpp: streams, processes and sockets
 void registerWorkers(VM& vm);  // worker.cpp: isolated workers
 void registerParallel(VM& vm); // parallel.cpp: parallel sections
+void registerText(VM& vm);     // text/api.cpp: fonts, text and pictures
 // What started this program (see __io.selfCommand): set by main before the program runs.
 void setSelfCommand(std::vector<std::string> command);
 

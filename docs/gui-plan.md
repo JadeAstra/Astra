@@ -5,7 +5,9 @@ time (section 7). M0, the two spikes, is done and accepted; what it found is in
 [m0-findings.md](m0-findings.md) and is folded in below. M1, the language, and M2, the
 standard library, are done. M3, threads and async I/O, is built; what was settled along the
 way is under "As built in M3" in 5.5 (and "As built in M2" in 5.4). M3.5, parallel
-sections, is built too (5.5, point 7). M4 is next.
+sections, is built too (5.5, point 7). M4, the text engine, has its first part built
+("As built in M4, part one" in section 4); its second part goes alongside M5 to M8. M5 is
+next.
 
 ## 1. Goal and ground rules
 
@@ -225,7 +227,12 @@ rendering. It is a complete engine from the start, not a subset to be extended l
    and a run's width is the sum of its glyphs' widths after shaping. Each glyph is placed by
    adding up those widths, so measuring and drawing use the same numbers and a caret cannot
    drift from its text. On a scaled display the rounding has to happen in device pixels, or
-   spacing comes out loose (found in M0); the exact clause is settled at the start of M4.
+   spacing comes out loose (found in M0). The clause, as settled in M4: a font is made for a
+   size and a scale, and every number it gives is in device pixels, each glyph's width
+   rounded there. A size in logical pixels is the device number divided by the scale, taken
+   of a whole run and never of one glyph at a time; where the toolkit wants a whole number
+   of logical pixels for a run (`FontMetrics.stringWidth`), it rounds that quotient up, so
+   the text always fits the room measured for it. At a scale of 1 the two are the same.
 9. Shaping applies what a script requires and leaves optional typography off: no kerning
    and no discretionary ligatures. For Latin, Cyrillic, Greek, Chinese, Japanese and Korean
    a string's width is therefore still the sum of its characters' widths, which is what
@@ -267,6 +274,81 @@ world uses for exactly this job, HarfBuzz, is over a hundred thousand lines, and
 scratch engine that handles Arabic and the Indic scripts properly is a larger piece of work
 than porting Jade's whole root package. It has a milestone of its own (M4), ordered so that
 the parts the first window needs come first and the window work is not held up by the rest.
+
+#### As built in M4, part one
+
+Points 1 to 4, 8 and 10 to 12 are built, in `src/text` (about 4,500 lines) with PNG in
+`src/image`. It needs no window and is in the runtime for every program, not only for Jade.
+
+**The parts.** `face` reads a font file: the table directory and collections, names, the
+character map (formats 4, 6, 12, 13, and 0 as a last resort; symbol fonts), widths, the
+line's measurements, and quadratic outlines with composites. `cff` runs the per-glyph
+programs of cubic outlines, of the plain kind (`CFF `) and the variable (`CFF2`, with its
+blends). `variation` reads `fvar`, `avar`, `gvar`, `HVAR` and `MVAR`:
+outlines, widths and line measurements for any place on a font's axes. `color` paints
+`COLR` version 0 and version 1 (every paint: solid, the three gradients with their three
+ways of extending, transforms, glyph clips, layers, and the composite modes) with `CPAL`;
+`bitmaps` reads the picture formats (`CBLC`/`CBDT`, `sbix`) and scales them. `raster` is
+the exact-area rasteriser from the M0 spike, for quadratic and cubic curves. `fonts` is the
+list of installed fonts with matching and fallback, `engine` a font at a size, and
+`system.cpp` the one file written for each system. A font file is mapped into memory, not
+read, and a font file once used stays mapped.
+
+**What is asked of the system** is the list of installed font files (on Windows, the two
+font folders) and nothing else: not the default font, not metrics, not a single glyph.
+`system.cpp` also holds two short lists of names per system: which families "SansSerif",
+"Serif" and "Monospaced" mean (Segoe UI, Times New Roman and Consolas on Windows; Segoe UI
+Variable is used when asked for by name), and which families to look in first for a
+character the chosen font lacks, before every other installed font is tried.
+
+**Matching** is by family, then width, then upright or italic, then the nearest weight in
+the direction asked for (the order CSS uses). A family is also found by its four-style
+name ("Segoe UI Semibold") and by a full name. A variable font answers for every weight in
+its range. A bold or italic the family lacks is made up, by thickening and by slanting.
+
+**Measuring** is the rule of point 8, with the clause for scaled displays as given there.
+Characters that only steer other characters (joiners, direction marks, variation
+selectors) and control characters take no room. There is no kerning and there are no
+ligatures, so a text's width is the sum of its characters' widths in every font.
+
+**Hinting** is the M0 rule unchanged: the x-height and the capital height go to the
+nearest whole pixel and what lies between is stretched to fit; nothing moves sideways and
+nothing below the baseline moves. It is on unless a font is made without it.
+
+**To Astra** the engine is `Fonts`, `Typeface`, `TextFont` and `Picture` (README, "Fonts,
+text and pictures"), names of the engine's own. Jade's `Font`, `FontMetrics`, `Color` and
+`BufferedImage` are written on them in M5, and M5's canvas takes glyph pictures from the
+same engine into its atlas. A `Picture`'s pixels are an ordinary `bytes` value.
+
+**Checked.** Every glyph of every font installed on the development machine reads without
+a damaged result: 508 fonts, 1.8 million glyphs, 4 seconds; the variable ones at both ends
+of their weights too. The same for the 332 fonts that other programs on the machine carry,
+300 of them with cubic outlines (the installed ones have 12). All of it also under the
+address sanitizer. Glyph widths of a variable font at 200 pixels agree with the ones GDI
+gives. The PNG reader agrees with Windows' own on 26 pictures of every kind the format
+has, written by Windows, and Windows reads the pictures written here. The tests hold
+measuring to drawing: a text drawn whole is the same picture as its characters drawn one at
+a time where measuring puts them, in five fonts, with fallback characters and at a scale
+of 1.5.
+
+**Not built, or built and not tried.**
+
+- Cubic outlines in a variable font (`CFF2`) are built, and have met one font: no such font
+  is installed here, and the one found on the machine is a test font of a single letter
+  that the fonttools project carries. Its outlines at the places that project's own tests
+  name come out to the coordinates those tests expect, exactly, as do those of the
+  TrueType variable font beside it (13 axes). Neither font is in Astra's tests.
+- `sbix`, Apple's picture format, is written to the specification and has not met a font:
+  none is on this machine. `CBDT` was tried against Noto Color Emoji, which a program
+  installed here carries, but that font is not in the tests since Windows does not have it.
+- The styles a variable font names along axes other than weight ("Sitka Display",
+  "Bahnschrift Condensed") are not families of their own. The weight is set as asked, and
+  the cut for the size where a font has one (its "optical size" axis).
+- Emoji stored as SVG are not read; no system's emoji font needs it.
+- The slight darkening of thin strokes that M0 suggested is left as tuning for when text
+  is on a screen (M5).
+- Reading the names of all installed fonts takes about a tenth of a second the first time
+  a program uses a font. If that shows at start-up, the answer is a small cache file.
 
 Testing support belongs in N1 from the start: hidden windows that render to an offscreen
 surface, synthetic raw events fed through the same path as real ones, an in-memory clipboard
@@ -1117,7 +1199,8 @@ saved as images and compared. In two parts, so that the window work is not held 
 - **Part one, which M5 depends on:** both outline formats, variable fonts, font matching
   and fallback, measuring and positioning by the one rule, rasterising, hinting, colour
   emoji. Ends with a page of text in several fonts and sizes rendered to an image, measured
-  widths matching drawn widths exactly.
+  widths matching drawn widths exactly. (Built: `examples/text_page.astra` is that page;
+  see "As built in M4, part one" in section 4.)
 - **Part two, alongside M5 to M8:** shaping, direction and the Unicode data. Ends with
   Arabic, Hebrew, Devanagari, combining marks and emoji sequences rendered correctly against
   reference pictures. The engine is not finished until this is.
@@ -1199,11 +1282,9 @@ font metrics will need new numbers: no other font engine measures text exactly a
 
 ### Open
 
-None. Two questions are deliberately left for the milestone that raises them:
+None. One question is deliberately left for the milestone that raises it. (The other, the
+measuring rule on scaled displays, was settled in M4: section 4, point 8.)
 
-- **The measuring rule on scaled displays** (M4). M0 found that giving every character a
-  whole number of logical pixels leaves spacing a little loose at 2x. The rule needs a
-  clause: round each width in device pixels and report the total in logical ones.
 - **How JadeMem's real sampling is done** (M8): on sample data, or through a way for Astra
   to call Windows system functions, which this plan does not size.
 

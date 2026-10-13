@@ -844,6 +844,7 @@ void registerBuiltins(VM& vm) {
     registerIo(vm);
     registerWorkers(vm);
     registerParallel(vm);
+    registerText(vm);
     // Windows belong to the main program: a worker has none.
     if (!vm.isWorker()) {
         registerGui(vm);

@@ -1,0 +1,125 @@
+// Measuring text: one rule. A character's width is a whole number of pixels, a text's
+// width is the sum of its characters' widths, and that is where the text ends when drawn.
+
+fun attempt(block) {
+  try { block(); return "no error" } catch (e) { return "Error: " + e.message }
+}
+
+val font = TextFont("Segoe UI", 13)
+print(font, font.family, font.size, font.scale, font.weight, font.isBold, font.isItalic)   // expect: TextFont(Segoe UI, 13) Segoe UI 13 1 400 false false
+
+// -- The line --
+print(font.ascent > 0, font.descent > 0, font.leading >= 0, font.height == font.ascent + font.descent + font.leading)   // expect: true true true true
+print(font.xHeight > 0, font.xHeight < font.capHeight, font.capHeight < font.ascent, font.ascent is int, font.height is int)   // expect: true true true true true
+val twice = TextFont("Segoe UI", 26)
+print(Math.abs(twice.ascent - 2 * font.ascent) <= 1, Math.abs(twice.descent - 2 * font.descent) <= 1, Math.abs(twice.width("measure") - 2 * font.width("measure")) <= 7)   // expect: true true true
+
+// -- The rule, in several fonts and sizes --
+val texts = ["Hello, world", "The quick brown fox jumps over the lazy dog", "AVAWA To fi fl ffi 0123456789", "naïve café — “quoted” €5",
+             "Ελληνικά Русский 中文 日本語 한국어", "emoji 😀🎉 and symbols ∑√♥", "", " ", "a"]
+var checked = 0
+val failed = []
+for (name in ["Segoe UI", "Arial", "Times New Roman", "Consolas", "Bahnschrift", "Segoe UI Emoji"]) {
+  for (size in [8, 9, 11, 12, 13.5, 16, 31, 72]) {
+    for (style in 0..<4) {
+      val f = TextFont(name, size, bold = style & 1 == 1, italic = style & 2 == 2)
+      for (text in texts) {
+        val whole = f.width(text)
+        var sum = 0
+        for (c in text) { sum += f.charWidth(c) }
+        val offsets = f.offsets(text)
+        val page = Picture(4, 4)
+        val drawn = page.drawText(text, 0, 2, f)
+        var steps = true
+        for (i in 0..<text.length) { steps = steps and offsets[i] == f.width(text.substring(0, i)) }
+        checked += 1
+        if (!(whole is int) or whole != sum or whole != drawn or offsets.size != text.length + 1 or offsets.last() != whole or !steps) {
+          failed.add("$name $size $style: $text")
+        }
+      }
+    }
+  }
+}
+print(checked, failed)   // expect: 1728 []
+
+print(font.width(""), font.offsets(""), font.offsets("ab") == [0, font.charWidth("a"), font.width("ab")])   // expect: 0 [0] true
+print(font.charWidth("W") > font.charWidth("i"), font.charWidth("a") == font.charWidth(97), font.width("aaaa") == 4 * font.charWidth("a"))   // expect: true true true
+// No pair of letters is nudged together: "AV" is as wide as "A" and "V".
+print(font.width("AVAVAV") == 3 * (font.charWidth("A") + font.charWidth("V")))   // expect: true
+
+// -- Characters that take no room: control characters, joiners, direction marks --
+print(font.width("a\nb\tc") == font.width("abc"), font.width("a\u{200D}b\u{200B}c\u{FE0F}") == font.width("abc"), font.charWidth("\u{200E}"), font.glyphBox("\n"))   // expect: true true 0 null
+
+// -- Styles --
+val bold = TextFont("Segoe UI", 13, bold = true)
+val italic = TextFont("Segoe UI", 13, italic = true)
+print(bold.isBold, bold.weight, bold.typeface.style, bold.width("measure") > font.width("measure"), italic.isItalic, italic.typeface.style)   // expect: true 700 Bold true true Italic
+print(TextFont("Segoe UI", 13, weight = 600).typeface.style, TextFont("Segoe UI", 13, weight = 300).typeface.style)   // expect: Semibold Light
+// A monospaced font: every character the same width.
+val mono = TextFont("Monospaced", 13)
+print(mono.charWidth("i") == mono.charWidth("W"), mono.width("0123456789") == 10 * mono.charWidth("m"), mono.typeface.isMonospace)   // expect: true true true
+// A variable font at any weight. (Bahnschrift keeps its widths; its strokes are what change.)
+val thin = TextFont("Bahnschrift", 20, weight = 300)
+val thick = TextFont("Bahnschrift", 20, weight = 700)
+print(thin.weight, thick.weight, thick.isBold, thin.typeface == thick.typeface, TextFont("Bahnschrift", 20, weight = 950).weight, TextFont("Bahnschrift", 20, bold = true).weight)   // expect: 300 700 true true 700 700
+// A style the family lacks is made up: a bold is thicker and so wider, an italic slanted.
+val emoji = TextFont("Segoe UI Emoji", 14)
+val fakeBold = TextFont("Segoe UI Emoji", 14, bold = true)
+print(fakeBold.isBold, fakeBold.typeface == emoji.typeface, fakeBold.width("made up") > emoji.width("made up"), fakeBold.width(" ") > 0)   // expect: true true true true
+val fakeItalic = TextFont("Bahnschrift", 14, italic = true)
+print(fakeItalic.isItalic, fakeItalic.typeface.isItalic, fakeItalic.width("made up") == TextFont("Bahnschrift", 14).width("made up"))   // expect: true false true
+// Hinting moves no character sideways: the widths are the same without it.
+val unhinted = TextFont("Segoe UI", 13, hinting = false)
+print(unhinted.width("The quick brown fox") == font.width("The quick brown fox"), unhinted.ascent == font.ascent)   // expect: true true
+
+// -- A family that is not installed gives the system's own --
+val missing = TextFont("No Such Family", 12)
+print(missing.family == TextFont("SansSerif", 12).family, missing.width("abc") == TextFont("SansSerif", 12).width("abc"))   // expect: true true
+
+// -- From a typeface --
+val face = Fonts.find("Arial")
+val fromFace = TextFont(face, 15)
+print(fromFace.typeface == face, face.font(15).width("abc") == fromFace.width("abc"), TextFont("Arial", 15).width("abc") == fromFace.width("abc"))   // expect: true true true
+print(TextFont(face, 15, bold = true).isBold, TextFont(face, 15, bold = true).width("abc") > fromFace.width("abc"))   // expect: true true
+val bigger = font.derive(20)
+print(bigger.size, bigger.typeface == font.typeface, bigger.width("abc") > font.width("abc"), font.derive().width("abc") == font.width("abc"))   // expect: 20 true true true
+
+// -- Characters the font lacks come from one that has them --
+print(font.typefaceFor("a") == font.typeface, font.typefaceFor("中") != font.typeface, font.typefaceFor("中").has("中"), font.charWidth("中") > 0)   // expect: true true true true
+print(font.typefaceFor("😀").hasColor, font.glyphBox("😀")[4], font.glyphBox("a")[4], font.typefaceFor("\u{10FFFD}"))   // expect: true true false null
+// One no font has is the font's own "missing" box, still measured and drawn by the rule.
+print(font.width("a\u{10FFFD}b") == font.width("a") + font.charWidth("\u{10FFFD}") + font.width("b"), font.charWidth("\u{10FFFD}") >= 0)   // expect: true true
+
+// -- A scale, for a dense screen: the numbers are in the screen's own pixels --
+// At 2x a font of 12 is a font of 24: every number is the same.
+val dense = TextFont("Segoe UI", 12, scale = 2)
+val large = TextFont("Segoe UI", 24)
+print(dense.scale, dense.size, dense.ascent == large.ascent, dense.descent == large.descent, dense.width("The quick brown fox") == large.width("The quick brown fox"))   // expect: 2 12 true true true
+// So a line at 2x is as wide, in the layout's units, as its characters truly are to within
+// a quarter of a pixel each; rounding in the layout's units would be twice as loose.
+val plain = TextFont("Segoe UI", 12)
+val line = "The quick brown fox jumps over the lazy dog"
+var exact = 0.0
+for (c in line) { exact += plain.typeface.advance(plain.typeface.glyph(c)) * 12 / plain.typeface.unitsPerEm }
+val at2 = Math.abs(dense.width(line) / 2.0 - exact)
+print(at2 <= line.length * 0.25, Math.abs(plain.width(line) - exact) <= line.length * 0.5)   // expect: true true
+// Any scale will do, and the rule holds at each.
+for (scale in [1.25, 1.5, 1.75, 3]) {
+  val f = TextFont("Segoe UI", 11, scale = scale)
+  var sum = 0
+  for (c in line) { sum += f.charWidth(c) }
+  print(scale, f.width(line) == sum, f.width(line) is int, Math.abs(f.width(line) / scale - TextFont("Segoe UI", 11).width(line)) < line.length * 0.5)
+}
+// expect: 1.25 true true true
+// expect: 1.5 true true true
+// expect: 1.75 true true true
+// expect: 3 true true true
+
+// -- What cannot be a font --
+print(attempt { TextFont("Segoe UI", 0) })       // expect: Error: a font's size is more than 0
+print(attempt { TextFont("Segoe UI", 12, scale = 0) })   // expect: Error: a scale is more than 0
+print(attempt { font.charWidth("") })            // expect: Error: a character is wanted, and the string is empty
+
+// -- Measuring in a parallel section: it changes nothing, so every core may --
+val words = line.split(" ")
+print(words.parallelStream().map { font.width(it) }.toList() == words.map { font.width(it) })   // expect: true

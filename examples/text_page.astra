@@ -1,0 +1,110 @@
+// A page of text in several fonts and sizes, drawn into a picture by Astra's own text
+// engine and saved as text_page.png. Nothing but the font files comes from the system.
+//
+//   astra examples/text_page.astra [scale]
+//
+// Under every line is a rule exactly as long as the line was measured to be, with a tick
+// where each character was measured to start: the text sits on them, because measuring and
+// drawing use the same numbers. The program checks that for every line and says so.
+//
+// A scale (1.5, 2) draws the page as a dense screen would show it.
+
+val scale = len(args()) > 0 ? float(args()[0]) : 1
+val ink = 0xFF1B1F23
+val faint = 0xFF8A9199
+val rule = 0xFF2F81F7
+val paper = 0xFFFFFFFF
+
+fun px(n) => int(Math.round(n * scale))
+
+val page = Picture(px(900), px(1070), paper)
+var y = px(24)
+var lines = 0
+var checked = 0
+
+// One line of text at the left margin, with its measured width ruled underneath.
+fun line(text, font, color = ink, note = null) {
+  val x = px(28)
+  y += font.ascent
+  val drawn = page.drawText(text, x, y, font, color)
+  val measured = font.width(text)
+  val offsets = font.offsets(text)
+  // Measured as a whole, drawn, and added up a character at a time: three ways, one number.
+  var sum = 0
+  for (c in text) { sum += font.charWidth(c) }
+  if (drawn != measured or sum != measured or offsets.last() != measured) {
+    throw Error("measured $measured, drew $drawn, characters add up to $sum: $text")
+  }
+  checked += 1
+  val below = y + font.descent + px(1)
+  page.fillRect(x, below, measured, 1, rule)
+  for (at in offsets) { page.fillRect(x + at, below - px(2), 1, px(2) + 1, rule) }
+  if (note != null) {
+    page.drawText(note, x + measured + px(14), y, notes, faint)
+  }
+  y += font.descent + px(9)
+  lines += 1
+}
+
+fun heading(text) {
+  y += px(10)
+  page.drawText(text, px(28), y + small.ascent, small, faint)
+  y += small.height + px(4)
+}
+
+val notes = TextFont("Segoe UI", 10, italic = true, scale = scale)
+val small = TextFont("Segoe UI", 10, bold = true, scale = scale)
+val pangram = "The quick brown fox jumps over the lazy dog 0123456789"
+
+line("Text, by Astra's own engine", TextFont("Segoe UI", 30, weight = 600, scale = scale))
+
+heading("ONE FAMILY, MANY SIZES")
+for (size in [9, 10, 11, 12, 13, 14, 16, 20]) {
+  val font = TextFont("Segoe UI", size, scale = scale)
+  line(pangram, font, ink, "${font.family} $size")
+}
+
+heading("STYLES")
+line("Regular, and the same family in bold,", TextFont("Segoe UI", 15, scale = scale))
+line("in bold, which is a font of its own,", TextFont("Segoe UI", 15, bold = true, scale = scale))
+line("in italic, and in bold italic.", TextFont("Segoe UI", 15, bold = true, italic = true, scale = scale))
+line("Serif: Times New Roman, 17, with its italic following.", TextFont("Serif", 17, scale = scale))
+line("Quoth the raven, “Nevermore.” — fi fl ff & ½ × ÷ © § ¶", TextFont("Serif", 17, italic = true, scale = scale))
+line("fun main() { print(\"monospaced: every character 0O1lI| the same width\") }", TextFont("Monospaced", 13, scale = scale))
+
+heading("ONE FILE, EVERY WEIGHT (VARIABLE FONTS)")
+for (weight in [300, 400, 500, 600, 700]) {
+  line("Bahnschrift at weight $weight: Hamburgefonstiv 0123456789", TextFont("Bahnschrift", 16, weight = weight, scale = scale))
+}
+line("Segoe UI Variable, small: the cut made for small sizes is chosen by itself", TextFont("Segoe UI Variable", 9, scale = scale))
+line("Segoe UI Variable, large: and the display cut here", TextFont("Segoe UI Variable", 26, scale = scale))
+
+heading("THE OTHER KIND OF OUTLINE (CUBIC CURVES, .OTF)")
+var cubic = null
+for (face in Fonts.typefaces()) {
+  if (cubic == null and face.hasCubicOutlines and face.has("a") and !face.isItalic and face.weight <= 500) { cubic = face }
+}
+if (cubic != null) {
+  line("${cubic.fullName}: Sphinx of black quartz, judge my vow. אבגדהוזחטי", TextFont(cubic, 19, scale = scale))
+} else {
+  line("(no font with cubic outlines is installed)", notes)
+}
+
+heading("CHARACTERS THE FONT LACKS COME FROM ONE THAT HAS THEM")
+val body = TextFont("Segoe UI", 15, scale = scale)
+line("English, Ελληνικά, Русский, Tiếng Việt, 中文, 日本語のテキスト, 한국어", body)
+line("Symbols → ∑ ∞ ≠ ≤ √ ∂ ♠ ♥ ♦ ♣ ♪ ✓ ✗ ★ ☂ and emoji 😀 🎉 🚀 🌈 🍎 🐢 👍", body)
+line("😀😃😄😁🤖👾🎨🔥💧🌍", TextFont("Segoe UI", 30, scale = scale))
+
+heading("STYLES A FAMILY LACKS ARE MADE UP; HINTING")
+line("Bahnschrift has no italic, so this one is slanted: made-up italic", TextFont("Bahnschrift", 15, italic = true, scale = scale))
+line("Segoe UI Emoji has no bold, so this one is thickened", TextFont("Segoe UI Emoji", 15, bold = true, scale = scale))
+line("With hinting: tops and bottoms of letters on pixel edges — minimum", TextFont("Segoe UI", 11, scale = scale))
+line("Without it:   tops and bottoms of letters on pixel edges — minimum", TextFont("Segoe UI", 11, scale = scale, hinting = false))
+
+page.save("text_page.png")
+print("$lines lines in ${page.width} x ${page.height} pixels, saved as text_page.png")
+print("every line's measured width, drawn width and sum of character widths agree ($checked checked)")
+
+// And the picture comes back from its file as it went in.
+print("read back the same:", Picture.load("text_page.png") == page)
