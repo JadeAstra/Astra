@@ -1,0 +1,237 @@
+// when: as a statement and as a value.
+
+class Shape(val name)
+class Circle(val radius) : Shape("circle")
+class Square(val side) : Shape("square")
+
+// A subject compared with values; several values can share a branch.
+fun word(n) {
+  when (n) {
+    0 -> return "zero"
+    1, 2, 3 -> return "few"
+    else -> return "many"
+  }
+}
+print(word(0), word(2), word(3), word(9))   // expect: zero few few many
+
+// As a value. Without parentheses too, like if.
+fun size(n) => when n {
+  0 -> "none"
+  1 -> "one"
+  else -> "several"
+}
+print(size(0), size(1), size(5))            // expect: none one several
+
+// is, !is, in and !in test the subject.
+fun describe(x) => when (x) {
+  null -> "nothing"
+  is Circle -> "circle of " + x.radius
+  is Shape -> "a " + x.name
+  is int, is float -> "number"
+  in ["yes", "no"] -> "answer"
+  !is string -> "something else"
+  else -> "text"
+}
+print(describe(Circle(2)), describe(Square(1)), describe(3), describe(2.5))   // expect: circle of 2 a square number number
+print(describe("yes"), describe([1]), describe("hello"), describe(null))      // expect: answer something else text nothing
+
+fun grade(score) => when (score) {
+  in 90..100 -> "A"
+  in 80..<90 -> "B"
+  !in 0..100 -> "invalid"
+  else -> "C"
+}
+print(grade(95), grade(80), grade(89), grade(50), grade(101))   // expect: A B B C invalid
+
+// Values are compared with ==, so lists match by content and a class can say what equal means.
+print(when ([1, 2]) { [1] -> "one"; [1, 2] -> "pair"; else -> "other" })   // expect: pair
+
+// Without a subject each branch is a condition; the first true one wins.
+fun sign(n) => when {
+  n < 0 -> "negative"
+  n == 0 -> "zero"
+  n > 100, n < 2 -> "extreme"
+  else -> "positive"
+}
+print(sign(-5), sign(0), sign(1), sign(7), sign(500))   // expect: negative zero extreme positive extreme
+
+// With no else and no branch taken, the value is null and nothing runs.
+print(when (5) { 1 -> "one" }, when { false -> 1 })     // expect: null null
+
+// The subject is worked out once.
+var asked = 0
+fun next() {
+  asked += 1
+  return asked
+}
+print(when (next()) { 5 -> "five"; 1 -> "one"; else -> "?" }, asked)   // expect: one 1
+
+// Conditions are only worked out until one matches.
+var tried = []
+fun probe(value) {
+  tried.push(value)
+  return value
+}
+when (2) {
+  probe(1), probe(2), probe(3) -> tried.push("hit")
+  probe(4) -> tried.push("never")
+}
+print(tried)                                // expect: [1, 2, "hit"]
+
+// A branch can be a block: its last expression is the value, and it has its own variables.
+fun area(shape) => when (shape) {
+  is Circle -> {
+    val r = shape.radius
+    val pi = 3
+    pi * r * r
+  }
+  is Square -> {
+    val s = shape.side
+    s * s
+  }
+  else -> {
+    0
+  }
+}
+print(area(Circle(2)), area(Square(3)), area(Shape("blob")))   // expect: 12 9 0
+print(when (1) { 1 -> { } else -> 5 }, when (1) { 1 -> { var n = 1; n += 1 } })   // expect: null 2
+
+// Naming the subject.
+fun measure(text) => when (val n = text.length) {
+  0 -> "empty"
+  1 -> "a character"
+  else -> "$n characters"
+}
+print(measure(""), measure("x"), measure("hello"))   // expect: empty a character 5 characters
+
+// In the middle of an expression, with variables declared in a branch.
+fun total(a, b, kind) => a + when (kind) {
+  "double" -> {
+    val twice = b * 2
+    twice
+  }
+  "square" -> {
+    val first = b
+    val second = b
+    first * second
+  }
+  else -> b
+} + a
+print(total(1, 5, "double"), total(1, 5, "square"), total(1, 5, "plain"))   // expect: 12 27 7
+print([1, when (2) { 2 -> { val x = 20; x + 2 } else -> 0 }, 3], "a" + when { true -> { val s = "b"; s + s } else -> "" } + "c")
+// expect: [1, 22, 3] abbc
+
+// Nested, and inside a lambda.
+fun classify(x, y) => when (x) {
+  0 -> when (y) {
+    0 -> "origin"
+    else -> "on the y axis"
+  }
+  else -> when {
+    y == 0 -> "on the x axis"
+    else -> "elsewhere"
+  }
+}
+print(classify(0, 0), classify(0, 3), classify(2, 0), classify(2, 2))   // expect: origin on the y axis on the x axis elsewhere
+print([1, 2, 3].map { when (it) { 1 -> "one"; 2 -> "two"; else -> "more" } })   // expect: ["one", "two", "more"]
+
+// A function captures a variable of a branch, and the subject.
+val readers = []
+for n in [1, 2, 3] {
+  val label = "n" + when (n) {
+    2 -> {
+      val doubled = n * 2
+      readers.push(fun() => doubled)
+      "two"
+    }
+    else -> {
+      readers.push(fun() => n)
+      "other"
+    }
+  }
+  readers.push(fun() => label)
+}
+print(readers.map { it() })                 // expect: [1, "nother", 4, "ntwo", 3, "nother"]
+
+val held = []
+for word in ["a", "bb"] {
+  when (val n = word.length) {
+    1 -> held.push(fun() => n)
+    else -> held.push(fun() => n * 10)
+  }
+}
+print(held.map { it() })                    // expect: [1, 20]
+
+// break, continue and return from a branch, with half-built values around.
+val picked = []
+for n in [1, 2, 3, 4, 5, 6] {
+  val entry = [n, when (n % 3) {
+    0 -> continue
+    1 -> "one"
+    else -> {
+      if n == 5 { break }
+      "two"
+    }
+  }]
+  picked.push(entry)
+}
+print(picked)                               // expect: [[1, "one"], [2, "two"], [4, "one"]]
+
+fun firstBig(list) {
+  for n in list {
+    val doubled = 2 * when {
+      n > 10 -> return n
+      else -> n
+    }
+    if doubled == 8 { return "eight" }
+  }
+  return "none"
+}
+print(firstBig([1, 2, 30]), firstBig([1, 4, 30]), firstBig([1]))   // expect: 30 eight none
+
+// With ?: and jumps as branch values.
+fun lookup(table, key) {
+  val found = table[key] ?: when (key) {
+    "missing" -> return "gave up"
+    else -> "default"
+  }
+  return found
+}
+print(lookup({"a": 1}, "a"), lookup({:}, "b"), lookup({:}, "missing"))   // expect: 1 default gave up
+
+// try and finally inside a branch.
+val log = []
+fun guarded(n) => 100 + when (n) {
+  1 -> {
+    try { throw "one" } catch (e) { log.push("caught " + e) } finally { log.push("finally") }
+    10
+  }
+  else -> {
+    var result = 0
+    try { result = 20 } finally { log.push("done") }
+    result
+  }
+}
+print(guarded(1), guarded(2), log)          // expect: 110 120 ["caught one", "finally", "done"]
+
+// As statements, with assignments and ++ in the branches.
+var hits = 0
+var last = ""
+for n in 1..6 {
+  when {
+    n % 2 == 0 -> hits++
+    n == 5 -> last = "five"
+  }
+}
+print(hits, last)                           // expect: 3 five
+
+// Many times over: nothing is left on the stack.
+var sum = 0
+for i in 1..30000 {
+  sum += 1 + when (i % 3) {
+    0 -> continue
+    1 -> { val one = 1; one }
+    else -> 2
+  }
+}
+print(sum)                                  // expect: 50000

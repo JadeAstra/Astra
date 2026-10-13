@@ -1,0 +1,35 @@
+// Type arguments and function types in declarations. They are read in full and checked by
+// their outer type: list, map, function.
+
+class Grid
+fun shapes(items : list<string>, lookup : map<string, list<int>>, test : (int) -> bool,
+           build : (a : int, b : string) -> list<int>) : list<int> => [items.length, lookup.length]
+fun later(callback : ((int) -> bool)? = null, done : () -> unit = {}) : unit { done() }
+fun run(block : Grid.() -> unit, pairs : list<map<string, int>>?, n : number?) : any => n
+val add : (int, int) -> int = { x, y -> x + y }
+var tests : list<(string) -> bool> = []
+
+class Box(val items : list<int> = [], var onChange : ((Box) -> unit)? = null) {
+  var cache : map<string, list<Box>>? = null
+  fun each(action : (int) -> unit) : Box {
+    for item in items { action(item) }
+    return this
+  }
+}
+
+print(shapes(["a"], {"k": [1]}, { true }, { x, y -> [] }), later(), run({}, null, 1.5), add(1, 2), tests)   // expect: [1, 1] null 1.5 3 []
+val seen = []
+print(Box([1, 2]).each { seen.push(it) } is Box, seen, Box().cache, Box().onChange)   // expect: true [1, 2] null null
+
+// The outer type is enforced.
+try { shapes("a", {:}, { true }, { x, y -> [] }) } catch (e) { print(e.message) }   // expect: argument 'items' of shapes() must be list, got string
+try { shapes([], [], { true }, { x, y -> [] }) } catch (e) { print(e.message) }     // expect: argument 'lookup' of shapes() must be map, got list
+try { shapes([], {:}, 5, { x, y -> [] }) } catch (e) { print(e.message) }           // expect: argument 'test' of shapes() must be function, got int
+try { later(5) } catch (e) { print(e.message) }                                     // expect: argument 'callback' of later() must be function?, got int
+try { tests = "none" } catch (e) { print(e.message) }                               // expect: cannot assign a value of type string to 'tests', which is declared as list
+print(shapes([1, 2], {:}, print, fun(a, b) => []))   // expect: [2, 0]
+
+// unit: a function that gives nothing back. any: no check at all.
+fun quiet() : unit { return }
+fun anything(x : any, y : any?) : any? => x
+print(quiet(), anything(1, null), anything(null, 2))   // expect: null 1 null

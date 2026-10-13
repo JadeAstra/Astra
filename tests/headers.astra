@@ -56,7 +56,7 @@ class Animal(val name : string, var legs : int) {
   fun describe() : string => "${this.name} has ${this.legs} legs"
 }
 class Dog(name : string, val breed : string) : Animal(name, 4) {
-  fun describe() : string => super.describe() + " and is a ${this.breed}"
+  override fun describe() : string => super.describe() + " and is a ${this.breed}"
 }
 class Puppy(name : string) : Dog(name, "mutt")
 class Snake(name : string) : Animal(name, 0)
@@ -134,5 +134,5 @@ print(Stepper(5).count, Stepper(5).step)         // expect: 15 2
 
 // lots of small objects
 var total = 0
-for i in 0..20000 { total += Student("s", i).grade - i + 1 }
+for i in 0..<20000 { total += Student("s", i).grade - i + 1 }
 print(total)                                     // expect: 20000

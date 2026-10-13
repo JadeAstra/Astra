@@ -1,0 +1,5 @@
+// A private name stays in its file.
+import NsShapes.*
+print(shapeSecret())                    // expect: shape's own, not for others
+print(hidden())
+// expect runtime error: Uncaught Error: undefined variable 'hidden'

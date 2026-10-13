@@ -1,0 +1,5 @@
+// Through an import's name, only what the import makes public.
+import NsShapes as shapes
+print(shapes.PI_ISH)
+print(shapes.hidden())
+// expect compile error: "NsShapes" has no name 'hidden' that can be seen from here

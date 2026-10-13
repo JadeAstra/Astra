@@ -53,14 +53,14 @@ enum class Op : uint8_t {
     Return,
 
     Class,         // u16 name                      -> class
-    Inherit,       //                               superclass subclass -> superclass
+    Inherit,       // u8 count                      supertypes... subclass -> superclass or null
     Method,        // u16 name                      class closure -> class
     StaticMethod,  // u16 name                      class closure -> class
 
     BuildList,     // u16 count
     BuildMap,      // u16 entry count               key value ... -> map
     BuildString,   // u16 part count
-    Range,         // u8 inclusive                  start end -> range
+    Range,         // u8 flags                      start end [step] -> range  (1 inclusive, 2 counts down, 4 has a step)
 
     IterInit,      //                               iterable -> iterator
     IterNext,      // u16 slot, i32 target          pushes the next item, or jumps when exhausted
@@ -105,6 +105,76 @@ enum class Op : uint8_t {
     GetImplicit,        // u16 name, u16 global            -> value
     SetImplicit,        // u16 name, u16 global            value -> value
 
+    Identical,          //                                 a b -> bool  (a === b: the very same object)
+
+    JumpIfNull,         // i32 target                      jumps if the top is null; it stays either way
+    JumpIfNotNull,      // i32 target                      jumps if the top is not null; it stays either way
+    AssertNotNull,      //                                 value -> value  (throws if it is null: `value!!`)
+
+    // `break`, `continue` or a `return` that has finally blocks to run, in the middle of an
+    // expression: drops the half-built values under the top one, leaving exactly `count`
+    // slots below it (the function's variables, one of which may not have its value yet).
+    Settle,             // u16 count                       ... value -> locals value
+
+    // Tests against a type written in the source; the u8 is as for CheckType.
+    IsType,             // u8 type                         value [class] -> bool
+    Cast,               // u8 type                         value [class] -> value  (throws on a mismatch)
+    CastOrNull,         // u8 type                         value [class] -> value or null
+    Swap,               //                                 a b -> b a
+
+    // The end of a block that is an expression: drops the block's `count` variables from
+    // under its value, closing any that a function captured.
+    PopUnder,           // u16 count                       locals... value -> value
+
+    // A call with `*list` among its arguments. The positional arguments are gathered into
+    // one list first, with Spread adding the elements of each list in turn.
+    Spread,             //                                 list value -> list  (value must be a list)
+    CallSpread,         // u8 named                        callee list (name value)... -> result
+
+    // Static members. StaticField's operands are as for DeclareField.
+    StaticField,        // u16 name, u16 flags             class [type closure] value -> class
+    StaticGetter,       // u16 name                        class closure -> class  (static get name())
+    StaticSetter,       // u16 name                        class closure -> class  (static set name(value))
+
+    // More for names that may be members of an object the code runs on (see GetImplicit).
+    // TryImplicit pushes the member and jumps if one of those objects has the name, and
+    // otherwise does nothing. InvokeImplicit calls the name as a method of the object that
+    // has it, or failing that as a global function; the slot under the arguments is spare.
+    TryImplicit,        // u16 name, i32 target            -> [value]
+    InvokeImplicit,     // u16 name, u16 global, u8 argc   spare args... -> result
+
+    // Enums. EnumEntry names an instance as the entry with that ordinal; EnumSeal ends the list.
+    EnumEntry,          // u16 name, u16 ordinal           class instance -> class
+    EnumSeal,           //                                 class -> class
+    EnumNext,           // u16 name, u16 ordinal           class -> class  (the entry made next has these already in its init)
+    PendingEnum,        // u16 name                        -> the name, to be settled by the parameter it is passed to
+
+    // Interfaces. Require names a member the implementing class has to supply; FinishClass,
+    // at the end of every class, checks that it supplies all that its interfaces require.
+    MarkInterface,      //                                 class -> class
+    Require,            // u16 name                        class -> class
+    FinishClass,        //                                 class -> class
+
+    // Data classes and taking values apart. DataField adds a header field to the parts of a
+    // data class; Component gives part `index` of a list or of a data object.
+    DataField,          // u16 name                        class -> class
+    Component,          // u8 index                        value -> part
+
+    MissingArg,         // u16 parameter name              throws: the call left out an argument that has no default
+
+    // A class's static values are worked out by a function of its own, attached with
+    // ClassInit and run on first need: by EnsureClassInit, or by any use of a static member.
+    ClassInit,          //                                 class closure -> class
+    EnsureClassInit,    //                                 class -> class
+
+    // An extension function: a method added to a type from outside. The u8 is a TypeId, with
+    // kTypeNullable when null takes it too; kTypeInstance has the class under the function,
+    // and 0 stands for every value.
+    Extension,          // u16 name, u8 type               [class] closure ->
+    MarkAbstract,       //                                 class -> class
+    // A member written `override` has to have something to take the place of.
+    CheckOverride,      // u16 name, u8 flags              class -> class  (1: written override; 2: a field or property)
+
     Count_,
 };
 
@@ -127,6 +197,7 @@ const uint8_t kTypeMask = 0x7F;
 
 const int kFieldVal = 0x100;       // the field can be assigned only once
 const int kFieldRequired = 0x200;  // the initializer has to assign it
+const int kFieldOverride = 0x400;  // declared again, in place of the superclass's field of that name
 
 // Maps a built-in type name to its TypeId; returns 0 for any other name.
 uint8_t builtinTypeId(const std::string& name);
@@ -149,6 +220,14 @@ struct FunctionProto {
     // function fills in itself (see DefaultArg). -1 means "the same as arity".
     int minArity = -1;
     int requiredArgs() const { return minArity < 0 ? arity : minArity; }
+
+    // The `vararg` parameter (counted from 0), which receives the arguments from its position
+    // on as a list, or -1. Parameters after it can only be passed by name.
+    int varargIndex = -1;
+
+    // Bit i is set when parameter i is declared with a class type, the only kind of parameter
+    // that can turn a bare name into an enum entry. (Parameters past the 64th never do.)
+    uint64_t classParams = 0;
 
     // Parameter names (interned), for calls that pass arguments by name. Empty for functions
     // that cannot be called that way.
@@ -187,6 +266,10 @@ private:
 // all paths, and records the function's stack requirement. The VM relies on both.
 // Throws std::runtime_error if the bytecode is malformed.
 void verifyFunction(FunctionProto& f, const Program& program);
+
+// For the compiler, part-way through a function: how many stack slots are in use where the
+// code written so far ends, counted from the frame base, or -1 if that point is never reached.
+int stackDepthAtEnd(FunctionProto& f, const Program& program);
 
 void disassemble(const Program& program, std::ostream& out);
 

@@ -53,7 +53,7 @@ fun scene(width, height) {
   Spike.oval(470, 60, 120, 80, 0, 0x0FA47F, 1.0)
   Spike.oval(530, 90, 120, 80, 0, 0x1565C0, 0.5)
   Spike.oval(470, 60, 120, 80, 2, 0x1A2420, 1.0)
-  for i in 0..8 { Spike.line(470, 190, 650, 190 + i * 9, 1 + i * 0.5, 0x1A2420, 1.0) }
+  for i in 0..<8 { Spike.line(470, 190, 650, 190 + i * 9, 1 + i * 0.5, 0x1A2420, 1.0) }
   Spike.line(16, 280, 650, 280, 1, 0x808080, 1.0)                 // a one-pixel rule: must be crisp
 
   Spike.text("events: $events   last: $lastEvent   pointer: $mouseX, $mouseY", 16, 300, 12, 0x606060, true)

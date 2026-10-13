@@ -1,0 +1,9 @@
+// A library can hold an object of its own name, as Jade does. What the library has a name
+// for is the library's; anything else is looked for on the object.
+import NsText.*
+
+NsText.bump().bump()
+print(NsText.count, NsText.Block("x").content, NsText.words("p q"), NsText is any)   // expect: 2 x ["p", "q"] true
+val same = NsText
+print(same.count, same === NsText)      // expect: 2 true
+try { NsText.missing() } catch (e) { print(e.message) }   // expect: undefined method 'missing' on NsText

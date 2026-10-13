@@ -24,11 +24,11 @@ class Rect : Shape {
     this.w = w
     this.h = h
   }
-  fun area() { return this.w * this.h }
+  override fun area() { return this.w * this.h }
 }
 class Square : Rect {
   fun init(side) { super.init(side, side); this.name = "square" }
-  fun describe() { return "[" + super.describe() + "]" }
+  override fun describe() { return "[" + super.describe() + "]" }
 }
 var shapes = [Shape("blob"), Rect(2, 3), Square(4)]
 for s in shapes { print(s.describe()) }
@@ -59,7 +59,7 @@ class Counter {
 }
 Counter.made = 0
 Counter.create(); Counter.create()
-print(Counter.describe(), Counter.name) // expect: made 2 Counter
+print(Counter.describe(), Counter.className) // expect: made 2 Counter
 
 class Parent { static fun make() { return "parent-made" } }
 class Child : Parent { }
@@ -88,7 +88,7 @@ print(Early(true).flag, Early(false).extra)   // expect: true true
 // this and super inside a closure
 class A { fun hello() { return "A.hello" } }
 class B : A {
-  fun hello() {
+  override fun hello() {
     var f = fun() => super.hello() + " via " + type(this)
     return f()
   }
@@ -111,7 +111,7 @@ class Stack {
   fun take() { return this.items.pop() }
 }
 class Queue : Stack {
-  fun take() { return this.items.removeAt(0) }
+  override fun take() { return this.items.removeAt(0) }
 }
 fun drain(box) {
   var seen = []

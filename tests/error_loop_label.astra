@@ -1,0 +1,5 @@
+// A label has to be that of a loop around the jump.
+for i in 1..3 {
+  break@outer
+}
+// expect compile error: there is no loop called 'outer' around this break

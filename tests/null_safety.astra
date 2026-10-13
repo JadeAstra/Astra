@@ -1,0 +1,183 @@
+// ?.  ?:  !!  and return / throw / break / continue where a value is expected.
+
+class Node(val name, var next = null) {
+  var visits = 0
+  fun label() => "<" + this.name + ">"
+  fun tag(prefix = "", suffix = "") => prefix + this.name + suffix
+}
+
+val none = null
+val a = Node("a")
+var calls = 0
+fun counted() {
+  calls += 1
+  return "x"
+}
+
+// ?. reads a member, or gives null when there is nothing to read it from.
+print(a?.name, none?.name, a?.label(), none?.label())   // expect: a null <a> null
+print(a.next?.name, a?.next?.name, "abc"?.length, none?.length)   // expect: null null 3 null
+
+// With no object, the arguments of the call are not worked out.
+print(none?.tag(counted()), none?.tag(suffix = counted()), calls)   // expect: null null 0
+print(a?.tag(counted()), a?.tag(suffix = "!"), calls)   // expect: xa a! 1
+
+// A lambda after the call, and the scope functions.
+print([1, 2]?.map { it * 2 }, none?.map { counted() }, a?.let { it.name + "!" }, none?.let { counted() }, calls)
+// expect: [2, 4] null a! null 1
+
+// Each step of a chain needs its own ?.
+a.next = Node("b")
+print(a?.next?.name, a.next?.next?.name)    // expect: b null
+try { print(none?.next.name) } catch (e) { print("caught") }   // expect: caught
+
+// ?: gives the left side unless it is null. Only null counts: 0, false and "" are values.
+print(none ?: "default", a.name ?: "unused", 0 ?: 1, false ?: true, "" ?: "empty")   // expect: default a 0 false
+print(none ?: none ?: 3, none?.name ?: "nobody", a.next?.next?.name ?: "end")   // expect: 3 nobody end
+calls = 0
+print("kept" ?: counted(), calls)           // expect: kept 0
+
+// It binds more loosely than arithmetic and more tightly than comparisons.
+print(none ?: 2 * 5, 5 ?: 0 > 3, none ?: 0 == 0, (none ?: 1) + 2)   // expect: 10 true true 3
+print(none == null ? none ?: "inner" : "outer")   // expect: inner
+
+// On the next line, as Kotlin code is usually laid out.
+val chained = a.next
+  ?.next
+  ?: "fallback"
+print(chained)                              // expect: fallback
+
+// !! insists on a value.
+print(a!!.name, a.next!!.label(), !!true, !!none)   // expect: a <b> true false
+try { print(none!!) } catch (e) { print(e.message) }   // expect: '!!' was used on a value that is null
+try { print(a.next.next!!.name) } catch (e) { print(e.message) }   // expect: '!!' was used on a value that is null
+
+// Assigning through ?. does nothing when there is no object, and the value is not worked out.
+calls = 0
+val missing = none
+missing?.next = counted()
+missing?.visits += 5
+missing?.visits++
+a?.visits = 2
+a?.visits += 3
+a?.visits++
+print(calls, a.visits, (a?.visits = 10), (missing?.visits = 10))   // expect: 0 6 10 null
+
+// return and throw as the other side of ?:
+fun nameOf(node) {
+  val found = node ?: return "nobody"
+  return found.name
+}
+fun required(node) => node ?: throw Error("nothing there")
+print(nameOf(a), nameOf(null), required(a).name)   // expect: a nobody a
+try { required(null) } catch (e) { print(e.message) }   // expect: nothing there
+
+fun describe(node) {
+  val text = "node " + (node?.name ?: return "none") + "."
+  return text
+}
+print(describe(a), describe(null))          // expect: node a. none
+
+// continue and break, with half-built values and earlier variables lying around.
+val seen = []
+for item in [1, null, 3, null, 5] {
+  val doubled = [item]
+  val value = item ?: continue
+  seen.push([doubled.length, 10 * value, [0, value ?: continue]])
+}
+print(seen)   // expect: [[1, 10, [0, 1]], [1, 30, [0, 3]], [1, 50, [0, 5]]]
+
+val items = [1, 2, null, 4]
+var index = 0
+var sum = 0
+while true {
+  val before = sum
+  sum = before + 100 * (items[index] ?: break)
+  index += 1
+}
+print(sum, index)                           // expect: 300 2
+
+fun add(x, y, z) => x + y + z
+var total = 0
+for item in [1, 2, null, 4] {
+  total += add(1, item ?: continue, 1)
+}
+print(total)                                // expect: 13
+
+// A variable that a closure captured is still closed properly on the way out.
+val readers = []
+for item in ["a", null, "c"] {
+  val kept = item
+  readers.push(fun() => kept)
+  val upper = item ?: continue
+  readers.push(fun() => upper + upper)
+}
+print(readers.map { it() })                 // expect: ["a", "aa", null, "c", "cc"]
+
+// A variable whose own value mentions it, with a break in the same expression.
+fun onlyIf(value, callback) => value == null ? null : callback
+val callbacks = []
+for item in [1, 2, null, 4] {
+  val self = onlyIf(item, fun() => self == null ? "unset" : "set $item") ?: break
+  callbacks.push(self)
+}
+print(callbacks.map { it() })               // expect: ["set 1", "set 2"]
+
+// Leaving through a finally block from the middle of an expression.
+val log = []
+fun guarded(value) {
+  try {
+    val built = [1, 2, value ?: return "early"]
+    return built.length
+  } finally {
+    val note = "finally"
+    log.push(note)
+  }
+}
+print(guarded(3), guarded(null), log)       // expect: 3 early ["finally", "finally"]
+
+for item in [1, null, 3] {
+  try {
+    val value = [item ?: continue]
+    log.push(value[0])
+  } finally {
+    log.push("pass")
+  }
+}
+print(log.slice(2))                         // expect: [1, "pass", "pass", 3, "pass"]
+
+fun firstGap(list) {
+  for item in list {
+    try {
+      val pair = [item, item ?: break]
+      log.push(pair.length)
+    } finally {
+      log.push("checked")
+    }
+  }
+  return "done"
+}
+print(firstGap([7, null, 9]), log.slice(7))   // expect: done [2, "checked", "checked"]
+
+// In a condition.
+var steps = 0
+val queue = [3, 2, null, 1]
+while (queue[steps] ?: break) > 0 { steps += 1 }
+print(steps)                                // expect: 2
+
+// At the top level, with global variables.
+var topLevel = 0
+for item in [5, null, 6] {
+  val global = item ?: continue
+  topLevel += global
+}
+print(topLevel)                             // expect: 11
+
+// Many times over: nothing is left on the stack.
+fun pick(i) => i % 3 == 0 ? null : i
+var many = 0
+for i in 1..30000 {
+  val kept = [i]
+  many += 1 * (pick(i) ?: continue) / i
+}
+print(many)                                 // expect: 20000

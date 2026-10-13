@@ -1,0 +1,147 @@
+// Interfaces: what a class promises to have, and what it gets for promising.
+
+interface Shape {
+  fun area()                                 // for the class to write
+  fun name() : string
+  fun describe() => "${name()} of area ${area()}"   // comes with the interface
+}
+interface Drawable {
+  val colour                                 // a property the class must have
+  fun draw() => "drawing in $colour"
+}
+interface Marker                             // nothing in it: only a kind to test for
+
+class Circle(val r : int) : Shape, Drawable, Marker {
+  override val colour = "red"
+  override fun area() => 3 * r * r
+  override fun name() : string => "circle"
+}
+class Square(val side : int, override val colour = "blue") : Shape, Drawable {
+  override fun area() => side * side
+  override fun name() : string => "square"
+  override fun describe() => "a square, " + area()    // its own replaces the interface's
+}
+
+val circle = Circle(2)
+val square = Square(3)
+print(circle.describe(), circle.draw())     // expect: circle of area 12 drawing in red
+print(square.describe(), square.draw())     // expect: a square, 9 drawing in blue
+
+// is, as and typed variables go by interface as well.
+print(circle is Shape, circle is Drawable, circle is Marker, square is Marker, 5 is Shape, null is Shape)   // expect: true true true false false false
+print(circle !is Marker, (square as? Marker) == null, (circle as Drawable).colour)   // expect: false true red
+fun total(shapes : list) {
+  var sum = 0
+  for shape in shapes { sum += (shape as Shape).area() }
+  return sum
+}
+fun paint(what : Drawable) : string => what.draw()
+val first : Shape = square
+print(total([circle, square]), paint(circle), first.name())   // expect: 21 drawing in red square
+try { paint(5) } catch (e) { print(e.message) }   // expect: argument 'what' of paint() must be Drawable, got int
+print(when (circle) { is Marker -> "marked"; else -> "plain" }, when (square) { is Marker -> "marked"; is Shape -> "a shape"; else -> "?" })   // expect: marked a shape
+
+// A superclass and interfaces together, in either order.
+class Base(val id : int) {
+  fun describe() => "base $id"
+  fun label() => "#$id"
+}
+interface Named {
+  fun label()                                // the superclass already has it
+  fun describe() => "named"                  // the superclass's comes first
+  fun title() => "<" + label() + ">"
+}
+class Child(id : int, val extra) : Base(id), Named, Marker
+class Other(id : int) : Marker, Named, Base(id) {
+  override fun describe() => "other, then " + super.describe()
+}
+val child = Child(7, "x")
+print(child.describe(), child.title(), child is Base, child is Named, child is Marker, child.extra)   // expect: base 7 <#7> true true true x
+print(Other(8).describe(), Other(8).title(), Other(8) is Base)   // expect: other, then base 8 <#8> true
+
+// A subclass implements whatever its superclass does.
+class Grandchild(id : int) : Child(id, "y")
+print(Grandchild(1) is Named, Grandchild(1) is Marker, Grandchild(1).title())   // expect: true true <#1>
+
+// Interfaces extend interfaces.
+interface Clickable {
+  fun click()
+  fun press() => "press " + click()
+}
+interface Focusable {
+  var focused
+  fun focus() { focused = true }
+}
+interface Control : Clickable, Focusable {
+  fun activate() {
+    focus()
+    return press() + (focused ? " (focused)" : "")
+  }
+}
+class Button(val text) : Control {
+  override var focused = false
+  override fun click() => "click $text"
+}
+val button = Button("OK")
+print(button.activate(), button is Control, button is Clickable, button is Focusable, button is Named)   // expect: press click OK (focused) true true true false
+
+// Properties with a body come along; ones without are required.
+interface Sized {
+  val width
+  val height
+  get area() => width * height
+  get wide() => width > height
+}
+class Rect(override val width, override val height) : Sized
+class Wide : Sized {
+  override get width() => 10                          // a getter satisfies a required property
+  override val height = 2
+}
+print(Rect(2, 5).area, Rect(2, 5).wide, Wide().area, Wide().wide)   // expect: 10 false 20 true
+
+// Static members, and an object that implements an interface.
+interface Codec {
+  static val VERSION = 3
+  static fun describe(codec) => "codec v$VERSION: " + codec.encode("x")
+  fun encode(text)
+}
+object Upper : Codec {
+  override fun encode(text) => text.upper()
+}
+print(Codec.VERSION, Codec.describe(Upper), Upper is Codec)   // expect: 3 codec v3: X true
+
+// An enum implements interfaces too.
+interface Scored { fun score() }
+enum Medal : Scored {
+  gold, silver
+  override fun score() => 3 - ordinal
+}
+print(Medal.gold.score(), Medal.silver is Scored)   // expect: 3 true
+
+// What is promised has to be there.
+try {
+  class Blob : Shape { override fun area() => 1 }
+} catch (e) { print(e.message) }            // expect: class Blob must have 'name', which interface Shape requires
+try {
+  class Plain : Drawable { }
+} catch (e) { print(e.message) }            // expect: class Plain must have 'colour', which interface Drawable requires
+try {
+  class Lazy : Control { override var focused = false }
+} catch (e) { print(e.message) }            // expect: class Lazy must have 'click', which interface Clickable requires
+
+// An interface is never created, and a class has one superclass.
+try { Shape() } catch (e) { print(e.message) }   // expect: Shape is an interface and cannot be created; create a class that implements it
+try {
+  class Both : Base, Circle { }
+} catch (e) { print(e.message) }            // expect: class Both can have only one superclass, but Base and Circle are both classes
+try {
+  interface Wrong : Base { }
+} catch (e) { print(e.message) }            // expect: interface Wrong cannot extend class Base
+class OnlyInterfaces : Marker {
+  fun up() => super.describe()
+}
+try { OnlyInterfaces().up() } catch (e) { print(e.message) }   // expect: there is no 'describe' for super to mean: this class has no superclass, and its interfaces come with none
+
+// `interface` is still an ordinary name.
+val interface = "a name"
+print(interface)                            // expect: a name

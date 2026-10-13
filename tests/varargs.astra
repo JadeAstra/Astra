@@ -1,0 +1,108 @@
+// vararg parameters and *list arguments.
+
+// Any number of arguments arrive as a list.
+fun count(vararg items) => items.length
+fun join(vararg parts) => parts.join("-")
+print(count(), count(1), count(1, 2, 3), join("a", "b", "c"), join())   // expect: 0 1 3 a-b-c
+print(count([1, 2]), count(null), count(null, null))   // expect: 1 1 2
+
+// After ordinary parameters.
+fun tag(name, vararg classes) => name + (classes.length > 0 ? "." + classes.join(".") : "")
+print(tag("div"), tag("div", "wide"), tag("div", "wide", "dark"))   // expect: div div.wide div.wide.dark
+try { tag() } catch (e) { print(e.message) }   // expect: tag() expects at least 1 argument(s) but got 0
+
+// A type written on it describes each argument; the parameter itself is a list.
+fun sum(vararg numbers : int) : int {
+  var total = 0
+  for n in numbers { total += n }
+  return total
+}
+print(sum(), sum(4), sum(1, 2, 3), sum(1, 2, 3) is int)   // expect: 0 4 6 true
+
+// Parameters after it are passed by name, and keep their defaults otherwise.
+fun chart(vararg series, labels = [], title = "untitled") => "$title: ${series.length} series, ${labels.length} labels"
+print(chart())                              // expect: untitled: 0 series, 0 labels
+print(chart([1, 2], [3, 4]))                // expect: untitled: 2 series, 0 labels
+print(chart([1, 2], title = "Sales"))       // expect: Sales: 1 series, 0 labels
+print(chart(title = "Empty", labels = ["a", "b"]))   // expect: Empty: 0 series, 2 labels
+print(chart([1], [2], [3], labels = ["x"], title = "Three"))   // expect: Three: 3 series, 1 labels
+
+fun call(name, vararg args, limit = 10) => "$name(${args.join(", ")}) limit $limit"
+print(call("f"), call("f", 1, 2), call("f", 1, limit = 3), call(limit = 5, name = "g"))
+// expect: f() limit 10 f(1, 2) limit 10 f(1) limit 3 g() limit 5
+
+// A parameter after it with no default has to be given, by name or as the lambda after the call.
+fun each(vararg items, action) {
+  for item in items { action(item) }
+}
+val seen = []
+each(1, 2, 3) { seen.push(it * 10) }
+each("a", action = fun(x) { seen.push(x) })
+print(seen)                                 // expect: [10, 20, 30, "a"]
+try { each(1, 2) } catch (e) { print(e.message) }   // expect: each() is missing argument 'action'
+
+// By name, the vararg parameter takes the list itself.
+print(count(items = [7, 8, 9]), tag("p", classes = ["a"]))   // expect: 3 p.a
+try { count(items = 5) } catch (e) { print(e.message) }
+// expect: argument 'items' of count() is a vararg parameter: by name it takes a list, not a value of type int
+
+// *list passes the elements of a list as arguments of their own.
+val three = [1, 2, 3]
+print(count(*three), sum(*three), sum(*three, 10), sum(10, *three), sum(*three, *three), sum(0, *three, 0, *[], 5))
+// expect: 3 6 16 16 12 11
+print(join(*["x", "y"]), tag("b", *["bold"]), call("h", *three, limit = 1))   // expect: x-y b.bold h(1, 2, 3) limit 1
+
+// The function gets a list of its own, not the caller's.
+fun mutate(vararg items) {
+  items.push("added")
+  return items.length
+}
+print(mutate(*three), three)                // expect: 4 [1, 2, 3]
+
+// It works for any call: ordinary functions, methods, initializers, lambdas and built-ins.
+fun add3(a, b, c) => a + b + c
+print(add3(*three), add3(1, *[2, 3]), add3(*[1], *[2], *[3]))   // expect: 6 6 6
+try { add3(*[1, 2]) } catch (e) { print(e.message) }   // expect: add3() expects 3 argument(s) but got 2
+
+class Vec(val x, val y) {
+  fun plus(dx, dy) => Vec(this.x + dx, this.y + dy)
+  fun all(vararg more) => [this.x, this.y] + more
+  static fun of(vararg parts) => Vec(*parts)
+  fun toString() => "(${this.x}, ${this.y})"
+}
+val v = Vec(*[1, 2])
+print(v.plus(*[10, 20]), v.all(), v.all(3, 4), v.all(*three), Vec.of(5, 6))   // expect: (11, 22) [1, 2] [1, 2, 3, 4] [1, 2, 1, 2, 3] (5, 6)
+val nothing = null
+print(nothing?.all(*three), v?.all(*[9]))   // expect: null [1, 2, 9]
+
+val lambda = { a, b -> a * b }
+val pushed = [0]
+pushed.push(*three)
+print(lambda(*[6, 7]), range(*[1, 7, 2]).toList(), pushed, "a-b-c".replace(*["-", "+"]))   // expect: 42 [1, 3, 5] [0, 1, 2, 3] a+b+c
+print(*three, *["and", "more"])             // expect: 1 2 3 and more
+
+class Stack {
+  val items = []
+  fun init(vararg initial) { for item in initial { this.items.push(item) } }
+}
+print(Stack().items, Stack(1, 2).items, Stack(*three).items)   // expect: [] [1, 2] [1, 2, 3]
+
+// Only a list can be spread.
+try { count(*5) } catch (e) { print(e.message) }   // expect: '*' in a call needs a list to spread, not a value of type int
+
+// `vararg` is still an ordinary name.
+val vararg = "a name"
+fun plain(vararg) => vararg
+print(vararg, plain(1))                     // expect: a name 1
+
+// A star still multiplies.
+val k = 2
+print(add3(k * 2, k
+  * 3, 1), [k * k].length)                  // expect: 11 1
+
+// Many arguments, many calls.
+val big = range(0, 500).toList()
+print(count(*big), sum(*big), count(*big, *big))   // expect: 500 124750 1000
+var total = 0
+for i in 1..20000 { total += sum(i, *[1, 1]) - i }
+print(total)                                // expect: 40000

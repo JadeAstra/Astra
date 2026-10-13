@@ -1,0 +1,64 @@
+// Functions and classes can be used above the line that declares them. A file's imports,
+// functions and classes are set up before the rest of it runs.
+
+print(early(2))                             // expect: 42
+val c = Later(3)
+print(c.describe(), c is Base, c is Api)    // expect: later3! true true
+
+class Later(val n) : Base("later"), Api {
+  fun describe() => name + n + mark()
+  override fun call() => "called"
+}
+fun early(n) => n * factor()
+fun factor() => 21
+class Base(val name)
+interface Api { fun call() }
+fun mark() => "!"
+
+// An enum's entries, and a class's static values, are worked out the first time they are
+// asked for, so they too can be used above their declaration.
+fun go(way : Way = up) : string => way.name + "/" + Way.entries.length
+print(go(), go(down), Limits.MAX, Limits.describe())   // expect: up/2 down/2 100 0..100
+enum Way { up, down }
+class Limits {
+  static val MIN = 0
+  static val MAX = 100
+  static fun describe() => "$MIN..$MAX"
+}
+
+// Asked for first where the class is written, they are worked out there, after what is above.
+val seed = 5
+val order = []
+class Config {
+  static val START = seed * 2
+  static val LOG = order.push("config") or order
+}
+enum Stage(val weight) {
+  one(seed), two(seed + 1)
+  fun init(weight) {
+    this.weight = weight
+    order.push("stage " + weight)
+  }
+}
+order.push("after")
+print(Config.START, order, Stage.two.weight)   // expect: 10 ["config", "stage 5", "stage 6", "after"] 6
+
+// Classes that extend each other across the file, in any order, with classes inside.
+class C3 : C2 { override fun level() => 3 }
+class C1 {
+  class Inner : C1 { override fun level() => 10 }
+  fun level() => 1
+  fun inner() => Inner().level()
+}
+class C2 : C1 { override fun level() => 2 }
+print(C3().level(), C3() is C1, C1().inner(), C1.Inner() is C1)   // expect: 3 true 10 true
+
+// A class that extends something held in a variable is made where it is written.
+val Dynamic = C2
+class FromVariable : Dynamic { override fun level() => 99 }
+print(FromVariable().level(), FromVariable() is C1)   // expect: 99 true
+
+// What a function needs is only needed when it is called.
+fun usesLater() => laterValue + 1
+val laterValue = 41
+print(usesLater())                          // expect: 42

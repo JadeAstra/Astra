@@ -5,7 +5,7 @@ class Node {
 
 // lots of short-lived garbage
 var total = 0
-for i in 0..300000 {
+for i in 0..<300000 {
   var n = Node(i, null)
   var pair = [i, "s" + i, {k: i}]
   total += pair[0] - n.value + pair[2]["k"] - i
@@ -14,7 +14,7 @@ print(total)                            // expect: 0
 
 // a long-lived structure built while garbage is being produced
 var head = null
-for i in 0..200000 {
+for i in 0..<200000 {
   head = Node(i, head)
   var junk = "junk" + i
 }
@@ -29,7 +29,7 @@ while cur != null {
 print(count, sum)                       // expect: 200000 19999900000
 
 // reference cycles are collected too
-for i in 0..200000 {
+for i in 0..<200000 {
   var a = Node(i, null)
   var b = Node(i, a)
   a.next = b
@@ -37,11 +37,11 @@ for i in 0..200000 {
 
 // closures keep their captured variables alive
 var makers = []
-for i in 0..1000 {
+for i in 0..<1000 {
   var data = [i, i * 2]
   makers.push(fun() => data[0] + data[1])
 }
-for i in 0..200000 { var g = [i, i] }
+for i in 0..<200000 { var g = [i, i] }
 print(makers[999](), makers[0]())       // expect: 2997 0
 
 // values held by native code while it calls back into the program
@@ -57,12 +57,12 @@ class Chain {
   fun init(n) { this.n = n }
   fun build() {
     var all = []
-    for i in 0..this.n { all.push(Chain(i)) }
+    for i in 0..<this.n { all.push(Chain(i)) }
     return all.length
   }
   fun toString() { var junk = [1, 2, 3]; return "Chain(${this.n})" }
 }
 print(Chain(100000).build())            // expect: 100000
 var texts = []
-for i in 0..50000 { texts.push("${Chain(i)}") }
+for i in 0..<50000 { texts.push("${Chain(i)}") }
 print(texts[0], texts[49999])           // expect: Chain(0) Chain(49999)

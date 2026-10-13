@@ -10,7 +10,7 @@ var label : string = "a"
 var flag : bool = true
 var items : list = [1, 2]
 var table : map = {k: 1}
-var span : range = 0..3
+var span : range = 0..<3
 var action : function = fun(x) => x + 1
 var amount : number = 1
 var anything : any = 1
@@ -19,7 +19,7 @@ anything = "now a string"
 ratio = ratio * 2
 label += "b"
 print(limit, ratio, label, flag, items, table, span, action(1), amount, anything)
-// expect: 10 1.0 ab true [1, 2] {"k": 1} 0..3 2 2.5 now a string
+// expect: 10 1.0 ab true [1, 2] {"k": 1} 0..<3 2 2.5 now a string
 
 // a typed var keeps its type for life; an untyped one takes anything
 fun attempt(f) {

@@ -1,9 +1,16 @@
-// Imported files share the global namespace and run once, in import order.
-var loadLog = []
-import "modules/mathutil"
-import "modules/strutil.astra"
-import "modules/mathutil.astra"
+// Importing a file loads that file, once, into the namespace of the folder it is in.
+import modules.mathutil.*               // its names, and those of its folder, by bare name
+import "modules/strutil.astra"          // a path in quotes says the same as modules.strutil
+import modules.mathutil
 print(loadLog)                          // expect: ["strutil", "mathutil"]
 print(double(21), shout("hi"), TAU)     // expect: 42 HI! 6.28
 var s = Pile().add(1).add(2)
 print(s.take(), s.size())               // expect: 2 1
+
+// Whatever was imported can be written with the import's name in front.
+print(modules.mathutil.double(4), modules.strutil.shout("yo"), modules.mathutil.Pile().size())   // expect: 8 YO! 0
+
+// The imported folder does not see this file's names.
+val mine = "the importer's"
+fun callBack() => mine
+print(callBack())                       // expect: the importer's

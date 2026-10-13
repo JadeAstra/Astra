@@ -45,7 +45,8 @@ print(attempt(fun(a) => a))                   // expect: error: <lambda>() expec
 print(attempt(fun() => Error("x").missing())) // expect: error: undefined method 'missing' on Error
 print(attempt(fun() => assert(1 == 2, "math is broken")))   // expect: error: math is broken
 print(attempt(fun() => int("abc")))           // expect: error: cannot convert "abc" to an int
-print(attempt(fun() => 1 is 2))               // expect: error: right operand of 'is' must be a class
+val notAType = 2
+print(attempt(fun() => 1 is notAType))        // expect: error: a type must be a class or a built-in type, not a value of type int
 print(attempt(fun() => 42))                   // expect: 42
 
 // nested try and rethrow
@@ -79,7 +80,7 @@ try { print("value: ${Grumpy()}") } catch (e) { print(e.message) }   // expect: 
 // break, continue and return inside try
 fun search() {
   var log = []
-  for i in 0..10 {
+  for i in 0..<10 {
     try {
       if i == 1 { continue }
       if i == 4 { break }

@@ -1,6 +1,8 @@
 // A circular import: mathutil is already being loaded, so this does nothing.
 import "mathutil"
 
+val loadLog = []                 // shared by the files of this folder, and seen by importers
+
 fun shout(s) => s.upper() + "!"
 
 loadLog.push("strutil")

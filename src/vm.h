@@ -45,6 +45,12 @@ struct Names {
     ObjString* end;
     ObjString* step;
     ObjString* name;
+    ObjString* className;
+    ObjString* ordinal;
+    ObjString* entries;
+    ObjString* entryName;    // an entry's own name, kept apart from a `name` property that replaces it
+    ObjString* entryOrdinal; // and its place in the list, likewise
+    ObjString* enumEntries;  // where an enum's own list is kept, whatever `entries` gives
     ObjString* opAdd;
     ObjString* opSub;
     ObjString* opMul;
@@ -108,6 +114,10 @@ public:
     // stack must be protected with TempRoot / TempVector across this call.
     Value call(Value callee, int argc, const Value* args);
 
+    // The == operator: by value, and for lists, maps and ranges by what they hold.
+    bool equals(Value a, Value b, int depth = 0);
+    static constexpr int kMaxEqualsDepth = 200;
+
     // Runs a function with `receiver` as the object it runs on: inside it, a name that is not
     // one of its variables is looked up on that object first (see Op::GetImplicit).
     Value callOn(Value receiver, Value callee, int argc, const Value* args);
@@ -124,6 +134,7 @@ public:
     const std::string& toStr(Value v, const char* what);
 
     void defineGlobal(const std::string& name, Value value) { builtins_[name] = value; }
+    bool hasBuiltin(const std::string& name) const { return builtins_.count(name) != 0; }
     void defineNative(const std::string& name, int minArgs, int maxArgs, NativeFn fn);
     void defineMethod(BuiltinType type, const std::string& name, int minArgs, int maxArgs, NativeMethodFn fn);
 
@@ -191,8 +202,18 @@ private:
     void run(int baseFrame);
     void resetState();
 
-    bool callValue(Value callee, int argc);
-    void callClosure(ObjClosure* closure, int argc);
+    // `packed`: the arguments are already arranged one per parameter (see callNamed).
+    bool callValue(Value callee, int argc, bool packed = false);
+    void callClosure(ObjClosure* closure, int argc, bool packed = false);
+    int packVarargs(const FunctionProto* proto, int argc);
+
+    // Bare names passed as arguments that may be enum entries (ValueKind::EnumName), not yet
+    // settled. While there are none, calls need not look for them.
+    int pendingEnums_ = 0;
+    AstraThrow unsettledName(Value pending);
+    void rejectPendingNames(const Value* args, int argc);
+    Value settleEnumName(Value pending, const ObjClass* type);
+    bool callSpread(int named);
     bool invoke(ObjString* name, int argc);
     bool scopeFunction(ObjString* name, int argc);
     bool callNamed(int positional, int named);
@@ -202,7 +223,20 @@ private:
 
     Value callWithReceiver(Value receiver, ObjClosure* method);
     Value implicitReceiver(const CallFrame* frame, const Value* base, const ObjString* name) const;
+    void ensureClassInit(ObjClass* cls);
+    const Value* superMethod(Value super, Value self, const ObjString* name) const;
+
+    // Extension functions on the built-in types, by TypeId; on null; and on every value.
+    Table typeExtensions_[16];
+    Table nullExtensions_;
+    Table anyExtensions_;
+    bool hasExtensions_ = false;
+    const Value* findExtension(Value receiver, const ObjString* name) const;
+    bool hasMember(Value candidate, const ObjString* name) const;
+    void nameEntry(ObjInstance* entry, ObjString* name, int ordinal);
     void checkFieldAssignment(ObjInstance* instance, ObjString* name, Value value);
+    void checkStaticType(ObjClass* owner, FieldDecl& field, Value value);
+    void assignStatic(ObjClass* cls, ObjString* name, Value value);
     void checkRequiredFields(ObjInstance* instance, const ObjClosure* init);
     Value getProperty(Value obj, ObjString* name);
     void setProperty(Value obj, ObjString* name, Value value);

@@ -180,7 +180,7 @@ print(attempt(fun() {
   class Clash : Animal {
     var legs : int = 2
   }
-}))                                     // expect: field 'legs' of class Clash is already declared by a superclass
+}))                                     // expect: 'legs' in class Clash takes the place of the one it inherits; write override in front of it
 
 // subclasses inherit the restriction, even if they declare nothing themselves
 class Kitten : Animal {
@@ -221,7 +221,7 @@ print(attempt(fun() => Careless()))     // expect: Careless has no field 'code';
 
 // lots of instances: field initializers and the collector work together
 var total = 0
-for i in 0..20000 {
+for i in 0..<20000 {
   val n = Counter()
   n.bump()
   total += n.count + n.history.length

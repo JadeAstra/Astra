@@ -1,0 +1,165 @@
+// Enums: a type with a fixed set of values.
+
+enum Way { up, down, left, right }
+
+val w = Way.left
+print(w, w.name, w.ordinal, Way.up.ordinal, Way.right.ordinal)   // expect: left left 2 0 3
+print(Way.entries, Way.entries.length, Way.entries[1] === Way.down)   // expect: [up, down, left, right] 4 true
+print(w == Way.left, w != Way.left, w === Way.left, w == Way.up, w is Way, "left" is Way, type(w))   // expect: true false true false true false Way
+print("going $w", [Way.up, Way.down], {"way": Way.right})   // expect: going left [up, down] {"way": right}
+
+// In a when, and as a declared type.
+fun turn(way : Way) : Way => when (way) {
+  Way.up -> Way.right
+  Way.right -> Way.down
+  Way.down -> Way.left
+  else -> Way.up
+}
+print(turn(Way.up), turn(turn(Way.up)), turn(Way.left))   // expect: right down up
+try { turn("up") } catch (e) { print(e.message) }   // expect: argument 'way' of turn() must be Way, got string
+var current : Way = Way.up
+current = Way.down
+print(current, Way.entries.indexOf(current), Way.entries.contains(Way.left))   // expect: down 1 true
+
+// Looping over the entries, and finding one by its name.
+val names = []
+for way in Way.entries { names.push(way.name + ":" + way.ordinal) }
+print(names, Way.entries.find { it.name == "right" })   // expect: ["up:0", "down:1", "left:2", "right:3"] right
+
+// The entries are all there are, and they cannot be changed.
+try { Way() } catch (e) { print(e.message) }   // expect: enum Way has only the entries it declares; Way() cannot make another
+try { Way.up = Way.down } catch (e) { print(e.message) }   // expect: cannot assign to static val 'up' of Way
+try { Way.entries = [] } catch (e) { print(e.message) }    // expect: cannot assign to static val 'entries' of Way
+try { Way.up.name = "north" } catch (e) { print(e.message) }   // expect: cannot assign to 'name' of an entry of enum Way
+try { Way.up.ordinal = 9 } catch (e) { print(e.message) }      // expect: cannot assign to 'ordinal' of an entry of enum Way
+try { print(Way.sideways) } catch (e) { print(e.message) }     // expect: undefined static member 'sideways' on class Way
+try { class Diagonal : Way { } } catch (e) { print(e.message) }   // expect: cannot inherit from enum Way
+
+// With a header, fields, methods, properties and static members, like a class.
+enum Planet(val mass : float, val radius : float) {
+  MERCURY(3.303e23, 2.4397e6),
+  EARTH(5.976e24, 6.37814e6),
+  JUPITER(1.9e27, 7.1492e7);
+
+  static val G = 6.67300e-11
+  static fun heaviest() {
+    var best = MERCURY
+    for planet in entries { if planet.mass > best.mass { best = planet } }
+    return best
+  }
+
+  var visits = 0
+  get gravity() => G * mass / (radius * radius)
+  fun heavierThan(other) => mass > other.mass
+  fun visit() {
+    visits += 1
+    return "$name visited $visits time(s), entry $ordinal of ${entries.length}"
+  }
+}
+print(Planet.EARTH, Planet.EARTH.mass, int(Planet.EARTH.gravity * 100), Planet.JUPITER.heavierThan(Planet.EARTH))   // expect: EARTH 5.976e+24 980 true
+Planet.EARTH.visit()
+print(Planet.EARTH.visit(), Planet.heaviest(), Planet.entries)   // expect: EARTH visited 2 time(s), entry 1 of 3 JUPITER [MERCURY, EARTH, JUPITER]
+
+// One entry per line, a trailing comma, no ';' before the members.
+enum Level(val label : string, val weight : int = 1) {
+  LOW("low"),
+  MID("mid", 5),
+  HIGH("high", 10),
+
+  fun describe() => "$label ($weight)"
+  static fun of(weight) {
+    for level in entries { if level.weight >= weight { return level } }
+    return HIGH
+  }
+}
+print(Level.LOW.describe(), Level.MID.describe(), Level.of(3), Level.of(99), Level.HIGH.ordinal)   // expect: low (1) mid (5) MID HIGH 2
+
+// A toString of its own wins over the name; an init runs for each entry.
+val made = []
+enum Suit {
+  hearts, spades
+  fun init() { made.push("made") }
+  fun toString() => name.upper() + "!"
+}
+print(Suit.hearts, made, Suit.spades.name)   // expect: HEARTS! ["made", "made"] spades
+
+// Entries that share a name with entries of another enum are still different values.
+enum Side { left, right }
+print(Side.left == Way.left, Side.left.name == Way.left.name, [Side.left, Way.left].indexOf(Way.left))   // expect: false true 1
+
+// An enum with no entries, and one declared in a function.
+enum Nothing { }
+print(Nothing.entries)                      // expect: []
+fun local() {
+  enum Mode { on, off }
+  return [Mode.on, Mode.entries.length]
+}
+print(local())                              // expect: [on, 2]
+
+// `enum` is still an ordinary name.
+val enum = "a name"
+print(enum)                                 // expect: a name
+
+// A class tells its own name with className, which leaves `name` free: an entry may be called
+// name or ordinal. The entry is on the enum, the property on each entry.
+enum SortKey {
+  name, size, ordinal
+  fun label() => "by " + name               // inside, the bare name is the entry's property
+  static fun first() => SortKey.name
+}
+print(SortKey.className, SortKey.name, SortKey.name.name, SortKey.name.ordinal, SortKey.ordinal.ordinal)   // expect: SortKey name name 0 2
+print(SortKey.size.label(), SortKey.name.label(), SortKey.first() === SortKey.name, SortKey.entries)   // expect: by size by name true [name, size, ordinal]
+var key : SortKey = size
+key = name
+print(key, key == SortKey.name, Way.className, Planet.className, Planet.EARTH.name)   // expect: name true Way Planet EARTH
+class Plain
+print(Plain.className, type(Plain()), Plain().let { type(it) })   // expect: Plain Plain Plain
+try { print(Plain.name) } catch (e) { print(e.message) }   // expect: undefined static member 'name' on class Plain
+
+// An enum may put its own `entries`, `name` or `ordinal` in place of the given one by saying
+// override, as long as it is still a property of the same type.
+enum Rank {
+  low, mid, high, hidden
+  override static get entries() : list => [low, mid, high]      // leaves one out
+  static fun all() => [low, mid, high, hidden]
+}
+print(Rank.entries, Rank.all().length, Rank.hidden.ordinal, Rank.hidden.name)   // expect: [low, mid, high] 4 3 hidden
+
+enum Shown {
+  first, second
+  override static val entries = ["just", "these"]
+  override get name() : string => "<" + ordinal + ">"
+  override get ordinal() => 10
+}
+print(Shown.entries, Shown.first.name, Shown.second.ordinal, Shown.first)   // expect: ["just", "these"] <10> 10 first
+
+// Outside an enum `entries` is a name like any other.
+class Journal {
+  val entries = []
+  static val ordinal = 1
+  fun add(entry) {
+    entries.push(entry)
+    return this
+  }
+}
+val entries = Journal().add("a").add("b").entries
+print(entries, Journal.ordinal)             // expect: ["a", "b"] 1
+
+// super reaches what was replaced: the full list, an entry's own name and place.
+enum Stage {
+  draft, review, done, archived
+  override static get entries() : list => super.entries.filter { it != archived }
+  override get name() : string => "stage " + super.name
+  override get ordinal() : int => super.ordinal + 1
+  static fun all() => super.entries
+  fun plain() => super.name + "#" + super.ordinal
+}
+print(Stage.entries.length, Stage.all().length, Stage.review.name, Stage.review.ordinal, Stage.archived.plain())   // expect: 3 4 stage review 2 archived#3
+print(Stage.entries.map { it.plain() }, Stage.all()[3] === Stage.archived, Stage.done)   // expect: ["draft#0", "review#1", "done#2"] true done
+
+// Without an override super gives the same as the plain name.
+enum Mark { tick, cross
+  static fun same() => super.entries === entries
+  fun both() => [name == super.name, ordinal == super.ordinal]
+}
+print(Mark.same(), Mark.cross.both())       // expect: true [true, true]

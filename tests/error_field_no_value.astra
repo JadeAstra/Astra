@@ -1,0 +1,6 @@
+// field needs a stored value.
+class Bad {
+  val area : int
+    get() => field * 2
+}
+// expect compile error: 'area' has no stored value for 'field' to mean; give the property an initial value

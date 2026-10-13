@@ -76,7 +76,7 @@ class Animal {
 }
 class Dog : Animal {
   fun init(name : string) { super.init(name, 4) }
-  fun speak() : string => "${this.name} says woof"
+  override fun speak() : string => "${this.name} says woof"
   fun befriend(other : Animal) : string => "${this.name} likes ${other.name}"
   fun offspring(mate : Dog?) : Dog? {
     if mate == null { return null }

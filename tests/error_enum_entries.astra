@@ -1,0 +1,3 @@
+// entries is the list of an enum's entries, so no entry can be called that.
+enum Bad { first, entries }
+// expect compile error: an entry called 'entries' would take the place of the list of all the entries, which every enum has under that name

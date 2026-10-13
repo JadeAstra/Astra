@@ -36,6 +36,14 @@ private:
     bool check(TokenType type) const { return toks_[p_].type == type; }
     bool match(TokenType type);
     const Token& expect(TokenType type, const char* what);
+
+    // Where only a name can come (after a '.', as the name of a member being declared, as the
+    // name of an argument) a keyword is a name like any other: `token.class`, `Key.if`.
+    static bool isKeyword(TokenType type);
+    static bool isName(const Token& t) { return t.type == TokenType::Identifier || isKeyword(t.type); }
+    const Token& expectName(const char* what);
+    bool word(const char* text) const { return peek().type == TokenType::Identifier && peek().text == text; }
+    bool nextWord(const char* text) const { return peekNext().type == TokenType::Identifier && peekNext().text == text; }
     CompileError error(const Token& at, const std::string& message) const;
 
     void endStatement();
@@ -44,9 +52,20 @@ private:
     StmtPtr declaration();
     TypeAnnotation optionalType();
     TypeAnnotation typeExpression();
+    TypeAnnotation checkedType();
+    bool tightNullable_ = false;     // after `is` and `as`, the '?' of a nullable type must touch the type
+    bool adjacentToPrevious() const;
     bool pendingTypeClose_ = false;  // half of a '>>' that closed an inner type argument list
     std::unique_ptr<VarStmt> varDeclaration(bool isField);
-    StmtPtr classDeclaration();
+    std::vector<std::string> destructuringPattern();
+    void fieldAccessors(VarStmt& field);
+    std::string jumpLabel();
+    void addDataMembers(ClassStmt& s, const Token& at);
+    StmtPtr classDeclaration(bool isEnum = false, bool isInterface = false, const Token* anonymous = nullptr);
+    bool anonymousObjectNext() const;
+    bool inInterface_ = false;  // a method may be declared without a body
+    bool abstractMember_ = false;  // so may the member being read now, which is marked abstract
+    void classMember(ClassStmt& s, bool inStatic);
     std::unique_ptr<FunctionDecl> method();
     std::unique_ptr<FunctionDecl> accessor();
     std::string operatorName();
@@ -64,6 +83,8 @@ private:
     ExprPtr logicalAnd();
     ExprPtr equality();
     ExprPtr comparison();
+    ExprPtr elvis();
+    ExprPtr pairing();
     ExprPtr range();
     ExprPtr bitOr();
     ExprPtr bitXor();
@@ -71,9 +92,13 @@ private:
     ExprPtr shift();
     ExprPtr additive();
     ExprPtr multiplicative();
+    ExprPtr cast();
     ExprPtr unary();
     ExprPtr postfix();
     ExprPtr primary();
+    ExprPtr jumpExpression(const Token& keyword);
+    ExprPtr whenExpression(const Token& keyword);
+    bool startsExpression() const;
     ExprPtr mapLiteral(const Token& open);
     ExprPtr braceExpression(const Token& open);
     ExprPtr lambdaLiteral(const Token& open, bool hasParams);

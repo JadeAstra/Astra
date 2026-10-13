@@ -1,0 +1,182 @@
+// Static members: fields, a static block, static properties; and `object` singletons.
+
+class Color(val r : int, val g : int, val b : int) {
+  static val BLACK = Color(0, 0, 0)          // an instance of the class itself
+  static val WHITE : Color = Color(255, 255, 255)
+  static var made = 0
+  static var last : Color? = null
+  static var label : string = "colour"
+
+  static fun gray(level) => Color(level, level, level)
+  fun toString() => "#${this.r},${this.g},${this.b}"
+}
+print(Color.BLACK, Color.WHITE, Color.gray(7), Color.made, Color.last, Color.label)   // expect: #0,0,0 #255,255,255 #7,7,7 0 null colour
+
+// A var can be assigned, within its type; a val cannot.
+Color.made += 2
+Color.last = Color.WHITE
+Color.label = "color"
+print(Color.made, Color.last, Color.label)  // expect: 2 #255,255,255 color
+try { Color.BLACK = Color.WHITE } catch (e) { print(e.message) }   // expect: cannot assign to static val 'BLACK' of Color
+try { Color.label = 5 } catch (e) { print(e.message) }
+// expect: cannot assign a value of type int to static field 'label' of Color, which is declared as string
+try { Color.last = "none" } catch (e) { print(e.message) }
+// expect: cannot assign a value of type string to static field 'last' of Color, which is declared as Color?
+Color.last = null
+print(Color.last)                           // expect: null
+
+// Values are worked out once, in the order written, and may use what came before.
+val order = []
+fun note(label, value) {
+  order.push(label)
+  return value
+}
+class Sizes {
+  static val SMALL = note("small", 10)
+  static val LARGE = note("large", Sizes.SMALL * 4)
+  static val ALL = note("all", [Sizes.SMALL, Sizes.LARGE, Sizes.half(Sizes.LARGE)])
+  static fun half(n) => n / 2
+}
+print(order, Sizes.ALL, Sizes.LARGE)        // expect: ["small", "large", "all"] [10, 40, 20] 40
+Sizes(); Sizes()
+print(order.length)                         // expect: 3
+
+// A static block holds the same declarations without the word on each.
+class Grid {
+  static {
+    val MAX_TRACK = 100000
+    var created = 0
+    fun key(row : int, col : int) : int => row * Grid.MAX_TRACK + col
+    get description() => "grid of up to ${Grid.MAX_TRACK} tracks"
+  }
+  val cells = {:}
+  fun init() { Grid.created += 1 }
+  fun put(row, col, value) { this.cells[Grid.key(row, col)] = value }
+}
+val grid = Grid()
+grid.put(2, 3, "x")
+Grid()
+print(Grid.MAX_TRACK, Grid.key(1, 2), grid.cells.keys(), Grid.created, Grid.description)
+// expect: 100000 100002 [200003] 2 grid of up to 100000 tracks
+try { Grid.MAX_TRACK = 1 } catch (e) { print(e.message) }   // expect: cannot assign to static val 'MAX_TRACK' of Grid
+
+// Static properties.
+class Theme {
+  static var current = "light"
+  static var changes = 0
+  static get dark() => Theme.current == "dark"
+  static set dark(on) {
+    Theme.current = on ? "dark" : "light"
+    Theme.changes += 1
+  }
+  static get name() => "theme:" + Theme.current
+}
+print(Theme.dark, Theme.name)               // expect: false theme:light
+Theme.dark = true
+print(Theme.dark, Theme.name, Theme.changes)   // expect: true theme:dark 1
+try { Theme.name = "x" } catch (e) { print(e.message) }   // expect: static property 'name' of Theme cannot be assigned: it has no setter
+
+// A subclass sees its superclass's statics, and assigning through it changes the one value.
+class Base {
+  static var count = 0
+  static val KIND = "base"
+  static fun describe() => "a " + Base.KIND
+}
+class Derived : Base {
+  static val EXTRA = "extra"
+}
+Derived.count = 5
+print(Base.count, Derived.count, Derived.KIND, Derived.describe(), Derived.EXTRA)   // expect: 5 5 base a base extra
+try { Derived.KIND = "x" } catch (e) { print(e.message) }   // expect: cannot assign to static val 'KIND' of Base
+try { print(Base.EXTRA) } catch (e) { print(e.message) }    // expect: undefined static member 'EXTRA' on class Base
+
+// A static and an instance member may share a name; they are different things.
+class Counter {
+  static var count = 100
+  var count = 0
+  fun bump() {
+    this.count += 1
+    Counter.count += 10
+    return this
+  }
+}
+val counter = Counter().bump().bump()
+print(counter.count, Counter.count)         // expect: 2 120
+
+// Assigning an undeclared name on a class still simply stores it.
+Counter.note = "kept"
+print(Counter.note)                         // expect: kept
+
+// In a function, with a captured variable.
+fun makeClass(start) {
+  class Local {
+    static val START = start
+    static var seen = [start]
+    static fun add(n) { Local.seen.push(n + Local.START) }
+  }
+  return Local
+}
+val made = makeClass(10)
+made.add(1)
+made.add(2)
+print(made.START, made.seen)                // expect: 10 [10, 11, 12]
+
+// object: a class with exactly one instance, which the name stands for.
+object Settings {
+  var volume = 5
+  val limits = [0, 10]
+  var changes = 0
+  get loud() => this.volume > 7
+  set level(n) {
+    this.volume = n
+    this.changes += 1
+  }
+  fun raise(by = 1) {
+    this.volume += by
+    return this
+  }
+  fun describe() => "volume ${this.volume} of ${this.limits[1]}"
+}
+Settings.raise().raise(2)
+print(Settings.volume, Settings.loud, Settings.describe())   // expect: 8 true volume 8 of 10
+Settings.level = 3
+print(Settings.volume, Settings.loud, Settings.changes, type(Settings), Settings is any)   // expect: 3 false 1 Settings true
+
+// It is a value like any other, and there is only the one.
+val same = Settings
+same.volume = 9
+print(Settings.volume, same === Settings)   // expect: 9 true
+
+// An object can extend a class, run an init, and be declared inside a function.
+class Shape(val name) {
+  fun describe() => "a " + this.name
+}
+object Origin : Shape("point") {
+  val x = 0
+  val y = 0
+}
+print(Origin.describe(), Origin.x, Origin is Shape)   // expect: a point 0 true
+
+object Registry {
+  val entries = []
+  fun init() { this.entries.push("ready") }
+  fun add(entry) {
+    this.entries.push(entry)
+    return this.entries.length
+  }
+}
+print(Registry.entries.length, Registry.add("one"), Registry.entries)   // expect: 1 2 ["ready", "one"]
+
+fun scoped(seed) {
+  object Local {
+    var value = seed
+    fun doubled() => this.value * 2
+  }
+  Local.value += 1
+  return Local.doubled()
+}
+print(scoped(4), scoped(10))                // expect: 10 22
+
+// `object` and `static` blocks do not take the words away as names.
+val object = "a name"
+print(object)                               // expect: a name

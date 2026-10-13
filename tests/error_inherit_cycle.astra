@@ -1,0 +1,4 @@
+// Two classes cannot each inherit from the other.
+class A : B
+class B : A
+// expect compile error: 'B' and 'A' each inherit from the other

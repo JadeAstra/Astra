@@ -1,4 +1,4 @@
-# Plan: jade, Astra's GUI library, based on JadeUI
+# Plan: Jade, Astra's GUI library, based on JadeUI
 
 Status: agreed plan, every decision settled (section 8). Work proceeds one milestone at a
 time (section 7). M0, the two spikes, is done and accepted; what it found is in
@@ -12,9 +12,9 @@ and parameter keeps its name, order and default, and every class keeps its name 
 ported by translating syntax, not by redesigning its UI code. The deliberate differences are
 listed in section 6.
 
-In Astra the library is called **jade** (`import "jade"`). "JadeUI" in this document always
+In Astra the library is called **Jade** (`import Jade`, or `import Jade.*` for bare names). "JadeUI" in this document always
 means the Kotlin original. Sections that describe the Kotlin library use its names
-(`JadeComponent`); sections about Astra use jade's (`Component`).
+(`JadeComponent`); sections about Astra use Jade's (`Component`).
 
 - The library is written in Astra.
 - C++ is used only for what a script cannot do: windows, input, drawing, text, images,
@@ -23,7 +23,7 @@ means the Kotlin original. Sections that describe the Kotlin library use its nam
 
 The full list of names to match is in [jadeui-api-inventory.md](jadeui-api-inventory.md)
 (machine-extracted; check a signature against the Kotlin source before relying on it). It
-lists the Kotlin names; apply sections 6.1 and 6.2 to get jade's.
+lists the Kotlin names; apply sections 6.1 and 6.2 to get Jade's.
 
 ## 2. What JadeUI is
 
@@ -73,7 +73,7 @@ Three apps depend on it today:
 app.astra
    │  same calls as the Kotlin app: grid { row { cell(label("Name:")) } }, Window(root).show()
    ▼
-jade (Astra)            components, layout, widgets, text editing, menus, dialogs,
+Jade (Astra)            components, layout, widgets, text editing, menus, dialogs,
    │                    and the host policy that both Kotlin backends duplicate, written once
    ▼
 compat (Astra)          the JDK names the API exposes: Color, Font, Dimension, Rectangle, Insets,
@@ -89,7 +89,7 @@ Decisions built into this shape:
    wheel, key down/up with physical key and layout letter, text, focus, resize, scale change,
    close request, file drop) and nothing else. A window is a `Window`, the one
    class that replaces JadeUI's `JadeHost`, `JadeWindow` and `WindowSpec` (section 6.1). The Kotlin
-   backends' own host classes are not part of jade under any name: nothing in Astra is called
+   backends' own host classes are not part of Jade under any name: nothing in Astra is called
    after GLFW or JavaFX.
 2. **The native canvas mirrors `Canvas`** (JadeUI's `JadeCanvas`) and adds persistent offscreen surfaces, because
    the per-component paint cache and the retained window buffer both depend on them.
@@ -101,17 +101,17 @@ Decisions built into this shape:
    through `Jade.scheduler`. The native layer must repaint from inside the resize callback
    (Windows runs a modal loop while a window is being resized), and runs file dialogs and
    image decoding on worker threads, delivering their results on the loop.
-4. **The old `gui` library is no longer supported and is removed.** jade is Astra's only GUI
+4. **The old `gui` library is no longer supported and is removed.** Jade is Astra's only GUI
    library. The old one receives no fixes from now on, and its files leave the tree in M5,
-   when jade's native layer replaces its backend:
+   when Jade's native layer replaces its backend:
    - `lib/gui.astra` and `src/gui.cpp`, with the references to them in `CMakeLists.txt`,
      `src/builtins.cpp`, `src/compiler.cpp`, `src/main.cpp` and `src/vm.h`;
    - the five `examples/gui_*.astra` and `tests/gui_widgets.astra`;
    - the GUI section of the README.
 
    Only its own examples and test were ever written against it, so nothing is kept for
-   compatibility and nothing is migrated; jade's examples are written fresh. Its `Window`
-   and `Color` names pass to jade. Three behaviours of the old backend are worth repeating
+   compatibility and nothing is migrated; Jade's examples are written fresh. Its `Window`
+   and `Color` names pass to Jade. Three behaviours of the old backend are worth repeating
    in the new native layer: a window shows the icon of a program built with `--icon`; an
    error raised inside an event handler is reported instead of being lost in the message
    loop; and sizes follow the display's DPI.
@@ -136,10 +136,10 @@ cover it or has to be copied in every frame.
 
 How the pieces map onto OpenGL (3.3 core, the version JadeUI's backend and JadeGen use):
 
-- **Shapes.** A small renderer of jade's own: batched quads, with the edges of rectangles,
+- **Shapes.** A small renderer of Jade's own: batched quads, with the edges of rectangles,
   rounded rectangles, ovals and lines smoothed in the shader. Colour with alpha is ordinary
   blending.
-- **Text.** OpenGL has none, and jade's comes from an engine of its own, with no
+- **Text.** OpenGL has none, and Jade's comes from an engine of its own, with no
   third-party code: it reads font files, measures, and rasterises glyphs once into a texture
   from which they are drawn as quads. Described under the tiers below. Measuring works with
   no OpenGL context, because the recorded-drawing tests measure text without ever opening a
@@ -163,7 +163,7 @@ the built program's icon. It is about two thousand lines, and the old `gui` back
 had its beginnings (a window class, the message loop, DPI handling, timers).
 
 It sits behind a small interface: create a window, deliver events, set a cursor, read and
-write the clipboard, wake the loop. That interface is the only part of jade that is written
+write the clipboard, wake the loop. That interface is the only part of Jade that is written
 per system. OpenGL drawing and the text engine are the same everywhere, so running on
 another system later means writing this one layer again for it and changing nothing in the
 toolkit. Two cautions for when that day comes: macOS's windowing is written in Objective-C,
@@ -171,7 +171,7 @@ and Apple has deprecated OpenGL there, where it still works but is frozen at an 
 
 | Tier | Contents | Needed by |
 | --- | --- | --- |
-| **N1** core | Windows with an OpenGL context: create hidden, show, title, size and position, min/max size, resizable, owner window, icons, bring to front, close. Raw events as listed above, plus pointer leave and the OS double-click time. Nine cursor shapes, hidden and locked pointer. One-shot wake timer and a nanosecond clock. Surfaces: the window's retained picture and offscreen textures, clear to transparent, redraw a dirty rectangle. Canvas: colour with alpha, font (family, size, bold, italic), the `Canvas` operations, a translate-and-clip stack, a scale for HiDPI, image draw scaled and with constant alpha. Text: jade's own engine (below) and the glyph atlas; width, ascent, descent, height, per-character width; three logical families. Plain-text clipboard. Save a surface as PNG and read a pixel (for tests). | root package, dialogs, sheet, hex, code, text, map, most of doc |
+| **N1** core | Windows with an OpenGL context: create hidden, show, title, size and position, min/max size, resizable, owner window, icons, bring to front, close. Raw events as listed above, plus pointer leave and the OS double-click time. Nine cursor shapes, hidden and locked pointer. One-shot wake timer and a nanosecond clock. Surfaces: the window's retained picture and offscreen textures, clear to transparent, redraw a dirty rectangle. Canvas: colour with alpha, font (family, size, bold, italic), the `Canvas` operations, a translate-and-clip stack, a scale for HiDPI, image draw scaled and with constant alpha. Text: Jade's own engine (below) and the glyph atlas; width, ascent, descent, height, per-character width; three logical families. Plain-text clipboard. Save a surface as PNG and read a pixel (for tests). | root package, dialogs, sheet, hex, code, text, map, most of doc |
 | **N2** services | Async open/save/folder dialogs. Image decode (PNG, JPEG, GIF, BMP) and PNG encode. Clipboard HTML and images. Installed font families. OS dark-mode query. Request attention. | dialogs, image view, CSS fonts |
 | **N3** vector stack | Paths with lines, quadratic and cubic curves, turned into triangles; stroke width, caps, joins, dashes; arcs and pie sectors; linear and radial gradients; affine transform stack; clip to a shape (stencil); image draws through a transform with nearest/bilinear/bicubic; `Clear` composite; Gaussian blur; whole-image pixel arrays. OpenGL provides none of this ready-made: it is written, or taken from a small library such as NanoVG, when M10 is reached. | svg, toolbar icons, chart (partly), math, image editing, HTML effects |
 | **N4** 3D view | The layering of an app's own OpenGL drawing between the interface and its popups, with the state set up and restored around it; and OpenGL bindings for Astra, so that an app can issue the calls. The context and the layering come with the window; the bindings are the large part. | `GlView`, so JadeGen |
@@ -184,7 +184,7 @@ exchange N4 shrinks to the bindings, where before it was the largest single item
 
 ### The text engine
 
-Text is jade's own, in C++, with no third-party code and nothing asked of the system except
+Text is Jade's own, in C++, with no third-party code and nothing asked of the system except
 which font files are installed. The requirement is that text works the same everywhere:
 measuring and positioning are reliable. It does not have to match any system's own
 rendering. It is a complete engine from the start, not a subset to be extended later.
@@ -198,8 +198,8 @@ rendering. It is a complete engine from the start, not a subset to be extended l
    interpreted. The second kind is common on Linux and in Chinese, Japanese and Korean fonts.
 3. **Variable fonts.** One file holding every weight and width, with each glyph's outline
    and width adjusted for the instance asked for. Windows 11's default interface font and
-   macOS's system font are both of this kind, so jade uses them as they are.
-4. **Finding fonts.** The system is asked only for the installed font files. jade reads
+   macOS's system font are both of this kind, so Jade uses them as they are.
+4. **Finding fonts.** The system is asked only for the installed font files. Jade reads
    their names to match a family, size and style, and their character tables to find another
    font when the chosen one lacks a character.
 
@@ -237,24 +237,24 @@ rendering. It is a complete engine from the start, not a subset to be extended l
 
 10. **Rasterising.** Each glyph's outline is turned into a small antialiased picture, once
     per font, size and instance, and kept in the atlas.
-11. **Hinting.** A simple rule of jade's own that snaps the baseline and the tops of letters
+11. **Hinting.** A simple rule of Jade's own that snaps the baseline and the tops of letters
     to whole pixels, so small text has crisp horizontal edges. The programs fonts carry for
     this are not run.
 12. **Colour emoji.** The layered-colour format Windows' emoji font uses, in both its
     versions (flat layers, and the newer one with gradients), drawn into a colour atlas
     beside the one for ordinary glyphs. The bitmap-based formats other systems' emoji fonts
-    use are read too, which needs a PNG decoder of jade's own.
+    use are read too, which needs a PNG decoder of Jade's own.
 
 **What to expect of it**
 
 - Reliable metrics and positions on every system, and identical pictures wherever the same
   font file is used, so even pixel tests of text are portable.
 - Small text a little softer than Windows' own on a screen at 100% scaling, since Windows
-  runs the fonts' hinting programs and jade does not. On a HiDPI screen the difference all
+  runs the fonts' hinting programs and Jade does not. On a HiDPI screen the difference all
   but disappears. JadeUI on the JVM is drawn with Java's antialiased text today, not
   Windows', so this is close to how the apps look now.
 - Each system's own default font, so numbers differ between Windows and macOS where the
-  fonts differ. Shipping one font with jade would make them equal as well; nothing in the
+  fonts differ. Shipping one font with Jade would make them equal as well; nothing in the
   design depends on that choice.
 
 **How big this is.** Points 1, 2, 4, 8, 10 and 11 are a few thousand lines and are what the
@@ -262,13 +262,13 @@ first window needs. Variable fonts and colour emoji are each a bounded addition.
 direction and the Unicode data (points 5 to 7) are the bulk: the library the rest of the
 world uses for exactly this job, HarfBuzz, is over a hundred thousand lines, and a from-
 scratch engine that handles Arabic and the Indic scripts properly is a larger piece of work
-than porting jade's whole root package. It has a milestone of its own (M4), ordered so that
+than porting Jade's whole root package. It has a milestone of its own (M4), ordered so that
 the parts the first window needs come first and the window work is not held up by the rest.
 
 Testing support belongs in N1 from the start: hidden windows that render to an offscreen
 surface, synthetic raw events fed through the same path as real ones, an in-memory clipboard
 and scripted file-dialog answers. That is the equivalent of the hidden test mode in the
-Kotlin GLFW backend, under names of jade's own, and it is what lets the Kotlin tests be ported.
+Kotlin GLFW backend, under names of Jade's own, and it is what lets the Kotlin tests be ported.
 
 ## 5. What Astra is missing
 
@@ -284,9 +284,9 @@ leaves app code looking the same.
 | Feature | Library | Apps | Astra today | What is needed |
 | --- | --- | --- | --- | --- |
 | Interfaces | 56 declared, 140 classes with 2+ supertypes | every custom widget | none; single inheritance only | `interface` with abstract and default methods and properties; a class may implement several; `x is SomeInterface` works, including for marker interfaces such as `FocusTarget`. The whole capability system (`content is OverlayContent`) rests on this. |
-| Enums | 22 | 2 | none | `enum Fill { NONE, HORIZONTAL, ... }`, with `name`, `ordinal`, `entries`, and optional fields and methods. An entry can be written by its bare name wherever its enum is expected. Described below the table. |
+| Enums | 22 | 2 | none | `enum Fill { none, horizontal, ... }`, with `name`, `ordinal`, `entries`, and optional fields and methods. An entry can be written by its bare name wherever its enum is expected. Described below the table. |
 | Singletons | 29 `object` | 6 | none | `object Jade { ... }`: a class and its one instance, bound to the name, with fields, properties with setters, and methods. |
-| Static members | 34 `companion object` | 7 | `static fun` only; static fields only by assigning after the class | A `static { ... }` block in a class, and static fields (`Font.BOLD`, `Color.BLACK`). Described below the table. |
+| Static members | 34 `companion object` | 7 | `static fun` only; static fields only by assigning after the class | A `static { ... }` block in a class, and static fields (`Font.bold`, `Color.black`). Described below the table. |
 | Nested classes | throughout | 16 inner | compile error | `Event.Click(x, y)`, `x is Event.Click`, `DrawOp.Text`, `Grid.Cell`. Several nested names repeat (`Text`, `Wheel`, `Hover`), so they must be scoped, not flattened. |
 | Lambda literals | 491 with parameters, 1,588 uses of `it` | 212 / 901 | `fun(x) { ... }` only | `{ a, b -> ... }` and `{ ... it ... }`, with the last expression as the result. A literal with no parameter list accepts no argument or one (`it`), since Kotlin writes the same `{ ... }` for both. `{}` is the lambda that does nothing, the usual default of a callback parameter. The parameter list may run over several lines, as in Kotlin. Told apart from a map literal by what follows the brace: an expression and `:` is a map, `{:}` the empty map, anything else a lambda. |
 | Trailing lambdas | 153 | 77 | none | `button("OK") { ... }`, `grid { ... }`. The lambda goes to the function's last parameter, whatever came before it, named arguments included: `spinner(3, min = 0, max = 20) { ... }`. In the condition of `if`, `while` and `for` a `{` opens the body instead, and parentheses allow a lambda again: `if (items.any { it > 1 }) { ... }`. |
@@ -328,46 +328,52 @@ t = Way.right           // the full name is always allowed
   that type.
 - Where the compiler can see the destination's type, it settles this when the program is
   compiled, and a name that is not an entry of that enum is a compile error. Where it
-  cannot, typically an argument to a method (`cell(c, fill = HORIZONTAL)`: which `cell` is
+  cannot, typically an argument to a method (`cell(c, fill = horizontal)`: which `cell` is
   only known when the call happens), the name is settled as the value arrives at the typed
   parameter, and a wrong one is an error there.
 - **With no enum-typed destination the full name is required.** `val x = up`, `print(up)`
   and `items.add(up)` are errors that ask for `Way.up`. This is what keeps a misspelt or
   undeclared variable from quietly turning into an enum entry.
 - The destination decides, not the name, so it does not matter that several enums share an
-  entry. That matters for jade: its 18 public enums have 180 entry names and 23 of them
-  belong to more than one enum (`LEFT` is in six: `Key`, `KeyCode`, `PointerButton`,
+  entry. That matters for Jade: its 18 public enums have 180 entry names and 23 of them
+  belong to more than one enum (Kotlin's `LEFT`, here `left`, is in six: `Key`, `KeyCode`, `PointerButton`,
   `FloatSide`, `ProseEdge`, `SheetAlign`).
 - A bare name is tried as an entry last, after locals, the object's members, the class's
   statics and globals. A variable called `left` therefore still means the variable.
 
-Ported Kotlin always writes `Fill.HORIZONTAL` and is unaffected. The three apps and the
+Ported Kotlin always writes the full name (`Fill.HORIZONTAL`, here `Fill.horizontal`) and is unaffected. The three apps and the
 examples do so 321 times, about two thirds of them for `Anchor` and `Fill` in grid layouts, where
-`cell(label("Name:"), fill = HORIZONTAL, anchor = WEST)` now reads as well.
+`cell(label("Name:"), fill = horizontal, anchor = west)` now reads as well.
 
 **Namespaces.** Today every file shares one set of global names, and declaring a class or a
 function under a name that already exists replaces it without a word, for every file. An app
 that declared its own `Button` after importing a toolkit broke the toolkit's `button(...)`
-factory from the inside. With the `Jade` prefix gone, jade alone brings in about 220 short
+factory from the inside. With the `Jade` prefix gone, Jade alone brings in about 220 short
 names (`Button`, `Table`, `Event`, `Window`, `Block`). So names get the structure Kotlin
 gives them:
 
 - **A folder is a namespace**, as a package is in Kotlin. The files of one folder see each
   other's top-level names. Nothing outside the folder sees them unless it imports the folder.
-- **`import` brings in a folder's public names** for the file that writes it:
-  `import "jade"`, `import "jade/chart"`. It is not passed on: importing a folder does not
-  give you what that folder imported. A sub-folder is a namespace of its own and imports its
-  parent like anyone else, as `com.jadelib.ui.chart` imports `com.jadelib.ui`.
+- **`import Jade` makes the folder's names available as `Jade.Name`**, and nothing more:
+  everything used from it is written with `Jade.` in front. **`import Jade.*` also lets them
+  be written bare**, which is what a ported Kotlin file wants (its `import com.jadelib.ui.*`).
+  Either way the names are the ones the importing file may see: public, plus `internal` when
+  it is in the same library, never private. A sub-folder is `import Jade.Chart` (then
+  `Jade.Chart.Axis`) or `import Jade.Chart.*`. A path that is not made of plain names is
+  written in quotes, `import "../shared/util" as util`. An import is not passed on: importing
+  a folder does not give you what that folder imported. A sub-folder is a namespace of its
+  own and imports its parent like anyone else, as `com.jadelib.ui.chart` imports
+  `com.jadelib.ui`.
 - **Three levels of visibility**, Kotlin's own. `private` at the top level of a file is seen
-  in that file only. `internal` is seen throughout its library (jade and all its
+  in that file only. `internal` is seen throughout its library (Jade and all its
   sub-folders) and nowhere else. Anything else is public.
-- **A folder's own names win** over imported ones. JadeGen's `TextField` and jade's then
-  coexist, and jade keeps using its own whatever the app declares.
-- **A hidden name is reached through an alias** the importer chooses:
-  `import "jade" as ui`, then `ui.Block`. Snips needs this: it has a `Block` of its own and
-  uses jade's in 8 places.
+- **A folder's own names win** over imported ones. JadeGen's `TextField` and Jade's then
+  coexist, and Jade keeps using its own whatever the app declares.
+- **A hidden name is reached through the import's name**: `Jade.Block`, or `Ui.Block` after
+  `import Jade.* as Ui`. Snips needs this: it has a `Block` of its own and uses Jade's in 8
+  places.
 - **Two imports that export the same name** are fine until the name is used unqualified;
-  that use is a compile error asking for an alias.
+  that use is a compile error asking which is meant (`Jade.title` or `text.title`).
 - **Declaring a name twice in one namespace is a compile error**, never a silent
   replacement.
 - Built-in names (`print`, `Math`, `File`, the types) are visible everywhere.
@@ -382,9 +388,9 @@ What it gives the port: JadeUI's 17 packages become 17 folders with their `priva
 How files are loaded:
 
 - **Importing a folder loads every `.astra` file directly in it**, once, as one unit, so its
-  files see each other whatever order they are in. This is what `import "jade"` does.
+  files see each other whatever order they are in. This is what `import Jade` does.
 - **Importing a file loads that file only**, into the namespace of the folder it is in. A
-  script with `import "helpers"` beside it shares names with `helpers.astra` exactly as
+  script with `import helpers` beside it shares names with `helpers.astra` exactly as
   today, and the other scripts in that folder are not touched.
 
 **Static members.** Kotlin has no `static`; what belongs to a class rather than to one object
@@ -396,8 +402,8 @@ that takes a companion's body as it stands:
 ```astra
 class Grid {
   static {
-    val MAX_TRACK = 100000
-    fun key(row : int, col : int) : int => row * MAX_TRACK + col
+    val maxTrack = 100000
+    fun key(row : int, col : int) : int => row * maxTrack + col
   }
 
   fun add(component, row, col) { ... key(row, col) ... }
@@ -413,7 +419,7 @@ class Grid {
   existing `static fun` code is unaffected.
 - Static fields are typed and `val` is enforced, like any other field.
 - `private static { ... }` covers a whole block; 33 of the 111 companions are private.
-- From outside, a static is reached through the class: `Grid.key(1, 2)`, `Font.BOLD`.
+- From outside, a static is reached through the class: `Grid.key(1, 2)`, `Font.bold`.
 - From inside the class it is reached by its bare name, both from other statics and from the
   class's instance methods, as Kotlin code does. That needs unqualified names in a class to
   be looked up as: locals, then the object's members, then the class's statics, then globals,
@@ -475,6 +481,22 @@ Each of these has a workaround, but the workaround touches nearly every line of 
 | `do { } while` | 2 | 0 | `while` with a flag. |
 | Extension functions | 33, among them `JadeComponent.layout`, `dispatch`, `find`, `click` | 1 | Declare them as methods of the class: the call looks the same. Only extensions on built-in types change shape; the public one is `List<JadeComponent>.nextFocus(current, forward)`. |
 
+Decisions for this section (2026-10-12). They are built as a second part of M1.
+
+- **`if` keeps its braces.** `if (!visible) return` is ported as `if !visible { return }`. `if` and
+  `try` do become values: `val w = if wide { 200 } else { 100 }`.
+- **Accessors are written Kotlin's way**, under the property, with `field` for the stored value:
+  `var gap = 4` followed by `set(value) { field = value; repaint() }`.
+- **Extension functions are allowed**, on our own classes and on the built-in types:
+  `fun Component.layout() { ... }`, `fun list.nextFocus(current, forward) { ... }`. A member of
+  the same name comes first. Unlike Kotlin's they are not scoped to the importing file.
+- **`override` is required**, as in Kotlin, on a method, field or property that replaces an
+  inherited one or supplies what an interface or abstract class asks for, and is an error
+  where there is nothing to replace.
+- Secondary constructors are left out (4 uses): default arguments or a static function do the job.
+- `indices`, `withIndex`, `repeat` and the other collection helpers come with the standard
+  library (M2).
+
 ### 5.3 The same text means something different
 
 These are the dangerous ones: the Kotlin line is accepted by Astra, or nearly, and does
@@ -506,7 +528,7 @@ something else.
 | Numbers | `coerceIn`, `coerceAtLeast`, `coerceAtMost` (very common), `Int.MAX_VALUE`, `roundToInt` | Helpers and constants. |
 | `Regex` | 63 | Native class (N5). |
 | Files | `java.io.File` is in the public API (`onFilesDropped: (List<File>) -> Unit`, `largeTextView(file)`) | A `File(path)` object with `name`, `path`, `exists()`, `readText()`. Astra's built-in `File` is a holder of static functions under the same name, so it has to grow into this. |
-| Namespaces | 75 files, 330 public classes | One per folder (5.1). `import "jade"` gives the root package, `import "jade/chart"` a sub-package. |
+| Namespaces | 75 files, 330 public classes | One per folder (5.1). `import Jade` gives the root package, `import Jade.Chart` a sub-package. |
 | Threads and async I/O | 1 thread in the core; every app runs background work | Section 5.5. |
 
 **Strings.** Today `length`, indexing, `slice` and `indexOf` count UTF-8 bytes while a `for`
@@ -598,7 +620,7 @@ What is added, in dependency order:
      `suspendCoroutine { c -> ... }`, which sets the flow aside until `c.resume(value)` is
      called, on whichever thread calls it.
 
-   The reason is Snips. jade's dialogs are modeless and answer through a callback, and Snips
+   The reason is Snips. Jade's dialogs are modeless and answer through a callback, and Snips
    wraps them so that a command asking several things reads top to bottom: 23 `suspend`
    functions, 149 calls to them, 55 flows started, built on those two primitives and nothing
    else. It ports as written. With `await` at every call it would not, and with callbacks
@@ -633,7 +655,7 @@ What is added, in dependency order:
    the first real use would be Snips' evaluator, which is self-contained, takes values and
    returns a value, and wants a hard kill for a script that never reaches a checkpoint.
 
-Rules for jade, the same as JadeUI's:
+Rules for Jade, the same as JadeUI's:
 
 - The tree, layout, painting and events belong to the UI thread, the one running the loop.
 - Safe from any thread: every member of `Window`, `Jade.requestRepaint()`,
@@ -641,7 +663,7 @@ Rules for jade, the same as JadeUI's:
   background thread hands a result to the UI.
 - Anything else called from another thread raises an error naming the thread and the call.
   Kotlin lets such a call through silently; here a porting mistake shows at once.
-- Inside jade, the large-text view keeps its indexing thread, and file dialogs and image
+- Inside Jade, the large-text view keeps its indexing thread, and file dialogs and image
   decoding run on native workers.
 
 Tested as the collector is: a stress setting that switches threads at every safe point, run
@@ -660,7 +682,7 @@ over the whole suite.
 
 1. Names, parameter names, order and defaults are identical to the Kotlin source, except for
    the deliberate changes in 6.1 and the dropped prefix in 6.2. Named arguments and defaults already work in Astra, so
-   `cell(x, fill = Fill.HORIZONTAL, weightX = 1.0)` carries over as written.
+   `cell(x, fill = Fill.HORIZONTAL, weightX = 1.0)` carries over with the constant in camelCase: `Fill.horizontal`.
 2. JDK types in public signatures keep their names, provided by the compat layer with the
    members JadeUI and its apps use: `Color` (293 uses in the API), `Font` (109),
    `BufferedImage` (76, backed by a native surface), `Rectangle` (33), `Dimension` (30),
@@ -682,7 +704,7 @@ over the whole suite.
 
 JadeUI has two window types and two ways to open one: `JadeHost`, the app's main window,
 made by constructing a host; and `JadeWindow`, the handle of a dialog or secondary window,
-made with `JadeUi.windowOpener.open(WindowSpec(...))`. In jade there is one class, `Window`,
+made with `JadeUi.windowOpener.open(WindowSpec(...))`. In Jade there is one class, `Window`,
 and one way: construct it and call `show()`.
 
 - **Making one.** `Window(root, title, initialWidth = 900, initialHeight = 640, exitOnClose,
@@ -713,11 +735,11 @@ and one way: construct it and call `show()`.
 
 What a port changes:
 
-| Kotlin | jade |
+| Kotlin | Jade |
 | --- | --- |
 | `JavaFxHost(root, title = ..., onClose = ...)` (three places) and `jadeHost(...)` (one) | `Window(...)`, arguments untouched |
 | `JadeUi.windowOpener.open(WindowSpec(title, content, width, height, focus = f, onClosed = g))` (JadeGen `HistoryWindow.kt:157`, Snips `PictureWindows.kt:75`, and the one place in the dialog code every dialog goes through) | `Window(content, title, width, height, owner = ..., focus = f, onClose = g)` followed by `show()`. Three names change: `content` is `root`, `width` and `height` are `initialWidth` and `initialHeight`, `onClosed` is `onClose`. |
-| The owner is whichever window is in front, implicitly | Passed as `owner`. jade offers the window in front for a caller that wants the old behaviour. |
+| The owner is whichever window is in front, implicitly | Passed as `owner`. Jade offers the window in front for a caller that wants the old behaviour. |
 | `open(...)` answers null when there is no host; Snips checks for it | `Window(...)` always gives an object. A window that cannot be realised fails at `show()`. |
 | A test's fake opener receives a `WindowSpec` and returns a fake `JadeWindow` | It receives a `Window` and returns a recording handle. About six small fake classes are rewritten (four in the library's tests, two in Snips'). The tests themselves mostly stand, since they act through helpers on the fake (`w.type(...)`, `w.key(Key.ESCAPE)`, `w.press("OK")`); where one reads `w.spec.title` it reads `w.title`. |
 
@@ -725,9 +747,36 @@ The opener's interface changes with this: it realises a `Window` and returns a h
 it used to take a spec and return a window. The handle is a new, small type with the four
 operations that pass through; its name is still to be chosen.
 
-### 6.2 The `Jade` prefix is dropped
+### 6.2 The `Jade` prefix is dropped, and how names are cased
 
-jade is the one standard GUI library, so its classes do not carry its name. A class called
+**Casing.** Everything we build follows one rule (settled 2026-10-12):
+
+- **Libraries and classes are in Title case**: the library is `Jade`, a sub-folder `Jade.Chart`,
+  and so is every class, enum, interface and object (`Window`, `ListBox`, `Event.Click`).
+- **Methods, fields, variables and constants are in camelCase**: `openWindow`, `windowOpener`.
+- **The built-in type names are lowercase** (`int`, `string`, `list`, ...). They are the one
+  exception.
+- **Constants and enum entries are camelCase too**, JadeUI's included: `Font.BOLD` is
+  `Font.bold`, `Fill.HORIZONTAL` is `Fill.horizontal`, `MAX_TRACK` is `maxTrack`. This is the
+  one place where Astra's names differ from Kotlin's by more than the dropped prefix. The
+  porter's rule is mechanical (UPPER_SNAKE to camelCase) and applies to about 3,350 uses
+  across JadeUI and the three apps. A keyword is a name wherever only a name can come, so
+  `ImageStore.CLASS` becomes `ImageStore.class` like the rest. An entry called `NAME`
+  (`SortKey.NAME`, and `Value.NAME`, `T.NAME`, `Table.NAME` in Snips) becomes `name` like the
+  rest: a class tells its own name with `className`, so `name` is free on the enum, where
+  `SortKey.name` is the entry and `SortKey.size.name` each entry's own name. Only `entries`
+  cannot be the name of an entry. A member of an enum called `entries`, `name` or `ordinal`
+  is an error unless it is written `override` and is a property of the same type as the one
+  it replaces; anywhere else those three are ordinary names. Inside the enum `super.entries`,
+  `super.name` and `super.ordinal` still give the originals. (`super` reaches a superclass's
+  properties in general, not only its methods.)
+
+The library and its global object are both called `Jade`. That works: `Jade.Button` is the
+library's class, and a name the library does not declare, `Jade.requestRepaint()`, is looked
+for on the object.
+
+
+Jade is the one standard GUI library, so its classes do not carry its name. A class called
 `JadeXxx` in Kotlin is `Xxx` in Astra; everything else about it is unchanged.
 
 Of JadeUI's 227 public top-level types, 72 have the prefix. Four are the window types
@@ -755,7 +804,7 @@ The other 66 are renamed by the rule:
   enums), every function (`label(...)`, `grid { }`, `textField(...)`), every parameter, and
   every nested name. Nested types follow their owner: `JadeEvent.Click` is `Event.Click`,
   `JadeGrid.Cell` is `Grid.Cell`.
-- **No two jade types end up with the same name.** Checked against all 227.
+- **No two Jade types end up with the same name.** Checked against all 227.
 - **A class and its factory now differ only by the first letter** for 23 widgets: `Button`
   and `button(...)`, `Grid` and `grid { }`, `TextField` and `textField(...)`. Astra is
   case-sensitive, so both exist, as `JadeButton` and `button` do in Kotlin: the class is the
@@ -764,10 +813,10 @@ The other 66 are renamed by the rule:
   (JadeMem), 167 times (JadeGen) and 676 times (Snips); the most frequent are
   `JadeComponent`, `JadeMenuItem`, `JadeUi` (becoming `Jade`), `JadeEvent` and `JadeCanvas`.
 - **Apps have classes of their own under these names.** With the prefix gone, 12
-  declarations in the three apps share a name with a jade class. Ten are nested inside
+  declarations in the three apps share a name with a Jade class. Ten are nested inside
   another class and stay out of the way because nested names are scoped. Two are top-level:
   `TextField` in JadeGen and `Block` in Snips. Folder namespaces (5.1) keep both apart from
-  jade's: the app's own class wins inside the app, and Snips reaches jade's `Block` through
+  Jade's: the app's own class wins inside the app, and Snips reaches Jade's `Block` through
   an alias.
 
 ## 7. Order of work
@@ -796,7 +845,7 @@ lambdas and receiver blocks in the parser, to find the grammar conflicts before 
 tokens), and the two loading questions left open under namespaces in 5.1. Spike 2: an OpenGL window
 that draws smooth shapes and text from a glyph atlas, draws the same picture into an offscreen
 framebuffer, and calls a script function per event. Text is the part to prove: the spike
-reads Segoe UI, rasterises it with jade's own hinting rule at 12 and 13 pixels, and the result
+reads Segoe UI, rasterises it with Jade's own hinting rule at 12 and 13 pixels, and the result
 is judged by eye beside the same text drawn by Windows.
 
 **M1. Language, first tranche.** Everything in 5.1, and the changes settled in 5.3. The two
@@ -883,7 +932,8 @@ font metrics will need new numbers: no other font engine measures text exactly a
 
 | | Decision | Outcome |
 | --- | --- | --- |
-| | The library's name in Astra. | `jade`. |
+| | The library's name in Astra. | `Jade`, in Title case like every library and class we build; methods, fields, constants and enum entries are camelCase, JadeUI's upper-case constants included (`Fill.horizontal`); the built-in type names stay lowercase (6.2). |
+| | What `import` brings in. | `import Jade` makes its names available as `Jade.Name` only; `import Jade.*` also lets them be written bare (5.1, namespaces). |
 | | Classes named after the Kotlin backends. | None. No GLFW or JavaFX names; `JadeHostProvider` and `JadeHostSpec` are dropped. |
 | | The window types. | One class, `Window`, made with `Window(...)` and opened with `show()`, replacing `JadeHost`, `JadeWindow`, `WindowSpec` and `jadeHost(...)` (6.1). |
 | | The old `gui` library. | Unsupported and removed (section 3). |
@@ -904,10 +954,10 @@ font metrics will need new numbers: no other font engine measures text exactly a
 | D10 | The thread model. | Both of two kinds. Threads share one heap, with one running Astra code at a time, so thread code ports as written. Isolated workers, each a separate VM exchanging copied messages, give real parallelism and a hard kill; they are added after threads (5.5). Fully parallel shared-heap threads are not planned. |
 | D11 | How code waits without blocking. | Kotlin's model: suspending functions, called like any other, running on fibers. No `async` or `await` keywords. One set of I/O functions that block on a background thread and suspend inside a flow (5.5). |
 | D12 | How far to commit. | One milestone at a time: build it, test it, and move to the next only when the result is accepted (section 7). |
-| D13 | Namespaces, and an app class with a jade name. | One namespace per folder, as with Kotlin packages. A folder's own names win over imported ones, and a library never sees the names of the program that imports it (5.1). |
+| D13 | Namespaces, and an app class with a Jade name. | One namespace per folder, as with Kotlin packages. A folder's own names win over imported ones, and a library never sees the names of the program that imports it (5.1). |
 | D14 | `==` on two lists, maps or sets. | Compares their contents, as in Kotlin. `===` compares identity (5.3). |
 | D15 | The value of an element of `bytes`. | 0 to 255, not Kotlin's -128 to 127. Code that tests a byte's sign is rewritten by hand (5.3). |
-| D16 | Where text comes from. | An engine of jade's own, with no third-party code, complete from the start: both outline formats, variable fonts, shaping for every script, text direction and colour emoji, measuring by one rule on every system (section 4). |
+| D16 | Where text comes from. | An engine of Jade's own, with no third-party code, complete from the start: both outline formats, variable fonts, shaping for every script, text direction and colour emoji, measuring by one rule on every system (section 4). |
 | D17 | Where the window and its input come from. | Written by us, directly against Windows (a Win32 window with a WGL context), with no third-party code. It sits behind a small interface so that another system needs one new file and no change to the toolkit (section 4). |
 | | How files are loaded under namespaces. | Importing a folder loads every `.astra` file directly in it, as one unit. Importing a file loads that file only, into its folder's namespace (5.1). |
 | | A lambda's parameter list over several lines. | Allowed, as in Kotlin (5.1). |
@@ -936,13 +986,13 @@ None. Two questions are deliberately left for the milestone that raises them:
   module information that changes shape.
 - **Receiver lookups cost a run-time check** per unqualified name inside a builder block,
   and Kotlin lets a receiver's member hide a top-level function of the same name (`label`).
-- **OpenGL and a text engine of jade's own make the native layer much bigger.** Smooth
+- **OpenGL and a text engine of Jade's own make the native layer much bigger.** Smooth
   shapes, a font reader, a rasteriser, hinting, the glyph atlas and font lookup all have to
   exist before the first label appears, where a ready-made 2D library would have supplied
   them.
 - **The text engine is now one of the largest pieces of the whole plan.** Shaping for every
   script, text direction and the Unicode data are what a hundred-thousand-line library
-  exists to do, and writing them from scratch is more work than porting jade's root
+  exists to do, and writing them from scratch is more work than porting Jade's root
   package. It is also work that none of the three apps needs in order to run: their text is
   Latin. It is in the plan because the engine is meant to be complete, and it is ordered
   (M4, part two) so that it cannot delay the first window.

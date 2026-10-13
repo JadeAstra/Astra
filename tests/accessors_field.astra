@@ -1,0 +1,111 @@
+// Accessors written under a property, Kotlin's way. In them `field` is the stored value.
+
+val log = []
+
+class Panel(val name : string) {
+  var gap : int = 4
+    set(value) {
+      if value < 0 { throw Error("gap cannot be negative") }
+      field = value
+      log.push("$name gap=$value")
+    }
+
+  var title = "untitled"
+    get() => field.upper()
+    set(value) { field = value.trim() }
+
+  var width = 10
+  var height = 5
+  val area : int
+    get() => width * height                  // nothing stored: worked out each time
+  val label : string get() => "$name ${width}x$height"
+
+  val created = "now"
+    get() => "created " + field              // a val: read only, with a value of its own
+
+  var visits = 0
+    private set                               // who may assign: accepted, not enforced yet
+
+  fun bump() {
+    visits += 1
+    gap += 1                                  // through the setter, by the bare name
+    return this
+  }
+}
+
+val p = Panel("main")
+print(p.gap, p.title, p.area, p.label, p.created, p.visits)   // expect: 4 UNTITLED 50 main 10x5 created now 0
+p.gap = 8
+p.title = "  Settings  "
+p.width = 20
+print(p.gap, p.title, p.area, p.label, log)   // expect: 8 SETTINGS 100 main 20x5 ["main gap=8"]
+p.bump().bump()
+print(p.gap, p.visits, log.length)          // expect: 10 2 3
+p.gap += 5
+print(p.gap, log[log.length - 1])           // expect: 15 main gap=15
+
+// What the setter refuses is not stored; the declared type still holds for what is.
+try { p.gap = -1 } catch (e) { print(e.message, p.gap) }   // expect: gap cannot be negative 15
+try { p.gap = "wide" } catch (e) { print(e.message) }      // expect: argument 'value' of Panel.gap() must be int, got string
+try { p.area = 3 } catch (e) { print(e.message) }          // expect: property 'area' of Panel cannot be assigned: it has no setter
+try { p.created = "later" } catch (e) { print(e.message) } // expect: property 'created' of Panel cannot be assigned: it has no setter
+
+// Each object has its own stored value.
+val q = Panel("side")
+q.gap = 1
+print(p.gap, q.gap, q.title)                // expect: 15 1 UNTITLED
+
+// With a header, and a value worked out from it; in a subclass, calling the original.
+class Temperature(var celsius : float) {
+  var fahrenheit : float
+    get() => celsius * 9 / 5 + 32
+    set(value) { celsius = (value - 32) * 5 / 9 }
+  val kelvin = celsius + 273.15
+    get() => field
+}
+val t = Temperature(100.0)
+t.fahrenheit = 32.0
+print(t.celsius, t.fahrenheit, t.kelvin)    // expect: 0.0 32.0 373.15
+
+class Loud(name : string) : Panel(name) {
+  var volume = 3
+    set(value) { field = value > 10 ? 10 : value }
+  fun describe() => "$title at $volume, gap $gap"
+}
+val loud = Loud("speaker")
+loud.volume = 99
+loud.gap = 2
+loud.title = " loud "
+print(loud.describe(), loud is Panel)       // expect: LOUD at 10, gap 2 true
+
+// In an interface a property with a getter comes with the interface.
+interface Sized {
+  val width
+  val height
+  val area get() => width * height
+  val wide : bool
+    get() => width > height
+}
+class Box(override val width, override val height) : Sized
+print(Box(4, 3).area, Box(4, 3).wide, Box(1, 3).wide)   // expect: 12 true false
+
+// A function inside an accessor still means the same `field`.
+class Counter {
+  var count = 0
+    set(value) {
+      val store = { field = value }
+      store()
+    }
+  var history = []
+    get() { return field.map { it * 2 } }
+}
+val counter = Counter()
+counter.count = 7
+counter.history = [1, 2]
+print(counter.count, counter.history)       // expect: 7 [2, 4]
+
+// `field`, `get` and `set` are ordinary names everywhere else.
+val field = "a meadow"
+fun get(x) => x
+fun set(x) => x
+print(field, get(1), set(2))                // expect: a meadow 1 2

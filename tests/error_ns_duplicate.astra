@@ -1,0 +1,5 @@
+// A name can be declared once in a folder.
+fun area(w, h) => w * h
+val unit = 1
+fun area(r) => 3 * r * r
+// expect compile error: 'area' is already declared; a name can be declared only once in a folder

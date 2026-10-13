@@ -1,0 +1,5 @@
+// An import without .* does not bring names in: they are written with its name in front.
+import NsShapes
+print(NsShapes.PI_ISH)                 // expect: 3
+print(PI_ISH)
+// expect runtime error: Uncaught Error: undefined variable 'PI_ISH'

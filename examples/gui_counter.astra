@@ -1,5 +1,5 @@
 // The smallest GUI program: a label and two buttons.
-import "gui"
+import gui.*
 
 val window = Window("Counter")
 var count = 0

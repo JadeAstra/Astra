@@ -63,10 +63,10 @@ class Base {
   set text(value) { this.raw = str(value) }
 }
 class Loud : Base {
-  set text(value) { this.raw = str(value).upper() + "!" }
+  override set text(value) { this.raw = str(value).upper() + "!" }
 }
 class Quiet : Base {
-  get text() => "(" + this.raw + ")"
+  override get text() => "(" + this.raw + ")"
 }
 val loud = Loud()
 val quiet = Quiet()

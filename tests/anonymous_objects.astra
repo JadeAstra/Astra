@@ -1,0 +1,98 @@
+// object : Type { ... } where a value is expected: a class with no name and its one object.
+
+interface Listener {
+  fun onClick(x)
+  fun describe() => "a listener"
+}
+abstract class Renderer(val name : string) {
+  abstract fun draw()
+  fun label() => "renderer $name"
+}
+
+// It implements an interface, sees the variables around it, and is a value like any other.
+val log = []
+fun makeListener(prefix) {
+  var count = 0
+  return object : Listener {
+    override fun onClick(x) {
+      count += 1
+      log.push("$prefix $x #$count")
+    }
+  }
+}
+val a = makeListener("a")
+val b = makeListener("b")
+a.onClick(1)
+a.onClick(2)
+b.onClick(9)
+print(log, a is Listener, a.describe(), a === b)   // expect: ["a 1 #1", "a 2 #2", "b 9 #1"] true a listener false
+
+// With a superclass and arguments for it, fields of its own, and more than one type.
+val r = object : Renderer("gl"), Listener {
+  var frames = 0
+  override fun draw() {
+    frames += 1
+    return label() + " frame " + frames
+  }
+  override fun onClick(x) { frames = x }
+}
+r.draw()
+r.onClick(10)
+print(r.draw(), r is Renderer, r is Listener, r.name)   // expect: renderer gl frame 11 true true gl
+
+// With no type at all: a few values and functions held together.
+val point = object {
+  val x = 3
+  val y = 4
+  fun length() => x + y
+}
+print(point.x, point.length(), type(point))   // expect: 3 7 object
+
+// Passed straight to a function, and several made in a loop.
+fun fire(listener : Listener, times) {
+  for i in 1..times { listener.onClick(i) }
+}
+var total = 0
+fire(object : Listener { override fun onClick(x) { total += x } }, 4)
+val listeners = [1, 2, 3].map { n -> object : Listener { override fun onClick(x) { total += n * x } } }
+for l in listeners { l.onClick(100) }
+print(total)                                // expect: 610
+
+// Inside a method it reaches the object the method belongs to, as Kotlin's does; so does a
+// class declared inside a method.
+class Counter {
+  var clicks = 0
+  val name = "counter"
+  fun bump() { clicks += 1 }
+  fun listener() => object : Listener {
+    val own = "listener"
+    override fun onClick(x) {
+      bump()                                 // the Counter's method
+      clicks += x                            // and its field
+    }
+    override fun describe() => "$own of $name"   // its own field, then the Counter's
+  }
+  fun helper() {
+    class Doubler(val by : int) {
+      fun run() {
+        clicks *= by
+        return name + " doubled"
+      }
+    }
+    return Doubler(2).run()
+  }
+}
+val counter = Counter()
+val l = counter.listener()
+l.onClick(5)
+l.onClick(5)
+print(counter.clicks, l.describe(), counter.helper(), counter.clicks)   // expect: 12 listener of counter counter doubled 24
+
+// What the type requires still has to be there.
+try { val bad = object : Listener { } } catch (e) { print(e.message) }   // expect: class object must have 'onClick', which interface Listener requires
+
+// `object` is still an ordinary name, and a named object still a declaration.
+val object = "a name"
+val picked = true ? object : "other"
+object Settings { val volume = 5 }
+print(object, picked, Settings.volume)      // expect: a name a name 5

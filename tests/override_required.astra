@@ -1,0 +1,80 @@
+// A member that takes the place of one from above, or supplies what an interface or an
+// abstract class asks for, says override. One that says it must have something to replace.
+
+class Base(val id : int) {
+  var size = 1
+  get label() => "base $id"
+  fun greet() => "hello"
+  fun toString() => "Base#$id"
+}
+interface Shape {
+  val name
+  fun area()
+  fun describe() => "$name of area ${area()}"
+}
+abstract class Tool { abstract fun use() }
+
+fun attempt(make) {
+  try { make() } catch (e) { return e.message }
+  return "ok"
+}
+
+// Methods.
+print(attempt(fun() { class A : Base(1) { fun greet() => "hi" } }))
+// expect: 'greet' in class A takes the place of the one it inherits; write override in front of it
+print(attempt(fun() { class A : Base(1) { override fun greet() => "hi" } }))   // expect: ok
+print(attempt(fun() { class A : Base(1) { override fun gret() => "hi" } }))
+// expect: 'gret' in class A is marked override, but there is nothing of that name for it to replace
+print(attempt(fun() { class A : Base(1) { fun wave() => "new, so no word" } }))   // expect: ok
+
+// Fields and properties, the header's fields included.
+print(attempt(fun() { class B : Base(1) { var size = 2 } }))
+// expect: 'size' in class B takes the place of the one it inherits; write override in front of it
+print(attempt(fun() { class B : Base(1) { get label() => "b" } }))
+// expect: 'label' in class B takes the place of the one it inherits; write override in front of it
+print(attempt(fun() { class B(override var size : int) : Base(1) { override get label() => "b $size" } }))   // expect: ok
+print(attempt(fun() { class B(override val weight : int) : Base(1) }))
+// expect: 'weight' in class B is marked override, but there is nothing of that name for it to replace
+
+// What an interface or an abstract class asks for, and what comes with an interface.
+print(attempt(fun() { class C : Shape { val name = "c"; override fun area() => 1 } }))
+// expect: 'name' in class C is what interface Shape asks for; write override in front of it
+print(attempt(fun() { class C : Shape { override val name = "c"; fun area() => 1 } }))
+// expect: 'area' in class C is what interface Shape asks for; write override in front of it
+print(attempt(fun() { class C(override val name) : Shape { override fun area() => 1; fun describe() => "mine" } }))
+// expect: 'describe' in class C takes the place of the one it inherits; write override in front of it
+print(attempt(fun() { class D : Tool { fun use() => 1 } }))
+// expect: 'use' in class D is what abstract class Tool asks for; write override in front of it
+print(attempt(fun() {
+  class C(override val name) : Shape {
+    override fun area() => 2
+    override fun describe() => "my " + super.describe()
+  }
+  return C("c").describe()
+}))                                         // expect: ok
+
+// toString and == may always be written with it; init never needs it. A field and a method of
+// one name are different things, so neither replaces the other.
+class Point(val x, val y) {
+  override fun toString() => "($x, $y)"
+  override op ==(other) => other is Point and x == other.x and y == other.y
+}
+class Named : Base {
+  var extra = null
+  fun init(id, extra) {
+    super.init(id)
+    this.extra = extra
+  }
+  override fun toString() => "Named " + super.toString()
+  fun size(n) {
+    size = n
+    return this
+  }
+}
+print(Point(1, 2), Point(1, 2) == Point(1, 2), Named(7, "x"), Named(7, "x").size(5).size)   // expect: (1, 2) true Named Base#7 5
+
+// Static members and the members of an enum that every enum is given follow their own rules.
+class Counter { static var count = 0; static fun bump() { count += 1 } }
+class Sub : Counter { static fun bump() { Counter.count += 10 } }
+Sub.bump()
+print(Counter.count)                        // expect: 10

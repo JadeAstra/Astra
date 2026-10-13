@@ -28,6 +28,12 @@ VM::VM() : output(&std::cout), input(&std::cin), rng(std::random_device{}()) {
     names.end = intern("end");
     names.step = intern("step");
     names.name = intern("name");
+    names.className = intern("className");
+    names.ordinal = intern("ordinal");
+    names.entries = intern("entries");
+    names.enumEntries = intern("(entries)");
+    names.entryName = intern("(name)");
+    names.entryOrdinal = intern("(ordinal)");
     names.opAdd = intern("+");
     names.opSub = intern("-");
     names.opMul = intern("*");
@@ -190,15 +196,70 @@ Value VM::callOn(Value receiver, Value callee, int argc, const Value* args) {
 // The object a name in a lambda belongs to: the one the lambda is running on, or failing that
 // the one an enclosing lambda is running on, whichever first has a member of that name.
 // Undefined if none has, in which case the name is a global.
-Value VM::implicitReceiver(const CallFrame* frame, const Value* base, const ObjString* name) const {
-    auto has = [&](Value candidate) {
-        if (!candidate.isObjType(ObjType::Instance)) return false;  // slot 0 is the function itself
+// The extension function called `name` that a value has, if any: one for its class, a class
+// above it or an interface it implements; for its built-in type; or one for every value.
+const Value* VM::findExtension(Value receiver, const ObjString* name) const {
+    if (!hasExtensions_) return nullptr;
+    const Value* found = nullptr;
+    switch (receiver.kind) {
+        case ValueKind::Null: found = nullExtensions_.find(name); break;
+        case ValueKind::Bool: found = typeExtensions_[kTypeBool].find(name); break;
+        case ValueKind::Int: found = typeExtensions_[kTypeInt].find(name); break;
+        case ValueKind::Float: found = typeExtensions_[kTypeFloat].find(name); break;
+        case ValueKind::Obj:
+            switch (receiver.as.obj->type) {
+                case ObjType::String: found = typeExtensions_[kTypeString].find(name); break;
+                case ObjType::List: found = typeExtensions_[kTypeList].find(name); break;
+                case ObjType::Map: found = typeExtensions_[kTypeMap].find(name); break;
+                case ObjType::Range: found = typeExtensions_[kTypeRange].find(name); break;
+                case ObjType::Closure:
+                case ObjType::Native:
+                case ObjType::BoundMethod:
+                case ObjType::BoundNative: found = typeExtensions_[kTypeFunction].find(name); break;
+                case ObjType::Instance: {
+                    const ObjClass* cls = asInstance(receiver)->cls;
+                    for (const ObjClass* k = cls; k != nullptr && found == nullptr; k = k->super) found = k->extensions.find(name);
+                    for (size_t i = 0; i < cls->interfaces.size() && found == nullptr; i++)
+                        found = cls->interfaces[i]->extensions.find(name);
+                    break;
+                }
+                default: break;
+            }
+            break;
+        default: break;
+    }
+    if (found == nullptr && receiver.isNumber()) found = typeExtensions_[kTypeNumber].find(name);
+    if (found == nullptr && !receiver.isNull()) found = anyExtensions_.find(name);
+    return found;
+}
+
+// Whether a bare name written in code that runs on `candidate` means a member of it.
+bool VM::hasMember(Value candidate, const ObjString* name) const {
+    if (candidate.isObjType(ObjType::Instance)) {
         const ObjInstance* instance = asInstance(candidate);
         const ObjClass* cls = instance->cls;
-        return instance->fields.find(name) != nullptr || cls->methods.find(name) != nullptr ||
-               cls->declaredIndex.find(name) != nullptr ||
-               (cls->hasAccessors && (cls->getters.find(name) != nullptr || cls->setters.find(name) != nullptr));
-    };
+        if (instance->fields.find(name) != nullptr || cls->methods.find(name) != nullptr ||
+            cls->declaredIndex.find(name) != nullptr ||
+            (cls->hasAccessors && (cls->getters.find(name) != nullptr || cls->setters.find(name) != nullptr)))
+            return true;
+        return findExtension(candidate, name) != nullptr;
+    }
+    // Slot 0 of an ordinary function is the function itself, which has no members to speak of.
+    if (candidate.isObjType(ObjType::Closure) || candidate.isObjType(ObjType::Native) ||
+        candidate.isObjType(ObjType::BoundMethod) || candidate.isObjType(ObjType::BoundNative) ||
+        candidate.isObjType(ObjType::Class))
+        return false;
+    // An extension function on a built-in type runs on a string, a list, a number...
+    if (!hasExtensions_) return false;
+    if (findNativeMethod(candidate, name) != nullptr || findExtension(candidate, name) != nullptr) return true;
+    if (!candidate.isObj()) return false;
+    const ObjType type = candidate.as.obj->type;
+    if (name == names.length) return type == ObjType::String || type == ObjType::List || type == ObjType::Map || type == ObjType::Range;
+    return type == ObjType::Range && (name == names.start || name == names.end || name == names.step);
+}
+
+Value VM::implicitReceiver(const CallFrame* frame, const Value* base, const ObjString* name) const {
+    auto has = [&](Value candidate) { return hasMember(candidate, name); };
     if (has(base[0])) return base[0];
     for (uint16_t upvalue : frame->closure->proto->outerReceivers) {
         Value outer = *frame->closure->upvalues[upvalue]->location;
@@ -327,13 +388,64 @@ void VM::checkArity(const std::string& name, int minArgs, int maxArgs, int argc)
     throw runtimeError(name + "() expects " + expected + " argument(s) but got " + std::to_string(argc));
 }
 
-void VM::callClosure(ObjClosure* closure, int argc) {
+// A bare name was passed where nothing says which enum it could belong to.
+AstraThrow VM::unsettledName(Value pending) {
+    pendingEnums_--;
+    return runtimeError("undefined variable '" + static_cast<ObjString*>(pending.as.obj)->chars + "'");
+}
+
+void VM::rejectPendingNames(const Value* args, int argc) {
+    for (int i = 0; i < argc; i++)
+        if (args[i].kind == ValueKind::EnumName) throw unsettledName(args[i]);
+}
+
+// The name has reached a parameter declared with the class `type`: it is the entry of that
+// name if the class is an enum, and an error otherwise.
+Value VM::settleEnumName(Value pending, const ObjClass* type) {
+    if (type != nullptr && type->staticInit != nullptr) ensureClassInit(const_cast<ObjClass*>(type));
+    if (type == nullptr || !type->isEnum) throw unsettledName(pending);
+    pendingEnums_--;
+    const ObjString* name = static_cast<ObjString*>(pending.as.obj);
+    const Value* entry = type->statics.find(name);
+    if (entry == nullptr || !entry->isObjType(ObjType::Instance) || asInstance(*entry)->cls != type)
+        throw runtimeError("'" + name->chars + "' is not an entry of enum " + type->name->chars);
+    return *entry;
+}
+
+// For a function with a `vararg` parameter: gathers the arguments from that parameter's
+// position on into a list, leaving the parameters after it to their defaults. Returns the
+// new argument count.
+int VM::packVarargs(const FunctionProto* proto, int argc) {
+    const int at = proto->varargIndex;
+    if (argc < proto->requiredArgs()) checkArity(proto->name, proto->requiredArgs(), -1, argc);
+    if (stackEnd_ - (sp_ - argc - 1) < proto->maxStack) throw runtimeError("stack overflow");
+
+    for (; argc < at; argc++) *sp_++ = Value::undefined();
+    const int extra = argc - at;
+    if (pendingEnums_ > 0) rejectPendingNames(sp_ - extra, extra);
+    ObjList* list = alloc<ObjList>();
+    list->items.assign(sp_ - extra, sp_);
+    account(static_cast<size_t>(extra) * sizeof(Value));
+    sp_ -= extra;
+    *sp_++ = Value::object(list);
+    return at + 1;
+}
+
+void VM::callClosure(ObjClosure* closure, int argc, bool packed) {
     const FunctionProto* proto = closure->proto;
+    if (proto->varargIndex >= 0 && !packed) argc = packVarargs(proto, argc);
     if (argc != proto->arity && (argc > proto->arity || argc < proto->requiredArgs()))
         checkArity(proto->name, proto->requiredArgs(), proto->arity, argc);
 
     Value* base = sp_ - argc - 1;
     if (frameCount_ == kMaxFrames || stackEnd_ - base < proto->maxStack) throw runtimeError("stack overflow");
+
+    if (pendingEnums_ > 0) {
+        // A bare name may only arrive at a parameter that could make an enum entry of it.
+        for (int i = 0; i < argc; i++)
+            if (base[i + 1].kind == ValueKind::EnumName && (i >= 64 || ((proto->classParams >> i) & 1) == 0))
+                throw unsettledName(base[i + 1]);
+    }
 
     // Arguments that were left out are marked, and the function fills in their defaults.
     for (int missing = argc; missing < proto->arity; missing++) *sp_++ = Value::undefined();
@@ -347,16 +459,17 @@ void VM::callClosure(ObjClosure* closure, int argc) {
 // Calls the value sitting below `argc` arguments on the stack. Returns true if a new frame
 // was pushed (the caller must then keep interpreting), false if the call already completed
 // and left its result on the stack.
-bool VM::callValue(Value callee, int argc) {
+bool VM::callValue(Value callee, int argc, bool packed) {
     if (callee.isObj()) {
         switch (callee.as.obj->type) {
             case ObjType::Closure:
-                callClosure(asClosure(callee), argc);
+                callClosure(asClosure(callee), argc, packed);
                 return true;
 
             case ObjType::Native: {
                 ObjNative* native = asNative(callee);
                 checkArity(native->name, native->minArgs, native->maxArgs, argc);
+                if (pendingEnums_ > 0) rejectPendingNames(sp_ - argc, argc);
                 Value result = native->fn(*this, argc, sp_ - argc);
                 sp_ -= argc + 1;
                 *sp_++ = result;
@@ -365,15 +478,30 @@ bool VM::callValue(Value callee, int argc) {
 
             case ObjType::Class: {
                 ObjClass* cls = asClass(callee);
+                if (cls->staticInit != nullptr) ensureClassInit(cls);  // an enum has its entries by now
+                if (cls->isAbstract)
+                    throw runtimeError(cls->name->chars + " is abstract and cannot be created; create a class that extends it");
+                if (cls->isInterface)
+                    throw runtimeError(cls->name->chars + " is an interface and cannot be created; create a class that implements it");
+                if (cls->enumSealed)
+                    throw runtimeError("enum " + cls->name->chars + " has only the entries it declares; " + cls->name->chars +
+                                       "() cannot make another");
                 ObjInstance* instance = alloc<ObjInstance>(cls);
                 account(96);  // rough cost of the field table
                 sp_[-argc - 1] = Value::object(instance);
+                instance->constructing = true;
+                if (cls->nextEntry != nullptr) {
+                    // An enum entry: it knows its name before its init runs.
+                    nameEntry(instance, cls->nextEntry, cls->nextOrdinal);
+                    cls->nextEntry = nullptr;
+                }
                 // Declared fields get their initial values before the initializer runs.
                 for (size_t i = 0; i < cls->fieldInits.size(); i++) callWithReceiver(Value::object(instance), cls->fieldInits[i]);
                 if (cls->init != nullptr) {
-                    callClosure(cls->init, argc);
+                    callClosure(cls->init, argc, packed);
                     return true;
                 }
+                instance->constructing = false;
                 if (argc != 0)
                     throw runtimeError(cls->name->chars + "() takes no arguments but got " + std::to_string(argc));
                 return false;
@@ -382,7 +510,7 @@ bool VM::callValue(Value callee, int argc) {
             case ObjType::BoundMethod: {
                 ObjBoundMethod* bound = asBoundMethod(callee);
                 sp_[-argc - 1] = bound->receiver;
-                callClosure(bound->method, argc);
+                callClosure(bound->method, argc, packed);
                 return true;
             }
 
@@ -390,6 +518,7 @@ bool VM::callValue(Value callee, int argc) {
                 ObjBoundNative* bound = asBoundNative(callee);
                 const NativeMethod* method = bound->method;
                 checkArity(method->name, method->minArgs, method->maxArgs, argc);
+                if (pendingEnums_ > 0) rejectPendingNames(sp_ - argc, argc);
                 Value result = method->fn(*this, bound->receiver, argc, sp_ - argc);
                 sp_ -= argc + 1;
                 *sp_++ = result;
@@ -452,13 +581,30 @@ bool VM::callNamed(int positional, int named) {
     int arity = proto->arity;
     if (proto->paramNames.size() != static_cast<size_t>(arity))
         throw runtimeError(display() + "() does not take named arguments");
-    if (positional > arity) checkArity(display(), proto->requiredArgs(), arity, positional + named);
+    const int vararg = proto->varargIndex;
+    if (positional > arity && vararg < 0) checkArity(display(), proto->requiredArgs(), arity, positional + named);
+
+    // The common case of a lambda after the call: every parameter before the last was given,
+    // so the lambda is simply the next argument.
+    if (named == 1 && vararg < 0 && positional + 1 == arity && asString(sp_[-2])->chars.empty()) {
+        sp_[-2] = sp_[-1];
+        sp_--;
+        return callValue(callee, arity);
+    }
 
     // Scratch space kept between calls. It is emptied back onto the stack before the callee
     // runs, so a named call made from inside the callee can use it again.
     std::vector<Value>& arranged = namedScratch_;
     arranged.resize(static_cast<size_t>(arity));
-    for (int i = 0; i < arity; i++) arranged[static_cast<size_t>(i)] = i < positional ? first[i] : Value::undefined();
+    const int direct = vararg >= 0 && positional > vararg ? vararg : positional;
+    for (int i = 0; i < arity; i++) arranged[static_cast<size_t>(i)] = i < direct ? first[i] : Value::undefined();
+    if (vararg >= 0 && positional > vararg) {
+        // The positional arguments from the vararg parameter on are its list.
+        ObjList* list = alloc<ObjList>();
+        list->items.assign(first + vararg, first + positional);
+        account(static_cast<size_t>(positional - vararg) * sizeof(Value));
+        arranged[static_cast<size_t>(vararg)] = Value::object(list);
+    }
 
     const Value* pair = first + positional;
     for (int i = 0; i < named; i++, pair += 2) {
@@ -481,6 +627,16 @@ bool VM::callNamed(int positional, int named) {
         arranged[static_cast<size_t>(index)] = pair[1];
     }
 
+    if (vararg >= 0) {
+        Value& gathered = arranged[static_cast<size_t>(vararg)];
+        if (gathered.kind == ValueKind::Undefined) {
+            gathered = Value::object(alloc<ObjList>());
+        } else if (!gathered.isObjType(ObjType::List)) {
+            throw runtimeError("argument '" + proto->paramNames[static_cast<size_t>(vararg)]->chars + "' of " + display() +
+                               "() is a vararg parameter: by name it takes a list, not a value of type " + typeName(gathered));
+        }
+    }
+
     // Only parameters with a default value may be left out.
     for (int i = 0; i < proto->requiredArgs(); i++)
         if (arranged[static_cast<size_t>(i)].kind == ValueKind::Undefined)
@@ -489,7 +645,23 @@ bool VM::callNamed(int positional, int named) {
     if (stackEnd_ - first < arity) throw runtimeError("stack overflow");
     for (int i = 0; i < arity; i++) first[i] = arranged[static_cast<size_t>(i)];
     sp_ = first + arity;
-    return callValue(callee, arity);
+    return callValue(callee, arity, vararg >= 0);
+}
+
+// A call whose positional arguments were gathered into a list because some were written
+// `*list`. The stack holds the callee, that list, then a (name, value) pair for each named
+// argument. The list is laid out as ordinary arguments and the call proceeds as usual.
+bool VM::callSpread(int named) {
+    Value* slot = sp_ - 2 * named - 1;
+    ObjList* list = asList(*slot);
+    const int count = static_cast<int>(list->items.size());
+    if (stackEnd_ - sp_ < count + 1) throw runtimeError("stack overflow");
+
+    std::copy_backward(slot + 1, sp_, sp_ + count - 1);
+    std::copy(list->items.begin(), list->items.end(), slot);
+    sp_ += count - 1;
+    if (named > 0) return callNamed(count, named);
+    return callValue(sp_[-count - 1], count);
 }
 
 const NativeMethod* VM::findNativeMethod(Value receiver, const ObjString* name) const {
@@ -514,14 +686,15 @@ bool VM::invoke(ObjString* name, int argc) {
     if (receiver.isObj()) {
         if (receiver.as.obj->type == ObjType::Instance) {
             ObjInstance* instance = asInstance(receiver);
-            // A field holding a function shadows a method of the same name.
-            if (const Value* field = instance->fields.find(name)) {
-                sp_[-argc - 1] = *field;
-                return callValue(*field, argc);
-            }
+            // A call goes to the method of that name. A field may share the name: reading it
+            // gives the field, calling it runs the method.
             if (const Value* method = instance->cls->methods.find(name)) {
                 callClosure(asClosure(*method), argc);
                 return true;
+            }
+            if (const Value* field = instance->fields.find(name)) {
+                sp_[-argc - 1] = *field;
+                return callValue(*field, argc);
             }
             if (instance->cls->hasAccessors) {
                 // obj.property(args): call whatever the getter of the property returns.
@@ -531,12 +704,17 @@ bool VM::invoke(ObjString* name, int argc) {
                     return callValue(callee, argc);
                 }
             }
+            if (const Value* extension = findExtension(receiver, name)) {
+                callClosure(asClosure(*extension), argc);
+                return true;
+            }
             if (scopeFunction(name, argc)) return false;
             throw runtimeError("undefined method '" + name->chars + "' on " + instance->cls->name->chars);
         }
 
         if (receiver.as.obj->type == ObjType::Class) {
             ObjClass* cls = asClass(receiver);
+            if (cls->staticInit != nullptr || (cls->super != nullptr && cls->super->staticInit != nullptr)) ensureClassInit(cls);
             if (const Value* member = cls->findStatic(name)) {
                 sp_[-argc - 1] = *member;
                 return callValue(*member, argc);
@@ -547,10 +725,15 @@ bool VM::invoke(ObjString* name, int argc) {
 
     const NativeMethod* method = findNativeMethod(receiver, name);
     if (method == nullptr) {
+        if (const Value* extension = findExtension(receiver, name)) {
+            callClosure(asClosure(*extension), argc);
+            return true;
+        }
         if (scopeFunction(name, argc)) return false;
         throw runtimeError("undefined method '" + name->chars + "' on a value of type " + typeName(receiver));
     }
     checkArity(method->name, method->minArgs, method->maxArgs, argc);
+    if (pendingEnums_ > 0) rejectPendingNames(sp_ - argc, argc);
     Value result = method->fn(*this, receiver, argc, sp_ - argc);
     sp_ -= argc + 1;
     *sp_++ = result;
@@ -566,14 +749,79 @@ bool VM::scopeFunction(ObjString* name, int argc) {
     if (argc != 1) return false;
     const std::string& n = name->chars;
     bool onReceiver = n == "apply" || n == "run";
-    if (!onReceiver && n != "let" && n != "also") return false;
+    if (!onReceiver && n != "let" && n != "also" && n != "takeIf") return false;
 
     Value receiver = sp_[-2], block = sp_[-1];  // both stay on the stack while the block runs
     Value result = onReceiver ? callOn(receiver, block, 0, nullptr) : call(block, 1, &receiver);
     if (n == "apply" || n == "also") result = receiver;
+    if (n == "takeIf") result = result.truthy() ? receiver : Value::null();
     sp_ -= 2;
     *sp_++ = result;
     return true;
+}
+
+// What == means: numbers and strings by value; lists, maps and ranges by what they hold,
+// compared the same way all the way down; an object by its own `==` operator if its class
+// has one, and otherwise only to itself. A structure nested deeper than a comparison can
+// follow (one that contains itself, for instance) is equal only to itself from there on.
+bool VM::equals(Value a, Value b, int depth) {
+    if (!a.isObj() || !b.isObj()) return valuesEqual(a, b);
+    if (a.as.obj == b.as.obj) return true;
+
+    if (a.isObjType(ObjType::Instance)) {
+        const Value* method = asInstance(a)->cls->methods.find(names.opEq);
+        if (method == nullptr) {
+            // Two objects of one data class are equal when their header fields are.
+            ObjInstance* x = asInstance(a);
+            if (!x->cls->isData || !b.isObjType(ObjType::Instance) || asInstance(b)->cls != x->cls) return false;
+            if (depth >= kMaxEqualsDepth) return false;
+            ObjInstance* y = asInstance(b);
+            for (ObjString* part : x->cls->components) {
+                const Value* left = x->fields.find(part);
+                const Value* right = y->fields.find(part);
+                if (!equals(left != nullptr ? *left : Value::null(), right != nullptr ? *right : Value::null(), depth + 1))
+                    return false;
+            }
+            return true;
+        }
+        TempRoot bound(*this, Value::object(alloc<ObjBoundMethod>(a, asClosure(*method))));
+        return call(bound.get(), 1, &b).truthy();
+    }
+    if (a.as.obj->type != b.as.obj->type) return false;
+    if (depth >= kMaxEqualsDepth) return false;
+
+    switch (a.as.obj->type) {
+        case ObjType::List: {
+            const std::vector<Value>& x = asList(a)->items;
+            const std::vector<Value>& y = asList(b)->items;
+            if (x.size() != y.size()) return false;
+            // An element's own == may change either list, so the sizes are looked at again.
+            for (size_t i = 0; i < x.size() && i < y.size(); i++)
+                if (!equals(x[i], y[i], depth + 1)) return false;
+            return x.size() == y.size();
+        }
+        case ObjType::Map: {
+            const ValueMap& x = asMap(a)->map;
+            const ValueMap& y = asMap(b)->map;
+            if (x.size() != y.size()) return false;
+            for (size_t i = 0; i < x.entries().size(); i++) {
+                if (!x.entries()[i].live) continue;
+                const Value key = x.entries()[i].key, value = x.entries()[i].value;
+                const Value* other = y.find(key);
+                if (other == nullptr) return false;
+                const Value otherValue = *other;
+                if (!equals(value, otherValue, depth + 1)) return false;
+            }
+            return true;
+        }
+        case ObjType::Range: {
+            const ObjRange* x = asRange(a);
+            const ObjRange* y = asRange(b);
+            return x->start == y->start && x->end == y->end && x->step == y->step && x->inclusive == y->inclusive;
+        }
+        default:
+            return valuesEqual(a, b);
+    }
 }
 
 // Calls an overloaded operator; the receiver and its operands are already on the stack in
@@ -601,12 +849,21 @@ Value VM::getProperty(Value obj, ObjString* name) {
                 if (instance->cls->setters.find(name) != nullptr)
                     throw runtimeError("property '" + name->chars + "' of " + instance->cls->name->chars +
                                        " cannot be read: it has no getter");
+                if (const Value* extension = findExtension(obj, name))
+                    return Value::object(alloc<ObjBoundMethod>(obj, asClosure(*extension)));
                 throw runtimeError("undefined property '" + name->chars + "' on " + instance->cls->name->chars);
             }
             case ObjType::Class: {
                 ObjClass* cls = asClass(obj);
+                if (cls->staticInit != nullptr || (cls->super != nullptr && cls->super->staticInit != nullptr)) ensureClassInit(cls);
                 if (const Value* member = cls->findStatic(name)) return *member;
-                if (name == names.name) return Value::object(cls->name);
+                for (const ObjClass* k = cls; k != nullptr; k = k->super) {
+                    if (const Value* getter = k->staticGetters.find(name)) return call(*getter, 0, nullptr);
+                    if (k->staticSetters.find(name) != nullptr)
+                        throw runtimeError("static property '" + name->chars + "' of " + k->name->chars +
+                                           " cannot be read: it has no getter");
+                }
+                if (name == names.className) return Value::object(cls->name);  // `name` is left free for a member
                 throw runtimeError("undefined static member '" + name->chars + "' on class " + cls->name->chars);
             }
             case ObjType::String:
@@ -633,6 +890,8 @@ Value VM::getProperty(Value obj, ObjString* name) {
 
     if (const NativeMethod* method = findNativeMethod(obj, name))
         return Value::object(alloc<ObjBoundNative>(obj, method));
+    if (const Value* extension = findExtension(obj, name))
+        return Value::object(alloc<ObjBoundMethod>(obj, asClosure(*extension)));
     throw runtimeError("undefined property '" + name->chars + "' on a value of type " + typeName(obj));
 }
 
@@ -654,15 +913,22 @@ void VM::checkRequiredFields(ObjInstance* instance, const ObjClosure* init) {
 // Enforces the field declarations of a class that has any (its own or inherited): only
 // declared fields exist, a val can be assigned only once, and a typed field only takes
 // values of its type.
-void VM::checkFieldAssignment(ObjInstance* instance, ObjString* name, Value value) {
+void VM::checkFieldAssignment(ObjInstance* instance, ObjString* stored, Value value) {
     ObjClass* cls = instance->cls;
-    const Value* index = cls->declaredIndex.find(name);
+    // A property with accessors keeps its value under "field:" and its name; messages say the name.
+    struct Shown {
+        std::string chars;
+    };
+    const Shown shown{stored->chars.rfind("field:", 0) == 0 ? stored->chars.substr(6) : stored->chars};
+    const Shown* const name = &shown;
+    const Value* index = cls->declaredIndex.find(stored);
     if (index == nullptr)
         throw runtimeError(cls->name->chars + " has no field '" + name->chars +
                            "'; fields must be declared in the class with val or var");
     size_t at = static_cast<size_t>(index->as.i);
 
-    if (cls->declared[at].isVal && instance->fields.find(name) != nullptr)
+    if (cls->declared[at].isVal && instance->fields.find(stored) != nullptr &&
+        !(cls->declared[at].overrides && instance->constructing))
         throw runtimeError("cannot assign to val field '" + name->chars + "' of " + cls->name->chars);
 
     uint8_t type = cls->declared[at].type;
@@ -684,13 +950,91 @@ void VM::checkFieldAssignment(ObjInstance* instance, ObjString* name, Value valu
                            cls->name->chars + ", which is declared as " + declaredTypeText(type, typeClass));
 }
 
+// `super.name(...)`: the method of the superclass, or failing that the one that comes with an
+// interface the object's class implements (a class with only interfaces has no superclass).
+const Value* VM::superMethod(Value super, Value self, const ObjString* name) const {
+    if (super.isObjType(ObjType::Class)) {
+        if (const Value* method = asClass(super)->methods.find(name)) return method;
+    }
+    if (self.isObjType(ObjType::Instance)) {
+        for (const ObjClass* implemented : asInstance(self)->cls->interfaces)
+            if (const Value* method = implemented->methods.find(name)) return method;
+    }
+    return nullptr;
+}
+
+// Gives an enum entry its name and its place in the list. A getter the enum wrote for `name`
+// or `ordinal` stands in for the field; the real ones are kept under names of their own.
+void VM::nameEntry(ObjInstance* entry, ObjString* name, int ordinal) {
+    const ObjClass* cls = entry->cls;
+    entry->fields.set(names.entryName, Value::object(name));
+    entry->fields.set(names.entryOrdinal, Value::integer(ordinal));
+    if (cls->getters.find(names.name) == nullptr) entry->fields.set(names.name, Value::object(name));
+    if (cls->getters.find(names.ordinal) == nullptr) entry->fields.set(names.ordinal, Value::integer(ordinal));
+}
+
+// Runs what works out a class's static values, if it has not run yet, superclasses first.
+void VM::ensureClassInit(ObjClass* cls) {
+    if (cls->super != nullptr && cls->super->staticInit != nullptr) ensureClassInit(cls->super);
+    ObjClosure* init = cls->staticInit;
+    if (init == nullptr) return;
+    cls->staticInit = nullptr;  // before running it: what it works out may be asked for meanwhile
+    call(Value::object(init), 0, nullptr);
+}
+
+// A value for a declared static field has to fit the field's type.
+void VM::checkStaticType(ObjClass* owner, FieldDecl& field, Value value) {
+    const uint8_t type = field.type;
+    if (type == 0) return;
+    if (value.isNull() && (type & kTypeNullable) != 0) return;
+
+    if ((type & kTypeMask) == kTypeInstance && field.typeClass == nullptr) {
+        TempRoot keepAlive(*this, value);
+        Value resolved = call(Value::object(field.typeThunk), 0, nullptr);
+        if (!resolved.isObjType(ObjType::Class))
+            throw runtimeError("a type must be a class or a built-in type, not a value of type " + typeName(resolved));
+        field.typeClass = asClass(resolved);
+    }
+    if (!matchesType(value, type, field.typeClass))
+        throw runtimeError("cannot assign a value of type " + typeName(value) + " to static field '" + field.name->chars +
+                           "' of " + owner->name->chars + ", which is declared as " + declaredTypeText(type, field.typeClass));
+}
+
+// `Class.name = value`. A declared static field keeps its rules (a val stays as it is, a type
+// is enforced), a static property runs its setter, and any other name is simply stored.
+void VM::assignStatic(ObjClass* cls, ObjString* name, Value value) {
+    if (cls->staticInit != nullptr || (cls->super != nullptr && cls->super->staticInit != nullptr)) {
+        TempRoot keepAlive(*this, value);
+        ensureClassInit(cls);
+    }
+    for (ObjClass* k = cls; k != nullptr; k = k->super) {
+        if (const Value* index = k->staticIndex.find(name)) {
+            FieldDecl& field = k->staticDeclared[static_cast<size_t>(index->as.i)];
+            if (field.isVal) throw runtimeError("cannot assign to static val '" + name->chars + "' of " + k->name->chars);
+            checkStaticType(k, field, value);
+            k->statics.set(name, value);
+            return;
+        }
+        if (const Value* setter = k->staticSetters.find(name)) {
+            call(*setter, 1, &value);
+            return;
+        }
+        if (k->staticGetters.find(name) != nullptr)
+            throw runtimeError("static property '" + name->chars + "' of " + k->name->chars +
+                               " cannot be assigned: it has no setter");
+    }
+    cls->statics.set(name, value);
+}
+
 void VM::setProperty(Value obj, ObjString* name, Value value) {
     if (obj.isObjType(ObjType::Instance)) {
         ObjInstance* instance = asInstance(obj);
+        if (instance->cls->isEnum && (name == names.name || name == names.ordinal))
+            throw runtimeError("cannot assign to '" + name->chars + "' of an entry of enum " + instance->cls->name->chars);
         if (!instance->cls->declared.empty()) checkFieldAssignment(instance, name, value);
         instance->fields.set(name, value);
     } else if (obj.isObjType(ObjType::Class)) {
-        asClass(obj)->statics.set(name, value);
+        assignStatic(asClass(obj), name, value);
     } else {
         throw runtimeError("cannot set property '" + name->chars + "' on a value of type " + typeName(obj));
     }
@@ -1128,6 +1472,12 @@ void VM::run(int baseFrame) {
                             *sp_++ = value;
                             break;
                         }
+                        if (!receiver.isObjType(ObjType::Instance)) {
+                            // In an extension function on a built-in type: a member of the value.
+                            SAVE_IP();
+                            *sp_++ = getProperty(receiver, name);
+                            break;
+                        }
                         ObjInstance* instance = asInstance(receiver);
                         if (const Value* field = instance->fields.find(name)) {
                             *sp_++ = *field;
@@ -1144,6 +1494,54 @@ void VM::run(int baseFrame) {
                         }
                         SAVE_IP();
                         *sp_++ = getProperty(receiver, name);  // a method, bound to the object
+                        break;
+                    }
+                    case Op::TryImplicit: {
+                        ObjString* name = asString(consts[READ_U16()]);
+                        int target = READ_I32();
+                        Value receiver = implicitReceiver(frame, base, name);
+                        if (receiver.kind == ValueKind::Undefined) break;
+                        ip = code + target;
+                        if (!receiver.isObjType(ObjType::Instance)) {
+                            SAVE_IP();
+                            *sp_++ = getProperty(receiver, name);
+                            break;
+                        }
+                        ObjInstance* instance = asInstance(receiver);
+                        if (const Value* field = instance->fields.find(name)) {
+                            *sp_++ = *field;
+                            break;
+                        }
+                        if (instance->cls->hasAccessors) {
+                            if (const Value* getter = instance->cls->getters.find(name)) {
+                                *sp_++ = receiver;
+                                SAVE_IP();
+                                callClosure(asClosure(*getter), 0);
+                                LOAD_FRAME();
+                                break;
+                            }
+                        }
+                        SAVE_IP();
+                        *sp_++ = getProperty(receiver, name);
+                        break;
+                    }
+                    case Op::InvokeImplicit: {
+                        ObjString* name = asString(consts[READ_U16()]);
+                        size_t index = static_cast<size_t>(READ_U16());
+                        int argc = READ_U8();
+                        GC_SAFE_POINT();
+                        SAVE_IP();
+                        Value receiver = implicitReceiver(frame, base, name);
+                        if (receiver.kind == ValueKind::Undefined) {
+                            Value callee = globals_[index];
+                            if (callee.kind == ValueKind::Undefined)
+                                throw runtimeError("undefined variable '" + program_->globalNames[index] + "'");
+                            sp_[-argc - 1] = callee;
+                            if (callValue(callee, argc)) LOAD_FRAME();
+                        } else {
+                            sp_[-argc - 1] = receiver;
+                            if (invoke(name, argc)) LOAD_FRAME();
+                        }
                         break;
                     }
                     case Op::SetImplicit: {
@@ -1165,6 +1563,10 @@ void VM::run(int baseFrame) {
                         sp_[-1] = receiver;
                         *sp_++ = value;
                         SAVE_IP();
+                        if (!receiver.isObjType(ObjType::Instance)) {
+                            setProperty(receiver, name, value);  // reports that it cannot be set
+                            break;
+                        }
                         ObjClass* cls = asInstance(receiver)->cls;
                         if (cls->hasAccessors) {
                             if (const Value* setter = cls->setters.find(name)) {
@@ -1196,6 +1598,7 @@ void VM::run(int baseFrame) {
                         ObjString* parameter = asString(consts[READ_U16()]);
                         uint8_t type = READ_U8();
                         ObjClass* cls = popTypeClass(type);
+                        if (sp_[-1].kind == ValueKind::EnumName) sp_[-1] = settleEnumName(sp_[-1], cls);
                         if (!matchesType(sp_[-1], type, cls))
                             throw runtimeError("argument '" + parameter->chars + "' of " + frame->closure->proto->name +
                                                "() must be " + declaredTypeText(type, cls) + ", got " + typeName(sp_[-1]));
@@ -1310,11 +1713,28 @@ void VM::run(int baseFrame) {
                     case Op::GetSuper: {
                         ObjString* name = asString(consts[READ_U16()]);
                         Value super = *--sp_;
-                        if (!super.isObjType(ObjType::Class)) throw runtimeError("superclass must be a class");
-                        const Value* method = asClass(super)->methods.find(name);
-                        if (method == nullptr)
-                            throw runtimeError("undefined method '" + name->chars + "' in superclass " +
+                        const Value* method = superMethod(super, sp_[-1], name);
+                        if (method == nullptr && super.isNull())
+                            throw runtimeError("there is no '" + name->chars + "' for super to mean: this class has no superclass, " +
+                                               std::string("and its interfaces come with none"));
+                        if (method == nullptr && !super.isObjType(ObjType::Class)) throw runtimeError("superclass must be a class");
+                        if (method == nullptr) {
+                            // super.name: the superclass's property, run on this object, or a
+                            // field it declares, which the object simply has.
+                            if (const Value* getter = asClass(super)->getters.find(name)) {
+                                SAVE_IP();
+                                callClosure(asClosure(*getter), 0);
+                                LOAD_FRAME();
+                                break;
+                            }
+                            const Value* field = sp_[-1].isObjType(ObjType::Instance) ? asInstance(sp_[-1])->fields.find(name) : nullptr;
+                            if (field != nullptr && asClass(super)->declaredIndex.find(name) != nullptr) {
+                                sp_[-1] = *field;
+                                break;
+                            }
+                            throw runtimeError("undefined method or property '" + name->chars + "' in superclass " +
                                                asClass(super)->name->chars);
+                        }
                         sp_[-1] = Value::object(alloc<ObjBoundMethod>(sp_[-1], asClosure(*method)));
                         break;
                     }
@@ -1411,7 +1831,24 @@ void VM::run(int baseFrame) {
                             LOAD_FRAME();
                             break;
                         }
+                        if (a.isObj() && b.isObj() && a.as.obj != b.as.obj && a.as.obj->type != ObjType::String) {
+                            // Two lists, maps or ranges: equal if what they hold is equal.
+                            SAVE_IP();
+                            const bool same = equals(a, b);
+                            sp_[-2] = Value::boolean(same);
+                            sp_--;
+                            break;
+                        }
                         sp_[-2] = Value::boolean(valuesEqual(a, b));
+                        sp_--;
+                        break;
+                    }
+                    case Op::Identical: {
+                        // The very same object. Numbers, booleans and strings have no identity
+                        // apart from their value.
+                        Value b = sp_[-1], a = sp_[-2];
+                        const bool objects = a.isObj() && b.isObj() && !a.isString();
+                        sp_[-2] = Value::boolean(objects ? a.as.obj == b.as.obj : valuesEqual(a, b));
                         sp_--;
                         break;
                     }
@@ -1454,6 +1891,59 @@ void VM::run(int baseFrame) {
                         break;
                     }
 
+                    case Op::JumpIfNull: {
+                        int target = READ_I32();
+                        if (sp_[-1].isNull()) ip = code + target;
+                        break;
+                    }
+                    case Op::JumpIfNotNull: {
+                        int target = READ_I32();
+                        if (!sp_[-1].isNull()) ip = code + target;
+                        break;
+                    }
+                    case Op::AssertNotNull:
+                        if (sp_[-1].isNull()) throw runtimeError("'!!' was used on a value that is null");
+                        break;
+                    case Op::Swap:
+                        std::swap(sp_[-1], sp_[-2]);
+                        break;
+                    case Op::PopUnder: {
+                        int count = READ_U16();
+                        Value* first = sp_ - 1 - count;
+                        closeUpvalues(first);
+                        *first = sp_[-1];
+                        sp_ = first + 1;
+                        break;
+                    }
+                    case Op::IsType: {
+                        uint8_t type = READ_U8();
+                        ObjClass* cls = popTypeClass(type);
+                        sp_[-1] = Value::boolean(matchesType(sp_[-1], type, cls));
+                        break;
+                    }
+                    case Op::Cast: {
+                        uint8_t type = READ_U8();
+                        ObjClass* cls = popTypeClass(type);
+                        if (!matchesType(sp_[-1], type, cls))
+                            throw runtimeError("cannot cast a value of type " + typeName(sp_[-1]) + " to " +
+                                               declaredTypeText(type, cls));
+                        break;
+                    }
+                    case Op::CastOrNull: {
+                        uint8_t type = READ_U8();
+                        ObjClass* cls = popTypeClass(type);
+                        if (!matchesType(sp_[-1], type, cls)) sp_[-1] = Value::null();
+                        break;
+                    }
+                    case Op::Settle: {
+                        Value top = sp_[-1];
+                        Value* target = base + READ_U16();
+                        for (Value* p = sp_ - 1; p < target; p++) *p = Value::null();
+                        *target = top;
+                        sp_ = target + 1;
+                        break;
+                    }
+
                     case Op::Call: {
                         int argc = READ_U8();
                         GC_SAFE_POINT();
@@ -1469,6 +1959,23 @@ void VM::run(int baseFrame) {
                         if (callNamed(positional, named)) LOAD_FRAME();
                         break;
                     }
+                    case Op::Spread: {
+                        Value added = *--sp_;
+                        if (!added.isObjType(ObjType::List))
+                            throw runtimeError("'*' in a call needs a list to spread, not a value of type " + typeName(added));
+                        ObjList* list = asList(sp_[-1]);
+                        const std::vector<Value>& items = asList(added)->items;
+                        list->items.insert(list->items.end(), items.begin(), items.end());
+                        account(items.size() * sizeof(Value));
+                        break;
+                    }
+                    case Op::CallSpread: {
+                        int named = READ_U8();
+                        GC_SAFE_POINT();
+                        SAVE_IP();
+                        if (callSpread(named)) LOAD_FRAME();
+                        break;
+                    }
                     case Op::Invoke: {
                         ObjString* name = asString(consts[READ_U16()]);
                         int argc = READ_U8();
@@ -1482,8 +1989,11 @@ void VM::run(int baseFrame) {
                         int argc = READ_U8();
                         GC_SAFE_POINT();
                         Value super = *--sp_;
-                        if (!super.isObjType(ObjType::Class)) throw runtimeError("superclass must be a class");
-                        const Value* method = asClass(super)->methods.find(name);
+                        const Value* method = superMethod(super, sp_[-argc - 1], name);
+                        if (method == nullptr && super.isNull())
+                            throw runtimeError("there is no '" + name->chars + "' for super to mean: this class has no superclass, " +
+                                               std::string("and its interfaces come with none"));
+                        if (method == nullptr && !super.isObjType(ObjType::Class)) throw runtimeError("superclass must be a class");
                         if (method == nullptr)
                             throw runtimeError("undefined method '" + name->chars + "' in superclass " +
                                                asClass(super)->name->chars);
@@ -1497,6 +2007,11 @@ void VM::run(int baseFrame) {
                         int argc = READ_U8();
                         GC_SAFE_POINT();
                         Value super = *--sp_;
+                        if (super.isNull()) {
+                            // Everything the class lists after its ':' turned out to be an interface.
+                            if (argc != 0) throw runtimeError("there is no superclass to pass arguments to: only a class takes them");
+                            break;
+                        }
                         if (!super.isObjType(ObjType::Class)) throw runtimeError("superclass must be a class");
                         ObjClosure* init = asClass(super)->init;
                         if (init == nullptr) {
@@ -1529,6 +2044,9 @@ void VM::run(int baseFrame) {
                         break;
 
                     case Op::ReturnInit:
+                        // The object is made once its own class's initializer has returned.
+                        if (base[0].isObjType(ObjType::Instance) && asInstance(base[0])->cls->init == frame->closure)
+                            asInstance(base[0])->constructing = false;
                         // Slot 0 is the new instance: its required fields must be set by now.
                         if (base[0].isObjType(ObjType::Instance) && asInstance(base[0])->cls->anyRequired) {
                             SAVE_IP();
@@ -1555,22 +2073,195 @@ void VM::run(int baseFrame) {
                         break;
                     }
                     case Op::Inherit: {
-                        Value super = sp_[-2], sub = sp_[-1];
-                        if (!super.isObjType(ObjType::Class))
-                            throw runtimeError("superclass must be a class, got " + typeName(super));
+                        const int count = READ_U8();
+                        Value sub = sp_[-1];
+                        Value* types = sp_ - 1 - count;
                         if (!sub.isObjType(ObjType::Class)) throw runtimeError("invalid class declaration");
                         ObjClass* subclass = asClass(sub);
-                        subclass->super = asClass(super);
-                        subclass->methods.addAll(asClass(super)->methods);
-                        subclass->init = asClass(super)->init;
-                        subclass->declared = asClass(super)->declared;
-                        subclass->declaredIndex.addAll(asClass(super)->declaredIndex);
-                        subclass->fieldInits = asClass(super)->fieldInits;
-                        subclass->anyRequired = asClass(super)->anyRequired;
-                        subclass->getters.addAll(asClass(super)->getters);
-                        subclass->setters.addAll(asClass(super)->setters);
-                        subclass->hasAccessors = asClass(super)->hasAccessors;
+
+                        // Of the supertypes, at most one is a class: the superclass.
+                        ObjClass* superclass = nullptr;
+                        for (int i = 0; i < count; i++) {
+                            if (!types[i].isObjType(ObjType::Class))
+                                throw runtimeError("superclass must be a class, got " + typeName(types[i]));
+                            ObjClass* type = asClass(types[i]);
+                            if (type->isInterface) continue;
+                            if (type->isEnum) throw runtimeError("cannot inherit from enum " + type->name->chars);
+                            if (subclass->isInterface)
+                                throw runtimeError("interface " + subclass->name->chars + " cannot extend class " + type->name->chars);
+                            if (superclass != nullptr)
+                                throw runtimeError("class " + subclass->name->chars + " can have only one superclass, but " +
+                                                   superclass->name->chars + " and " + type->name->chars + " are both classes");
+                            superclass = type;
+                        }
+                        if (superclass != nullptr) {
+                            subclass->super = superclass;
+                            subclass->methods.addAll(superclass->methods);
+                            subclass->init = superclass->init;
+                            subclass->declared = superclass->declared;
+                            subclass->declaredIndex.addAll(superclass->declaredIndex);
+                            subclass->fieldInits = superclass->fieldInits;
+                            subclass->anyRequired = superclass->anyRequired;
+                            subclass->getters.addAll(superclass->getters);
+                            subclass->setters.addAll(superclass->setters);
+                            subclass->hasAccessors = superclass->hasAccessors;
+                            subclass->interfaces = superclass->interfaces;
+                            subclass->required = superclass->required;  // what an abstract class left unwritten
+                        }
+
+                        // An interface gives the methods and properties it has a body for, where
+                        // the superclass has none of that name, and asks for the rest.
+                        auto implement = [&](ObjClass* type) {
+                            for (ObjClass* known : subclass->interfaces)
+                                if (known == type) return;
+                            subclass->interfaces.push_back(type);
+                        };
+                        for (int i = 0; i < count; i++) {
+                            ObjClass* type = asClass(types[i]);
+                            if (!type->isInterface) continue;
+                            implement(type);
+                            for (ObjClass* extended : type->interfaces) implement(extended);
+                            subclass->methods.addMissing(type->methods);
+                            subclass->getters.addMissing(type->getters);
+                            subclass->setters.addMissing(type->setters);
+                            subclass->hasAccessors = subclass->hasAccessors || type->hasAccessors;
+                            subclass->required.insert(subclass->required.end(), type->required.begin(), type->required.end());
+                        }
+                        types[0] = superclass != nullptr ? Value::object(superclass) : Value::null();
+                        sp_ = types + 1;
+                        break;
+                    }
+                    case Op::ClassInit: {
+                        Value init = sp_[-1], cls = sp_[-2];
+                        if (!cls.isObjType(ObjType::Class) || !init.isObjType(ObjType::Closure) || asClosure(init)->proto->arity != 0)
+                            throw runtimeError("invalid class declaration");
+                        asClass(cls)->staticInit = asClosure(init);
                         sp_--;
+                        break;
+                    }
+                    case Op::EnsureClassInit:
+                        if (!sp_[-1].isObjType(ObjType::Class)) throw runtimeError("invalid class declaration");
+                        SAVE_IP();
+                        ensureClassInit(asClass(sp_[-1]));
+                        break;
+                    case Op::MissingArg: {
+                        ObjString* parameter = asString(consts[READ_U16()]);
+                        throw runtimeError(frame->closure->proto->name + "() is missing argument '" + parameter->chars + "'");
+                    }
+                    case Op::DataField: {
+                        ObjString* name = asString(consts[READ_U16()]);
+                        if (!sp_[-1].isObjType(ObjType::Class)) throw runtimeError("invalid class declaration");
+                        asClass(sp_[-1])->isData = true;
+                        asClass(sp_[-1])->components.push_back(name);
+                        break;
+                    }
+                    case Op::Component: {
+                        const size_t index = READ_U8();
+                        Value whole = sp_[-1];
+                        static const char* const kOrdinals[] = {"first", "second", "third", "fourth", "fifth"};
+                        const std::string which = index < 5 ? kOrdinals[index] : std::to_string(index + 1) + "th";
+                        if (whole.isObjType(ObjType::List)) {
+                            const std::vector<Value>& items = asList(whole)->items;
+                            if (index >= items.size())
+                                throw runtimeError("cannot take a " + which + " part from a list of " + std::to_string(items.size()));
+                            sp_[-1] = items[index];
+                        } else if (whole.isObjType(ObjType::Instance) && asInstance(whole)->cls->isData) {
+                            const ObjClass* cls = asInstance(whole)->cls;
+                            if (index >= cls->components.size())
+                                throw runtimeError("cannot take a " + which + " part from " + cls->name->chars + ", which has " +
+                                                   std::to_string(cls->components.size()));
+                            SAVE_IP();
+                            sp_[-1] = getProperty(whole, cls->components[index]);
+                        } else {
+                            throw runtimeError("cannot take apart a value of type " + typeName(whole) +
+                                               ": only a list or a data object has parts");
+                        }
+                        break;
+                    }
+                    case Op::MarkInterface:
+                        if (!sp_[-1].isObjType(ObjType::Class)) throw runtimeError("invalid class declaration");
+                        asClass(sp_[-1])->isInterface = true;
+                        break;
+                    case Op::Extension: {
+                        ObjString* name = asString(consts[READ_U16()]);
+                        const int type = READ_U8();
+                        Value function = *--sp_;
+                        if (!function.isObjType(ObjType::Closure)) throw runtimeError("invalid extension function");
+                        const int id = type & kTypeMask;
+                        if (id == kTypeInstance) {
+                            Value target = *--sp_;
+                            if (!target.isObjType(ObjType::Class))
+                                throw runtimeError("an extension function is added to a class or a built-in type, not to a value of type " +
+                                                   typeName(target));
+                            asClass(target)->extensions.set(name, function);
+                        } else if (id == 0) {
+                            anyExtensions_.set(name, function);
+                        } else {
+                            typeExtensions_[id].set(name, function);
+                        }
+                        if (type & kTypeNullable) nullExtensions_.set(name, function);
+                        hasExtensions_ = true;
+                        break;
+                    }
+                    case Op::MarkAbstract:
+                        if (!sp_[-1].isObjType(ObjType::Class)) throw runtimeError("invalid class declaration");
+                        asClass(sp_[-1])->isAbstract = true;
+                        break;
+                    case Op::CheckOverride: {
+                        ObjString* name = asString(consts[READ_U16()]);
+                        if (!sp_[-1].isObjType(ObjType::Class)) throw runtimeError("invalid class declaration");
+                        const int flags = READ_U8();
+                        const bool marked = (flags & 1) != 0, property = (flags & 2) != 0;
+                        const ObjClass* cls = asClass(sp_[-1]);
+
+                        // What the class gets from above under this name: a method for a method,
+                        // a field or property for a field or property; or something an interface
+                        // or an abstract class asks for, which either kind supplies.
+                        auto has = [&](const ObjClass* from) {
+                            if (!property) return from->methods.find(name) != nullptr;
+                            return from->getters.find(name) != nullptr || from->setters.find(name) != nullptr ||
+                                   from->declaredIndex.find(name) != nullptr;
+                        };
+                        bool inherited = cls->super != nullptr && has(cls->super);
+                        for (const ObjClass* implemented : cls->interfaces) inherited = inherited || has(implemented);
+                        const ObjClass* askedBy = nullptr;
+                        for (const auto& [wanted, by] : cls->required)
+                            if (wanted == name && by != cls) askedBy = by;
+
+                        if (marked) {
+                            // toString and == are there for every object to replace.
+                            if (!inherited && askedBy == nullptr && name != names.toString && name != names.opEq)
+                                throw runtimeError("'" + name->chars + "' in class " + cls->name->chars +
+                                                   " is marked override, but there is nothing of that name for it to replace");
+                        } else if (askedBy != nullptr) {
+                            throw runtimeError("'" + name->chars + "' in class " + cls->name->chars + " is what " +
+                                               (askedBy->isInterface ? "interface " : "abstract class ") + askedBy->name->chars +
+                                               " asks for; write override in front of it");
+                        } else if (inherited) {
+                            throw runtimeError("'" + name->chars + "' in class " + cls->name->chars +
+                                               " takes the place of the one it inherits; write override in front of it");
+                        }
+                        break;
+                    }
+                    case Op::Require: {
+                        ObjString* name = asString(consts[READ_U16()]);
+                        if (!sp_[-1].isObjType(ObjType::Class)) throw runtimeError("invalid class declaration");
+                        asClass(sp_[-1])->required.emplace_back(name, asClass(sp_[-1]));
+                        break;
+                    }
+                    case Op::FinishClass: {
+                        if (!sp_[-1].isObjType(ObjType::Class)) throw runtimeError("invalid class declaration");
+                        ObjClass* cls = asClass(sp_[-1]);
+                        if (cls->isInterface || cls->isAbstract) break;  // left for the classes below
+                        for (const auto& [name, interface] : cls->required) {
+                            if (cls->methods.find(name) != nullptr || cls->declaredIndex.find(name) != nullptr ||
+                                cls->getters.find(name) != nullptr)
+                                continue;
+                            throw runtimeError("class " + cls->name->chars + " must have '" + name->chars + "', which " +
+                                               (interface->isInterface ? "interface " : "abstract class ") + interface->name->chars +
+                                               " requires");
+                        }
+                        cls->required.clear();
                         break;
                     }
                     case Op::Getter:
@@ -1584,6 +2275,96 @@ void VM::run(int baseFrame) {
                         (isGetter ? asClass(cls)->getters : asClass(cls)->setters).set(name, accessor);
                         asClass(cls)->hasAccessors = true;
                         sp_--;
+                        break;
+                    }
+                    case Op::PendingEnum:
+                        *sp_++ = Value::enumName(asString(consts[READ_U16()]));
+                        pendingEnums_++;
+                        break;
+                    case Op::EnumNext: {
+                        ObjString* name = asString(consts[READ_U16()]);
+                        const int ordinal = READ_U16();
+                        if (!sp_[-1].isObjType(ObjType::Class)) throw runtimeError("invalid enum declaration");
+                        asClass(sp_[-1])->nextEntry = name;
+                        asClass(sp_[-1])->nextOrdinal = ordinal;
+                        break;
+                    }
+                    case Op::EnumEntry:
+                    case Op::EnumSeal: {
+                        const bool isEntry = static_cast<Op>(ip[-1]) == Op::EnumEntry;
+                        ObjString* name = isEntry ? asString(consts[READ_U16()]) : nullptr;
+                        const int ordinal = isEntry ? READ_U16() : 0;
+                        Value target = sp_[isEntry ? -2 : -1];
+                        if (!target.isObjType(ObjType::Class)) throw runtimeError("invalid enum declaration");
+                        ObjClass* cls = asClass(target);
+                        cls->isEnum = true;
+
+                        // A static val, so that neither an entry nor the list can be replaced.
+                        auto declare = [&](ObjString* member, Value value) {
+                            FieldDecl field;
+                            field.name = member;
+                            field.isVal = true;
+                            cls->staticIndex.set(member, Value::integer(static_cast<int64_t>(cls->staticDeclared.size())));
+                            cls->staticDeclared.push_back(field);
+                            cls->statics.set(member, value);
+                        };
+                        // The list is kept under a name of its own, and is what `entries` gives
+                        // unless the enum has a property of that name in its place.
+                        const Value* list = cls->statics.find(names.enumEntries);
+                        if (list == nullptr) {
+                            Value fresh = Value::object(alloc<ObjList>());
+                            cls->statics.set(names.enumEntries, fresh);
+                            if (cls->staticGetters.find(names.entries) == nullptr) declare(names.entries, fresh);
+                            list = cls->statics.find(names.enumEntries);
+                        }
+                        if (!isEntry) {
+                            cls->enumSealed = true;
+                            break;
+                        }
+
+                        Value entry = sp_[-1];
+                        if (!entry.isObjType(ObjType::Instance) || asInstance(entry)->cls != cls || !list->isObjType(ObjType::List))
+                            throw runtimeError("invalid enum declaration");
+                        nameEntry(asInstance(entry), name, ordinal);
+                        asList(*list)->items.push_back(entry);
+                        declare(name, entry);
+                        sp_--;
+                        break;
+                    }
+                    case Op::StaticGetter:
+                    case Op::StaticSetter: {
+                        bool isGetter = static_cast<Op>(ip[-1]) == Op::StaticGetter;
+                        ObjString* name = asString(consts[READ_U16()]);
+                        Value accessor = sp_[-1], cls = sp_[-2];
+                        if (!cls.isObjType(ObjType::Class) || !accessor.isObjType(ObjType::Closure) ||
+                            asClosure(accessor)->proto->arity != (isGetter ? 0 : 1))
+                            throw runtimeError("invalid class declaration");
+                        (isGetter ? asClass(cls)->staticGetters : asClass(cls)->staticSetters).set(name, accessor);
+                        sp_--;
+                        break;
+                    }
+                    case Op::StaticField: {
+                        ObjString* name = asString(consts[READ_U16()]);
+                        int flags = READ_U16();
+                        FieldDecl field;
+                        field.name = name;
+                        field.type = static_cast<uint8_t>(flags & 0xFF);
+                        field.isVal = (flags & kFieldVal) != 0;
+                        const bool classTyped = (field.type & kTypeMask) == kTypeInstance;
+                        Value value = sp_[-1];
+                        Value target = sp_[classTyped ? -3 : -2];
+                        if (classTyped) {
+                            if (!sp_[-2].isObjType(ObjType::Closure)) throw runtimeError("invalid class declaration");
+                            field.typeThunk = asClosure(sp_[-2]);
+                        }
+                        if (!target.isObjType(ObjType::Class)) throw runtimeError("invalid class declaration");
+                        ObjClass* cls = asClass(target);
+                        SAVE_IP();
+                        checkStaticType(cls, field, value);
+                        cls->staticIndex.set(name, Value::integer(static_cast<int64_t>(cls->staticDeclared.size())));
+                        cls->staticDeclared.push_back(field);
+                        cls->statics.set(name, value);
+                        sp_ -= classTyped ? 2 : 1;
                         break;
                     }
                     case Op::DeclareField: {
@@ -1600,9 +2381,14 @@ void VM::run(int baseFrame) {
                         }
                         if (!sp_[-1].isObjType(ObjType::Class)) throw runtimeError("invalid class declaration");
                         ObjClass* cls = asClass(sp_[-1]);
-                        if (cls->declaredIndex.find(name) != nullptr)
-                            throw runtimeError("field '" + name->chars + "' of class " + cls->name->chars +
-                                               " is already declared by a superclass");
+                        if (const Value* inherited = cls->declaredIndex.find(name)) {
+                            if ((flags & kFieldOverride) == 0)
+                                throw runtimeError("field '" + name->chars + "' of class " + cls->name->chars +
+                                                   " is already declared by a superclass; write override to declare it again");
+                            field.overrides = true;
+                            cls->declared[static_cast<size_t>(inherited->as.i)] = field;
+                            break;
+                        }
                         cls->declaredIndex.set(name, Value::integer(static_cast<int64_t>(cls->declared.size())));
                         cls->declared.push_back(field);
                         if (flags & kFieldRequired) {
@@ -1670,11 +2456,18 @@ void VM::run(int baseFrame) {
                         break;
                     }
                     case Op::Range: {
-                        bool inclusive = READ_U8() != 0;
+                        const int flags = READ_U8();
+                        int64_t step = 1;
+                        if (flags & 4) {
+                            Value given = *--sp_;
+                            if (!given.isInt() || given.as.i <= 0)
+                                throw runtimeError("the step of a range must be a positive int");
+                            step = given.as.i;
+                        }
                         Value end = sp_[-1], start = sp_[-2];
                         if (!start.isInt() || !end.isInt())
                             throw runtimeError("range bounds must be ints, got " + typeName(start) + " and " + typeName(end));
-                        sp_[-2] = Value::object(alloc<ObjRange>(start.as.i, end.as.i, int64_t{1}, inclusive));
+                        sp_[-2] = Value::object(alloc<ObjRange>(start.as.i, end.as.i, (flags & 2) ? -step : step, (flags & 1) != 0));
                         sp_--;
                         break;
                     }
@@ -1831,7 +2624,7 @@ void VM::stringifyInto(std::string& out, Value v, bool quote, int depth) {
         case ObjType::Range: {
             ObjRange* range = asRange(v);
             out += std::to_string(range->start);
-            out += range->inclusive ? "..=" : "..";
+            out += range->inclusive ? ".." : "..<";
             out += std::to_string(range->end);
             if (range->step != 1) out += " step " + std::to_string(range->step);
             return;
@@ -1867,6 +2660,32 @@ void VM::stringifyInto(std::string& out, Value v, bool quote, int depth) {
                 }
                 return;
             }
+            if (instance->cls->isData) {
+                // A data object prints as its class and header fields: Point(x=1, y=2).
+                out += instance->cls->name->chars + "(";
+                if (depth > 20) {
+                    out += "...)";
+                    return;
+                }
+                bool first = true;
+                for (ObjString* part : instance->cls->components) {
+                    if (!first) out += ", ";
+                    first = false;
+                    out += part->chars + "=";
+                    const Value* field = instance->fields.find(part);
+                    stringifyInto(out, field != nullptr ? *field : Value::null(), true, depth + 1);
+                }
+                out += ")";
+                return;
+            }
+            if (instance->cls->isEnum) {
+                // An enum entry prints as its name.
+                const Value* entryName = instance->fields.find(names.entryName);
+                if (entryName != nullptr && entryName->isString()) {
+                    out += asString(*entryName)->chars;
+                    return;
+                }
+            }
             out += "<" + instance->cls->name->chars + " instance>";
             return;
         }
@@ -1887,6 +2706,9 @@ void VM::collectGarbage() {
     for (int i = 0; i < frameCount_; i++) markObject(frames_[static_cast<size_t>(i)].closure);
     for (ObjUpvalue* upvalue = openUpvalues_; upvalue != nullptr; upvalue = upvalue->nextOpen) markObject(upvalue);
     for (const Value& global : globals_) markValue(global);
+    for (const Table& table : typeExtensions_) markTable(table);
+    markTable(nullExtensions_);
+    markTable(anyExtensions_);
     for (const auto& builtin : builtins_) markValue(builtin.second);
     for (const Value& root : tempRoots) markValue(root);
     for (const Value& root : pinned) markValue(root);
@@ -1978,6 +2800,22 @@ void VM::blacken(Obj* obj) {
                 markObject(field.typeClass);
             }
             for (ObjClosure* fieldInit : cls->fieldInits) markObject(fieldInit);
+            markTable(cls->staticGetters);
+            markTable(cls->staticSetters);
+            markObject(cls->staticInit);
+            markTable(cls->extensions);
+            markObject(cls->nextEntry);
+            for (ObjClass* implemented : cls->interfaces) markObject(implemented);
+            for (ObjString* part : cls->components) markObject(part);
+            for (const auto& [name, interface] : cls->required) {
+                markObject(name);
+                markObject(interface);
+            }
+            for (const FieldDecl& field : cls->staticDeclared) {
+                markObject(field.typeThunk);
+                markObject(field.typeClass);
+            }
+            liveBytes_ += cls->staticDeclared.capacity() * sizeof(FieldDecl);
             liveBytes_ += cls->declared.capacity() * sizeof(FieldDecl) + cls->fieldInits.capacity() * sizeof(ObjClosure*);
             break;
         }

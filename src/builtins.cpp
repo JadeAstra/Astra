@@ -78,6 +78,20 @@ size_t utf8Length(const std::string& s, size_t i) {
     return n;
 }
 
+std::vector<std::string> splitLines(const std::string& text) {
+    std::vector<std::string> lines;
+    size_t start = 0;
+    for (;;) {
+        size_t end = text.find('\n', start);
+        std::string line = text.substr(start, end == std::string::npos ? end : end - start);
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        lines.push_back(std::move(line));
+        if (end == std::string::npos) break;
+        start = end + 1;
+    }
+    return lines;
+}
+
 ObjList* newList(VM& vm, std::vector<Value> items = {}) {
     ObjList* list = vm.alloc<ObjList>();
     list->items = std::move(items);
@@ -405,6 +419,43 @@ void registerStringMethods(VM& vm) {
         return vm.str(std::string(trimmed(asString(self)->chars)));
     });
 
+    // For text written over several lines in the source: trimIndent takes away the indentation
+    // the lines share, and trimMargin everything up to and including a marker ("|" unless
+    // another is given). Both drop a first and a last line that are blank.
+    vm.defineMethod(T, "trimIndent", 0, 0, [](VM& vm, Value self, int, Value*) -> Value {
+        std::vector<std::string> lines = splitLines(asString(self)->chars);
+        size_t indent = std::string::npos;
+        for (const std::string& line : lines) {
+            size_t first = line.find_first_not_of(" \t");
+            if (first != std::string::npos) indent = std::min(indent, first);
+        }
+        std::string out;
+        for (size_t i = 0; i < lines.size(); i++) {
+            const bool blank = lines[i].find_first_not_of(" \t") == std::string::npos;
+            if (blank && (i == 0 || i + 1 == lines.size())) continue;
+            if (!out.empty() || i > 1 || (i == 1 && lines[0].find_first_not_of(" \t") != std::string::npos)) out += '\n';
+            if (!blank) out += lines[i].substr(indent == std::string::npos ? 0 : indent);
+        }
+        return vm.str(std::move(out));
+    });
+
+    vm.defineMethod(T, "trimMargin", 0, 1, [](VM& vm, Value self, int argc, Value* args) -> Value {
+        const std::string marker = argc > 0 ? vm.toStr(args[0], "margin marker") : std::string("|");
+        std::vector<std::string> lines = splitLines(asString(self)->chars);
+        std::string out;
+        bool any = false;
+        for (size_t i = 0; i < lines.size(); i++) {
+            const size_t first = lines[i].find_first_not_of(" \t");
+            const bool blank = first == std::string::npos;
+            if (blank && (i == 0 || i + 1 == lines.size())) continue;
+            if (any) out += '\n';
+            any = true;
+            if (!blank && !marker.empty() && lines[i].compare(first, marker.size(), marker) == 0) out += lines[i].substr(first + marker.size());
+            else out += lines[i];
+        }
+        return vm.str(std::move(out));
+    });
+
     vm.defineMethod(T, "split", 0, 1, [](VM& vm, Value self, int argc, Value* args) -> Value {
         const std::string& s = asString(self)->chars;
         std::vector<Value> parts;
@@ -542,10 +593,10 @@ void registerListMethods(VM& vm) {
         return removed;
     });
 
-    vm.defineMethod(T, "remove", 1, 1, [](VM&, Value self, int, Value* args) -> Value {
+    vm.defineMethod(T, "remove", 1, 1, [](VM& vm, Value self, int, Value* args) -> Value {
         std::vector<Value>& items = asList(self)->items;
         for (size_t i = 0; i < items.size(); i++) {
-            if (valuesEqual(items[i], args[0])) {
+            if (vm.equals(items[i], args[0])) {
                 items.erase(items.begin() + static_cast<std::ptrdiff_t>(i));
                 return Value::boolean(true);
             }
@@ -558,16 +609,18 @@ void registerListMethods(VM& vm) {
         return Value::null();
     });
 
-    vm.defineMethod(T, "contains", 1, 1, [](VM&, Value self, int, Value* args) -> Value {
-        for (const Value& item : asList(self)->items)
-            if (valuesEqual(item, args[0])) return Value::boolean(true);
+    vm.defineMethod(T, "contains", 1, 1, [](VM& vm, Value self, int, Value* args) -> Value {
+        // By index: comparing may run an object's own == operator, which may change the list.
+        const std::vector<Value>& items = asList(self)->items;
+        for (size_t i = 0; i < items.size(); i++)
+            if (vm.equals(items[i], args[0])) return Value::boolean(true);
         return Value::boolean(false);
     });
 
-    vm.defineMethod(T, "indexOf", 1, 1, [](VM&, Value self, int, Value* args) -> Value {
+    vm.defineMethod(T, "indexOf", 1, 1, [](VM& vm, Value self, int, Value* args) -> Value {
         const std::vector<Value>& items = asList(self)->items;
         for (size_t i = 0; i < items.size(); i++)
-            if (valuesEqual(items[i], args[0])) return Value::integer(static_cast<int64_t>(i));
+            if (vm.equals(items[i], args[0])) return Value::integer(static_cast<int64_t>(i));
         return Value::integer(-1);
     });
 
@@ -707,6 +760,11 @@ void registerMapMethods(VM& vm) {
     });
 
     vm.defineMethod(T, "has", 1, 1, [](VM&, Value self, int, Value* args) -> Value {
+        return Value::boolean(asMap(self)->map.find(args[0]) != nullptr);
+    });
+
+    // The same under the name that `key in map` looks for.
+    vm.defineMethod(T, "contains", 1, 1, [](VM&, Value self, int, Value* args) -> Value {
         return Value::boolean(asMap(self)->map.find(args[0]) != nullptr);
     });
 

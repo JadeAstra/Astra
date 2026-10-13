@@ -168,7 +168,7 @@ class Box(val window, val vertical : bool, var padding : int = 0, var spacing : 
     return canvas
   }
 
-  fun measure() : list {
+  override fun measure() : list {
     var along = 0
     var across = 0
     for child in this.children {
@@ -181,7 +181,7 @@ class Box(val window, val vertical : bool, var padding : int = 0, var spacing : 
     return this.vertical ? [across + edges, along + edges] : [along + edges, across + edges]
   }
 
-  fun place(x : int, y : int, width : int, height : int) {
+  override fun place(x : int, y : int, width : int, height : int) {
     // Space left over goes to the children that fill.
     val wanted = this.measure()
     val spare = this.vertical ? height - wanted[1] : width - wanted[0]
@@ -280,12 +280,12 @@ class Widget(val window, val id : int, var width : int = 0, var height : int = 0
   fun stretchesWide() : bool => true       // uses all the width it is given?
   fun stretchesTall() : bool => false      // uses all the height it is given?
 
-  fun measure() : list {
+  override fun measure() : list {
     val natural = this.natural()
     return [this.width > 0 ? this.width : natural[0], this.height > 0 ? this.height : natural[1]]
   }
 
-  fun place(x : int, y : int, width : int, height : int) {
+  override fun place(x : int, y : int, width : int, height : int) {
     val wanted = this.measure()
     val w = this.stretchesWide() ? width : Math.min(wanted[0], width)
     val h = this.stretchesTall() ? height : Math.min(wanted[1], height)
@@ -304,13 +304,13 @@ class Widget(val window, val id : int, var width : int = 0, var height : int = 0
 }
 
 class Label(window, text : string, width : int = 0) : Widget(window, GuiBackend.control("label", window.id, text), width) {
-  fun natural() : list {
+  override fun natural() : list {
     val size = GuiBackend.textSize(this.text)
     return [size[0] + 4, size[1] + 4]
   }
 
   // A label takes the room its text needs, so new text can move its neighbours.
-  set text(value) {
+  override set text(value) {
     GuiBackend.setText(this.id, str(value))
     if this.window.shown { this.window.layout() }
   }
@@ -318,9 +318,9 @@ class Label(window, text : string, width : int = 0) : Widget(window, GuiBackend.
 
 class Button(window, text : string, var onClick : function? = null, width : int = 0)
     : Widget(window, GuiBackend.control("button", window.id, text), width) {
-  fun stretchesWide() : bool => false
+  override fun stretchesWide() : bool => false
 
-  fun natural() : list {
+  override fun natural() : list {
     val size = GuiBackend.textSize(this.text)
     return [Math.max(size[0] + 28, 84), size[1] + 12]
   }
@@ -334,7 +334,7 @@ class Button(window, text : string, var onClick : function? = null, width : int 
     return this
   }
 
-  fun handle(event, a, b, c) {
+  override fun handle(event, a, b, c) {
     if event == "click" and this.onClick != null { this.onClick() }
     return null
   }
@@ -342,7 +342,7 @@ class Button(window, text : string, var onClick : function? = null, width : int 
 
 class CheckBox(window, text : string, var onChange : function? = null)
     : Widget(window, GuiBackend.control("checkbox", window.id, text)) {
-  fun natural() : list {
+  override fun natural() : list {
     val size = GuiBackend.textSize(this.text)
     return [size[0] + 26, size[1] + 6]
   }
@@ -351,7 +351,7 @@ class CheckBox(window, text : string, var onChange : function? = null)
   set checked(on : bool) { GuiBackend.setChecked(this.id, on) }
   fun click() { GuiBackend.click(this.id) }
 
-  fun handle(event, a, b, c) {
+  override fun handle(event, a, b, c) {
     if event == "click" and this.onChange != null { this.onChange(this.checked) }
     return null
   }
@@ -360,9 +360,9 @@ class CheckBox(window, text : string, var onChange : function? = null)
 // A single line of editable text. onChange(text) runs when the user edits it.
 class TextBox(window, text : string, var onChange : function? = null, width : int = 0)
     : Widget(window, GuiBackend.control("textbox", window.id, text), width) {
-  fun natural() : list => [170, GuiBackend.textSize("Ag")[1] + 10]
+  override fun natural() : list => [170, GuiBackend.textSize("Ag")[1] + 10]
 
-  fun handle(event, a, b, c) {
+  override fun handle(event, a, b, c) {
     if event == "change" and this.onChange != null { this.onChange(this.text) }
     return null
   }
@@ -371,10 +371,10 @@ class TextBox(window, text : string, var onChange : function? = null, width : in
 // Several lines of editable text.
 class TextArea(window, text : string, var onChange : function? = null, width : int = 0, height : int = 0)
     : Widget(window, GuiBackend.control("textarea", window.id, text), width, height) {
-  fun natural() : list => [260, 110]
-  fun stretchesTall() : bool => true
+  override fun natural() : list => [260, 110]
+  override fun stretchesTall() : bool => true
 
-  fun handle(event, a, b, c) {
+  override fun handle(event, a, b, c) {
     if event == "change" and this.onChange != null { this.onChange(this.text) }
     return null
   }
@@ -385,8 +385,8 @@ class ListBox(window, var onSelect : function? = null, width : int = 0, height :
     : Widget(window, GuiBackend.control("listbox", window.id, ""), width, height) {
   val items : list = []
 
-  fun natural() : list => [170, 120]
-  fun stretchesTall() : bool => true
+  override fun natural() : list => [170, 120]
+  override fun stretchesTall() : bool => true
 
   fun add(item) {
     this.items.push(item)
@@ -420,7 +420,7 @@ class ListBox(window, var onSelect : function? = null, width : int = 0, height :
     return index < 0 ? null : this.items[index]
   }
 
-  fun handle(event, a, b, c) {
+  override fun handle(event, a, b, c) {
     if event == "select" and this.onSelect != null { this.onSelect(this.selectedIndex, this.selected) }
     return null
   }
@@ -440,8 +440,8 @@ class Canvas(window, width : int = 300, height : int = 200)
   var onKeyUp : function? = null          // fun(key)
   var onResize : function? = null         // fun(width, height)
 
-  fun natural() : list => [300, 200]
-  fun stretchesTall() : bool => true
+  override fun natural() : list => [300, 200]
+  override fun stretchesTall() : bool => true
 
   // The size it currently has on screen.
   fun size() : list => [this.currentWidth, this.currentHeight]
@@ -484,7 +484,7 @@ class Canvas(window, width : int = 300, height : int = 200)
   // Saves the drawing as a .bmp file.
   fun saveImage(path : string) { GuiBackend.saveImage(this.id, path) }
 
-  fun handle(event, a, b, c) {
+  override fun handle(event, a, b, c) {
     if event == "mouseDown" {
       if this.onMouseDown != null { this.onMouseDown(a, b, c) }
     } else if event == "mouseUp" {

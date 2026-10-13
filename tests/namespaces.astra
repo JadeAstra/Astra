@@ -1,0 +1,45 @@
+// A folder is a namespace. `import name` loads it, and its names are then written name.Thing;
+// `import name.*` lets them be written bare as well.
+import NsShapes.*
+import NsText                          // NsText.Block, NsText.words
+import NsText as text                  // or under a name of the importer's choosing
+
+val shapes = [Circle(1), Square(3), unit()]
+print(shapes.map { it.describe() })     // expect: ["<circle> r=1", "<square> side=3", "<square> side=1"]
+print(largest(shapes).name, created, PI_ISH, fillOf(shapes[0]), fillOf(shapes[1], SOLID))   // expect: square 3 3 circle:NONE square:SOLID
+
+// With .* the import's own name still works, for saying which one is meant.
+print(NsShapes.PI_ISH, NsShapes.Square(2).area(), NsShapes.label(shapes[0]), NsShapes.Fill.SOLID)   // expect: 3 4 <circle> SOLID
+
+// Each file keeps its private names to itself; two files can each have one of the same name.
+print(circleSecret(), shapeSecret())    // expect: circle's own shape's own, not for others
+val secret = "the test's own"
+print(secret)                           // expect: the test's own
+
+// internal names are seen by the whole program (and by nobody outside a library).
+print(registry.length, register(Circle(9)).r, registry)  // expect: 1 9 ["square", "circle"]
+
+// This file's own names come before imported ones.
+class Block(val n) {
+  fun describe() => "my block $n"
+}
+print(Block(1).describe())              // expect: my block 1
+
+// Without .* nothing of the import is in reach by a bare name.
+print(NsText.Block("hi").describe(), text.words("a b c"), NsText.title, text.title)   // expect: text block: hi ["a", "b", "c"] text text
+try { words("x y") } catch (e) { print(e.message) }   // expect: undefined variable 'words'
+val made : text.Block = NsText.Block("typed")
+print(made is text.Block, made is NsText.Block, made is Block, Block(2) is text.Block)   // expect: true true false false
+fun show(block : NsText.Block) => block.content
+print(show(made), [1].map { text.label("x") })   // expect: typed ["[x]"]
+try { show(Block(3)) } catch (e) { print(e.message) }   // expect: argument 'block' of show() must be Block, got Block
+
+// A variable called like an import comes first, as a variable does everywhere.
+fun shadowed(text) => text.length
+print(shadowed("four"))                 // expect: 4
+
+// Importing a folder again, or a file of a folder already loaded, loads nothing again.
+import NsShapes
+import NsShapes.shape
+print(created, NsShapes.shape.title)   // expect: 5 shapes
+

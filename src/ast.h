@@ -19,7 +19,7 @@ struct Node {
 
 enum class ExprKind {
     Literal, Interp, Name, This, Super, Unary, Binary, Logical, Ternary, Assign,
-    Call, Member, Index, List, Map, Range, Is, Function, IncDec,
+    Call, Member, Index, List, Map, Range, Is, Function, IncDec, Elvis, Jump, Cast, In, When, Statement, Object,
 };
 
 struct Expr : Node {
@@ -51,6 +51,27 @@ struct FunctionDecl : Node {
     TypeAnnotation returnType;
     std::vector<StmtPtr> body;
     bool isStatic = false;
+
+    // `vararg items`: the parameter that gathers any number of arguments into a list, or -1.
+    int varargIndex = -1;
+
+    // In an interface: `fun name(params)` with no body, for the implementing class to supply.
+    bool isAbstract = false;
+
+    // Written `override`: it takes the place of a member the class would otherwise be given.
+    bool isOverride = false;
+
+    // Made by the compiler rather than written (the `copy` of a data class), so the rule about
+    // saying `override` does not apply to it.
+    bool generated = false;
+
+    // For a lambda literal: the names `return@name` can use for it. One written before it
+    // (`name@ { ... }`), and that of the function it is passed to.
+    std::string label;
+    std::string calleeLabel;
+
+    // One per parameter when any is written `(a, b)`: the names its parts go to. Empty otherwise.
+    std::vector<std::vector<std::string>> paramPatterns;
 
     // A lambda literal, `{ a, b -> ... }` or `{ ... it ... }`. Its value is its last expression,
     // and a name it does not declare may belong to the object it is run on (its receiver).
@@ -141,12 +162,17 @@ struct CallExpr : Expr {
 
     // The last argument is a lambda written after the ')': `button("OK") { ... }`.
     bool trailingLambda = false;
+
+    // One per argument: `*list` passes each element of the list as an argument of its own.
+    std::vector<char> spread;
+    bool hasSpread = false;
     CallExpr() : Expr(ExprKind::Call) {}
 };
 
 struct MemberExpr : Expr {
     ExprPtr object;
     std::string name;
+    bool safe = false;  // `object?.name`: null when the object is null
     MemberExpr() : Expr(ExprKind::Member) {}
 };
 
@@ -168,12 +194,38 @@ struct MapExpr : Expr {
 struct RangeExpr : Expr {
     ExprPtr start, end;
     bool inclusive = false;
+    bool descending = false;  // `10 downTo 1`
+    ExprPtr step;             // `... step 2`; null for a step of one
     RangeExpr() : Expr(ExprKind::Range) {}
 };
 
+// `value is Type` and `value !is Type`.
 struct IsExpr : Expr {
-    ExprPtr value, type;
+    ExprPtr value;
+    TypeAnnotation type;
+    bool negated = false;
     IsExpr() : Expr(ExprKind::Is) {}
+};
+
+// `value as Type` insists on the type; `value as? Type` gives null instead of an error.
+struct CastExpr : Expr {
+    ExprPtr value;
+    TypeAnnotation type;
+    bool safe = false;
+    CastExpr() : Expr(ExprKind::Cast) {}
+};
+
+// `value in container` and `value !in container`: container.contains(value).
+struct InExpr : Expr {
+    ExprPtr value, container;
+    bool negated = false;
+    InExpr() : Expr(ExprKind::In) {}
+};
+
+// `left ?: right`: left, unless it is null.
+struct ElvisExpr : Expr {
+    ExprPtr left, right;
+    ElvisExpr() : Expr(ExprKind::Elvis) {}
 };
 
 struct FunctionExpr : Expr {
@@ -189,6 +241,10 @@ enum class StmtKind {
 
 struct Stmt : Node {
     const StmtKind kind;
+
+    // For a declaration at the top level of a file: 0 public, 1 internal (its library only),
+    // 2 private (its file only).
+    uint8_t visibility = 0;
     explicit Stmt(StmtKind k) : kind(k) {}
     virtual ~Stmt() = default;
 };
@@ -201,6 +257,19 @@ struct ExprStmt : Stmt {
 // `val name : type = init` (immutable) or `var name : type = init`. The type is optional.
 struct VarStmt : Stmt {
     std::string name;
+
+    bool isOverride = false;  // a field written `override`, as for FunctionDecl
+    bool isAbstract = false;  // `abstract val x`: for a subclass to supply
+
+    // A field of a class with accessors written under it, Kotlin's way:
+    //   var gap = 4
+    //     set(value) { field = value; repaint() }
+    // In them `field` is the stored value, which the property has when it has an initial value.
+    std::unique_ptr<FunctionDecl> getter, setter;
+
+    // `val (a, b) = pair`: the names the parts of the value go to, `_` for one to skip.
+    // Empty for an ordinary declaration.
+    std::vector<std::string> pattern;
     ExprPtr init;  // may be null (var only)
     bool isVal = false;
 
@@ -222,13 +291,17 @@ struct IfStmt : Stmt {
 };
 
 struct WhileStmt : Stmt {
+    std::string label;      // `outer@ while ...`, for break@outer and continue@outer
+    bool doWhile = false;   // `do { ... } while condition`: the body runs before the first test
     ExprPtr condition;
     std::unique_ptr<BlockStmt> body;
     WhileStmt() : Stmt(StmtKind::While) {}
 };
 
 struct ForInStmt : Stmt {
+    std::string label;
     std::string variable;
+    std::vector<std::string> pattern;  // `for (key, value) in pairs`: as for VarStmt
     ExprPtr iterable;
     std::unique_ptr<BlockStmt> body;
     ForInStmt() : Stmt(StmtKind::ForIn) {}
@@ -236,14 +309,23 @@ struct ForInStmt : Stmt {
 
 struct ReturnStmt : Stmt {
     ExprPtr value;  // may be null
+
+    // The last expression of a lambda literal, which is its value, rather than a `return`
+    // somebody wrote.
+    bool implicit = false;
+
+    // `return@name value`: leaves the lambda of that name, not the function around it.
+    std::string label;
     ReturnStmt() : Stmt(StmtKind::Return) {}
 };
 
 struct BreakStmt : Stmt {
+    std::string label;  // `break@outer`: the loop of that name rather than the innermost
     BreakStmt() : Stmt(StmtKind::Break) {}
 };
 
 struct ContinueStmt : Stmt {
+    std::string label;
     ContinueStmt() : Stmt(StmtKind::Continue) {}
 };
 
@@ -252,21 +334,79 @@ struct ThrowStmt : Stmt {
     ThrowStmt() : Stmt(StmtKind::Throw) {}
 };
 
+// One `catch` of a try: `catch (e : NotFound) { ... }`. Without a type it catches every error.
+struct CatchClause {
+    bool hasVariable = false;
+    std::string variable;
+    TypeAnnotation type;
+    std::unique_ptr<BlockStmt> body;
+};
+
 struct TryStmt : Stmt {
     std::unique_ptr<BlockStmt> body;
-    bool hasCatchVariable = false;
-    std::string catchVariable;
-    std::unique_ptr<BlockStmt> handler;
+    std::vector<CatchClause> catches;        // empty when there is only a finally
+    std::unique_ptr<BlockStmt> finalizer;    // null when there is no finally
     TryStmt() : Stmt(StmtKind::Try) {}
+};
+
+// `return`, `throw`, `break` or `continue` where a value is expected, as in
+// `val user = find(id) ?: return`. It never produces a value: control goes elsewhere.
+struct JumpExpr : Expr {
+    StmtPtr jump;
+    JumpExpr() : Expr(ExprKind::Jump) {}
+};
+
+// An `if` or a `try` where a value is expected: `val w = if wide { 200 } else { 100 }`. Its
+// value is that of the block that ran, which is the block's last expression.
+struct StatementExpr : Expr {
+    StmtPtr statement;
+    StatementExpr() : Expr(ExprKind::Statement) {}
+};
+
+// One test of a `when` branch: a value the subject equals, `is Type` or `in container`.
+// Without a subject it is a condition in its own right.
+struct WhenCondition {
+    enum class Kind { Value, Is, In };
+    Kind kind = Kind::Value;
+    bool negated = false;   // !is, !in
+    ExprPtr value;          // Value and In
+    TypeAnnotation type;    // Is
+};
+
+struct WhenBranch : Node {
+    std::vector<WhenCondition> conditions;  // any of them selects the branch; empty for `else`
+    bool isElse = false;
+    StmtPtr body;  // a block, or one statement
+};
+
+// when (subject) { 1, 2 -> a;  is Circle -> b;  in 3..9 -> c;  else -> d }
+// Its value is that of the branch taken, or null when none is.
+struct WhenExpr : Expr {
+    ExprPtr subject;          // null for `when { condition -> ... }`
+    std::string subjectName;  // `when (val name = subject)`
+    std::vector<WhenBranch> branches;
+    WhenExpr() : Expr(ExprKind::When) {}
 };
 
 struct ImportStmt : Stmt {
     std::string path;
+
+    // The name its contents are reached by: `jade.Button` after `import jade`, `ui.Button`
+    // after `import jade as ui`. Empty when the path gives no usable name.
+    std::string alias;
+
+    // `import jade.*`: its names can be written bare as well.
+    bool all = false;
     ImportStmt() : Stmt(StmtKind::Import) {}
 };
 
 struct FunctionStmt : Stmt {
     std::unique_ptr<FunctionDecl> fn;
+
+    // `fun Shape.describe() { ... }`: an extension function. It becomes a method of the type
+    // named, a class or a built-in type, for every value of that type; `this` is the value.
+    std::string receiver;
+    bool receiverNullable = false;  // `fun string?.orEmpty()`: null takes it too
     FunctionStmt() : Stmt(StmtKind::Function) {}
 };
 
@@ -282,9 +422,26 @@ struct HeaderParam : Node {
     ExprPtr defaultValue;
 };
 
+// One entry of an enum: `NORTH`, or `NORTH(0, -1)` when the enum has a header.
+struct EnumEntry : Node {
+    std::string name;
+    std::vector<ExprPtr> args;
+};
+
 // class Name(val a : T, var b, c) : Super(args) { fields and methods }
 struct ClassStmt : Stmt {
     std::string name;
+
+    // `object Name { ... }`: the class is made, then its one instance, and the name is the instance.
+    bool isObject = false;
+
+    // `enum Name { A, B }`: a class whose only instances are the entries listed first in its body.
+    bool isEnum = false;
+    std::vector<EnumEntry> entries;
+
+    // `data Name(val a, val b)`: compared and printed by its header fields, which are also
+    // the parts it comes apart into.
+    bool isData = false;
 
     // Fields can be listed in a header after the name. They are ordinary declared fields,
     // and a class that writes no init of its own gets one that takes the header's entries
@@ -293,14 +450,41 @@ struct ClassStmt : Stmt {
     std::vector<HeaderParam> header;
     size_t headerFieldCount = 0;  // the first so many of `fields` come from the header
 
+    // `interface Name { ... }`: methods for classes to supply or inherit; never has instances.
+    bool isInterface = false;
+
+    // `abstract class`: may leave members for its subclasses to write, and is never created
+    // itself. (`sealed class` is read the same way.)
+    bool isAbstract = false;
+
+    // `init { ... }` blocks, each with the number of fields declared above it: they run when an
+    // object is made, in order with the fields' initial values.
+    std::vector<std::pair<size_t, std::unique_ptr<BlockStmt>>> initBlocks;
+
+    // What follows the ':' : at most one superclass and any number of interfaces, in the order
+    // written. Which is which is settled when the program runs, except that only a superclass
+    // can be given arguments. `superName` is the first of them.
+    std::vector<std::string> supertypes;
+
     bool hasSuper = false;
     std::string superName;
     bool hasSuperArgs = false;        // `: Super(...)`: arguments for the superclass initializer
     std::vector<ExprPtr> superArgs;
 
     std::vector<std::unique_ptr<VarStmt>> fields;  // header fields, then the body's `val`/`var`
+    std::vector<std::unique_ptr<VarStmt>> staticFields;  // `static val`/`static var`, in the order written
     std::vector<std::unique_ptr<FunctionDecl>> methods;
+
+    // Classes, enums, interfaces and objects declared in the body. Each is a static member of
+    // this class, reached as `Outer.Inner`.
+    std::vector<std::unique_ptr<ClassStmt>> nested;
     ClassStmt() : Stmt(StmtKind::Class) {}
+};
+
+// `object : Listener { ... }` where a value is expected: a class with no name, and its one instance.
+struct ObjectExpr : Expr {
+    std::unique_ptr<ClassStmt> cls;
+    ObjectExpr() : Expr(ExprKind::Object) {}
 };
 
 }  // namespace astra

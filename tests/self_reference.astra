@@ -31,7 +31,7 @@ print(schedule())                                // expect: ["timer 1 fired"]
 // typed or not, in blocks and loops, and with each loop turn getting its own variable
 fun counters() {
   val results = []
-  for i in 0..3 {
+  for i in 0..<3 {
     val countdown : function = fun(n) => n == 0 ? "done $i" : countdown(n - 1)
     results.push(countdown(i))
   }
@@ -94,7 +94,7 @@ print(topLevel(5))                               // expect: bottom
 // many of them, to see that nothing is left behind on the stack
 fun many() {
   var sum = 0
-  for i in 0..20000 {
+  for i in 0..<20000 {
     val self = fun(n) => n == 0 ? i : self(n - 1)
     sum += self(2)
   }

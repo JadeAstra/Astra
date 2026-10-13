@@ -12,7 +12,7 @@ namespace astra {
 
 namespace {
 
-enum class Operand : uint8_t { None, U8, U16, I32, U16U8, U16I32, U16U16, U8U8 };
+enum class Operand : uint8_t { None, U8, U16, I32, U16U8, U16I32, U16U16, U8U8, U16U16U8 };
 
 struct OpInfo {
     const char* name;
@@ -65,7 +65,7 @@ const OpInfo kOps[] = {
     {"CLOSE_UPVALUE", Operand::None},
     {"RETURN", Operand::None},
     {"CLASS", Operand::U16},
-    {"INHERIT", Operand::None},
+    {"INHERIT", Operand::U8},
     {"METHOD", Operand::U16},
     {"STATIC_METHOD", Operand::U16},
     {"BUILD_LIST", Operand::U16},
@@ -100,6 +100,38 @@ const OpInfo kOps[] = {
     {"BIT_NOT", Operand::None},
     {"GET_IMPLICIT", Operand::U16U16},
     {"SET_IMPLICIT", Operand::U16U16},
+    {"IDENTICAL", Operand::None},
+    {"JUMP_IF_NULL", Operand::I32},
+    {"JUMP_IF_NOT_NULL", Operand::I32},
+    {"ASSERT_NOT_NULL", Operand::None},
+    {"SETTLE", Operand::U16},
+    {"IS_TYPE", Operand::U8},
+    {"CAST", Operand::U8},
+    {"CAST_OR_NULL", Operand::U8},
+    {"SWAP", Operand::None},
+    {"POP_UNDER", Operand::U16},
+    {"SPREAD", Operand::None},
+    {"CALL_SPREAD", Operand::U8},
+    {"STATIC_FIELD", Operand::U16U16},
+    {"STATIC_GETTER", Operand::U16},
+    {"STATIC_SETTER", Operand::U16},
+    {"TRY_IMPLICIT", Operand::U16I32},
+    {"INVOKE_IMPLICIT", Operand::U16U16U8},
+    {"ENUM_ENTRY", Operand::U16U16},
+    {"ENUM_SEAL", Operand::None},
+    {"ENUM_NEXT", Operand::U16U16},
+    {"PENDING_ENUM", Operand::U16},
+    {"MARK_INTERFACE", Operand::None},
+    {"REQUIRE", Operand::U16},
+    {"FINISH_CLASS", Operand::None},
+    {"DATA_FIELD", Operand::U16},
+    {"COMPONENT", Operand::U8},
+    {"MISSING_ARG", Operand::U16},
+    {"CLASS_INIT", Operand::None},
+    {"ENSURE_CLASS_INIT", Operand::None},
+    {"EXTENSION", Operand::U16U8},
+    {"MARK_ABSTRACT", Operand::None},
+    {"CHECK_OVERRIDE", Operand::U16U8},
 };
 
 const char* const kTypeNames[] = {"", "int", "float", "number", "string", "bool", "list", "map", "range", "function"};
@@ -116,6 +148,7 @@ size_t operandSize(Operand o) {
         case Operand::U16I32: return 6;
         case Operand::U16U16: return 4;
         case Operand::U8U8: return 2;
+        case Operand::U16U16U8: return 5;
     }
     return 0;
 }
@@ -145,6 +178,7 @@ void decodeOperands(const std::vector<uint8_t>& code, size_t ip, Operand operand
             b = readI32(code, ip + 3);
             break;
         case Operand::U16U16:
+        case Operand::U16U16U8:  // the third operand is read where it is needed
             a = readU16(code, ip + 1);
             b = readU16(code, ip + 3);
             break;
@@ -177,17 +211,23 @@ FunctionProto* Program::newProto() {
 
 // ---- Verification ----
 
-void verifyFunction(FunctionProto& f, const Program& program) {
+// Follows every path through a function, checking each instruction and working out the
+// stack depth it runs at. With `partial` the function is still being compiled: jumps that
+// have no target yet are passed over, and the answer is the depth at which the code written
+// so far ends, or -1 if nothing reaches that point.
+static int analyzeStack(FunctionProto& f, const Program& program, bool partial) {
     auto fail = [&](const std::string& why) {
         throw std::runtime_error("invalid bytecode in " + f.name + ": " + why);
     };
 
     const std::vector<uint8_t>& code = f.code;
     const size_t n = code.size();
+    if (n == 0 && partial) return 1 + f.arity;
     if (n == 0) fail("empty function");
     if (f.lines.size() != n) fail("line table does not match the code");
     if (f.arity < 0 || f.arity > 255) fail("bad arity");
     if (f.minArity < -1 || f.minArity > f.arity) fail("bad arity");
+    if (f.varargIndex < -1 || f.varargIndex >= f.arity) fail("bad vararg parameter");
     if (!f.paramNames.empty() && f.paramNames.size() != static_cast<size_t>(f.arity)) fail("bad parameter names");
     for (uint16_t upvalue : f.outerReceivers)
         if (upvalue >= f.upvalues.size()) fail("receiver upvalue out of range");
@@ -198,7 +238,15 @@ void verifyFunction(FunctionProto& f, const Program& program) {
     std::vector<size_t> work;
     int maxDepth = 1 + f.arity;
 
+    int endDepth = -1;
+    auto reachEnd = [&](int depth) {
+        if (endDepth != -1 && endDepth != depth) fail("inconsistent stack depth");
+        endDepth = depth;
+    };
+
     auto flow = [&](int64_t target, int depth) {
+        if (partial && target == 0) return;  // a forward jump that has not been given its target
+        if (partial && static_cast<size_t>(target) == n) return reachEnd(depth);
         if (target < 0 || static_cast<size_t>(target) >= n) fail("jump out of range");
         int& d = depthAt[static_cast<size_t>(target)];
         if (d == -1) {
@@ -214,7 +262,8 @@ void verifyFunction(FunctionProto& f, const Program& program) {
             fail("name operand is not a string constant");
     };
 
-    flow(0, 1 + f.arity);
+    depthAt[0] = 1 + f.arity;
+    work.push_back(0);
 
     while (!work.empty()) {
         size_t ip = work.back();
@@ -306,6 +355,8 @@ void verifyFunction(FunctionProto& f, const Program& program) {
                 case Op::StaticMethod:
                 case Op::Getter:
                 case Op::Setter:
+                case Op::StaticGetter:
+                case Op::StaticSetter:
                     requireName(a);
                     pops = 2;
                     pushes = 1;
@@ -316,14 +367,13 @@ void verifyFunction(FunctionProto& f, const Program& program) {
                 case Op::Mul:
                 case Op::Div:
                 case Op::Mod:
+                case Op::Identical:
                 case Op::Eq:
                 case Op::Lt:
                 case Op::Le:
                 case Op::Gt:
                 case Op::Ge:
                 case Op::Is:
-                case Op::Inherit:
-                case Op::Range:
                 case Op::Shl:
                 case Op::Shr:
                 case Op::BitAnd:
@@ -357,6 +407,119 @@ void verifyFunction(FunctionProto& f, const Program& program) {
                     if (depth < 2) fail("stack underflow");
                     flow(a, depth);
                     pops = 1;
+                    break;
+                case Op::JumpIfNull:
+                case Op::JumpIfNotNull:
+                    if (depth < 2) fail("stack underflow");
+                    flow(a, depth);
+                    break;
+                case Op::AssertNotNull:
+                    pops = pushes = 1;
+                    break;
+                case Op::Swap:
+                    pops = pushes = 2;
+                    break;
+                case Op::PopUnder:
+                    pops = a + 1;
+                    pushes = 1;
+                    break;
+                case Op::Spread:
+                    pops = 2;
+                    pushes = 1;
+                    break;
+                case Op::EnumEntry:
+                    requireName(a);
+                    pops = 2;
+                    pushes = 1;
+                    break;
+                case Op::EnumNext:
+                    requireName(a);
+                    pops = pushes = 1;
+                    break;
+                case Op::EnumSeal:
+                case Op::MarkInterface:
+                case Op::FinishClass:
+                    pops = pushes = 1;
+                    break;
+                case Op::Require:
+                case Op::DataField:
+                    requireName(a);
+                    pops = pushes = 1;
+                    break;
+                case Op::Component:
+                    pops = pushes = 1;
+                    break;
+                case Op::Range:
+                    if ((a & ~7) != 0) fail("bad range");
+                    pops = (a & 4) != 0 ? 3 : 2;
+                    pushes = 1;
+                    break;
+                case Op::MissingArg:
+                    requireName(a);
+                    terminal = true;
+                    break;
+                case Op::ClassInit:
+                    pops = 2;
+                    pushes = 1;
+                    break;
+                case Op::EnsureClassInit:
+                case Op::MarkAbstract:
+                    pops = pushes = 1;
+                    break;
+                case Op::CheckOverride:
+                    requireName(a);
+                    pops = pushes = 1;
+                    break;
+                case Op::Extension:
+                    requireName(a);
+                    if ((b & kTypeMask) > kTypeInstance) fail("unknown type");
+                    pops = (b & kTypeMask) == kTypeInstance ? 2 : 1;
+                    break;
+                case Op::Inherit:
+                    if (a < 1) fail("bad supertype count");
+                    pops = a + 1;
+                    pushes = 1;
+                    break;
+                case Op::PendingEnum:
+                    requireName(a);
+                    pushes = 1;
+                    break;
+                case Op::TryImplicit:
+                    requireName(a);
+                    flow(b, depth + 1);
+                    maxDepth = std::max(maxDepth, depth + 1);
+                    break;
+                case Op::InvokeImplicit:
+                    requireName(a);
+                    if (static_cast<size_t>(b) >= program.globalNames.size()) fail("global out of range");
+                    pops = code[ip + 5] + 1;
+                    pushes = 1;
+                    break;
+                case Op::StaticField: {
+                    requireName(a);
+                    int id = b & kTypeMask;
+                    if (id > kTypeInstance || (b & ~(0xFF | kFieldVal)) != 0) fail("bad field declaration");
+                    pops = id == kTypeInstance ? 3 : 2;
+                    pushes = 1;
+                    break;
+                }
+                case Op::CallSpread:
+                    pops = 2 + 2 * a;
+                    pushes = 1;
+                    break;
+                case Op::IsType:
+                case Op::Cast:
+                case Op::CastOrNull: {
+                    int id = a & kTypeMask;
+                    if (id < kTypeInt || id > kTypeInstance) fail("unknown type");
+                    pops = id == kTypeInstance ? 2 : 1;
+                    pushes = 1;
+                    break;
+                }
+                case Op::Settle:
+                    // At most one slot is added: that of a variable whose value was being worked out.
+                    if (depth < 2 || a < 1 || a > depth) fail("bad stack size");
+                    depth = a + 1;
                     break;
                 case Op::Call:
                     pops = a + 1;
@@ -397,7 +560,7 @@ void verifyFunction(FunctionProto& f, const Program& program) {
                 case Op::DeclareField: {
                     requireName(a);
                     int id = b & kTypeMask;
-                    if (id > kTypeInstance || (b & ~(0xFF | kFieldVal | kFieldRequired)) != 0) fail("bad field declaration");
+                    if (id > kTypeInstance || (b & ~(0xFF | kFieldVal | kFieldRequired | kFieldOverride)) != 0) fail("bad field declaration");
                     pops = id == kTypeInstance ? 2 : 1;
                     pushes = 1;
                     break;
@@ -469,6 +632,10 @@ void verifyFunction(FunctionProto& f, const Program& program) {
             if (terminal) break;
 
             size_t nextIp = ip + size;
+            if (nextIp >= n && partial) {
+                reachEnd(depth);
+                break;
+            }
             if (nextIp >= n) fail("control runs off the end of the function");
             int& d = depthAt[nextIp];
             if (d != -1) {
@@ -480,8 +647,13 @@ void verifyFunction(FunctionProto& f, const Program& program) {
         }
     }
 
-    f.maxStack = maxDepth;
+    if (!partial) f.maxStack = maxDepth;
+    return endDepth;
 }
+
+void verifyFunction(FunctionProto& f, const Program& program) { analyzeStack(f, program, false); }
+
+int stackDepthAtEnd(FunctionProto& f, const Program& program) { return analyzeStack(f, program, true); }
 
 // ---- Disassembly ----
 
@@ -544,6 +716,8 @@ void disassembleFunction(const FunctionProto& f, const Program& program, std::os
             case Op::StaticMethod:
             case Op::Getter:
             case Op::Setter:
+            case Op::StaticGetter:
+            case Op::StaticSetter:
                 out << " " << a << "  ; " << asString(f.constants[a])->chars;
                 break;
             case Op::Invoke:
@@ -557,6 +731,12 @@ void disassembleFunction(const FunctionProto& f, const Program& program, std::os
             case Op::CallNamed:
                 out << " positional=" << a << " named=" << b;
                 break;
+            case Op::TryImplicit:
+                out << " " << a << " -> " << b << "  ; " << asString(f.constants[a])->chars;
+                break;
+            case Op::InvokeImplicit:
+                out << " " << a << " " << b << " argc=" << static_cast<int>(f.code[ip + 5]) << "  ; " << asString(f.constants[a])->chars;
+                break;
             case Op::Closure:
                 out << " " << a << "  ; " << f.protos[a]->name;
                 break;
@@ -569,6 +749,8 @@ void disassembleFunction(const FunctionProto& f, const Program& program, std::os
             case Op::JumpIfFalse:
             case Op::And:
             case Op::Or:
+            case Op::JumpIfNull:
+            case Op::JumpIfNotNull:
             case Op::TryBegin:
                 out << " -> " << a;
                 break;
@@ -580,8 +762,12 @@ void disassembleFunction(const FunctionProto& f, const Program& program, std::os
                 out << " " << a << "  ; " << asString(f.constants[a])->chars << " : " << typeText(static_cast<uint8_t>(b), "<class>");
                 break;
             case Op::CheckReturn:
+            case Op::IsType:
+            case Op::Cast:
+            case Op::CastOrNull:
                 out << "  ; " << typeText(static_cast<uint8_t>(a), "<class>");
                 break;
+            case Op::StaticField:
             case Op::DeclareField:
                 out << " " << a << "  ; " << ((b & kFieldVal) ? "val " : "var ") << asString(f.constants[a])->chars;
                 if ((b & kTypeMask) != 0) out << " : " << typeText(static_cast<uint8_t>(b & 0xFF), "<class>");
@@ -643,6 +829,8 @@ struct Writer {
         str(f.source);
         u32(static_cast<uint32_t>(f.arity));
         u32(static_cast<uint32_t>(f.requiredArgs()));
+        u32(static_cast<uint32_t>(f.varargIndex + 1));
+        u64(f.classParams);
         u32(static_cast<uint32_t>(f.paramNames.size()));
         for (const ObjString* param : f.paramNames) str(param->chars);
 
@@ -740,6 +928,10 @@ struct Reader {
         f->arity = static_cast<int>(u32());
         f->minArity = static_cast<int>(u32());
         if (f->minArity < 0 || f->minArity > f->arity) corrupt();
+        uint32_t vararg = u32();
+        if (vararg > static_cast<uint32_t>(f->arity)) corrupt();
+        f->varargIndex = static_cast<int>(vararg) - 1;
+        f->classParams = u64();
         uint32_t paramCount = count(4);
         for (uint32_t i = 0; i < paramCount; i++) f->paramNames.push_back(vm.intern(str()));
 

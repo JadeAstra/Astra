@@ -1,0 +1,118 @@
+// data declarations, and taking values apart.
+
+data Point(val x : int, val y : int)
+
+val p = Point(1, 2)
+val q = Point(1, 2)
+print(p, [p, Point(3, 4)], "at $p")         // expect: Point(x=1, y=2) [Point(x=1, y=2), Point(x=3, y=4)] at Point(x=1, y=2)
+
+// Equal when the header fields are; still two objects.
+print(p == q, p != q, p === q, p == Point(1, 3), p == [1, 2], p == null)   // expect: true false false false false false
+print([p, q].indexOf(Point(1, 2)), [Point(5, 5)].contains(Point(5, 5)), [p] == [q], {"at": p} == {"at": q})   // expect: 0 true true true
+
+// copy changes some fields and keeps the rest.
+print(p.copy(), p.copy(y = 9), p.copy(x = 7, y = 8), p.copy(5), p)   // expect: Point(x=1, y=2) Point(x=1, y=9) Point(x=7, y=8) Point(x=5, y=2) Point(x=1, y=2)
+print(p.copy() == p, p.copy() === p, p.copy(x = 2) == p)   // expect: true false false
+try { p.copy(x = "one") } catch (e) { print(e.message) }
+// expect: cannot assign a value of type string to field 'x' of Point, which is declared as int
+
+// It comes apart into its header fields, in order.
+val (px, py) = p
+print(px, py)                               // expect: 1 2
+var (a, _) = Point(10, 20)
+a += 1
+print(a)                                    // expect: 11
+
+// So does a list.
+val (first, second, third) = ["a", "b", "c", "d"]
+val (_, middle) = [1, 2, 3]
+print(first, second, third, middle)         // expect: a b c 2
+fun minMax(items) {
+  var low = items[0]
+  var high = items[0]
+  for item in items {
+    if item < low { low = item }
+    if item > high { high = item }
+  }
+  return [low, high]
+}
+val (low, high) = minMax([3, 9, 1, 4])
+print(low, high)                            // expect: 1 9
+
+// In a function, with the names captured, and in a loop.
+fun spread(point) {
+  val (x, y) = point
+  val sum = fun() => x + y
+  return [y, x, sum()]
+}
+print(spread(Point(3, 4)), spread([5, 6]))  // expect: [4, 3, 7] [6, 5, 11]
+
+val pairs = [["one", 1], ["two", 2], ["three", 3]]
+val seen = []
+for (name, number) in pairs { seen.push("$name=$number") }
+for ((name, number) in pairs) { if number > 1 { seen.push(name.upper()) } }
+for (x, y) in [Point(1, 2), Point(3, 4)] { seen.push(x * y) }
+for (key, value) in {"k": "v", "n": 1}.entries() { seen.push(key + ":" + value) }
+print(seen)   // expect: ["one=1", "two=2", "three=3", "TWO", "THREE", 2, 12, "k:v", "n:1"]
+
+val closures = []
+for (label, _) in pairs { closures.push(fun() => label) }
+print(closures.map { it() })                // expect: ["one", "two", "three"]
+
+// Asking for a part that is not there, or of something that has none.
+try { val (x, y, z) = p } catch (e) { print(e.message) }   // expect: cannot take a third part from Point, which has 2
+try { val (x, y) = [1] } catch (e) { print(e.message) }    // expect: cannot take a second part from a list of 1
+try { val (x, y) = 5 } catch (e) { print(e.message) }      // expect: cannot take apart a value of type int: only a list or a data object has parts
+class Plain(val x, val y)
+try { val (x, y) = Plain(1, 2) } catch (e) { print(e.message) }
+// expect: cannot take apart a value of type Plain: only a list or a data object has parts
+print(Plain(1, 2) == Plain(1, 2))           // expect: false
+
+// A data class is a class: a body, defaults, a superclass, interfaces, statics.
+interface Shape { fun area() }
+data Rect(val w : int, val h : int = 1, var label : string = "rect") : Shape {
+  static val UNIT = Rect(1)
+  val made = "made"                           // not in the header: no part of equality or printing
+  override fun area() => w * h
+  fun scaled(by) => copy(w = w * by, h = h * by)
+}
+val r = Rect(2, 3)
+r.label = "mine"
+print(r, r.area(), r.scaled(2), r.scaled(2).label, Rect.UNIT, r is Shape)
+// expect: Rect(w=2, h=3, label="mine") 6 Rect(w=4, h=6, label="mine") mine Rect(w=1, h=1, label="rect") true
+print(Rect(2, 3) == Rect(2, 3), Rect(2, 3) == Rect(2, 3, "other"), Rect(1) == Rect.UNIT)   // expect: true false true
+val (w, h, label) = r
+print(w, h, label)                          // expect: 2 3 mine
+
+// Its own ==, toString or copy takes the place of the given one.
+data Version(val major : int, val minor : int, val note : string = "") {
+  op ==(other) => other is Version and major == other.major and minor == other.minor
+  fun toString() => "v$major.$minor"
+  fun copy(major = this.major) => Version(major, 0)
+}
+print(Version(1, 2, "a") == Version(1, 2, "b"), Version(1, 2), Version(1, 2).copy(3))   // expect: true v1.2 v3.0
+
+// Data objects inside data objects, and inside lists.
+data Line(val from : Point, val to : Point, val tags : list = [])
+val line = Line(Point(0, 0), Point(1, 1), ["a"])
+print(line, line == Line(Point(0, 0), Point(1, 1), ["a"]), line == Line(Point(0, 0), Point(1, 2), ["a"]))
+// expect: Line(from=Point(x=0, y=0), to=Point(x=1, y=1), tags=["a"]) true false
+val (from, to) = line
+val (tx, ty) = to
+print(from, tx + ty)                        // expect: Point(x=0, y=0) 2
+
+// Inside a class, and in a function.
+class Shapes {
+  data Size(val w, val h)
+  static fun square(n) => Size(n, n)
+}
+fun local() {
+  data Pair(val left, val right)
+  val (l, r) = Pair("L", "R").copy(right = "r")
+  return [l, r, Pair(1, 2) == Pair(1, 2)]
+}
+print(Shapes.square(2), Shapes.Size(1, 2) == Shapes.Size(1, 2), local())   // expect: Size(w=2, h=2) true ["L", "r", true]
+
+// `data` is still an ordinary name.
+val data = [1, 2]
+print(data, data.length)                    // expect: [1, 2] 2

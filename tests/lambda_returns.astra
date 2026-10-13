@@ -1,0 +1,156 @@
+// let, also and takeIf compiled in place; return and return@name in lambdas; parameters that
+// wrap over lines or come apart.
+
+class Node(val name, val children = []) {
+  var hidden = false
+}
+val tree = Node("root", [Node("a", [Node("a1"), Node("a2")]), Node("b")])
+
+// let: the value becomes `it`, or a name of your choosing, and the block's value is the result.
+print(5.let { it + 1 }, "abc".let { text -> text.upper() }, [1, 2].let { it.length })   // expect: 6 ABC 2
+val none = null
+var ran = 0
+print(none?.let { ran += 1; "ran" }, tree.name?.let { it + "!" }, ran)   // expect: null root! 0
+
+// A return inside it leaves the function it is written in.
+fun find(node, name) {
+  if node.name == name { return node }
+  for child in node.children { find(child, name)?.let { return it } }
+  return null
+}
+print(find(tree, "a2")?.name, find(tree, "b")?.name, find(tree, "zzz"))   // expect: a2 b null
+
+fun firstLong(words) {
+  for word in words {
+    word.takeIf { it.length > 3 }?.let { return "found " + it }
+  }
+  return "none"
+}
+print(firstLong(["a", "bb", "cccc", "ddddd"]), firstLong(["a"]))   // expect: found cccc none
+
+// So do break and continue, in a loop around it.
+val kept = []
+for n in [1, 2, null, 4, 5, 6] {
+  n?.let {
+    if it == 2 { continue }
+    if it == 5 { break }
+    kept.push(it * 10)
+  }
+}
+print(kept)                                 // expect: [10, 40]
+
+// also gives the value back; takeIf gives it back or null.
+val log = []
+val made = [1, 2].also { log.push("made " + it.length) }.also { list -> list.push(3) }
+print(made, log, 7.takeIf { it > 5 }, 3.takeIf { it > 5 }, "x".takeIf { false } ?: "fallback")   // expect: [1, 2, 3] ["made 2"] 7 null fallback
+print(none?.also { log.push("never") }, none?.takeIf { true }, log.length)   // expect: null null 1
+
+// In the middle of an expression, with variables of its own, and one inside another.
+fun describe(node) => "node " + node.name.let {
+  val upper = it.upper()
+  val count = node.children.length
+  "$upper($count)"
+} + "."
+print(describe(tree), [1, 2.let { val twice = it * 2; twice + 1 }, 3])   // expect: node ROOT(2). [1, 5, 3]
+print(10.let { outer -> 20.let { inner -> outer + inner + 1.let { it + outer } } })   // expect: 41
+print(4.let { it * 2 }.let { it + 1 }.also { log.push(it) }.takeIf { it == 9 }, log[1])   // expect: 9 9
+
+// The variable is this function's own, so a function made in the block keeps it.
+val readers = []
+for n in [1, 2, 3] {
+  n.let { readers.push(fun() => it * 100) }
+  (n * 2).also { doubled -> readers.push({ doubled }) }
+}
+print(readers.map { it() })                 // expect: [100, 2, 200, 4, 300, 6]
+
+// return@let ends just the block, with a value if one is given.
+fun grade(score) => score.let {
+  if it < 0 { return@let "invalid" }
+  if it >= 90 { return@let "A" }
+  "other"
+}
+print(grade(-1), grade(95), grade(50))      // expect: invalid A other
+fun checked(items) {
+  val seen = []
+  for item in items {
+    item.also {
+      if it == null { return@also }
+      seen.push(it)
+    }
+  }
+  return seen
+}
+print(checked([1, null, 2]))                // expect: [1, 2]
+
+// With try and finally inside the block.
+val order = []
+fun guarded(value) {
+  val result = value.let {
+    try {
+      if it == 0 { return@let "zero" }
+      if it < 0 { return "negative" }
+      return@let "positive"
+    } finally {
+      order.push("finally $it")
+    }
+  }
+  return "result: " + result
+}
+print(guarded(0), guarded(-1), guarded(1), order)   // expect: result: zero negative result: positive ["finally 0", "finally -1", "finally 1"]
+
+// In a real lambda, return@name leaves the lambda; the name is that of the function it is
+// passed to, or one written before it.
+val evens = [1, 2, 3, 4].filter { if it % 2 == 1 { return@filter false }; true }
+val labels = [1, 2, 3].map { if it == 2 { return@map "two" }; "n$it" }
+val shown = []
+[1, 2, 3, 4].each { if it == 3 { return@each }; shown.push(it) }
+val pick = chosen@ { a, b -> if a > b { return@chosen a }; b }
+fun apply2(f, x, y) => f(x, y)
+print(evens, labels, shown, pick(3, 9), pick(8, 2), apply2({ a, b -> if a == b { return@apply2 "same" }; "different" }, 1, 1))
+// expect: [2, 4] ["n1", "two", "n3"] [1, 2, 4] 9 8 same
+
+// A function written with fun returns with a plain return, as before.
+val area = fun(w, h) { return w * h }
+print(area(3, 4), [3, 1, 2].map(fun(n) { if n > 2 { return "big" }; return "small" }))   // expect: 12 ["big", "small", "small"]
+
+// A parameter list broken after a comma, as Kotlin code lays out a long one.
+val sum3 = { first,
+             second,
+             third ->
+  first + second + third
+}
+fun combine(a, b, f) => f(a, b, a + b)
+print(sum3(1, 2, 3), combine(10, 20) { x : int,
+                                       y : int,
+                                       total ->
+  "$x+$y=$total"
+})                                          // expect: 6 10+20=30
+
+// A parameter written (a, b) comes apart.
+val pairs = [["one", 1], ["two", 2]]
+data Point(val x, val y)
+print(pairs.map { (name, n) -> name + n }, pairs.filter { (_, n) -> n > 1 }, [Point(1, 2)].map { (x, y) -> x + y })   // expect: ["one1", "two2"] [["two", 2]] [3]
+fun fold(items, start, step) {
+  var acc = start
+  for item in items { acc = step(acc, item) }
+  return acc
+}
+print(fold(pairs, 0) { total, (_, n) -> total + n }, [3, 4].let { (a, b) -> a * b }, pairs[0].also { (name, _) -> log.push(name) }[1], log[2])   // expect: 3 12 1 one
+
+// A value with a method of its own called let is still taken as the scope function when a
+// lambda follows; called with ordinary arguments it is the method.
+class Lender {
+  fun let(amount) => "lent $amount"
+}
+print(Lender().let(5), Lender().let { "the scope function" })   // expect: lent 5 the scope function
+
+// A function passed by name is called in the ordinary way.
+fun double(n) => n * 2
+print(5.let(double), 5.also(double), 5.takeIf(fun(n) => n > 9))   // expect: 10 5 null
+
+// Many times over: nothing is left on the stack.
+var total = 0
+for i in 1..30000 {
+  total += i.let { if it % 3 == 0 { continue }; 1 } + (i.takeIf { it % 2 == 0 }?.let { 1 } ?: 0)
+}
+print(total)                                // expect: 30000

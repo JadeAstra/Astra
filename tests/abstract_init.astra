@@ -1,0 +1,124 @@
+// abstract classes, override, and init { } blocks.
+
+abstract class Shape(val name : string) {
+  abstract fun area()
+  abstract val sides : int
+  fun describe() => "$name with $sides sides, area ${area()}"
+  open fun scale() => 1
+}
+class Square(val side : int) : Shape("square") {
+  override fun area() => side * side
+  override val sides = 4
+  override fun scale() => 2
+}
+class Dot : Shape("dot") {
+  override fun area() => 0
+  override val sides : int
+    get() => 0
+}
+print(Square(3).describe(), Dot().describe(), Square(1).scale(), Dot().scale())   // expect: square with 4 sides, area 9 dot with 0 sides, area 0 2 1
+print(Square(1) is Shape, Dot() is Shape)   // expect: true true
+
+// An abstract class is never created, and what it leaves has to be written somewhere below.
+try { Shape("blob") } catch (e) { print(e.message) }   // expect: Shape is abstract and cannot be created; create a class that extends it
+try {
+  class Blob : Shape("blob") { override fun area() => 1 }
+} catch (e) { print(e.message) }            // expect: class Blob must have 'sides', which abstract class Shape requires
+
+// An abstract class may itself leave things for further down, and add its own.
+interface Named { fun title() }
+abstract class Polygon(name : string, val corners : int) : Shape(name), Named {
+  override val sides get() => corners
+  abstract fun perimeter()
+}
+class Triangle(val edge : int) : Polygon("triangle", 3) {
+  override fun area() => edge * edge / 2
+  override fun perimeter() => edge * 3
+  override fun title() => "Triangle"
+}
+val t = Triangle(4)
+print(t.describe(), t.perimeter(), t.title(), t is Named)   // expect: triangle with 3 sides, area 8 12 Triangle true
+try {
+  class Half : Polygon("half", 2) {
+    override fun area() => 0
+    override fun title() => "Half"
+  }
+} catch (e) { print(e.message) }            // expect: class Half must have 'perimeter', which abstract class Polygon requires
+
+// sealed is read as abstract: a class that only its subclasses stand for.
+sealed class Event {
+  class Click(val x) : Event()
+  class Key(val code) : Event()
+}
+print(Event.Click(1) is Event, Event.Key(13).code)   // expect: true 13
+try { Event() } catch (e) { print(e.message) }   // expect: Event is abstract and cannot be created; create a class that extends it
+
+// override has to have something to replace.
+try {
+  class Wrong : Shape("wrong") {
+    override fun area() => 0
+    override val sides = 0
+    override fun aera() => 0
+  }
+} catch (e) { print(e.message) }            // expect: 'aera' in class Wrong is marked override, but there is nothing of that name for it to replace
+class Plain {
+  open fun greet() => "hello"
+  var size = 1
+}
+class Loud : Plain() {
+  override fun greet() => super.greet().upper()
+  override var size = 2
+}
+print(Loud().greet(), Loud().size)          // expect: HELLO 2
+
+// init { } blocks run when an object is made, in order with the fields around them.
+val log = []
+class Widget(val id : int, name : string = "widget") {
+  val label = "$name#$id"
+  init {
+    log.push("first: " + label)
+    registered = true                        // a field declared below already exists, as null
+  }
+  var registered : bool? = null
+  var children = []
+  init {
+    children.push(id * 10)
+    log.push("second: " + children + " " + registered)
+  }
+  fun describe() => "$label $registered $children"
+}
+val w = Widget(7)
+print(w.describe(), log)   // expect: widget#7 null [70] ["first: widget#7", "second: [70] null"]
+
+// With a superclass: its part first. With no header at all.
+class Base(val kind : string) {
+  val made = []
+  init { made.push("base " + kind) }
+}
+class Derived(val n : int) : Base("derived") {
+  init { made.push("derived " + n) }
+}
+class Counter {
+  var count = 0
+  init { count = 10 }
+  init { count += 1 }
+}
+print(Derived(5).made, Counter().count)     // expect: ["base derived", "derived 5"] 11
+
+// In an object and an enum.
+object Registry {
+  val names = []
+  init { names.push("ready") }
+}
+enum Level(val weight : int) {
+  low(1), high(9)
+  var label = ""
+  init { label = name + ":" + weight }
+}
+print(Registry.names, Level.high.label)     // expect: ["ready"] high:9
+
+// `init`, `abstract`, `sealed`, `open` and `override` are ordinary names elsewhere.
+val abstract = 1
+val open = 2
+val init = 3
+print(abstract + open + init)               // expect: 6

@@ -1,5 +1,5 @@
 // Drawing with the mouse on a canvas. Drag to draw; the buttons pick a colour.
-import "gui"
+import gui.*
 
 val window = Window("Paint", 560, 420)
 

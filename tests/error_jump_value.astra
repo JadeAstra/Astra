@@ -1,0 +1,3 @@
+// A jump written as a value still needs somewhere to jump from.
+val first = null ?: break
+// expect compile error: 'break' outside of a loop

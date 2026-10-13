@@ -1,0 +1,5 @@
+// Two imports that declare the same name: its bare name could mean either.
+import NsShapes.*
+import NsText.*
+print(title)
+// expect compile error: 'title' is declared by both NsShapes and NsText; say which, as in NsText.title

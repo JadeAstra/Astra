@@ -1,0 +1,135 @@
+// Classes, enums, interfaces and objects declared inside a class.
+
+class Event(val source : string) {
+  class Click(source : string, val x : int, val y : int) : Event(source) {
+    override fun describe() => "click at $x,$y from $source"
+  }
+  class Key(source : string, val code : int) : Event(source) {
+    override fun describe() => "key $code from $source"
+  }
+  class Hover(source : string) : Event(source)
+
+  enum Phase { capture, target, bubble }
+  interface Handler { fun handle(event) }
+  object Bus {
+    val log = []
+    fun post(event) {
+      log.push(event.describe())
+      return log.length
+    }
+  }
+
+  var phase : Phase = target                 // an enum declared here, by its short name
+  fun describe() => "event from $source"
+  fun isClick() => this is Click              // a nested class by its bare name
+  static fun click(x, y) => Click("factory", x, y)
+}
+
+// From outside, through the outer class.
+val click = Event.Click("button", 3, 4)
+val key = Event.Key("field", 13)
+print(click.describe(), key.describe(), Event.Hover("panel").describe())   // expect: click at 3,4 from button key 13 from field event from panel
+print(click is Event.Click, click is Event, key is Event.Click, click.isClick(), key.isClick(), type(click))   // expect: true true false true false Click
+print(Event.click(1, 2).describe(), Event.Phase.entries, click.phase, Event.Phase.bubble.ordinal)   // expect: click at 1,2 from factory [capture, target, bubble] target 2
+Event.Bus.post(click)
+print(Event.Bus.post(key), Event.Bus.log)   // expect: 2 ["click at 3,4 from button", "key 13 from field"]
+
+// As types: parameters, variables, is, as, when, catch.
+fun route(event : Event, phase : Event.Phase = bubble) : string => when (event) {
+  is Event.Click -> "click/$phase"
+  is Event.Key -> "key/$phase"
+  else -> "other/$phase"
+}
+val held : Event.Click? = click
+print(route(click), route(key, capture), route(Event.Hover("x"), Event.Phase.target), (held as Event.Click).x, key as? Event.Click)
+// expect: click/bubble key/capture other/target 3 null
+try { route(5) } catch (e) { print(e.message) }   // expect: argument 'event' of route() must be Event, got int
+class Printer : Event.Handler {
+  val seen = []
+  override fun handle(event) { seen.push(route(event)) }
+}
+val printer = Printer()
+printer.handle(click)
+print(printer is Event.Handler, printer.seen)   // expect: true ["click/bubble"]
+
+class Failure : Error {
+  class Missing : Failure { fun init(what) { super.init(what + " is missing") } }
+  class Denied : Failure { fun init() { super.init("denied") } }
+  fun init(message) { super.init(message) }
+}
+fun attempt(action) {
+  try { action() } catch (e : Failure.Missing) { return "missing: " + e.message } catch (e : Failure) { return "failed: " + e.message }
+  return "fine"
+}
+print(attempt(fun() { throw Failure.Missing("key") }), attempt(fun() { throw Failure.Denied() }), attempt(fun() { }))
+// expect: missing: key is missing failed: denied fine
+
+// Names can repeat under different outer classes.
+class DrawOp {
+  class Text(val content) { fun kind() => "draw text " + content }
+  class Line(val length) { fun kind() => "draw line " + length }
+  static fun both() => [Text("a").kind(), Line(2).kind()]
+}
+class Doc {
+  class Text(val words) { fun kind() => "doc text of ${words.length} words" }
+  enum Mode { edit, view }
+  var mode : Mode = view
+}
+print(DrawOp.Text("hi").kind(), Doc.Text(["a", "b"]).kind(), DrawOp.both(), Doc().mode)
+// expect: draw text hi doc text of 2 words ["draw text a", "draw line 2"] view
+print(DrawOp.Text("x") is DrawOp.Text, DrawOp.Text("x") is Doc.Text, DrawOp.Text === Doc.Text)   // expect: true false false
+
+// A nested class sees the outer class's static members and its other nested classes.
+class Grid {
+  static val GAP = 4
+  static fun key(row, col) => row * 100 + col
+
+  class Cell(val row : int, val col : int, var fill : Fill = NONE) {
+    val id = key(row, col)                    // the outer class's static function
+    fun span() => Span(this, GAP)             // a sibling class, and the outer static
+    fun widen() {
+      fill = BOTH
+      return this
+    }
+  }
+  class Span(val cell : Cell, val gap : int) {
+    fun describe() => "span of cell ${cell.id}, gap $gap, ${cell.fill}"
+  }
+  enum Fill { NONE, BOTH }
+
+  val cells = []
+  fun add(row, col) {
+    cells.push(Cell(row, col))
+    return cells[cells.length - 1]
+  }
+}
+val cell = Grid().add(2, 3)
+print(cell.id, cell.span().describe(), cell.widen().span().describe(), Grid.Cell(1, 1, BOTH).fill)
+// expect: 203 span of cell 203, gap 4, NONE span of cell 203, gap 4, BOTH BOTH
+
+// Deeper.
+class A {
+  class B {
+    class C {
+      static val NAME = "A.B.C"
+      fun where() => NAME + " in " + LEVEL    // a static of the class two levels out
+    }
+    static fun make() => C()
+  }
+  static val LEVEL = "A"
+}
+print(A.B.C.NAME, A.B.C().where(), A.B.make() is A.B.C)   // expect: A.B.C A.B.C in A true
+
+// A nested class is a val of the outer class.
+try { Event.Click = null } catch (e) { print(e.message) }   // expect: cannot assign to static val 'Click' of Event
+try { print(Event.Nothing) } catch (e) { print(e.message) }   // expect: undefined static member 'Nothing' on class Event
+
+// In a function.
+fun local() {
+  class Outer {
+    class Inner(val n) { fun twice() => n * 2 }
+    static fun make(n) => Inner(n)
+  }
+  return [Outer.Inner(4).twice(), Outer.make(5).twice()]
+}
+print(local())                              // expect: [8, 10]

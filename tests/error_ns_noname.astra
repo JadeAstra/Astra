@@ -1,0 +1,3 @@
+// A path that makes no name needs one given to it.
+import "NsShapes/../NsText"
+// expect compile error: 'NsShapes/../NsText' gives no name to reach its contents by; add one (import "NsShapes/../NsText" as name) or import its names with .*

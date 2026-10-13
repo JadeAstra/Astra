@@ -1,0 +1,4 @@
+// A bare name headed for an enum has to be one of its entries.
+enum Way { up, down }
+var t : Way = sideways
+// expect compile error: 'sideways' is not an entry of enum Way, nor a variable

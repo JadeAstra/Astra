@@ -1,0 +1,6 @@
+// A member that clashes with what every enum has needs to say override.
+enum Bad {
+  first, second
+  static fun entries() => [first]
+}
+// expect compile error: enum 'Bad' already has 'entries' (the list of its entries); write it as an override to replace that: override static get entries() : list

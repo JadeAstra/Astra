@@ -1,0 +1,93 @@
+// is / !is, as / as?, in / !in.
+
+class Shape(val name)
+class Circle(val radius) : Shape("circle")
+class Square(val side) : Shape("square")
+class Other
+
+val circle = Circle(2)
+val square = Square(3)
+val none = null
+
+// is works for classes and for the built-in types.
+print(circle is Circle, circle is Shape, circle is Square, circle is Other, none is Shape)   // expect: true true false false false
+print(1 is int, 1 is float, 1.5 is float, 1 is number, 1.5 is number, "1" is number)   // expect: true false true true true false
+print("a" is string, true is bool, [1] is list, {"k": 1} is map, 1..2 is range, print is function, { it } is function)
+// expect: true true true true true true true
+print(circle is string, "circle" is Shape, [circle] is Shape, Circle is Shape)   // expect: false false false false
+
+// A type ending in ? takes null as well, and `any` takes everything.
+print(none is Shape?, circle is Shape?, none is int?, 3 is int?, "3" is int?, none is any, 0 is any)
+// expect: true true true true false true true
+
+// Generic types are read, and only the outer type is tested.
+print([1, 2] is list<int>, ["a"] is list<int>, {:} is map<string, list<int>>, [] is list<*>)   // expect: true true true true
+
+// !is
+print(circle !is Square, circle !is Shape, none !is Shape, 1 !is string)   // expect: true false true true
+val isReady = false
+val index = 0
+print(!isReady, !index)                     // expect: true false
+
+// A class held in a variable can be tested against too.
+val kind = Square
+print(square is kind, circle is kind)       // expect: true false
+
+// With the conditional expression: the ? only belongs to the type when it touches it.
+print(circle is Shape ? "shape" : "other", none is Shape? ? "fits" : "does not")   // expect: shape fits
+if circle is Circle { print("in a condition") }   // expect: in a condition
+if circle !is Square and (square is Square) { print("combined") }   // expect: combined
+
+// as insists, and says what went wrong.
+print((circle as Shape).name, (circle as Circle).radius, 5 as int, (none as Shape?) == null)   // expect: circle 2 5 true
+try { square as Circle } catch (e) { print(e.message) }   // expect: cannot cast a value of type Square to Circle
+try { "5" as int } catch (e) { print(e.message) }         // expect: cannot cast a value of type string to int
+try { none as Shape } catch (e) { print(e.message) }      // expect: cannot cast a value of type null to Shape
+try { 5 as kind } catch (e) { print(e.message) }          // expect: cannot cast a value of type int to Square
+
+// as? gives null instead.
+print((square as? Circle) == null, (square as? Square).side, "5" as? int, 5 as? int, none as? Shape)   // expect: true 3 null 5 null
+print((square as? Circle)?.radius ?: "no radius", (circle as? Circle)?.radius ?: "no radius")   // expect: no radius 2
+fun radiusOf(shape) {
+  val round = shape as? Circle ?: return -1
+  return round.radius
+}
+print(radiusOf(circle), radiusOf(square), radiusOf(null))   // expect: 2 -1 -1
+
+// as binds tighter than arithmetic, and can be chained.
+print(2 * 3 as int, -circle.radius as int, circle as Shape as Circle is Circle)   // expect: 6 -2 true
+
+// `as` is still an ordinary name.
+val as = "a name"
+print(as, as.length)                        // expect: a name 6
+
+// in asks the container: lists, strings, maps (their keys) and ranges.
+print(2 in [1, 2, 3], 5 in [1, 2, 3], "ell" in "hello", "z" in "hello", "k" in {"k": 1}, "v" in {"k": 1})
+// expect: true false true false true false
+print(3 in 1..3, 3 in 1..<3, 0 !in 1..3, 2.5 in 1..3, [1, 2] in [[1, 2], [3]])   // expect: true false true false true
+print(2 !in [1, 2, 3], "z" !in "hello", "k" !in {:})   // expect: false true true
+
+// A class takes part by having a method called contains.
+class Bounds(val low, val high) {
+  fun contains(n) => n >= this.low and n <= this.high
+}
+val bounds = Bounds(10, 20)
+print(15 in bounds, 25 in bounds, 25 !in bounds)   // expect: true false true
+
+// The value is worked out before the container, as written.
+val order = []
+fun note(label, value) {
+  order.push(label)
+  return value
+}
+print(note("value", 1) in note("container", [1]), order)   // expect: true ["value", "container"]
+
+// With the other operators: arithmetic first, comparisons and `and` after.
+print(1 + 1 in [2], 2 in [1] + [2], 1 in [1] == true, 3 in [1] or 3 in [3], none ?: 2 in [2])   // expect: true true true true true
+
+// for still reads its own `in`.
+var total = 0
+for n in [1, 2, 3] { if n in 2..3 { total += n } }
+for (n in 1..2) { total += n }
+print(total)                                // expect: 8
+try { 1 in 5 } catch (e) { print(e.message) }   // expect: undefined method 'contains' on a value of type int

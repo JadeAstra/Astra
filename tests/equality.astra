@@ -1,0 +1,56 @@
+// == compares lists, maps and ranges by what they hold; === asks for the very same object.
+
+val a = [1, 2, 3]
+val b = [1, 2, 3]
+print(a == b, a != b, a === b, a !== b, a === a)        // expect: true false false true true
+print([1, 2] == [1, 2, 3], [1, 2] == [2, 1], [] == [])  // expect: false false true
+print([1, 2.0, "x", null, true] == [1.0, 2, "x", null, true])   // expect: true
+
+// All the way down.
+print([[1, [2, 3]], {"k": [4]}] == [[1, [2, 3]], {"k": [4]}])   // expect: true
+print([[1, [2, 3]]] == [[1, [2, 4]]])                    // expect: false
+
+// Maps: the same keys with equal values, in any order.
+val m = {"a": 1, "b": [2, 3]}
+val n = {"b": [2, 3], "a": 1}
+print(m == n, m === n, {"a": 1} == {"a": 2}, {"a": 1} == {"b": 1}, {:} == {:})   // expect: true false false false true
+print({"a": 1} == {"a": 1, "b": 2}, [1] == {"a": 1}, [1] == "1", [1] == null)     // expect: false false false false
+
+// Ranges.
+print(1..3 == 1..3, 1..3 == 1..<4, (1..3).toList() == (1..<4).toList())   // expect: true false true
+
+// Objects: only to themselves, unless their class says what == means.
+class Plain(val n)
+class Point(val x, val y) {
+  op ==(o) => o is Point and this.x == o.x and this.y == o.y
+}
+val p = Plain(1)
+print(p == p, Plain(1) == Plain(1), Point(1, 2) == Point(1, 2), Point(1, 2) === Point(1, 2))   // expect: true false true false
+// A list of objects is compared with the objects' own ==.
+print([Point(1, 2), Point(3, 4)] == [Point(1, 2), Point(3, 4)], [Plain(1)] == [Plain(1)], [p] == [p])   // expect: true false true
+print({"at": Point(0, 0)} == {"at": Point(0, 0)})       // expect: true
+
+// Strings, numbers and booleans have no identity apart from their value.
+val word = "ab"
+print(word + "c" === "abc", 1 === 1, 1 === 1.0, null === null, true !== false)   // expect: true true true true true
+
+// Functions and classes are only ever equal to themselves.
+val f = fun() => 1
+print(f == f, f == fun() => 1, Point == Point, Point == Plain)   // expect: true false true false
+
+// Finding things in a list goes by ==.
+val rows = [[1, 2], [3, 4], [5, 6]]
+print(rows.contains([3, 4]), rows.indexOf([5, 6]), rows.indexOf([7, 8]), rows.remove([1, 2]), rows)   // expect: true 2 -1 true [[3, 4], [5, 6]]
+print([Point(1, 1), Point(2, 2)].indexOf(Point(2, 2)))   // expect: 1
+
+// A list that contains itself is equal to itself, and comparing two such lists ends.
+val loop = [1]
+loop.push(loop)
+val other = [1]
+other.push(other)
+print(loop == loop, loop == other)                       // expect: true false
+
+// As a key in a map, a list is still itself and nothing else.
+val keyed = {:}
+keyed[a] = "first"
+print(keyed[a], keyed[b])                                // expect: first null

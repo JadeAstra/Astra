@@ -12,13 +12,13 @@ class Shape(var name : string) {
 }
 
 class Circle(val radius : number) : Shape("circle") {
-  fun area() : number => Math.PI * this.radius * this.radius
-  fun perimeter() : number => 2 * Math.PI * this.radius
+  override fun area() : number => Math.PI * this.radius * this.radius
+  override fun perimeter() : number => 2 * Math.PI * this.radius
 }
 
 class Rect(val width : number, val height : number) : Shape("rectangle") {
-  fun area() : number => this.width * this.height
-  fun perimeter() : number => 2 * (this.width + this.height)
+  override fun area() : number => this.width * this.height
+  override fun perimeter() : number => 2 * (this.width + this.height)
 }
 
 // A square needs more than the header can say, so it writes its own init.

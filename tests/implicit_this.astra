@@ -1,0 +1,261 @@
+// Inside a class a bare name is a variable, then a member of the object, then a static of the
+// class, then a global. `this.` is still allowed everywhere.
+
+val scale = 10
+fun describe() => "the global describe"
+fun helper(n) => n + 1000
+
+class Account(val owner : string, var balance : int = 0) {
+  var history = []
+  val limit = 500
+
+  get rich() => balance > 100
+  set cash(amount) { balance = amount }
+
+  fun deposit(amount) {
+    balance += amount                 // a field
+    history.push(amount)
+    return this
+  }
+  fun withdraw(amount) {
+    if amount > limit { return "over the limit of $limit" }
+    balance = balance - amount
+    return balance
+  }
+  fun describe() => "$owner has $balance"     // a member comes before the global of that name
+  fun report() => describe() + (rich ? " (rich)" : "") + ", scale " + scale + ", " + helper(1)
+  fun twice() {
+    deposit(1).deposit(1)             // a method, called on this object
+    return history.length
+  }
+  fun shadow(balance) {
+    val owner = "local"
+    return owner + " " + balance + " " + this.balance + " " + this.owner
+  }
+}
+val account = Account("Ann", 50)
+account.deposit(100)
+print(account.balance, account.history, account.rich, account.describe())   // expect: 150 [100] true Ann has 150
+print(account.withdraw(600), account.withdraw(30), account.report())
+// expect: over the limit of 500 120 Ann has 120 (rich), scale 10, 1001
+print(account.twice(), account.shadow(7), describe())   // expect: 3 local 7 122 Ann the global describe
+account.cash = 5
+print(account.balance, account.rich)        // expect: 5 false
+
+// ++ and the compound assignments.
+class Tally {
+  var count = 0
+  var total = 0.0
+  var words = []
+  fun add(n) {
+    count++
+    total += n
+    total *= 2
+    words.push("n$count")
+    return this
+  }
+}
+val tally = Tally().add(1).add(2)
+print(tally.count, tally.total, tally.words)   // expect: 2 8.0 ["n1", "n2"]
+
+// A field's initial value sees the header's entries and the fields above it.
+class Box(val width : int, val height : int, unit = "cm") {
+  val area = width * height
+  val label = "$area $unit"
+  var corners = [[0, 0], [width, height]]
+}
+val box = Box(2, 3)
+print(box.area, box.label, box.corners, Box(1, 1, "in").label)   // expect: 6 6 cm [[0, 0], [2, 3]] 1 in
+
+// A hand-written init assigns by bare name too.
+class Crate {
+  var label = "crate"
+  var size = 0
+  fun init(size, name = null) {
+    this.size = size
+    if name != null { label = name }
+  }
+}
+print(Crate(1).label, Crate(2, "big").label, Crate(3).size)   // expect: crate big 3
+
+// Members that come from a superclass.
+class Shape(val name : string) {
+  var visible = true
+  var moves = 0
+  get title() => "<$name>"
+  fun hide() { visible = false }
+  fun area() => 0
+  fun describe() => "$name of area ${area()}"
+}
+class Rect(val w : int, val h : int) : Shape("rect") {
+  override fun area() => w * h
+  fun summary() => title + " " + describe() + (visible ? "" : " (hidden)") + " x" + scale
+  fun toggle() {
+    hide()
+    moves += 1
+    return visible
+  }
+}
+val rect = Rect(2, 5)
+print(rect.summary(), rect.toggle(), rect.moves, rect.summary())
+// expect: <rect> rect of area 10 x10 false 1 <rect> rect of area 10 (hidden) x10
+
+// Statics by their bare names: from methods, from other statics, and from their own values.
+class Grid {
+  static {
+    val MAX = 100
+    val LIMITS = [MAX, MAX * 2]
+    var made = 0
+    fun key(row, col) => row * MAX + col
+    fun both(n) => [key(n, 0), key(0, n)]
+    get count() => made
+  }
+  val id = key(1, made)
+  fun init() { made += 1 }
+  fun cell(row, col) => "cell " + key(row, col) + " of " + LIMITS[1]
+}
+val first = Grid()
+val second = Grid()
+print(first.id, second.id, first.cell(2, 3), Grid.both(4), Grid.count, Grid.made)
+// expect: 100 101 cell 203 of 200 [400, 4] 2 2
+
+// A subclass of something with statics.
+class Base {
+  static val KIND = "base"
+  var kind = "an object's kind"
+}
+class Derived : Base {
+  static val KIND = "derived"
+  static val kind = "a static"
+  fun kinds() => [KIND, kind, Base.KIND]      // the inherited field comes before the static
+}
+print(Derived().kinds())                    // expect: ["derived", "an object's kind", "base"]
+
+// Functions and lambdas written inside a method reach the object too.
+class Button(val text : string) {
+  var clicks = 0
+  var log = []
+  fun press() { clicks += 1 }
+  fun handler() => fun() {
+    press()
+    log.push("$text $clicks")
+    return clicks
+  }
+  fun counter() => { clicks += 10; clicks }
+  fun each(items) {
+    items.each { log.push(text + ":" + it) }
+    return log
+  }
+  fun nested() {
+    val outer = {
+      val inner = { fun() => text + "!" }
+      inner()()
+    }
+    return outer()
+  }
+}
+val button = Button("OK")
+val handle = button.handler()
+handle()
+print(handle(), button.counter()(), button.each(["a", "b"]), button.nested())
+// expect: 2 12 ["OK 1", "OK 2", "OK:a", "OK:b"] OK!
+
+// In a lambda run on another object, that object's members come first, then this object's.
+class Panel {
+  var title = "panel"
+  var gap = 1
+  var rows = []
+  fun row(name) { rows.push(name) }
+}
+class Screen {
+  var title = "screen"
+  var built = []
+  fun note(text) { built.push(text) }
+  fun build() {
+    val panel = Panel()
+    panel.apply {
+      gap = 4                        // the panel's
+      row("first")                   // the panel's
+      note(title)                    // note is the screen's; title is the panel's
+      row(describe())                // a global
+    }
+    return [panel.gap, panel.rows, built, title]
+  }
+}
+print(Screen().build())                     // expect: [4, ["first", "the global describe"], ["panel"], "screen"]
+
+// Objects.
+object Clock {
+  var ticks = 0
+  val names = ["tick", "tock"]
+  fun tick() {
+    ticks += 1
+    return names[ticks % 2]
+  }
+  fun run(n) {
+    var said = []
+    for i in 1..n { said.push(tick()) }
+    return said
+  }
+}
+print(Clock.run(3), Clock.ticks)            // expect: ["tock", "tick", "tock"] 3
+
+// A class with no declared fields makes them by assignment through this; afterwards the bare
+// name finds them.
+class Legacy {
+  fun init(x) { this.x = x }
+  fun double() => x * 2
+  fun grow() {
+    x += 1
+    return this
+  }
+}
+print(Legacy(4).grow().double())            // expect: 10
+
+// A field holding a function is called by its bare name.
+class Runner(val action) {
+  var extra = fun(n) => n * 2
+  fun go(n) => action(n) + extra(n)
+}
+print(Runner(fun(n) => n + 1).go(5))        // expect: 16
+
+// What is nowhere to be found is reported as before.
+class Lost {
+  val here = 1
+  fun find() => nowhere
+  fun call() => nothing(1)
+}
+try { Lost().find() } catch (e) { print(e.message) }   // expect: undefined variable 'nowhere'
+try { Lost().call() } catch (e) { print(e.message) }   // expect: undefined variable 'nothing'
+class LostChild : Lost {
+  override fun find() => nowhereElse
+  fun assign() { nowhereElse = 1 }
+}
+try { LostChild().find() } catch (e) { print(e.message) }     // expect: undefined variable 'nowhereElse'
+try { LostChild().assign() } catch (e) { print(e.message) }   // expect: undefined variable 'nowhereElse'
+
+// A class in a function, using that function's variables and its own members.
+fun make(step) {
+  class Stepper {
+    var at = 0
+    fun next() {
+      at += step
+      return at
+    }
+  }
+  return Stepper()
+}
+val stepper = make(5)
+stepper.next()
+print(stepper.next())                       // expect: 10
+
+// Many times over.
+class Sum {
+  var total = 0
+  fun add(n) { total += n }
+  fun run(count) {
+    for i in 1..count { add(i) }
+    return total
+  }
+}
+print(Sum().run(100000))                    // expect: 5000050000

@@ -1,0 +1,7 @@
+// else has to come last.
+val n = 2
+when (n) {
+  else -> print("other")
+  1 -> print("one")
+}
+// expect compile error: 'else' must be the last branch of a 'when'

@@ -1,5 +1,5 @@
 // Two text boxes that stay in step: type in either one.
-import "gui"
+import gui.*
 
 val window = Window("Temperature")
 

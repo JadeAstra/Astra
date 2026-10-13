@@ -133,6 +133,12 @@ void Table::addAll(const Table& other) {
         if (other.entries_[i].key != nullptr) set(other.entries_[i].key, other.entries_[i].value);
 }
 
+void Table::addMissing(const Table& other) {
+    for (uint32_t i = 0; i < other.capacity_; i++)
+        if (other.entries_[i].key != nullptr && find(other.entries_[i].key) == nullptr)
+            set(other.entries_[i].key, other.entries_[i].value);
+}
+
 // ---- ValueMap ----
 
 const Value* ValueMap::find(const Value& key) const {

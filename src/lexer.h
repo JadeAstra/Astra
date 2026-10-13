@@ -18,7 +18,11 @@ enum class TokenType {
     Plus, Minus, Star, Slash, Percent,
     PlusEq, MinusEq, StarEq, SlashEq, PercentEq,
     Bang, BangEq, Eq, EqEq, Lt, LtEq, Gt, GtEq,
-    Arrow, ThinArrow, DotDot, DotDotEq,   // => -> .. ..=
+    EqEqEq, BangEqEq,   // === !==
+    QuestionDot, Elvis, BangBang,   // ?. ?: !!
+    NotIs, NotIn,                   // !is !in
+    At,                             // @ (return@label, label@ { })
+    Arrow, ThinArrow, DotDot, DotDotLt,   // => -> .. ..<
     Amp, Pipe, Caret, Tilde, AmpEq, PipeEq, CaretEq,   // & | ^ ~ &= |= ^=
     Shl, Shr, ShlEq, ShrEq,   // << >> <<= >>=
     PlusPlus, MinusMinus,     // ++ --
@@ -29,7 +33,7 @@ enum class TokenType {
     // Keywords
     Val, Var, Fun, Class, Static, Operator, This, Super,
     Return, If, Else, While, For, In, Break, Continue,
-    True, False, Null, Try, Catch, Throw, Import, Is,
+    True, False, Null, Try, Catch, Throw, Import, Is, When,
     And, Or,
 
     Eof,

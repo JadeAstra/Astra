@@ -1,6 +1,6 @@
 // Animation: balls bouncing around a canvas, redrawn sixty times a second.
 // Click the canvas to add a ball; Space pauses.
-import "gui"
+import gui.*
 
 class Ball(var x : number, var y : number, var dx : number, var dy : number, val radius : number, val color : int) {
   fun move(width : number, height : number) {
@@ -43,7 +43,7 @@ fun frame() {
   status.text = "  ${balls.length} balls" + (paused ? " (paused)" : "") + ". Click to add one; Space pauses."
 }
 
-for i in 0..6 { addBall(100 + i * 60, 80 + i * 40) }
+for i in 0..<6 { addBall(100 + i * 60, 80 + i * 40) }
 window.show()
 canvas.focus()
 App.every(16, frame)

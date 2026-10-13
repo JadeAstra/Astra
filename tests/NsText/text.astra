@@ -1,0 +1,16 @@
+// Declares two names that NsShapes declares too.
+val title = "text"
+fun label(s) => "[" + s + "]"
+fun words(s) => s.split(" ")
+class Block(val content) {
+  fun describe() => "text block: " + content
+}
+
+// A value called like the folder: NsText.Block is the class above, NsText.count the object's.
+object NsText {
+  var count = 0
+  fun bump() {
+    count += 1
+    return this
+  }
+}

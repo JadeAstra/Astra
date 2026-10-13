@@ -1,0 +1,5 @@
+class Square(val side) : Shape("square") {
+  override fun area() => side * side
+  fun describe() => label(this) + " side=$side"
+}
+fun unit() => register(Square(1))

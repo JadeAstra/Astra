@@ -1,0 +1,88 @@
+// A field or property and a method may share a name: reading it gives the value, calling it
+// runs the method.
+
+class Component {
+  var tooltip : string? = null
+  var background = "white"
+  var changes = 0
+
+  fun tooltip(text : string) {            // the fluent form of setting it
+    tooltip = text
+    changes += 1
+    return this
+  }
+  fun background(colour) {
+    background = colour
+    return this
+  }
+  fun describe() => "tooltip=$tooltip background=$background"
+}
+val c = Component().tooltip("Save the file").background("grey")
+print(c.tooltip, c.background, c.changes, c.describe())   // expect: Save the file grey 1 tooltip=Save the file background=grey
+c.tooltip = "Changed"
+print(c.tooltip, c.tooltip("Again").tooltip, c.changes)   // expect: Changed Again 2
+
+// With a property instead of a field.
+class Label {
+  var text = "label"
+  var colours = []
+  get foreground() => colours.length > 0 ? colours[colours.length - 1] : "black"
+  set foreground(colour) { colours.push(colour) }
+  fun foreground(colour) {
+    foreground = colour
+    return this
+  }
+  fun text(value) {
+    text = value
+    return this
+  }
+}
+val label = Label().foreground("red").text("Hello")
+label.foreground = "blue"
+print(label.foreground, label.colours, label.text, label.foreground("green").foreground)   // expect: blue ["red", "blue", "green"] Hello green
+
+// In a subclass, and through an interface.
+interface Styled {
+  var style
+  fun style(value) {
+    style = value
+    return this
+  }
+}
+class Button : Component, Styled {
+  override var style = "plain"
+  override fun tooltip(text : string) {
+    super.tooltip(text + "!")
+    return this
+  }
+}
+val button = Button().tooltip("Click").style("bold").background("blue")
+print(button.tooltip, button.style, button.background, button.changes)   // expect: Click! bold blue 1
+
+// A field that holds a function is still called through its name when there is no method.
+class Holder {
+  var action = fun(n) => n + 1
+  var label = "holder"
+  fun run(n) => action(n)
+}
+val holder = Holder()
+print(holder.action(1), holder.run(2))      // expect: 2 3
+holder.action = fun(n) => n * 10
+print(holder.action(1), holder.run(2))      // expect: 10 20
+try { holder.label(1) } catch (e) { print(e.message) }   // expect: cannot call a value of type string
+
+// super reaches a superclass's property as well as its methods.
+class Base(val id : int) {
+  var label = "base"
+  get title() => "<" + label + " " + id + ">"
+  fun describe() => "base " + id
+}
+class Derived(id : int) : Base(id) {
+  override get title() => super.title + "!"
+  override fun describe() => super.describe() + ", " + super.title + ", " + super.label + ", " + super.id
+}
+val derived = Derived(7)
+derived.label = "derived"
+print(derived.title, derived.describe())    // expect: <derived 7>! base 7, <derived 7>, derived, 7
+try { class Odd : Base(1) { fun bad() => super.missing }; Odd().bad() } catch (e) { print(e.message) }
+// expect: undefined method or property 'missing' in superclass Base

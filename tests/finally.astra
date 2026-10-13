@@ -1,0 +1,154 @@
+// try / catch / finally: the finally block runs however the try is left.
+
+val log = []
+
+// Leaving normally, and leaving by an error that is caught.
+try { log.push("body") } finally { log.push("finally") }
+try { throw "boom" } catch (e) { log.push("caught " + e) } finally { log.push("finally") }
+print(log)                                  // expect: ["body", "finally", "caught boom", "finally"]
+
+// An error nobody here catches: the block runs and the error carries on.
+fun failing() {
+  try {
+    throw Error("lost")
+  } finally {
+    log.push("cleanup")
+  }
+}
+try { failing() } catch (e) { log.push(e.message) }
+print(log.slice(4))                         // expect: ["cleanup", "lost"]
+
+// return: the value is worked out first, then the block runs, then the function returns it.
+var counter = 0
+fun next() {
+  try {
+    return counter
+  } finally {
+    counter += 1
+  }
+}
+print(next(), next(), counter)              // expect: 0 1 2
+
+// A return inside finally replaces whatever was on its way out.
+fun override() {
+  try { return "from try" } finally { return "from finally" }
+}
+fun swallow() {
+  try { throw "error" } finally { return "the error is gone" }
+}
+print(override(), swallow())                // expect: from finally the error is gone
+
+// break and continue run it too, once for each pass through the loop.
+val passes = []
+for i in 1..5 {
+  try {
+    if i == 2 { continue }
+    if i == 4 { break }
+    passes.push("body $i")
+  } finally {
+    passes.push("finally $i")
+  }
+}
+print(passes)   // expect: ["body 1", "finally 1", "finally 2", "body 3", "finally 3", "finally 4"]
+
+// Nested: innermost first, on the way out of a return and of an error.
+val order = []
+fun nested() {
+  try {
+    try {
+      return "value"
+    } finally {
+      order.push("inner")
+    }
+  } finally {
+    order.push("outer")
+  }
+}
+print(nested(), order)                      // expect: value ["inner", "outer"]
+
+fun nestedError() {
+  try {
+    try { throw "deep" } finally { order.push("inner again") }
+  } catch (e) {
+    order.push("caught " + e)
+  } finally {
+    order.push("outer again")
+  }
+}
+nestedError()
+print(order.slice(2))                       // expect: ["inner again", "caught deep", "outer again"]
+
+// An error thrown by the catch still runs the finally.
+fun catchThrows() {
+  try { throw "first" } catch (e) { throw "second" } finally { order.push("ran") }
+}
+try { catchThrows() } catch (e) { print(e, order[order.length - 1]) }   // expect: second ran
+
+// An error thrown by the finally block itself is the one that gets out.
+fun finallyThrows() {
+  try { return 1 } finally { throw "from finally" }
+}
+try { finallyThrows() } catch (e) { print(e) }   // expect: from finally
+
+// The block has its own variables, and sees those around it.
+fun scoped() {
+  val around = "outer"
+  var seen = ""
+  try {
+    val inTry = "try"
+    seen += inTry
+  } finally {
+    val inFinally = "finally"
+    seen += " " + inFinally + " " + around
+  }
+  return seen
+}
+print(scoped())                             // expect: try finally outer
+
+// Catches for particular classes of error.
+class NotFound : Error {
+  fun init(what) { super.init(what + " not found") }
+}
+class Denied : Error {
+  fun init() { super.init("denied") }
+}
+fun attempt(action) {
+  try {
+    action()
+    return "ok"
+  } catch (e : NotFound) {
+    return "missing: " + e.message
+  } catch (e : Denied) {
+    return "refused"
+  } catch (e) {
+    return "other: " + e
+  } finally {
+    log.push("attempted")
+  }
+}
+print(attempt(fun() { }), attempt(fun() { throw NotFound("key") }), attempt(fun() { throw Denied() }), attempt(fun() { throw 42 }))
+// expect: ok missing: key not found refused other: 42
+
+// With no catch for it, an error passes through.
+fun onlyNotFound(action) {
+  try { action() } catch (e : NotFound) { return "handled" }
+  return "nothing thrown"
+}
+print(onlyNotFound(fun() { throw NotFound("x") }), onlyNotFound(fun() { }))   // expect: handled nothing thrown
+try { onlyNotFound(fun() { throw Denied() }) } catch (e) { print("passed through:", e.message) }   // expect: passed through: denied
+
+// `finally` is still an ordinary name elsewhere.
+val finally = "a name"
+print(finally)                              // expect: a name
+
+// Many times over: nothing is left on the stack.
+var total = 0
+for i in 1..20000 {
+  try {
+    if i % 3 == 0 { continue }
+    total += 1
+  } finally {
+    total += 1
+  }
+}
+print(total)                                // expect: 33334

@@ -1,0 +1,51 @@
+// A keyword is only a keyword where it could be one. Where nothing but a name can come, after
+// a dot, as a member being declared, as the name of an argument, it is a name.
+
+class Token(val class : string, var in = 0, val is = false) {
+  var null = "not null"
+  static val import = "an import"
+  static fun for(n) => "for $n"
+
+  fun if(flag) => flag ? this.class : "else"
+  fun return() => this.in + 1
+  get when() => "when " + this.class
+  fun describe() => this.class + "/" + this.in + "/" + this.is + "/" + this.null
+}
+
+val t = Token("word", in = 3)
+print(t.class, t.in, t.is, t.null, t.when)  // expect: word 3 false not null when word
+print(t.if(true), t.if(false), t.return(), t.describe())   // expect: word else 4 word/3/false/not null
+t.in = 7
+t.null = null
+print(t.in, t.null, t?.class, Token.import, Token.for(2))   // expect: 7 null word an import for 2
+print(Token(class = "named", is = true).describe())   // expect: named/0/true/not null
+
+// Enum entries.
+enum Key {
+  if, else, for, in, is, null, true, class, return
+  fun label() => "<" + name + ">"
+}
+print(Key.if, Key.in.ordinal, Key.class.label(), Key.entries.length, Key.null == Key.null, Key.true != Key.null)   // expect: if 3 <class> 9 true true
+fun describe(key : Key) => when (key) {
+  Key.if, Key.else -> "branch"
+  Key.for -> "loop"
+  else -> "other: " + key.name
+}
+print(describe(Key.if), describe(Key.for), describe(Key.return))   // expect: branch loop other: return
+
+// Map keys, read back with a dot or an index.
+val words = {class: 1, in: 2, if: 3, "plain": 4}
+print(words.keys(), words["class"] + words["in"], words["if"])   // expect: ["class", "in", "if", "plain"] 3 3
+
+// `op` and `static` are ordinary names except at the start of a class member.
+val op = "+"
+var static = 0
+fun apply(op, a, b) => op == "+" ? a + b : a - b
+static += 5
+class Calc(val op : string) {
+  static val static = "a static named static"
+  op +(other) => Calc(op + other.op)
+  fun run(a, b) => apply(op, a, b)
+}
+print(op, static, apply(op, 1, 2), (Calc("-") + Calc("!")).op, Calc("-").run(5, 3), Calc.static)
+// expect: + 5 3 -! 2 a static named static

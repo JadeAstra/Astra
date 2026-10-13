@@ -34,6 +34,11 @@ enum class ValueKind : uint8_t {
     Float,
     Obj,
     Undefined,  // a global slot that has not been defined yet; never visible to programs
+
+    // A bare name passed as an argument that may be an enum entry: which enum is only known
+    // once it reaches a parameter declared as one. Holds the name (as.obj, an ObjString) and
+    // never gets further than the start of the function called.
+    EnumName,
 };
 
 // An Astra runtime value: null, bool, 64-bit int, double, or a pointer to a heap object.
@@ -49,6 +54,12 @@ struct Value {
     Value() : kind(ValueKind::Null) { as.i = 0; }
 
     static Value null() { return Value(); }
+    static Value enumName(Obj* name) {
+        Value v;
+        v.kind = ValueKind::EnumName;
+        v.as.obj = name;
+        return v;
+    }
     static Value undefined() {
         Value v;
         v.kind = ValueKind::Undefined;
@@ -141,6 +152,7 @@ public:
 
     void set(ObjString* key, Value value);
     void addAll(const Table& other);
+    void addMissing(const Table& other);  // only the keys this table does not have
 
     uint32_t size() const { return count_; }
     uint32_t capacity() const { return capacity_; }
@@ -248,6 +260,10 @@ struct FieldDecl {
     uint8_t type = 0;       // a TypeId, optionally with kTypeNullable; 0 means untyped
     bool isVal = false;     // can be assigned only once
 
+    // Declared again in a subclass with `override`. Such a val is given a value twice while
+    // its object is made, first by the superclass and then by the subclass.
+    bool overrides = false;
+
     // For a class-typed field: the class is looked up on first use, by calling `typeThunk`,
     // so that a field may name a class that is declared later in the program.
     ObjClosure* typeThunk = nullptr;
@@ -272,11 +288,46 @@ struct ObjClass final : Obj {
     bool anyRequired = false;               // this class or an ancestor has required fields
     std::vector<ObjClosure*> fieldInits;    // run on every new instance, superclass first
 
+    // Static fields declared with `static val` / `static var` (their values are in `statics`),
+    // and static properties.
+    std::vector<FieldDecl> staticDeclared;
+    Table staticIndex;                      // name -> index into `staticDeclared`
+    Table staticGetters;
+    Table staticSetters;
+
+    // An enum: its instances are its entries, each with a name and an ordinal, and once they
+    // are made no more can be.
+    bool isEnum = false;
+    bool enumSealed = false;
+    ObjString* nextEntry = nullptr;  // the name of the entry about to be made, which it has from the start
+    int nextOrdinal = 0;
+
+    // Interfaces. A class lists every interface it implements, its superclass's and those its
+    // interfaces extend included. `required` are the members an interface leaves for the
+    // class to supply, each with the interface that asks for it.
+    // A data class: the header fields its objects are compared, printed and taken apart by.
+    bool isData = false;
+    std::vector<ObjString*> components;
+
+    // Works out the class's static fields and, for an enum, its entries. It runs once, the
+    // first time a static member is asked for or when the program reaches the class's
+    // declaration, and is null from then on.
+    ObjClosure* staticInit = nullptr;
+
+    Table extensions;  // functions added from outside with `fun Name.function()`: looked for after the members
+    bool isAbstract = false;  // never created itself; what it leaves unwritten its subclasses supply
+    bool isInterface = false;
+    std::vector<ObjClass*> interfaces;
+    std::vector<std::pair<ObjString*, ObjClass*>> required;
+
     explicit ObjClass(ObjString* n) : Obj(ObjType::Class), name(n) {}
 
     bool isSubclassOf(const ObjClass* other) const {
         for (const ObjClass* k = this; k != nullptr; k = k->super)
             if (k == other) return true;
+        if (other != nullptr && other->isInterface)
+            for (const ObjClass* implemented : interfaces)
+                if (implemented == other) return true;
         return false;
     }
 
@@ -290,6 +341,7 @@ struct ObjClass final : Obj {
 struct ObjInstance final : Obj {
     ObjClass* const cls;
     Table fields;
+    bool constructing = false;  // from being made until its initializer has returned
     explicit ObjInstance(ObjClass* c) : Obj(ObjType::Instance), cls(c) {}
 };
 

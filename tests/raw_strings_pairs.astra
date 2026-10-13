@@ -1,0 +1,57 @@
+// Raw strings, and pairs made with `to`.
+
+// Three quotes: quotes and backslashes are just text, and the string can run over lines.
+val html = """<div class="box">C:\temp\new</div>"""
+print(html, html.length)                    // expect: <div class="box">C:\temp\new</div> 34
+val name = "Ann"
+print("""Hello, $name! You have ${1 + 2} "new" messages.""")   // expect: Hello, Ann! You have 3 "new" messages.
+print("""a "quoted" word""", """ends with a quote"""", """""".length)   // expect: a "quoted" word ends with a quote" 0
+
+val css = """
+    .button {
+        color: red;
+    }
+""".trimIndent()
+print(css)
+// expect: .button {
+// expect:     color: red;
+// expect: }
+print(css.split("\n").length, """one line""".trimIndent(), """
+  first
+
+  third
+""".trimIndent().split("\n"))               // expect: 3 one line ["first", "", "third"]
+
+val text = """
+    |Dear $name,
+    |  thank you.
+    |Bye
+""".trimMargin()
+print(text.split("\n"), """
+    > quoted
+    > lines
+""".trimMargin("> ").split("\n"))           // expect: ["Dear Ann,", "  thank you.", "Bye"] ["quoted", "lines"]
+
+// a to b is Pair(a, b): two values, read back as first and second or taken apart.
+val pair = "width" to 200
+print(pair, pair.first, pair.second, pair == Pair("width", 200), pair is Pair)   // expect: Pair(first="width", second=200) width 200 true true
+val (key, value) = pair
+print(key, value, pair.toList(), pair.copy(second = 300).second)   // expect: width 200 ["width", 200] 300
+
+fun tabs(vararg items) => items.map { (title, content) -> "$title: $content" }
+print(tabs("A" to 1, "B" to 2))             // expect: ["A: 1", "B: 2"]
+val table = ["one" to 1, "two" to 2, "three" to 3]
+val names = []
+for (word, number) in table { if number > 1 { names.push(word) } }
+print(names, table[0].first, (1 to 2) to 3, 1 + 1 to 2 * 2)   // expect: ["two", "three"] one Pair(first=Pair(first=1, second=2), second=3) Pair(first=2, second=4)
+print(null ?: 1 to 2, (1 to 2) == (1 to 2), 1 to 2 == 3)   // expect: Pair(first=1, second=2) true false
+
+val triple = Triple("x", 1, true)
+val (a, b, c) = triple
+print(triple, a, b, c, triple.toList(), triple.third)   // expect: Triple(first="x", second=1, third=true) x 1 true ["x", 1, true] true
+
+// `to` is an ordinary name everywhere else.
+data Line(val from, val to)
+val line = Line(1, 9)
+val to = line.to
+print(to, line.to - line.from, Line(to = 4, from = 2).to)   // expect: 9 8 4

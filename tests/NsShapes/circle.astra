@@ -1,0 +1,8 @@
+// Uses names declared in other files of the folder, whatever order the files load in.
+class Circle(val r) : Shape("circle") {
+  override fun area() => PI_ISH * r * r
+  fun describe() => label(this) + " r=$r"
+}
+
+private val secret = "circle's own"
+fun circleSecret() => secret

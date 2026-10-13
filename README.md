@@ -15,7 +15,7 @@ class Animal {
 }
 
 class Dog : Animal {
-  fun speak() => super.speak() + " - woof!"
+  override fun speak() => super.speak() + " - woof!"
 }
 
 for pet in [Animal("Generic"), Dog("Rex")] {
@@ -114,6 +114,40 @@ them, and an object's `toString()` is used if it has one. A `$` that is not foll
 name or `{` is an ordinary dollar sign (`"$5"`); write `\$` to keep one in front of a name
 (`"\$name"`).
 
+A string in three quotes is raw: it runs to the next three quotes, over as many lines as it
+likes, and quotes and backslashes in it are just text. `$name` and `${...}` still work.
+`trimIndent()` takes away the indentation its lines share and `trimMargin()` everything up to
+a `|` at the start of each line, so that the text can be indented with the code around it:
+
+```astra
+val path = """C:\temp\new "file".txt"""
+val css = """
+    .button {
+        color: $colour;
+    }
+""".trimIndent()
+```
+
+### Keywords as names
+
+A keyword is only a keyword where it could be one. Where nothing but a name can come, it is
+a name: after a dot, as a field, method, property or enum entry being declared, as the name
+of an argument, and as a key in a map.
+
+```astra
+enum Key { if, else, in, class }
+class Token(val class : string, var in = 0) {
+  fun is(other) => this.class == other.class
+}
+
+Key.if        token.class        token.is(other)        Token(class = "word")        {in: 1}
+```
+
+On its own a keyword keeps its meaning, so inside the class above the field is written
+`this.class`. `op`, `static`, `get`, `set`, `data`, `enum`, `interface`, `object`, `vararg`,
+`as`, `until`, `private`, `internal` and `finally` are not keywords at all: each means
+something only in the one place it belongs, and is an ordinary name everywhere else.
+
 ### Variables and types
 
 Variables are declared with `val` (immutable) or `var` (mutable). A type may follow the name:
@@ -136,8 +170,21 @@ when the program is compiled; everything else is checked as the program runs and
 catchable `Error`.
 
 Type names: `int`, `float`, `number`, `string`, `bool`, `list`, `map`, `range`, `function`,
-`any`, or the name of a class. Without `?`, a typed variable must be initialized and can
-never be null.
+`any`, or the name of a class, interface or enum (`Event.Click` for one declared inside
+another class). Without `?`, a typed variable must be initialized and can never be null.
+
+A type can say more, for the reader's sake: what a list or map holds, and what a function
+takes and gives back.
+
+```astra
+val names : list<string> = []
+var index : map<string, list<int>> = {:}
+fun each(action : (int) -> unit) { ... }           // unit: gives nothing back
+var onChange : ((Settings) -> unit)? = null        // a function, or null
+fun build(block : Grid.() -> unit) { ... }         // a function run on a Grid
+```
+
+Only the outer type is checked: that `names` is a list, that `action` is a function.
 
 A `val` fixes the variable, not the object: a list held in a `val` can still be changed.
 
@@ -155,17 +202,19 @@ Operators, from the ones that bind tightest:
 
 | Operators | |
 | --- | --- |
-| `f()` `a[i]` `a.b` | after their operand |
+| `f()` `a[i]` `a.b` `a?.b` `a!!` | after their operand |
 | `-x` `!x` `~x` | before their operand; `~` flips every bit of an int |
+| `as` `as?` | `value as Type` |
 | `*` `/` `%` | |
 | `+` `-` | |
 | `<<` `>>` | shift the bits of an int left or right |
 | `&` | bitwise and |
 | `^` | bitwise exclusive or |
 | `\|` | bitwise or |
-| `..` `..=` | ranges |
-| `<` `<=` `>` `>=` `is` | |
-| `==` `!=` | |
+| `..` `..<` `until` | ranges: `a..b` includes `b`; `a..<b` and `a until b` stop before it |
+| `?:` | `a ?: b` is `a`, or `b` when `a` is null |
+| `<` `<=` `>` `>=` `is` `!is` `in` `!in` | |
+| `==` `!=` `===` `!==` | equal in value; `===` is "the very same object" |
 | `and` | |
 | `or` | |
 | `? :` | |
@@ -187,14 +236,118 @@ They are statements, not expressions: each stands on its own and has no value, s
 `val n = count++` and `list[i++]` are compile errors, and there is no `++count`. Change the
 target on one line and use it on the next. The operator goes on the same line as its target.
 
+`is` tests what a value is, against a class or one of the built-in type names, and `in` asks
+a list, string, map (its keys) or range whether it holds a value:
+
+```astra
+shape is Circle       shape !is Circle      // Circle or a subclass of it
+x is int              x is string           // also float, number, bool, list, map, range, function
+x is Shape?                                 // a Shape, or null
+3 in [1, 2, 3]        "ell" in "hello"      "key" in settings       n !in 1..10
+```
+
+`a in b` calls `b.contains(a)`, so a class joins in by having a `contains` method. `as`
+insists that a value has a type and gives the value back; `as?` gives `null` when it does not:
+
+```astra
+val circle = shape as Circle                // runtime error unless shape is a Circle
+val radius = (shape as? Circle)?.radius ?: 0
+```
+
+Three operators deal with `null`:
+
+```astra
+user?.name                  // the name, or null when user is null
+user?.rename("Sam")         // not called, and its arguments not worked out, when user is null
+user?.address?.city         // each step that may be null needs its own ?.
+user?.visits += 1           // assignments are skipped the same way
+title ?: "Untitled"         // title, unless it is null
+user!!.name                 // insists: a runtime error if user is null
+```
+
+`?:` only looks for `null`: `0 ?: 1` is `0` and `"" ?: "x"` is `""`, where `or` would move on
+to the right-hand side for `false` as well.
+
+`return`, `throw`, `break` and `continue` can be written where a value is expected, which with
+`?:` gives the usual way to stop when something is missing:
+
+```astra
+val user = find(id) ?: return           // leave the function
+val port = config["port"] ?: throw Error("no port configured")
+for line in lines {
+  val entry = parse(line) ?: continue   // on to the next line
+  ...
+}
+```
+
 ### Control flow
 
 ```astra
 if n < 0 { ... } else if n == 0 { ... } else { ... }
 while i < 10 { i += 1 }
 for x in [1, 2, 3] { ... }      // also strings (characters), maps (keys), ranges
-for i in 0..10 { ... }          // 0 to 9;  0..=10 includes 10;  range(10, 0, -2) steps
+for i in 1..10 { ... }          // 1 to 10: a range includes its end
+for i in 0..<10 { ... }         // 0 to 9;  `0 until 10` says the same;  range(10, 0, -2) steps
 break    continue
+```
+
+`when` picks one branch out of several. With a subject, a branch lists the values it takes,
+or tests the subject with `is` or `in`; without one, each branch is a condition:
+
+```astra
+when (key) {                              // the parentheses are optional, as for if
+  "q", "x" -> quit()                      // either value
+  in "0123456789" -> digit(key)           // also !in
+  is Shortcut -> key.run()                // also !is
+  else -> print("unknown key")
+}
+
+val size = when {
+  n == 0 -> "none"
+  n < 10 -> "a few"
+  else -> "many"
+}
+```
+
+Values are compared with `==`. A `when` has a value, that of the branch taken, so it can be
+assigned, returned or used inside a larger expression; with no `else` and no branch taken the
+value is `null`. A branch is one statement, or after the arrow a `{ }` block with variables of
+its own, whose last expression is the branch's value. `when (val n = text.length) { ... }`
+gives the subject a name for the branches to use.
+
+`is`, `!is`, `in` and `!in` are the operators that cannot begin a continuation line: at the
+start of a line they open a new branch.
+
+`if` and `try` have a value too, that of the block that ran, which is the block's last
+expression. The braces stay:
+
+```astra
+val width = if wide { 200 } else { 100 }
+val port = try { int(text) } catch (e) { 8080 }
+val label = if count == 0 {
+  "nothing"
+} else {
+  val rest = count - 1
+  "one and $rest more"
+}
+```
+
+An `if` with no `else` gives `null` when its condition is false. A `finally` block still
+runs, and does not change the value.
+
+More about loops:
+
+```astra
+for i in 10 downTo 1 { ... }             // counting down, 1 included
+for i in 0..100 step 10 { ... }          // every tenth; also after ..<, until and downTo
+do { line = read() } while line != null  // the block runs before the first test
+
+rows@ for row in grid {                  // a name for the loop
+  for cell in row {
+    if cell == null { continue@rows }    // on to the next row
+    if cell == wanted { break@rows }     // out of both loops
+  }
+}
 ```
 
 ### Functions
@@ -252,8 +405,32 @@ greet("Ann", "Hi")
 greet(greeting = "Hi", name = "Ann")
 ```
 
-Parameters with defaults come last. A default is computed on each call that needs it and may
-use the parameters before it.
+A default is computed on each call that needs it and may use the parameters before it. A
+parameter without a default may follow one with: it is then given by name, and a call that
+leaves it out is an error.
+
+A `vararg` parameter takes any number of arguments and receives them as a list. In a call,
+`*list` passes the elements of a list as arguments of their own, to any function:
+
+```astra
+fun total(vararg numbers : int) : int {     // the type is that of each argument
+  var sum = 0
+  for n in numbers { sum += n }
+  return sum
+}
+
+total()                           // 0
+total(1, 2, 3)                    // 6
+val more = [4, 5]
+total(1, *more, 6)                // 16
+print(*more)                      // 4 5
+
+fun chart(vararg series, title = "") { ... }
+chart(a, b, title = "Sales")      // what comes after a vararg parameter is passed by name
+```
+
+A function has at most one `vararg` parameter. Passed by name it takes the list itself:
+`total(numbers = more)`.
 
 Each type is optional and independent, so `fun log(level : int, message)` is fine.
 
@@ -262,6 +439,80 @@ are checked when the function is entered and the result when it returns; a funct
 to return a non-nullable type that reaches its end without returning a value raises an
 error. Returning a literal of the wrong type is a compile error. Methods, static methods,
 initializers and operators take types the same way (an initializer has no return type).
+
+### Lambdas
+
+A function can be written in braces where a value is expected. Its value is its last
+expression:
+
+```astra
+val add = { a, b -> a + b }
+val double = { it * 2 }              // with no parameter list, the one argument is called `it`
+val nothing = {}                     // does nothing; the empty map is written {:}
+
+[1, 2, 3].map { it * 2 }             // after a call, the lambda is its last argument
+button("OK") { save() }              // after the other arguments, too
+spinner(3, max = 20) { update(it) }
+pairs.map { (name, score) -> "$name: $score" }    // (a, b) takes an argument apart
+```
+
+A lambda written after a call goes to the function's last parameter, whatever came before it.
+In the condition of an `if`, `while` or `for` a `{` opens the body, so a call there that takes
+a lambda goes in parentheses: `if (items.any { it > 1 }) { ... }`. A parameter list may be
+broken after a comma. What tells a lambda from a map is what follows the brace: a key and a
+`:` make a map (`{"a": 1}`), `{:}` is the empty map, anything else is a lambda.
+
+**A lambda can be run on an object**, whose members are then in reach by their bare names.
+This is what builds a layout or fills in an object:
+
+```astra
+val panel = Panel().apply {          // apply runs the lambda on the panel and gives the panel
+  title = "Settings"
+  gap = 4
+  row("first")                       // a method of the panel
+}
+with(panel) { row("second") }
+```
+
+A name in such a lambda is looked for among its own variables and those of the functions
+around it first, then on the object, then (in a lambda inside another) on the objects of the
+lambdas around it, and last among the globals.
+
+Every value has `let`, `also`, `apply`, `run` and `takeIf`:
+
+| | the lambda gets the value as | the result is |
+| --- | --- | --- |
+| `x.let { ... }` | `it` | the lambda's value |
+| `x.also { ... }` | `it` | `x` |
+| `x.takeIf { ... }` | `it` | `x` if the lambda gives true, else `null` |
+| `x.run { ... }` | the object it runs on | the lambda's value |
+| `x.apply { ... }` | the object it runs on | `x` |
+
+With `?.` they are the usual way to do something only when a value is there:
+`user?.let { greet(it) }`.
+
+**`return` in a lambda.** Written with a lambda, `let`, `also` and `takeIf` are compiled in
+place, as part of the function they are in. A `return` there leaves that function, and
+`break` and `continue` reach a loop around them:
+
+```astra
+fun find(node, name) {
+  for child in node.children { child.find(name)?.let { return it } }   // leaves find()
+  return null
+}
+```
+
+In any other lambda a plain `return` is a compile error, because it could not leave the
+function it is written in. `return@name` leaves the lambda itself, with a value if one is
+given; the name is that of the function the lambda is passed to, or one written before the
+lambda:
+
+```astra
+items.each { if it.hidden { return@each }; show(it) }       // on to the next item
+val pick = larger@ { a, b -> if a > b { return@larger a }; b }
+```
+
+`fun(x) { ... }` is unchanged: it is a function, and `return` returns from it.
 
 ### Classes
 
@@ -275,7 +526,7 @@ class Shape(val name : string) {             // header: a field, set when the ob
 }
 
 class Square(val side : number) : Shape("square") {    // single inheritance
-  fun area() : number => this.side * this.side         // overrides
+  override fun area() : number => this.side * this.side
 }
 
 val s = Square(3)
@@ -389,7 +640,22 @@ class Vec {
 
 Overloadable: `+ - * / %`, `<< >>`, `& | ^`, unary `-` and `~`, `==`, `< <= > >=`, `[]`, `[]=`.
 `!=` is the negation of `==`, and `++` and `--` use `+` and `-`. Without an `==` operator,
-instances compare by identity.
+an instance is equal only to itself.
+
+`==` compares by value. Two lists are equal if they hold equal items in the same order, two
+maps if they have the same keys with equal values, and that goes all the way down, using an
+object's own `==` where its class has one. `contains`, `indexOf` and `remove` on a list find
+an item the same way. `===` and `!==` ask a different question, whether two names refer to
+the very same object:
+
+```astra
+val a = [1, 2]
+val b = [1, 2]
+print(a == b, a === b, a === a)     // true false true
+```
+
+Numbers, booleans and strings have no identity apart from their value, so for them `===` is
+the same as `==`.
 
 #### Properties
 
@@ -414,6 +680,361 @@ one. A setter is the place to check a value or react to a change before storing 
 itself lives in an ordinary field with a different name. `get` and `set` are only special at
 the start of a class member, so they remain usable as names (`map.get(key)`).
 
+#### Names inside a class
+
+Inside a class, `this.` can be left off. A bare name is looked for among the function's own
+variables, then the members of the object, then the static members of the class, then the
+globals:
+
+```astra
+class Account(val owner : string, var balance : int = 0) {
+  val history = []
+
+  fun deposit(amount) {
+    balance += amount                   // this.balance
+    history.push(amount)                // this.history
+    return describe()                   // this.describe()
+  }
+  fun describe() => "$owner has $balance"
+  fun rename(owner) { this.owner = owner }   // the parameter hides the field: say this.
+}
+```
+
+A function or a lambda written inside a method reaches the object the same way. In a lambda
+that is run on another object (`panel.apply { ... }`) that object's members come first, then
+those of the object the method belongs to.
+
+A field's initial value can use the entries of the class header and the fields above it:
+
+```astra
+class Box(val width : int, val height : int) {
+  val area = width * height
+  val label = "$area square"
+}
+```
+
+That holds for a class whose initializer is the one made from its header. With a hand-written
+`init`, initial values are given before `init` runs, so they cannot depend on what it sets.
+
+A field or property and a method may share a name. Reading the name gives the value and
+calling it runs the method, which is how a setter that can be chained is written:
+
+```astra
+class Component {
+  var tooltip : string? = null
+  fun tooltip(text : string) {
+    tooltip = text
+    return this
+  }
+}
+Component().tooltip("Save")       // the method
+component.tooltip                 // the field
+```
+
+#### Accessors under a property
+
+A getter and a setter can also be written under the field they belong to. In them `field` is
+the stored value:
+
+```astra
+class Panel {
+  var gap : int = 4
+    set(value) {
+      field = value                        // store it
+      repaint()                            // and react
+    }
+
+  var title = "untitled"
+    get() => field.upper()
+
+  val area : int                           // nothing stored: worked out each time
+    get() => width * height
+}
+```
+
+Reading and assigning `panel.gap` go through the accessors, from inside the class as well. A
+property has a stored value when it is given an initial one; an accessor that is not written
+is then the plain one. The accessors take the property's type.
+
+#### Abstract classes, override and init blocks
+
+```astra
+abstract class Shape(val name : string) {
+  abstract fun area()                      // for a subclass to write
+  abstract val sides : int
+  open fun describe() => "$name, area ${area()}"
+}
+
+class Square(val side : int) : Shape("square") {
+  override fun area() => side * side
+  override val sides = 4
+
+  init {                                   // runs when an object is made
+    register(this)
+  }
+}
+```
+
+- An abstract class is never created itself, and a class that extends it has to supply what
+  it left `abstract`, or be abstract too. `sealed class` is read the same way.
+- `override` says that a member takes the place of one the class would otherwise have: a
+  method, field or property of its superclass, one that comes with an interface, or one that
+  an interface or abstract class asks for. The word is required for all of these, and it is
+  an error where there is nothing of that name to replace. So a method can neither replace
+  another by accident nor miss the one it was meant to replace through a misspelt name.
+  `toString` and `==` can always be written with it, and `init` never needs it.
+- `init { }` blocks run when an object is made, after the header's entries are set, in order
+  with the initial values of the fields around them. A class has either such blocks or a
+  hand-written `fun init`, not both.
+- `open`, `final`, `public`, `protected` and `private` on a member are accepted and change
+  nothing.
+
+#### Static members
+
+A static member belongs to the class rather than to each object, and is reached through the
+class. `static` goes in front of a single member, or a `static { }` block holds several:
+
+```astra
+class Color(val r : int, val g : int, val b : int) {
+  static val black = Color(0, 0, 0)        // may be an instance of the class itself
+  static var created : int = 0
+  static fun gray(level) => Color(level, level, level)
+
+  static {                                  // the same, without the word on each line
+    val max = 255
+    fun clamp(n) => n < 0 ? 0 : n > max ? max : n
+    get count() => Color.created            // a static property
+  }
+}
+
+Color.black        Color.gray(128)        Color.created += 1
+```
+
+A static field gets its value once, when the class is declared, in the order the fields are
+written. A `static val` cannot be assigned again and a typed static field only takes values
+of its type. Inside the class a static member is reached by its bare name (`clamp(n)`,
+`max`), from methods and from other static members alike; elsewhere through the class. A
+subclass sees its superclass's static members through its own name (`Sub.max`), though not
+by a bare name. The block holds declarations
+only (`val`, `var`, `fun`, `get`, `set`); it is not code that runs.
+
+#### Objects
+
+`object` declares a class together with its one instance, and the name stands for that
+instance:
+
+```astra
+object Settings {
+  var volume = 5
+  get loud() => this.volume > 7
+  fun raise(by = 1) { this.volume += by }
+}
+
+Settings.raise(3)
+print(Settings.volume, Settings.loud)     // 8 true
+```
+
+An object has fields, properties and methods like any class, may extend one
+(`object Origin : Shape("point") { ... }`) and may have an `init`, which takes no arguments.
+It is created where it is declared.
+
+An object can also be made on the spot, with no name, where a value is expected. It sees the
+variables around it, and inside a method the members of that method's object as well:
+
+```astra
+button.onClick(object : Listener {
+  override fun clicked(x, y) { count += 1 }
+})
+val origin = object { val x = 0; val y = 0 }
+```
+
+#### Interfaces
+
+An interface lists what a class promises to have. A method written without a body, or a
+`val` / `var`, is for the class to supply; a method or property with a body comes along with
+the interface:
+
+```astra
+interface Shape {
+  fun area()                                   // the class writes this
+  val name                                     // and has a field or getter called name
+  fun describe() => "$name of area ${area()}"  // every Shape gets this
+}
+
+class Circle(val r) : Shape {
+  override val name = "circle"
+  override fun area() => 3.14159 * r * r
+}
+
+Circle(1).describe()
+Circle(1) is Shape                             // true; also as, when, and declared types
+```
+
+After the `:` a class lists at most one superclass and any number of interfaces, in any
+order: `class Button(text) : Component(text), Clickable, Focusable`. A class that lacks
+something an interface requires is an error where the class is declared. A method the class
+or its superclass has takes the place of one that comes with an interface. Interfaces extend
+other interfaces (`interface Control : Clickable, Focusable`), may be empty (a marker to test
+for with `is`), may have static members, and are implemented by objects and enums too. An
+interface holds no values and is never created.
+
+#### Classes inside classes
+
+A class, enum, interface or object can be declared in the body of a class. It is a static
+member of that class and is reached through it:
+
+```astra
+class Event(val source) {
+  class Click(source, val x, val y) : Event(source)   // may extend the class it is in
+  class Key(source, val code) : Event(source)
+  enum Phase { capture, target, bubble }
+}
+
+val e = Event.Click("button", 3, 4)
+e is Event.Click                       // also in declared types: fun route(e : Event.Click)
+Event.Phase.bubble
+```
+
+Inside the outer class the short name is enough (`Click(...)`, `Phase`), and a class declared
+inside sees the outer class's static members and its other inner classes by their bare names.
+It does not belong to any one object of the outer class: an object it needs is passed to it.
+Two classes can each have an inner class of the same name (`DrawOp.Text`, `Doc.Text`).
+
+#### Data classes
+
+`data` declares a class that is all about the fields in its header:
+
+```astra
+data Point(val x : int, val y : int)
+
+val p = Point(1, 2)
+print(p)                     // Point(x=1, y=2)
+p == Point(1, 2)             // true: equal when the header fields are (=== still tells them apart)
+p.copy(y = 9)                // Point(x=1, y=9): a new object with some fields changed
+val (x, y) = p               // comes apart into its header fields, in order
+```
+
+Every entry of the header is a field (`val` or `var`). Otherwise it is an ordinary class: it
+can have a body, default values, a superclass, interfaces and static members, and an `==`,
+`toString` or `copy` written in the body replaces the one it would be given. Fields declared
+in the body take no part in equality or printing. Objects of an ordinary class are only equal
+to themselves.
+
+#### Taking values apart
+
+`val (a, b) = value` declares a variable for each part of a list or of a data object, and
+`_` skips a part. The same works for the variable of a `for` loop:
+
+```astra
+val (low, high) = minMax(readings)          // a function returning [low, high]
+val (_, second) = ["a", "b", "c"]
+for (name, score) in [["Ann", 3], ["Bo", 5]] { ... }
+for (key, value) in settings.entries() { ... }
+```
+
+Asking for more parts than there are is an error.
+
+`a to b` makes a `Pair`, two values that travel together; `Triple(a, b, c)` holds three. Both
+are data classes, with `first`, `second` (and `third`), and come apart like any other:
+
+```astra
+val entry = "width" to 200               // Pair("width", 200)
+val (key, value) = entry
+tabs("General" to general, "Advanced" to advanced)
+```
+
+#### Enums
+
+An enum is a type with a fixed set of values, its entries:
+
+```astra
+enum Way { up, down, left, right }
+
+Way.left.name            // "left"
+Way.className            // "Way": any class tells its own name this way
+Way.left.ordinal         // 2: its place in the list
+Way.entries              // [up, down, left, right]
+```
+
+An entry prints as its name, entries are compared with `==`, and no others can be made. An
+entry can have any name but `entries`, even `name` (`SortKey.name` is then that entry, and
+`SortKey.size.name` still the name of the entry `size`).
+
+`entries`, `name` and `ordinal` are only spoken for inside an enum. A member of an enum with
+one of those names clashes with what the enum is given and is an error, unless it says
+`override` and keeps the shape of what it replaces, a property of the same type:
+
+```astra
+enum Level {
+  low, mid, high, hidden
+  override static get entries() : list => super.entries.filter { it != hidden }
+  override get name() : string => "level " + super.name
+  static fun all() => super.entries
+}
+```
+
+Inside the enum, `super.entries`, `super.name` and `super.ordinal` are the ones every enum is
+given, whatever has been put in their place. From outside there is only `Level.entries`: what
+the enum chooses to show. Like
+a class, an enum can have a header, fields, methods, properties and static members; the
+entries come first, with their arguments:
+
+```astra
+enum Planet(val mass : float, val radius : float) {
+  mercury(3.303e23, 2.4397e6),
+  earth(5.976e24, 6.37814e6);
+
+  get gravity() => 6.673e-11 * mass / (radius * radius)
+  fun heavierThan(other) => mass > other.mass
+}
+```
+
+**Where the destination is declared as the enum, an entry can be written by its bare name**,
+because there it can mean nothing else:
+
+```astra
+var t : Way = up                    // a variable or field of that type, declared or assigned
+t = down
+if t == left { ... }                // the other side of == or !=
+fun turn(way : Way) : Way {         // a parameter, and a function's result
+  return when (way) {               // the branches of a when on such a value
+    up -> right
+    else -> up
+  }
+}
+turn(left)
+cell(label, fill = horizontal)      // by name too: the parameter says which enum
+```
+
+With no such destination the full name is needed: `val x = up`, `print(up)` and
+`items.push(up)` are errors, since nothing says which enum is meant. A name that already means
+something (a variable, a member of the class, a global) keeps that meaning, so the bare name
+of an entry is only ever tried last. The destination decides, so two enums may share entry
+names. For an argument, the name is settled as it reaches the parameter, and a name that is
+not an entry of the parameter's enum is an error there.
+
+### Extension functions
+
+A function can be added to a type from outside, to a class of your own or to a built-in
+type. It is declared with the type in front of its name, and called like a method:
+
+```astra
+fun Shape.describe() => "$name of area ${area()}"    // bare names are the shape's members
+fun string.shout() => upper() + "!"
+fun int.isEven() => this % 2 == 0
+fun list.second() => this[1]
+fun string?.orEmpty() => this == null ? "" : this    // with ?, null takes it too
+fun any.tag() => "<" + this + ">"                    // every value
+
+Shape("dot", 1, 1).describe()        "hi".shout()        4.isEven()        null.orEmpty()
+```
+
+Inside, `this` is the value the function was called on. The types are a class, an interface,
+an enum, or `int`, `float`, `number`, `string`, `bool`, `list`, `map`, `range`, `function`
+and `any`. A member of the same name always comes first, so an extension cannot change what
+a type already does. An extension function belongs to the type, not to a file: once the file
+that declares it has been loaded, every value of that type has it.
+
 ### Errors
 
 ```astra
@@ -432,26 +1053,97 @@ Any value can be thrown. Runtime errors (division by zero, undefined variables, 
 overflow, ...) are `Error` instances and can be caught the same way. An uncaught error
 prints a stack trace and exits with code 70.
 
-### Modules
+A `catch` can be for one class of error, and several can follow a `try`; an error that none
+of them is for carries on outwards. A `finally` block runs however the `try` is left: at its
+end, by an error, or by `return`, `break` or `continue`.
 
 ```astra
-import "lib/shapes"      // path relative to this file; ".astra" is optional
+fun load(path) {
+  val file = open(path)
+  try {
+    return parse(file)
+  } catch (e : NotFound) {
+    return null
+  } catch (e) {                 // any other error; has to be the last catch
+    log("cannot read $path: $e")
+    throw e
+  } finally {
+    file.close()                // runs in every case, after the value to return is worked out
+  }
+}
 ```
 
-An imported file runs once. All files share one global namespace, so its top-level
-functions, classes and variables are simply available afterwards.
+### Modules
 
-A file that is not found next to the importing one is looked for in the `lib` folder beside
+**A folder is a namespace.** The files of one folder share their top-level names: a function,
+class or variable declared in one is in reach of the others, with no import. Other folders
+see nothing of it until they import it:
+
+```astra
+import Shapes              // the folder Shapes: its names are written Shapes.Circle
+import Shapes.*            // the same, and its names can be written bare as well: Circle
+import Jade.Chart          // the folder Jade/Chart: Jade.Chart.Axis
+import Jade as Ui          // under a name of your own: Ui.Button
+import Shapes.Circle       // a file, Shapes/Circle.astra: loads that one file
+import "../shared/util" as Util    // a path that is not made of plain names goes in quotes
+```
+
+- **`import Shapes` makes you say `Shapes.`** in front of everything you use from it. That
+  keeps a file's own names and the library's apart, and shows where each name comes from.
+- **`import Shapes.*` brings in every name the file may see**: the public ones, and the
+  `internal` ones if the file belongs to the same library. Private names never. The name
+  `Shapes.Circle` still works, for the cases below.
+- An import counts for the file that writes it, and only that file. It is not passed on: what
+  the folder itself imported stays its own business.
+- A file's own folder comes first. A name declared there is the one meant, even if a `.*`
+  import declares it too; the import's is then written with its name in front.
+- When two `.*` imports declare the same name, its bare use is an error that asks which is
+  meant: `Shapes.title` or `Text.title`.
+- A name with an import in front works in types too (`fun show(b : Ui.Block)`).
+- A library may hold an object called like itself. `Jade.Button` is then the library's class,
+  and what the library has no name for, `Jade.requestRepaint()`, is looked for on the object.
+- A name can be declared only once in a folder.
+
+**How names are written.** Libraries (folders) and classes, enums, interfaces and objects
+are in Title case: `Jade`, `Jade.Chart`, `ListBox`. Functions, methods, fields, variables and
+constants and enum entries are in camelCase: `openWindow`, `windowOpener`, `Color.black`,
+`Fill.horizontal`. The built-in type names (`int`,
+`string`, `list`, ...) are lowercase, and are the only exception. The language does not
+enforce this; it is how everything that comes with it is named.
+- Built-in names (`print`, `Error`, the types) are in reach everywhere.
+
+Three words say who may see a top-level declaration:
+
+```astra
+private fun helper() { ... }      // this file only
+internal val cache = {:}          // this library: its folder and those under it
+fun open() { ... }                // everyone who imports the folder
+```
+
+A library is a folder directly inside `lib`, with everything below it, so `Jade` and
+`Jade/Chart` can share `internal` names that programs using them cannot see. The folders of
+a program count as one library.
+
+An import is looked for next to the importing file, then in the `lib` folder beside
 `astra.exe`, and nowhere else. That is where bundled libraries such as `gui` live, so
 `astra.exe` and its `lib` folder belong together when astra is copied somewhere.
 
+**Order.** Within a file, and across the files of a folder that is imported as a whole, the
+order of declarations does not matter. Before anything else runs, the imports are loaded, the
+functions defined and the classes set up, each after the classes it extends. A class's static
+fields and an enum's entries are worked out the first time one of them is asked for, or when
+the program reaches the class, whichever comes first. Everything else, top-level variables
+and statements, runs in the order written, and for a folder file by file in alphabetical
+order: a top-level variable can be used by a function at any time, but not by a statement
+that runs before the variable's own line.
+
 ## GUI
 
-`import "gui"` gives a program windows, buttons, text boxes, lists and a canvas to draw on.
+`import gui.*` gives a program windows, buttons, text boxes, lists and a canvas to draw on.
 It uses the native controls of Windows and works only there.
 
 ```astra
-import "gui"
+import gui.*
 
 val window = Window("Counter")
 var count = 0
@@ -603,16 +1295,26 @@ opportunity, which is slow but useful for finding memory bugs when changing the 
 
 ## Limitations
 
-- No `finally` or variadic parameters.
 - The GUI library is Windows-only, and covers the basic widgets: there are no menus, images,
   combo boxes, sliders or tabs yet.
 - Types are checked while the program runs (only literals are checked at compile time), so
   a mismatch shows up when the offending line executes. Typed calls cost a little speed.
-- Static fields, loop variables and `catch` variables cannot be typed, and there are no element
-  types such as "list of int".
+- Loop variables cannot be typed, and the element types in `list<int>` or `(int) -> bool` are
+  read but not checked.
 - Strings are UTF-8 byte strings: `length`, indexing and `slice` count bytes, while `for`
   and `split("")` step through whole characters. `upper`/`lower` only change ASCII letters.
-- Imports share one global namespace; there are no private module members.
+- `private` and the other access words are enforced for top-level declarations. On the members
+  of a class they are accepted and change nothing yet.
+- A class declared inside another does not belong to one object of the outer class (there is
+  no `inner`), and an inherited static member needs the class name in front (`Base.max`).
+- `if` always needs its braces, also as a value: `if wide { 200 } else { 100 }`.
+- Extension functions are not scoped to the file that imports them, and there are no extension
+  properties. A class has one initializer: there are no secondary constructors.
+- `apply` and `run` are ordinary calls, so a plain `return` inside their lambda is an error;
+  it works in `let`, `also` and `takeIf`.
+- A data object used as a map key is still looked up as itself, not by its fields.
+- An `object` is created where it is written, and top-level variables get their values in
+  order (file by file for a folder), so one cannot be used by a statement that runs earlier.
 - Integer arithmetic wraps on overflow.
 - Bytecode files are verified when loaded, but that is a consistency check rather than a
   security sandbox. Run only `.astc` files you trust.

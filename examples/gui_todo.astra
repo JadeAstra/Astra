@@ -1,5 +1,5 @@
 // A to-do list: a text box, a list, and buttons that act on the selection.
-import "gui"
+import gui.*
 
 class Task(val title : string, var done : bool = false) {
   fun toString() : string => (this.done ? "[x] " : "[  ] ") + this.title

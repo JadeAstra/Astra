@@ -1,6 +1,6 @@
 // The GUI library, driven without a person: the windows here are never shown, and the
 // buttons are clicked from code.
-import "gui"
+import gui.*
 
 // a window is a column; widgets come from its methods
 val window = Window("Counter", 320, 200)

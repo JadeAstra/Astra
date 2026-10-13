@@ -1,0 +1,84 @@
+// Extension functions: a function added to a type from outside. `this` is the value it runs on.
+
+class Shape(val name : string, val w : int, val h : int) {
+  fun area() => w * h
+}
+class Square(side : int) : Shape("square", side, side)
+
+fun Shape.describe() => "$name of area ${area()}"      // bare names are the shape's members
+fun Shape.scaled(by : int = 2) : Shape => Shape(name, w * by, h * by)
+fun Shape.area() => -1                                  // a member of that name comes first
+
+val s = Shape("rect", 2, 3)
+print(s.describe(), s.scaled().describe(), s.scaled(by = 3).w, s.area())   // expect: rect of area 6 rect of area 24 6 6
+print(Square(2).describe(), Square(2).scaled(5).area())   // expect: square of area 4 100
+
+// As a value it is a function bound to the object, and ?. works on it.
+val bound = s.describe
+val missing = null
+print(bound(), missing?.describe(), [s, Square(1)].map { it.describe() })   // expect: rect of area 6 null ["rect of area 6", "square of area 1"]
+
+// On the built-in types.
+fun string.shout() => upper() + "!"                    // upper() is the string's own
+fun string.words() => split(" ")
+fun string.isLong(limit = 5) => length > limit
+fun int.double() => this * 2
+fun int.isEven() => this % 2 == 0
+fun number.half() => this / 2
+fun float.rounded() => int(this + 0.5)
+fun bool.toInt() => this ? 1 : 0
+fun list.second() => this[1]
+fun list<int>.total() : int {
+  var sum = 0
+  for n in this { sum += n }
+  return sum
+}
+fun map.keyCount() => keys().length
+fun range.middle() => (start + end) / 2
+fun function.twice(x) => this(this(x))
+print("hi".shout(), "a b c".words(), "hello!".isLong(), "hey".isLong(2), 21.double(), 3.isEven(), 4.isEven())   // expect: HI! ["a", "b", "c"] true true 42 false true
+print(9.half(), 9.0.half(), 2.6.rounded(), true.toInt(), [1, 2, 3].second(), [1, 2, 3].total(), {"a": 1, "b": 2}.keyCount(), (0..10).middle())   // expect: 4 4.5 3 1 2 6 2 5
+print({ it + 1 }.twice(5), "x".shout().shout(), [3, 4].total().double())   // expect: 7 X!! 14
+
+// On every value, and on null.
+fun any.tag() => "<" + this + ">"
+fun string?.orEmpty() => this == null ? "" : this
+fun string?.isBlank() => this == null or this.trim().length == 0
+print(5.tag(), "x".tag(), [1].tag(), s.name.tag(), missing.orEmpty().length, "kept".orEmpty(), missing.isBlank(), " ".isBlank(), "a".isBlank())   // expect: <5> <x> <[1]> <rect> 0 kept true true false
+
+// On an interface, an enum, and a class declared inside another.
+interface Named { val name }
+class Pet(override val name) : Named
+fun Named.greeting() => "hello, $name"
+enum Way { up, down }
+fun Way.opposite() : Way => this == up ? down : up
+class Event { class Click(val x) }
+fun Event.Click.where() => "at $x"
+print(Pet("Rex").greeting(), Way.up.opposite(), Way.down.opposite().name, Event.Click(4).where())   // expect: hello, Rex down up at 4
+
+// Inside a method, and inside a lambda run on an object, by its bare name.
+fun Shape.label() => "[" + name + "]"
+class Canvas {
+  val shape = Shape("dot", 1, 1)
+  fun draw() => shape.label() + " " + shape.apply { w }.describe()
+  fun viaReceiver() => shape.run { label() + "/" + describe() }
+}
+print(Canvas().draw(), Canvas().viaReceiver())   // expect: [dot] dot of area 1 [dot]/dot of area 1
+
+// Declared further down the file than where it is used; named and extra arguments.
+print("abc".padded(6), "abc".padded(width = 5, fill = "*"), 7.clamp(0, 5), 7.clamp(low = 8, high = 9))   // expect: abc... abc** 5 8
+fun string.padded(width, fill = ".") {
+  var out = this
+  while out.length < width { out += fill }
+  return out
+}
+fun int.clamp(low, high) => this < low ? low : this > high ? high : this
+
+// What has no such function says so.
+try { 5.shout() } catch (e) { print(e.message) }   // expect: undefined method 'shout' on a value of type int
+try { s.total() } catch (e) { print(e.message) }   // expect: undefined method 'total' on Shape
+
+// Many calls.
+var sum = 0
+for i in 1..20000 { sum += i.double() - i }
+print(sum, "".tag())                        // expect: 200010000 <>

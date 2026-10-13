@@ -110,5 +110,5 @@ val out = Stream() << "a" << "b" << 3
 print(out.parts, out >> 2)                       // expect: ["a", "b", 3] ["a", "b"]
 
 // shifts bind more tightly than ranges and comparisons, less tightly than + and -
-for value in 1 << 1..1 << 3 { steps.push(value) }
+for value in 1 << 1..<1 << 3 { steps.push(value) }
 print(steps)                                     // expect: [3, 2, 1, 2, 3, 4, 5, 6, 7]

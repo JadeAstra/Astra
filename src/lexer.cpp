@@ -9,14 +9,14 @@ namespace {
 
 const std::unordered_map<std::string, TokenType> kKeywords = {
     {"val", TokenType::Val},       {"var", TokenType::Var},           {"fun", TokenType::Fun},
-    {"class", TokenType::Class},   {"static", TokenType::Static},     {"op", TokenType::Operator},
+    {"class", TokenType::Class},
     {"this", TokenType::This},     {"super", TokenType::Super},       {"return", TokenType::Return},
     {"if", TokenType::If},         {"else", TokenType::Else},         {"while", TokenType::While},
     {"for", TokenType::For},       {"in", TokenType::In},             {"break", TokenType::Break},
     {"continue", TokenType::Continue}, {"true", TokenType::True},     {"false", TokenType::False},
     {"null", TokenType::Null},     {"try", TokenType::Try},           {"catch", TokenType::Catch},
     {"throw", TokenType::Throw},   {"import", TokenType::Import},     {"is", TokenType::Is},
-    {"and", TokenType::And},       {"or", TokenType::Or},
+    {"and", TokenType::And},       {"or", TokenType::Or},             {"when", TokenType::When},
 };
 
 bool isDigit(char c) { return c >= '0' && c <= '9'; }
@@ -188,11 +188,25 @@ void Lexer::scanToken() {
         case ',': type = TokenType::Comma; break;
         case ';': type = TokenType::Semicolon; break;
         case ':': type = TokenType::Colon; break;
-        case '?': type = TokenType::Question; break;
+        case '@': type = TokenType::At; break;
+        case '?':
+            // `c ?.5 : x` is still a conditional: a digit cannot start a member name.
+            if (next('.') && !(pos_ + 2 < end_ && isDigit(src_[pos_ + 2]))) {
+                type = TokenType::QuestionDot;
+                length = 2;
+            } else if (next(':')) {
+                type = TokenType::Elvis;
+                length = 2;
+            } else {
+                type = TokenType::Question;
+            }
+            break;
         case '.':
             if (next('.')) {
-                if (pos_ + 2 < end_ && src_[pos_ + 2] == '=') {
-                    type = TokenType::DotDotEq;
+                if (pos_ + 2 < end_ && src_[pos_ + 2] == '=')
+                    throw error("'..=' is not an operator; 'a..b' includes b, and 'a..<b' leaves it out");
+                if (pos_ + 2 < end_ && src_[pos_ + 2] == '<') {
+                    type = TokenType::DotDotLt;
                     length = 3;
                 } else {
                     type = TokenType::DotDot;
@@ -224,7 +238,22 @@ void Lexer::scanToken() {
         case '*': withEq(TokenType::Star, TokenType::StarEq); break;
         case '/': withEq(TokenType::Slash, TokenType::SlashEq); break;
         case '%': withEq(TokenType::Percent, TokenType::PercentEq); break;
-        case '!': withEq(TokenType::Bang, TokenType::BangEq); break;
+        case '!':
+            if (pos_ + 2 < end_ && src_[pos_ + 1] == '=' && src_[pos_ + 2] == '=') {
+                type = TokenType::BangEqEq;
+                length = 3;
+            } else if (next('!')) {
+                type = TokenType::BangBang;
+                length = 2;
+            } else if (pos_ + 2 < end_ && src_[pos_ + 1] == 'i' && (src_[pos_ + 2] == 's' || src_[pos_ + 2] == 'n') &&
+                       !(pos_ + 3 < end_ && isIdentPart(src_[pos_ + 3]))) {
+                // `x !is T` and `x !in list`; `!isReady` and `!index` are still a not.
+                type = src_[pos_ + 2] == 's' ? TokenType::NotIs : TokenType::NotIn;
+                length = 3;
+            } else {
+                withEq(TokenType::Bang, TokenType::BangEq);
+            }
+            break;
         case '<':
             if (next('<')) {
                 bool assign = pos_ + 2 < end_ && src_[pos_ + 2] == '=';
@@ -245,8 +274,9 @@ void Lexer::scanToken() {
             break;
         case '=':
             if (next('=')) {
-                type = TokenType::EqEq;
-                length = 2;
+                const bool identity = pos_ + 2 < end_ && src_[pos_ + 2] == '=';
+                type = identity ? TokenType::EqEqEq : TokenType::EqEq;
+                length = identity ? 3 : 2;
             } else if (next('>')) {
                 type = TokenType::Arrow;
                 length = 2;
@@ -340,13 +370,36 @@ void Lexer::number(size_t start, int line, int col) {
 }
 
 void Lexer::string(char quote, size_t start, int line, int col) {
-    pos_++;
+    // Three quotes open a raw string: it runs to the next three, over as many lines as it
+    // likes, and a backslash in it is just a backslash. $name and ${...} still work.
+    const bool raw = quote == '"' && pos_ + 2 < end_ && src_[pos_ + 1] == '"' && src_[pos_ + 2] == '"';
+    pos_ += raw ? 3 : 1;
     std::string text;
     std::shared_ptr<std::vector<InterpPart>> parts;
 
     for (;;) {
         if (pos_ >= end_) throw CompileError(file_, line, col, "unterminated string", true);
         char c = src_[pos_];
+
+        if (raw && c == quote) {
+            if (pos_ + 2 < end_ && src_[pos_ + 1] == quote && src_[pos_ + 2] == quote) {
+                // Quotes beyond the closing three belong to the text.
+                while (pos_ + 3 < end_ && src_[pos_ + 3] == quote) {
+                    text += quote;
+                    pos_++;
+                }
+                pos_ += 3;
+                break;
+            }
+            text += c;
+            pos_++;
+            continue;
+        }
+        if (raw && c == '\\') {
+            text += c;
+            pos_++;
+            continue;
+        }
 
         if (c == quote) {
             pos_++;

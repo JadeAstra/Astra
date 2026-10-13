@@ -28,7 +28,7 @@ print("a[0], a[1] =", a[0], a[1])
 // Compound assignment works through the same operators.
 var position : Vec2 = Vec2(0, 0)
 val velocity : Vec2 = Vec2(1.5, -0.5)
-for step in 0..4 {
+for step in 0..<4 {
   position += velocity
 }
 print("after 4 steps:", position)
