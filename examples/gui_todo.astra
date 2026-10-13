@@ -2,10 +2,10 @@
 import gui.*
 
 class Task(val title : string, var done : bool = false) {
-  fun toString() : string => (this.done ? "[x] " : "[  ] ") + this.title
+  override fun toString() => (done ? "[x] " : "[  ] ") + title
 }
 
-val tasks : list = [Task("Write an Astra program"), Task("Give it a window", true), Task("Show it to someone")]
+val tasks = [Task("Write an Astra program"), Task("Give it a window", true), Task("Show it to someone")]
 
 val window = Window("To do", 380, 340)
 
@@ -25,16 +25,16 @@ val summary = actions.label("")
 fun refresh() {
   val selected = list.selectedIndex
   list.setItems(tasks)
-  if selected >= 0 and selected < tasks.length { list.selectedIndex = selected }
+  if selected in 0..<tasks.length { list.selectedIndex = selected }
 
-  val remaining = tasks.filter(fun(task) => !task.done).length
+  val remaining = tasks.filter { !it.done }.length
   summary.text = "$remaining of ${tasks.length} left"
   val hasSelection = list.selectedIndex >= 0
   toggleButton.enable(hasSelection)
   removeButton.enable(hasSelection)
 }
 
-addButton.onClick = fun() {
+addButton.onClick = {
   val title = input.text.trim()
   if title != "" {
     tasks.push(Task(title))
@@ -45,18 +45,18 @@ addButton.onClick = fun() {
 }
 addButton.makeDefault()     // Enter adds the task
 
-toggleButton.onClick = fun() {
+toggleButton.onClick = {
   val task = tasks[list.selectedIndex]
   task.done = !task.done
   refresh()
 }
 
-removeButton.onClick = fun() {
+removeButton.onClick = {
   tasks.removeAt(list.selectedIndex)
   refresh()
 }
 
-list.onSelect = fun(index, item) { refresh() }
+list.onSelect = { index, item -> refresh() }
 
 refresh()
 window.show()

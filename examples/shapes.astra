@@ -1,44 +1,55 @@
-// Inheritance, super, polymorphism, static methods and toString().
+// Shapes: an abstract class, an interface, override, static members, init blocks and an
+// extension function.
 
-class Shape(var name : string) {
-  fun area() : number { return 0.0 }
-  fun perimeter() : number { return 0.0 }
+interface Drawable {
+  fun outline() : string
+}
 
-  fun toString() : string {
-    return "${this.name}: area ${Shape.round2(this.area())}, perimeter ${Shape.round2(this.perimeter())}"
+abstract class Shape(val name : string) : Drawable {
+  static {
+    var made = 0
+    fun round2(x : number) : float => Math.round(x * 100) / 100.0
   }
 
-  static fun round2(x : number) : float => Math.round(x * 100) / 100.0
+  init { made += 1 }                         // runs for every shape that is made
+
+  abstract fun area() : number                // for each kind of shape to write
+  abstract fun perimeter() : number
+
+  override fun outline() => "$name, ${round2(perimeter())} around"
+  override fun toString() => "$name: area ${round2(area())}, perimeter ${round2(perimeter())}"
 }
 
 class Circle(val radius : number) : Shape("circle") {
-  override fun area() : number => Math.PI * this.radius * this.radius
-  override fun perimeter() : number => 2 * Math.PI * this.radius
+  override fun area() => Math.PI * radius * radius
+  override fun perimeter() => 2 * Math.PI * radius
 }
 
-class Rect(val width : number, val height : number) : Shape("rectangle") {
-  override fun area() : number => this.width * this.height
-  override fun perimeter() : number => 2 * (this.width + this.height)
+class Rect(val width : number, val height : number, name : string = "rectangle") : Shape(name) {
+  override fun area() => width * height
+  override fun perimeter() => 2 * (width + height)
 }
 
-// A square needs more than the header can say, so it writes its own init.
-class Square : Rect {
-  fun init(side : number) {
-    super.init(side, side)
-    this.name = "square"
-  }
+class Square(side : number) : Rect(side, side, "square")
+
+// An extension function adds to a type from outside. `this` is the shape it is called on.
+fun Shape.describe() => when (this) {
+  is Circle -> "a circle of radius $radius"
+  is Square -> "a square of side $width"
+  is Rect -> "a $width by $height rectangle"
+  else -> "some shape"
 }
 
-val shapes : list = [Circle(1.5), Rect(3, 4.5), Square(2)]
-for shape in shapes {
-  print(shape)
-}
+val shapes = [Circle(1.5), Rect(3, 4.5), Square(2)]
+for shape in shapes { print(shape) }
+shapes.each { print("  ", it.describe(), "-", it.outline()) }
 
-fun larger(a : Shape, b : Shape) : Shape => b.area() > a.area() ? b : a
-
-val largest : Shape = shapes.reduce(larger, shapes[0])
-print("largest is the ${largest.name}")
+val largest = shapes.reduce({ best, shape -> shape.area() > best.area() ? shape : best }, shapes[0])
+print("largest is the ${largest.name};", Shape.made, "shapes were made")
 print("squares are rectangles:", shapes[2] is Rect, "- circles are not:", shapes[0] is Rect)
 
-shapes.sort(fun(a : Shape, b : Shape) : number => a.area() - b.area())
-print("by area:", shapes.map(fun(s : Shape) : string => s.name).join(" < "))
+shapes.sort { a, b -> a.area() - b.area() }
+print("by area:", shapes.map { it.name }.join(" < "))
+
+// An abstract class is never made itself.
+try { Shape("blob") } catch (e) { print(e.message) }

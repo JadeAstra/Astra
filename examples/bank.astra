@@ -1,76 +1,84 @@
-// Custom error classes, try/catch, closures and maps.
+// A small bank: an enum, a data class, an object, errors of our own, try / catch / finally
+// and lambdas.
 
-class InsufficientFunds : Error {
-  val shortfall : number
+enum Kind { paidIn, paidOut }
 
-  fun init(needed : number, available : number) {
-    super.init("need ${needed} but only ${available} available")
-    this.shortfall = needed - available
-  }
+data Entry(val kind : Kind, val amount : number)
+
+class InsufficientFunds(val needed : number, val available : number)
+    : Error("need $needed but only $available available") {
+  val shortfall = needed - available
 }
 
-class Account(val owner : string, var balance : number) {
-  val history : list = []
+class Account(val owner : string, var balance : number = 0) {
+  val history = []
 
   fun deposit(amount : number) : Account {
-    if amount <= 0 { throw Error("deposit must be positive") }
-    this.balance += amount
-    this.history.push({kind: "deposit", amount: amount})
+    if amount <= 0 { throw Error("a deposit has to be more than nothing") }
+    balance += amount
+    history.push(Entry(paidIn, amount))        // the parameter is a Kind, so the bare name will do
     return this
   }
 
   fun withdraw(amount : number) : Account {
-    if amount > this.balance { throw InsufficientFunds(amount, this.balance) }
-    this.balance -= amount
-    this.history.push({kind: "withdraw", amount: amount})
+    if amount > balance { throw InsufficientFunds(amount, balance) }
+    balance -= amount
+    history.push(Entry(paidOut, amount))
     return this
   }
 
-  fun toString() : string => "${this.owner}: ${this.balance}"
+  fun total(kind : Kind) => history.filter { it.kind == kind }.reduce({ sum, entry -> sum + entry.amount }, 0)
+
+  override fun toString() => "$owner: $balance"
 }
 
-class Bank {
-  val accounts : map = {:}
+// One bank, so an object rather than a class.
+object Bank {
+  val accounts = {:}
 
-  fun open(owner : string, balance : number) : Account {
-    this.accounts[owner] = Account(owner, balance)
-    return this.accounts[owner]
+  fun open(owner : string, balance : number = 0) : Account {
+    val account = Account(owner, balance)
+    accounts[owner] = account
+    return account
   }
 
+  fun find(owner : string) : Account => accounts[owner] ?: throw Error("there is no account for $owner")
+
   fun transfer(from : string, to : string, amount : number) {
-    val source : Account? = this.accounts[from]
-    val target : Account? = this.accounts[to]
-    if source == null or target == null { throw Error("unknown account") }
+    val source = find(from)
+    val target = find(to)
     source.withdraw(amount)
     target.deposit(amount)
   }
 }
 
-val bank : Bank = Bank()
-bank.open("ada", 100)
-bank.open("grace", 20)
+Bank.open("ada", 100)
+Bank.open("grace", 20)
 
 // Each attempt reports how it went instead of stopping the program.
-fun attempt(label : string, action : function) {
+var attempts = 0
+fun attempt(label : string, action : () -> unit) {
   try {
     action()
     print("ok      ", label)
+  } catch (e : InsufficientFunds) {
+    print("declined", label, "- short by", e.shortfall)
   } catch (e) {
-    if e is InsufficientFunds {
-      print("declined", label, "- short by", e.shortfall)
-    } else {
-      print("failed  ", label, "-", e.message)
-    }
+    print("failed  ", label, "-", e.message)
+  } finally {
+    attempts++
   }
 }
 
-attempt("ada -> grace 30", fun() { bank.transfer("ada", "grace", 30) })
-attempt("grace -> ada 500", fun() { bank.transfer("grace", "ada", 500) })
-attempt("ada -> nobody 1", fun() { bank.transfer("ada", "nobody", 1) })
-attempt("deposit -5", fun() { bank.accounts["ada"].deposit(-5) })
-attempt("deposit \"ten\"", fun() { bank.accounts["ada"].deposit("ten") })
+attempt("ada -> grace 30") { Bank.transfer("ada", "grace", 30) }
+attempt("grace -> ada 500") { Bank.transfer("grace", "ada", 500) }
+attempt("ada -> nobody 1") { Bank.transfer("ada", "nobody", 1) }
+attempt("deposit -5") { Bank.find("ada").deposit(-5) }
+attempt("deposit \"ten\"") { Bank.find("ada").deposit("ten") }
 
-for owner in bank.accounts {
-  val account : Account = bank.accounts[owner]
-  print(account, "after", account.history.length, "transaction(s)")
+print(attempts, "attempts")
+for owner in Bank.accounts {
+  val account = Bank.find(owner)
+  print(account, "- paid in ${account.total(paidIn)}, paid out ${account.total(paidOut)}")
+  account.history.each { print("   ", it) }
 }

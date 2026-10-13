@@ -6,12 +6,12 @@ val window = Window("Paint", 560, 420)
 val tools = window.row()
 var color = Color.black
 var thickness = 3
-for choice in [["Black", Color.black], ["Red", Color.red], ["Green", Color.green], ["Blue", Color.blue]] {
-  tools.button(choice[0], fun() { color = choice[1] }, width = 70)
+for (name, shade) in [["Black", Color.black], ["Red", Color.red], ["Green", Color.green], ["Blue", Color.blue]] {
+  tools.button(name, { color = shade }, width = 70)
 }
-val thick = tools.checkBox("Thick", onChange = fun(on) { thickness = on ? 9 : 3 })
+val thick = tools.checkBox("Thick", onChange = { on -> thickness = on ? 9 : 3 })
 tools.spacer()
-tools.button("Clear", fun() { canvas.clear() })
+tools.button("Clear", { canvas.clear() })
 
 val canvas = window.canvas(fill = true)
 val hint = window.label("Drag on the white area to draw.")
@@ -20,13 +20,13 @@ val hint = window.label("Drag on the white area to draw.")
 var lastX = null
 var lastY = null
 
-canvas.onMouseDown = fun(x, y, button) {
+canvas.onMouseDown = { x, y, button ->
   lastX = x
   lastY = y
   canvas.fillCircle(x, y, thickness / 2.0, color)
 }
 
-canvas.onMouseMove = fun(x, y, button) {
+canvas.onMouseMove = { x, y, button ->
   if button == 1 and lastX != null {
     canvas.line(lastX, lastY, x, y, color, thickness)
     lastX = x
@@ -35,7 +35,7 @@ canvas.onMouseMove = fun(x, y, button) {
   hint.text = "$x, $y"
 }
 
-canvas.onMouseUp = fun(x, y, button) {
+canvas.onMouseUp = { x, y, button ->
   lastX = null
   lastY = null
 }

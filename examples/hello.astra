@@ -1,16 +1,26 @@
-// The smallest tour: variables, a function, a class.
+// The smallest tour: values, a function, a class, a lambda, and a value that may be missing.
 
-val who : string = "world"
+val who = "world"
 print("Hello, $who!")
 
 fun greet(name : string) : string => "Hello, $name!"
 print(greet("Astra"))
 
 class Greeter(val greeting : string) {
-  fun greet(name : string) : string => "${this.greeting}, $name!"
+  fun greet(name : string) => "$greeting, $name!"      // greeting is this.greeting
 }
 
 val formal = Greeter("Good evening")
 for name in ["Ada", "Grace", "Linus"] {
   print(formal.greet(name))
+}
+
+// A lambda is a function written in braces; `it` is its one argument.
+val shout = { it.upper() + "!" }
+print(["hello", "astra"].map(shout).join(" "))
+
+// A map gives null for a key it does not have, and ?: says what to use then.
+val nicknames = {"Ada": "the Countess"}
+for name in ["Ada", "Grace"] {
+  print(name, "is", nicknames[name] ?: "just $name")
 }
