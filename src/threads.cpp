@@ -550,6 +550,7 @@ struct VM::Workers {
 };
 
 Value VM::blocking(std::function<void()> work, std::function<Value(VM&)> finish) {
+    if (inParallelSection()) throw runtimeError("a parallel section does not wait: reading, writing and other waiting is done outside it");
     if (canSuspend() && onLoopThread()) {
         // In a flow on the loop thread: a worker does the waiting, and the flow is set aside
         // until the loop hears that the work is done.

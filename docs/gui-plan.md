@@ -5,7 +5,7 @@ time (section 7). M0, the two spikes, is done and accepted; what it found is in
 [m0-findings.md](m0-findings.md) and is folded in below. M1, the language, and M2, the
 standard library, are done. M3, threads and async I/O, is built; what was settled along the
 way is under "As built in M3" in 5.5 (and "As built in M2" in 5.4). M3.5, parallel
-sections, is next, and M4 after it.
+sections, is built too (5.5, point 7). M4 is next.
 
 ## 1. Goal and ground rules
 
@@ -747,6 +747,49 @@ What is added, in dependency order:
    one call at a time, which no core can share. In Jade the graphics card draws them all in
    one call, and what the cores are for is working out the numbers it is given.
 
+   **As built in M3.5 (2026-10-13).** What was settled while building it, and where it
+   differs from the above:
+
+   - **No change to the interpreter.** "One interpreter state per core" turned out not to
+     need the state taken out of the VM. Each core has a VM of its own, made once and kept,
+     with its own stack and calls; these VMs work on the heap of the VM that started the
+     section, which waits with its lock held so that none of its threads runs. A core's VM
+     has a copy of the table of variables, which it reads and never writes, and uses the
+     root's table of names.
+   - **Ownership is one byte in every object**: 0 for shared, otherwise the core that owns it.
+     Every place that looks into an object asks: the property and index instructions, method
+     calls, loops, comparing and printing, the keys of maps, and every built-in method as it
+     is called, with those that change what they are called on marked as such. Outside a
+     section the question costs one comparison that never fails.
+   - **A core owns the item, not what the item holds.** "Whatever those items alone hold"
+     cannot be told without walking the whole heap, so what an item holds is shared: it can
+     be read, and replaced by something the core has made, but not changed in place. An item
+     that is itself a list or a map is owned like any other.
+   - **Another core's item cannot even be read**, since its owner may be half way through
+     changing it. Asking whether two values are the same object is allowed, so a core can
+     find its item in a list of everyone's.
+   - **The same object twice in one stream is an error**, as it would be two cores' at once.
+   - **The buffer of numbers is not built.** `bytes` is shared out by position
+     (`parallelChunks`); a buffer of floating-point numbers is added when Jade has points to
+     hand the graphics card (M5).
+   - **Built-in functions that wait, or that work on what the program has one of**, are
+     refused in a section by name: threads and locks, the event loop, flows, files and
+     streams, workers, windows, `input` and `exit`.
+   - **Measured** on a machine with 24 cores: moving 50,000 balls 7.4 ms in one loop and
+     0.9 ms in a section; 64 counts of primes 2084 ms and 129 ms. Starting the cores costs
+     0.04 ms, so a section pays from about 300 quick items. Dealing the items out and taking
+     them back is done by the one waiting thread, which is what keeps quick items from
+     gaining more.
+   - **The bounce example is one line different** (`gui_bounce_parallel.astra`) and, as
+     foreseen, no smoother: 37 frames a second at 5000 balls either way.
+   - **The stress setting named in the milestone was a mistake**: running every `forEach`
+     of the library as a section would refuse the many lambdas that change a variable, as
+     it should. Instead `ASTRA_CORES` sets the number of cores, and the section tests are
+     run with 1, 2, 3, 7 and all of them, under the sanitizer.
+   - **What there is no tool for**: nothing on Windows finds two cores touching the same
+     memory, so the rule was checked by going through every instruction and every built-in
+     that writes. All writes are either checked or made to an object just created.
+
 Rules for Jade, the same as JadeUI's:
 
 - The tree, layout, painting and events belong to the UI thread, the one running the loop.
@@ -1012,7 +1055,7 @@ committed to.
 - **Shown:** something that runs, to try by hand, with a short account of what was built,
   what turned out differently from this plan, and what that means for the milestones after.
 - **Versioned:** the version of `astra` goes up with each milestone: M1 is 0.1.0, M2 is
-  0.2.0, M3 is 0.3.0, and so on. `astra --version` then says which milestone a build is.
+  0.2.0, M3 is 0.3.0, M3.5 is 0.3.5, and so on. `astra --version` then says which milestone a build is.
 - **Accepted, or not:** the next milestone starts on a go-ahead. If the result is not good
   enough it is reworked first; if it changes what should come next, the plan is revised
   before going on.

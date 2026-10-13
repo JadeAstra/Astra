@@ -114,7 +114,9 @@ struct FiberSuspend {};
 // an Astra error: no catch block sees it, and it ends whatever the worker was doing.
 struct WorkerStop {};
 
-struct WorkerLink;  // worker.cpp: what a worker and the program that started it share
+struct WorkerLink;    // worker.cpp: what a worker and the program that started it share
+struct ParallelPool;  // parallel.cpp: the cores of a VM's parallel sections
+struct ParallelJob;
 
 // One operating-system thread that runs Astra code.
 struct ThreadState {
@@ -201,6 +203,9 @@ public:
     // `worker`: this VM is a worker's, running beside the one that started it. It has no
     // windows: what belongs to the one user interface stays with the main program.
     explicit VM(bool worker = false);
+    // The VM of one core of `root`'s parallel sections (parallel.cpp). It has an interpreter
+    // of its own and works on root's objects.
+    VM(VM& root, uint8_t coreId);
     ~VM();
     bool isWorker() const { return isWorker_; }
     VM(const VM&) = delete;
@@ -214,6 +219,7 @@ public:
     template <class T, class... A>
     T* alloc(A&&... args) {
         T* obj = new T(std::forward<A>(args)...);
+        obj->core = coreId_;  // what a core makes is its own until the section is over
         obj->next = objects_;
         objects_ = obj;
         bytesAllocated_ += sizeof(T);
@@ -337,6 +343,39 @@ public:
     // Called, from whatever thread, when the loop has been given something to do.
     std::atomic<void (*)()> onLoopWake{nullptr};
 
+    // ---- Parallel sections (parallel.cpp) ----
+    // Several cores running Astra code on the same objects at the same time. Each core has a
+    // VM of its own for the interpreter's working state, and they share the heap of the VM
+    // that started the section, which waits meanwhile with its lock held. What keeps them
+    // apart is ownership (Obj::core): a core looks only into what is shared or its own, and
+    // changes only what is its own. Every place that looks into an object asks.
+
+    bool inParallelSection() const { return coreId_ != 0; }
+    // Throws if this core may not look into, or may not change, the object.
+    void guardRead(const Obj* obj) const {
+        if (obj->core != coreId_ && obj->core != 0) [[unlikely]] throw otherCores(obj);
+    }
+    void guardRead(Value v) const {
+        if (v.kind == ValueKind::Obj) guardRead(v.as.obj);
+    }
+    void guardWrite(const Obj* obj) const {
+        if (obj->core != coreId_) [[unlikely]] throw notOwned(obj);
+    }
+    // Says which of a type's built-in methods change the value they are called on, and which
+    // built-in functions are not for a parallel section (by the object they belong to).
+    void markMutating(BuiltinType type, std::initializer_list<const char*> methods);
+    void markNotParallel(const std::string& global, std::initializer_list<const char*> except = {});
+
+    // Runs `function` on every item of `source` (a list, a range, anything a loop takes), the
+    // items dealt out to the cores. With `keep`, gives the list of what it returned, in order.
+    Value runParallel(Value source, Value function, bool keep);
+    // Runs `function` on each of `parts` ranges that together cover a `bytes`, one core to
+    // a range, each allowed to write that part of it.
+    void runParallelChunks(Value buffer, Value function);
+    int parallelCores();
+    // One core's share of a section. Called on that core's thread, in its own VM.
+    void runParallelShare(ParallelJob& job, size_t share);
+
     // ---- Workers (worker.cpp) ----
     // A worker is a second VM on a thread of its own, with a heap and a lock of its own, so
     // it runs at the same time as this one, on another core. The two share nothing and
@@ -458,6 +497,24 @@ private:
     std::vector<ObjFiber*> waitingFibers_;  // flows set aside until work in progress is done
     bool isWorker_ = false;
     int liveWorkers_ = 0;
+
+    // Parallel sections
+    VM* root_ = nullptr;           // for a core's VM: the VM whose objects it works on
+    uint8_t coreId_ = 0;           // which core this VM is; 0 for a VM that is not a core's
+    std::shared_ptr<ParallelPool> parallelPool_;
+    std::mutex internMutex_;       // cores intern strings in the root's table
+    uint64_t extensionEpoch_ = 0;  // goes up when an extension function is added
+    const Obj* bandBuffer_ = nullptr;  // in runParallelChunks: the bytes this core may write...
+    size_t bandFrom_ = 0, bandTo_ = 0; // ...and the part of it
+    void refreshFromRoot();
+    void adoptObjects(VM& core);
+    AstraThrow otherCores(const Obj* obj) const;
+    AstraThrow notOwned(const Obj* obj) const;
+    AstraThrow notOwned(const std::string& what) const;
+    void guardNative(const Value* args, int argc) const {
+        for (int i = 0; i < argc; i++) guardRead(args[i]);
+    }
+    friend struct ParallelPool;
     std::atomic<bool> stopRequested_{false};
 
     // Worker threads for work that blocks (see blocking()).
@@ -625,6 +682,7 @@ void registerBuiltins(VM& vm);
 void registerThreads(VM& vm);  // threads.cpp: threads, locks, the event loop and flows
 void registerIo(VM& vm);       // io.cpp: streams, processes and sockets
 void registerWorkers(VM& vm);  // worker.cpp: isolated workers
+void registerParallel(VM& vm); // parallel.cpp: parallel sections
 // What started this program (see __io.selfCommand): set by main before the program runs.
 void setSelfCommand(std::vector<std::string> command);
 

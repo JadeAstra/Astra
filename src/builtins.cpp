@@ -843,11 +843,23 @@ void registerBuiltins(VM& vm) {
     registerThreads(vm);
     registerIo(vm);
     registerWorkers(vm);
+    registerParallel(vm);
     // Windows belong to the main program: a worker has none.
     if (!vm.isWorker()) {
         registerGui(vm);
         registerSpike(vm);
     }
+
+    // For parallel sections: which methods change what they are called on, and which
+    // built-in functions wait, or work on something the whole program has one of.
+    vm.markMutating(BuiltinType::List, {"push", "pop", "insert", "removeAt", "remove", "clear", "reverse", "sort", "add", "addAll", "set",
+                                        "removeFirst", "removeLast", "removeFirstOrNull", "removeLastOrNull", "fill"});
+    vm.markMutating(BuiltinType::Map, {"remove", "clear", "put", "set"});
+    vm.markMutating(BuiltinType::Bytes, {"fill"});
+    for (const char* global : {"__thread", "__loop", "__io", "__file", "__worker", "GuiBackend", "Spike", "input", "exit"})
+        vm.markNotParallel(global);
+    vm.markNotParallel("__flow", {"arity"});      // how many parameters a function has: map.forEach asks
+    vm.markNotParallel("__parallel", {"cores"});
 }
 
 }  // namespace astra

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <atomic>
 #include <cstdint>
 #include <string>
 #include <string_view>
@@ -23,6 +24,10 @@ struct Obj {
     const ObjType type;
     bool marked = false;
     bool immortal = false;  // never collected (interned strings)
+    // In a parallel section: the core that owns the object, which alone may look into it and
+    // change it. 0 for an object that is shared, which every core may read and none may change.
+    // Outside a section every object is 0.
+    uint8_t core = 0;
 
     explicit Obj(ObjType t) : type(t) {}
     virtual ~Obj() = default;
@@ -109,6 +114,10 @@ struct Value {
 
 uint32_t hashString(std::string_view s);
 
+// The core the running thread is, in a parallel section; 0 on any other thread. For code
+// that looks into objects without a VM at hand (the keys of a map).
+extern thread_local uint8_t currentCore;
+
 // How many characters (Unicode code points) a piece of UTF-8 text holds.
 size_t countCharacters(std::string_view s);
 
@@ -136,8 +145,9 @@ struct ObjString final : Obj {
 
 private:
     // For text that is not all ASCII: where each character starts, and the end. Made the
-    // first time a position is asked for.
+    // first time a position is asked for, which several cores may do at once.
     mutable std::vector<uint32_t> starts_;
+    mutable std::atomic<bool> indexed_{false};
     void index() const;
 };
 
@@ -170,6 +180,13 @@ public:
     ~Table() { delete[] entries_; }
     Table(const Table&) = delete;
     Table& operator=(const Table&) = delete;
+
+    void clear() {
+        delete[] entries_;
+        entries_ = nullptr;
+        capacity_ = 0;
+        count_ = 0;
+    }
 
     const Value* find(const ObjString* key) const {
         if (count_ == 0) return nullptr;
@@ -282,6 +299,9 @@ struct ObjNative final : Obj {
     const std::string name;
     const int minArgs, maxArgs;
     const NativeFn fn;
+    // False for a function that waits, or works on something there is one of for the whole
+    // program: it is not called from a parallel section.
+    bool parallelSafe = true;
     ObjNative(std::string n, int min, int max, NativeFn f)
         : Obj(ObjType::Native), name(std::move(n)), minArgs(min), maxArgs(max), fn(f) {}
 };
@@ -294,6 +314,8 @@ struct NativeMethod {
     // What its parameters are called, for the methods that take arguments by name
     // (`text.contains("a", ignoreCase = true)`); empty for the rest.
     std::vector<std::string> params;
+    // It changes the value it is called on: in a parallel section, a core's own only.
+    bool mutates = false;
 };
 
 struct ObjClass;

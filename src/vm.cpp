@@ -106,6 +106,7 @@ VM::VM(bool worker) : output(&std::cout), input(&std::cin), rng(std::random_devi
 }
 
 VM::~VM() {
+    parallelPool_.reset();  // its cores first: they work on this VM's objects
     Obj* obj = objects_;
     while (obj != nullptr) {
         Obj* next = obj->next;
@@ -117,6 +118,11 @@ VM::~VM() {
 // ---- Strings ----
 
 ObjString* VM::intern(std::string_view s) {
+    if (root_ != nullptr) {
+        // A core's VM has no table of its own: a name is the same object for every core.
+        std::lock_guard<std::mutex> hold(root_->internMutex_);
+        return root_->intern(s);
+    }
     auto it = interned_.find(s);
     if (it != interned_.end()) return it->second;
 
@@ -147,6 +153,7 @@ void VM::nameParams(BuiltinType type, const std::string& method, std::initialize
 }
 
 void VM::collect(Value iterable, std::vector<Value>& out) {
+    guardRead(iterable);
     if (iterable.isObjType(ObjType::List)) {
         const std::vector<Value>& items = asList(iterable)->items;
         out.insert(out.end(), items.begin(), items.end());
@@ -288,6 +295,7 @@ const Value* VM::findExtension(Value receiver, const ObjString* name) const {
 
 // Whether a bare name written in code that runs on `candidate` means a member of it.
 bool VM::hasMember(Value candidate, const ObjString* name) const {
+    guardRead(candidate);
     if (candidate.isObjType(ObjType::Instance)) {
         const ObjInstance* instance = asInstance(candidate);
         const ObjClass* cls = instance->cls;
@@ -610,6 +618,12 @@ bool VM::callValue(Value callee, int argc, bool packed) {
                 ObjNative* native = asNative(callee);
                 checkArity(native->name, native->minArgs, native->maxArgs, argc);
                 if (pendingEnums_ > 0) rejectPendingNames(sp_ - argc, argc);
+                if (coreId_ != 0) {
+                    if (!native->parallelSafe)
+                        throw runtimeError(native->name + "() cannot be used in a parallel section: nothing waits there, and what the " +
+                                           "whole program has one of is left alone");
+                    guardNative(sp_ - argc, argc);
+                }
                 nativeBase_ = sp_ - argc - 1;
                 Value result = native->fn(*this, argc, sp_ - argc);
                 if (result.kind == ValueKind::Undefined) return true;  // it set a call going in its place (tailCallOn)
@@ -661,6 +675,11 @@ bool VM::callValue(Value callee, int argc, bool packed) {
                 const NativeMethod* method = bound->method;
                 checkArity(method->name, method->minArgs, method->maxArgs, argc);
                 if (pendingEnums_ > 0) rejectPendingNames(sp_ - argc, argc);
+                if (coreId_ != 0) {
+                    guardRead(bound->receiver);
+                    if (method->mutates && bound->receiver.isObj()) guardWrite(bound->receiver.as.obj);
+                    guardNative(sp_ - argc, argc);
+                }
                 nativeBase_ = sp_ - argc - 1;
                 Value result = method->fn(*this, bound->receiver, argc, sp_ - argc);
                 sp_ -= argc + 1;
@@ -876,6 +895,7 @@ const NativeMethod* VM::findNativeMethod(Value receiver, const ObjString* name) 
 // Calls method `name` on the receiver sitting below `argc` arguments. Same result as callValue.
 bool VM::invoke(ObjString* name, int argc, bool trailing) {
     Value receiver = sp_[-argc - 1];
+    guardRead(receiver);
 
     if (receiver.isObj()) {
         if (receiver.as.obj->type == ObjType::Instance) {
@@ -931,6 +951,10 @@ bool VM::invoke(ObjString* name, int argc, bool trailing) {
     }
     checkArity(method->name, method->minArgs, method->maxArgs, argc);
     if (pendingEnums_ > 0) rejectPendingNames(sp_ - argc, argc);
+    if (coreId_ != 0) {
+        if (method->mutates && receiver.isObj()) guardWrite(receiver.as.obj);
+        guardNative(sp_ - argc, argc);
+    }
     nativeBase_ = sp_ - argc - 1;
     Value result = method->fn(*this, receiver, argc, sp_ - argc);
     sp_ -= argc + 1;
@@ -1007,6 +1031,8 @@ bool VM::equals(Value a, Value b, int depth) {
     if (!a.isObj() || !b.isObj()) return valuesEqual(a, b);
     if (a.as.obj == b.as.obj) return true;
 
+    // In a parallel section another core's item is not looked into. Telling two objects apart
+    // by which they are needs no looking, so only the cases below that do look ask.
     if (a.isObjType(ObjType::Instance)) {
         const Value* method = asInstance(a)->cls->methods.find(names.opEq);
         if (method == nullptr) {
@@ -1014,6 +1040,8 @@ bool VM::equals(Value a, Value b, int depth) {
             ObjInstance* x = asInstance(a);
             if (!x->cls->isData || !b.isObjType(ObjType::Instance) || asInstance(b)->cls != x->cls) return false;
             if (depth >= kMaxEqualsDepth) return false;
+            guardRead(a.as.obj);
+            guardRead(b.as.obj);
             ObjInstance* y = asInstance(b);
             for (ObjString* part : x->cls->components) {
                 const Value* left = x->fields.find(part);
@@ -1028,6 +1056,8 @@ bool VM::equals(Value a, Value b, int depth) {
     }
     if (a.as.obj->type != b.as.obj->type) return false;
     if (depth >= kMaxEqualsDepth) return false;
+    guardRead(a.as.obj);
+    guardRead(b.as.obj);
 
     switch (a.as.obj->type) {
         case ObjType::Bytes:
@@ -1081,6 +1111,7 @@ void VM::invokeOperator(Value receiver, ObjString* name, int argc) {
 
 Value VM::getProperty(Value obj, ObjString* name) {
     if (obj.isObj()) {
+        guardRead(obj.as.obj);
         switch (obj.as.obj->type) {
             case ObjType::Instance: {
                 ObjInstance* instance = asInstance(obj);
@@ -1216,6 +1247,7 @@ void VM::checkFieldAssignment(ObjInstance* instance, ObjString* stored, Value va
         Value resolved = call(Value::object(cls->declared[at].typeThunk), 0, nullptr);
         if (!resolved.isObjType(ObjType::Class))
             throw runtimeError("a type must be a class or a built-in type, not a value of type " + typeName(resolved));
+        // (In a parallel section several cores may find this out at once: they all find the same class.)
         cls->declared[at].typeClass = asClass(resolved);
     }
 
@@ -1291,6 +1323,10 @@ void VM::ensureClassInit(ObjClass* cls) {
     if (cls->super != nullptr && cls->super->staticInit != nullptr) ensureClassInit(cls->super);
     ObjClosure* init = cls->staticInit;
     if (init == nullptr) return;
+    // Working out a class's static values changes the class, which every core sees.
+    if (cls->core != coreId_)
+        throw notOwned("class " + cls->name->chars + " is used for the first time here, and its static values are worked out on " +
+                       "first use; use it once before the section");
     cls->staticInit = nullptr;  // before running it: what it works out may be asked for meanwhile
     call(Value::object(init), 0, nullptr);
 }
@@ -1316,6 +1352,7 @@ void VM::checkStaticType(ObjClass* owner, FieldDecl& field, Value value) {
 // `Class.name = value`. A declared static field keeps its rules (a val stays as it is, a type
 // is enforced), a static property runs its setter, and any other name is simply stored.
 void VM::assignStatic(ObjClass* cls, ObjString* name, Value value) {
+    guardWrite(cls);
     if (cls->staticInit != nullptr || (cls->super != nullptr && cls->super->staticInit != nullptr)) {
         TempRoot keepAlive(*this, value);
         ensureClassInit(cls);
@@ -1342,6 +1379,7 @@ void VM::assignStatic(ObjClass* cls, ObjString* name, Value value) {
 void VM::setProperty(Value obj, ObjString* name, Value value) {
     if (obj.isObjType(ObjType::Instance)) {
         ObjInstance* instance = asInstance(obj);
+        guardWrite(instance);
         if (instance->cls->isEnum && (name == names.name || name == names.ordinal))
             throw runtimeError("cannot assign to '" + name->chars + "' of an entry of enum " + instance->cls->name->chars);
         if (!instance->cls->declared.empty()) checkFieldAssignment(instance, name, value);
@@ -1368,6 +1406,7 @@ bool resolveIndex(int64_t index, size_t length, size_t& out) {
 
 Value VM::getIndex(Value obj, Value index) {
     if (obj.isObj()) {
+        guardRead(obj.as.obj);
         switch (obj.as.obj->type) {
             case ObjType::List: {
                 const std::vector<Value>& items = asList(obj)->items;
@@ -1407,6 +1446,7 @@ Value VM::getIndex(Value obj, Value index) {
 
 void VM::setIndex(Value obj, Value index, Value value) {
     if (obj.isObjType(ObjType::List)) {
+        guardWrite(obj.as.obj);
         std::vector<Value>& items = asList(obj)->items;
         size_t i;
         if (!resolveIndex(toInt(index, "list index"), items.size(), i))
@@ -1414,6 +1454,7 @@ void VM::setIndex(Value obj, Value index, Value value) {
                                std::to_string(items.size()) + ")");
         items[i] = value;
     } else if (obj.isObjType(ObjType::Map)) {
+        guardWrite(obj.as.obj);
         asMap(obj)->map.set(index, value);
         account(64);
     } else if (obj.isObjType(ObjType::Bytes)) {
@@ -1424,6 +1465,13 @@ void VM::setIndex(Value obj, Value index, Value value) {
                                std::to_string(data.size()) + ")");
         if (!value.isInt() || value.as.i < 0 || value.as.i > 255)
             throw runtimeError("a byte is a whole number from 0 to 255, not " + stringify(value));
+        // In a parallel section over the parts of a buffer, a core writes its own part of it.
+        if (obj.as.obj->core != coreId_ && !(obj.as.obj == bandBuffer_ && i >= bandFrom_ && i < bandTo_)) {
+            if (obj.as.obj == bandBuffer_)
+                throw notOwned("position " + std::to_string(i) + " is outside this core's part of the buffer, which is " +
+                               std::to_string(bandFrom_) + " to " + std::to_string(bandTo_ - 1));
+            throw notOwned(obj.as.obj);
+        }
         data[i] = static_cast<uint8_t>(value.as.i);
     } else {
         throw runtimeError("cannot assign to an index of a value of type " + typeName(obj));
@@ -1434,6 +1482,8 @@ void VM::setIndex(Value obj, Value index, Value value) {
 
 bool VM::binarySlow(Op op) {
     Value a = sp_[-2], b = sp_[-1];
+    guardRead(a);
+    guardRead(b);
     ObjString* symbol = opNames_[static_cast<int>(op)];
 
     if (a.isObjType(ObjType::Instance)) {
@@ -1484,6 +1534,8 @@ bool VM::binarySlow(Op op) {
 
 bool VM::compareSlow(Op op) {
     Value a = sp_[-2], b = sp_[-1];
+    guardRead(a);
+    guardRead(b);
     ObjString* symbol = opNames_[static_cast<int>(op)];
 
     if (a.isObjType(ObjType::Instance)) {
@@ -1579,6 +1631,7 @@ bool VM::bitwise(Op op) {
 // ---- Iteration ----
 
 Value VM::makeIterator(Value iterable) {
+    guardRead(iterable);
     if (iterable.isObj()) {
         switch (iterable.as.obj->type) {
             case ObjType::List:
@@ -1807,6 +1860,7 @@ void VM::run(int baseFrame) {
                     }
                     case Op::SetGlobal: {
                         int index = READ_U16();
+                        if (coreId_ != 0) throw notOwned("the variable '" + program_->globalNames[static_cast<size_t>(index)] + "' is shared");
                         Value& slot = globals_[static_cast<size_t>(index)];
                         if (slot.kind == ValueKind::Undefined)
                             throw runtimeError("undefined variable '" + program_->globalNames[static_cast<size_t>(index)] + "'");
@@ -1819,6 +1873,7 @@ void VM::run(int baseFrame) {
                     }
                     case Op::DefineGlobal: {
                         size_t index = static_cast<size_t>(READ_U16());
+                        if (coreId_ != 0) throw notOwned("'" + program_->globalNames[index] + "' is declared for the whole program");
                         globals_[index] = *--sp_;
                         globalTypes_[index] = TypeConstraint{};
                         break;
@@ -1912,6 +1967,7 @@ void VM::run(int baseFrame) {
                         size_t index = static_cast<size_t>(READ_U16());
                         Value receiver = implicitReceiver(frame, base, name);
                         if (receiver.kind == ValueKind::Undefined) {
+                            if (coreId_ != 0) throw notOwned("the variable '" + program_->globalNames[index] + "' is shared");
                             Value& slot = globals_[index];
                             if (slot.kind == ValueKind::Undefined)
                                 throw runtimeError("undefined variable '" + program_->globalNames[index] + "'");
@@ -1953,6 +2009,7 @@ void VM::run(int baseFrame) {
                         Value value = *--sp_;
                         if (!matchesType(value, type, cls))
                             throw typeMismatch(program_->globalNames[index], type, cls, value);
+                        if (coreId_ != 0) throw notOwned("'" + program_->globalNames[index] + "' is declared for the whole program");
                         globals_[index] = value;
                         globalTypes_[index] = TypeConstraint{type, cls};
                         break;
@@ -1998,15 +2055,20 @@ void VM::run(int baseFrame) {
                     case Op::Unset:
                         *sp_++ = Value::undefined();
                         break;
-                    case Op::SetUpvalue:
-                        *frame->closure->upvalues[static_cast<size_t>(READ_U16())]->location = sp_[-1];
+                    case Op::SetUpvalue: {
+                        ObjUpvalue* upvalue = frame->closure->upvalues[static_cast<size_t>(READ_U16())];
+                        // A variable of the code around the section is every core's to read, and nobody's to change.
+                        if (upvalue->core != coreId_) throw notOwned("a variable from outside the section is shared");
+                        *upvalue->location = sp_[-1];
                         break;
+                    }
 
                     case Op::GetProp: {
                         ObjString* name = asString(consts[READ_U16()]);
                         Value obj = sp_[-1];
                         if (obj.isObjType(ObjType::Instance)) {
                             ObjInstance* instance = asInstance(obj);
+                            guardRead(instance);
                             if (const Value* field = instance->fields.find(name)) {
                                 sp_[-1] = *field;
                                 break;
@@ -2090,6 +2152,7 @@ void VM::run(int baseFrame) {
                                 LOAD_FRAME();
                                 break;
                             }
+                            guardRead(sp_[-1]);
                             const Value* field = sp_[-1].isObjType(ObjType::Instance) ? asInstance(sp_[-1])->fields.find(name) : nullptr;
                             if (field != nullptr && asClass(super)->declaredIndex.find(name) != nullptr) {
                                 sp_[-1] = *field;
@@ -2327,6 +2390,7 @@ void VM::run(int baseFrame) {
                         if (!added.isObjType(ObjType::List))
                             throw runtimeError("'*' in a call needs a list to spread, not a value of type " + typeName(added));
                         ObjList* list = asList(sp_[-1]);
+                        guardRead(added);
                         const std::vector<Value>& items = asList(added)->items;
                         list->items.insert(list->items.end(), items.begin(), items.end());
                         account(items.size() * sizeof(Value));
@@ -2532,6 +2596,7 @@ void VM::run(int baseFrame) {
                     case Op::Component: {
                         const size_t index = READ_U8();
                         Value whole = sp_[-1];
+                        guardRead(whole);
                         static const char* const kOrdinals[] = {"first", "second", "third", "fourth", "fifth"};
                         const std::string which = index < 5 ? kOrdinals[index] : std::to_string(index + 1) + "th";
                         if (whole.isObjType(ObjType::List)) {
@@ -2561,6 +2626,7 @@ void VM::run(int baseFrame) {
                         const int type = READ_U8();
                         Value function = *--sp_;
                         if (!function.isObjType(ObjType::Closure)) throw runtimeError("invalid extension function");
+                        if (coreId_ != 0) throw notOwned("an extension function is added for the whole program");
                         const int id = type & kTypeMask;
                         if (id == kTypeInstance) {
                             Value target = *--sp_;
@@ -2573,6 +2639,7 @@ void VM::run(int baseFrame) {
                         } else {
                             typeExtensions_[id].set(name, function);
                         }
+                        extensionEpoch_++;
                         if (type & kTypeNullable) {
                             // Remembered with the type it is for: a second type declaring the
                             // same name leaves a call on null with no answer (see findExtension).
@@ -2961,6 +3028,7 @@ void VM::stringifyInto(std::string& out, Value v, bool quote, int depth) {
         case ValueKind::Obj: break;
     }
 
+    guardRead(v.as.obj);
     switch (v.as.obj->type) {
         case ObjType::String:
             if (quote) out += quoteString(asString(v)->chars);

@@ -1,0 +1,79 @@
+// Parallel sections: the items of a list worked on by every core of the machine at once.
+// Not copies of them, as a worker would get, and not one at a time, as threads work.
+
+val cores = availableProcessors()
+print("this machine gives a parallel section $cores cores")
+print()
+
+fun timed(work) {
+  val started = clock()
+  val result = work()
+  return [result, (clock() - started) * 1000]
+}
+
+// ---- Work that takes a while for each item ----
+// How many primes there are below a number, found the slow way.
+fun primesBelow(limit) {
+  var found = 0
+  for n in 2..<limit {
+    var prime = true
+    var d = 2
+    while (d * d <= n) {
+      if (n % d == 0) { prime = false; break }
+      d += 1
+    }
+    if (prime) { found += 1 }
+  }
+  return found
+}
+
+val limits = List(64) { 30000 + it * 500 }
+val (oneByOne, slow) = timed { limits.map { primesBelow(it) } }
+val (together, fast) = timed { limits.parallelStream().map { primesBelow(it) }.toList() }
+print("64 counts of primes, one after another: %.0f ms".format(slow))
+print("the same on $cores cores:                  %.0f ms, %.1f times as fast, the same answers: ${oneByOne == together}".format(fast, slow / fast))
+print()
+
+// ---- Changing the items themselves ----
+// Each core changes its own share of the accounts. They are the program's accounts, not copies.
+class Account(val owner, var balance) {
+  var history = []
+  fun addInterest(rate) {
+    val interest = balance * rate / 100
+    balance += interest
+    history = history + [interest]      // a list the core made, put in place of the old one
+  }
+}
+
+val accounts = List(100000) { n -> Account("customer $n", 1000 + n % 500) }
+val rate = 3
+val (_, yearly) = timed { accounts.parallelStream().forEach { it.addInterest(rate) } }
+print("interest added to ${accounts.size} accounts in %.1f ms; the first now holds ${accounts[0].balance}".format(yearly))
+print("richest: ${accounts.parallelStream().maxOf { it.balance }}, in all: ${accounts.parallelStream().sumOf { it.balance }}")
+print()
+
+// ---- What a section may not do ----
+// A core may change its own items and what it makes. Everything else it may only read, and
+// an attempt to change it is an error on the spot, never a damaged list.
+val audited = []
+try {
+  accounts.parallelStream().forEach { audited.add(it.owner) }
+} catch (e) {
+  print("refused: ${e.message}")
+}
+// What is wanted from each item is returned instead, and put together afterwards.
+val owners = accounts.parallelStream().filter { it.balance > 1540 }.map { it.owner }.toList()
+print("returned instead: ${owners.size} owners, the first is ${owners[0]}")
+print()
+
+// ---- A buffer, shared out by position ----
+// Each core fills its own part of a picture: here a gradient, one byte for each point.
+val width = 512
+val height = 512
+val picture = bytes(width * height)
+val (_, painting) = timed {
+  picture.parallelChunks { positions ->
+    for i in positions { picture[i] = (i % width + i / width) * 255 / (width + height - 2) }
+  }
+}
+print("a ${width} by ${height} picture filled in %.1f ms; its corners are ${picture[0]} and ${picture[width * height - 1]}".format(painting))

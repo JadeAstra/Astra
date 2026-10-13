@@ -1,0 +1,80 @@
+// ---- Parallel sections ----
+// The items of a list worked on by several cores at once, on the objects themselves:
+//
+//   balls.parallelStream().forEach { it.move(width, height, steps) }
+//   val totals = orders.parallelStream().map { priceOf(it) }.toList()
+//
+// Threads take turns, and workers work on copies. Here the cores really run at the same time
+// on the same objects, which is safe because of one rule that the runtime holds each core to:
+//
+//   - a core may change the item it was given, and anything it makes itself;
+//   - everything else it may read and not change: the variables around the lambda, other
+//     lists and objects, and whatever an item holds that is an object of its own.
+//
+// A lambda that keeps to that runs on every core. One that does not, { it.move(); moved.add(it) }
+// say, gets an error the first time it runs: it never damages anything. Results come back by
+// being returned: map, filter, sumOf and the rest put them together afterwards.
+//
+// Nothing waits inside a section: no lock, no reading or writing, no setting a flow aside.
+// The section itself is an ordinary call, which returns when every core has finished.
+// The work is done by the built-in __parallel (parallel.cpp).
+
+class ParallelStream {
+  private val items
+
+  fun init(source) {
+    this.items = source is list ? source : source.toList()
+  }
+
+  // Runs the action on every item, the items dealt out to the cores.
+  fun forEach(action) {
+    __parallel.run(items, action, false)
+  }
+
+  // What the function gives for each item, in the order of the items, as a stream to go on from.
+  fun map(transform) => ParallelStream(__parallel.run(items, transform, true))
+
+  fun mapNotNull(transform) => ParallelStream(__parallel.run(items, transform, true).filterNotNull())
+
+  // The items for which the condition holds.
+  fun filter(predicate) {
+    val keep = __parallel.run(items, predicate, true)
+    val out = []
+    for index in 0..<items.size {
+      if (keep[index]) { out.add(items[index]) }
+    }
+    return ParallelStream(out)
+  }
+
+  fun count(predicate = null) => predicate == null ? items.size : __parallel.run(items, predicate, true).count { it }
+  fun any(predicate) => __parallel.run(items, predicate, true).any { it }
+  fun all(predicate) => __parallel.run(items, predicate, true).all { it }
+  fun none(predicate) => !__parallel.run(items, predicate, true).any { it }
+
+  fun sumOf(selector) => __parallel.run(items, selector, true).sum()
+  fun maxOf(selector) => __parallel.run(items, selector, true).max()
+  fun minOf(selector) => __parallel.run(items, selector, true).min()
+  fun sum() => items.sum()
+  fun max() => items.max()
+  fun min() => items.min()
+
+  // The items as a list: after map or filter, what they came to.
+  fun toList() => items.toList()
+  fun toSet() => Set(items)
+  fun sorted() => items.sorted()
+  fun joinToString(separator = ", ") => items.joinToString(separator)
+}
+
+fun list.parallelStream() => ParallelStream(this)
+fun range.parallelStream() => ParallelStream(this)
+
+// The buffer in as many parts as there are cores, each core given the positions of one part:
+// it may write those and no others.
+//
+//   pixels.parallelChunks { positions -> for i in positions { pixels[i] = shade(i) } }
+fun bytes.parallelChunks(action) {
+  __parallel.chunks(this, action)
+}
+
+// How many cores a parallel section uses on this machine.
+fun availableProcessors() => __parallel.cores()

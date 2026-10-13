@@ -1494,11 +1494,11 @@ writes the whole file. Two Files are `==` if their paths are the same text. The 
 
 ## Doing several things at once
 
-A program has four ways of having more than one thing in hand: **threads**, which share
+A program has five ways of having more than one thing in hand: **threads**, which share
 everything and take turns; the **event loop**, which runs small tasks one after another on
 the main thread; **flows**, functions that can stop in the middle to wait for something and
-go on later without holding a thread; and **workers**, which share nothing and run on other
-cores. Reading and writing are written the same way in all three.
+go on later without holding a thread; **workers**, which share nothing and run on other
+cores; and **parallel sections**, where every core works on the items of one list. Reading and writing are written the same way in all three.
 `examples\watch.astra` and `examples\questions.astra` use them together.
 
 **When a program ends.** A program is over when its script has run to the end, every thread
@@ -1675,6 +1675,69 @@ than its data takes to copy gains a core. Work that is quick for each item, on m
 does not: moving five thousand balls takes 0.6 ms, and so does copying them to a worker and
 back.
 
+### Parallel sections
+
+The items of a list worked on by every core of the machine at once: the objects themselves,
+not copies of them as a worker gets, and at the same time, not in turns as threads work.
+
+```astra
+balls.parallelStream().forEach { it.move(width, height, steps) }
+val totals = orders.parallelStream().map { priceOf(it) }.toList()
+val big = files.parallelStream().filter { it.size > limit }.toList()
+```
+
+The items are dealt out to the cores, each core runs the lambda on its share, and the call
+returns when all are done. On work that takes a while for each item the gain is large:
+`examples\parallel.astra` counts primes 16 times as fast on a machine with 24 cores, eight
+fast and sixteen slower ones.
+
+That several cores can run on the same objects safely rests on one rule, which the runtime
+holds every core to:
+
+- **A core may change the item it was given, and anything it makes itself.**
+- **Everything else it may read and not change**: the variables around the lambda, other
+  lists, maps and objects, and whatever an item holds that is an object of its own.
+- Another core's item it may not even look into, since that core may be changing it. (Asking
+  whether two values are the same object is not looking: `items.indexOf(it)` is fine.)
+
+A lambda that keeps to the rule runs on every core. One that does not gets an error the
+first time it tries, which says what it tried to change. It never damages anything:
+
+```astra
+val moved = []
+balls.parallelStream().forEach { it.move(w, h, 1); moved.add(it) }
+// Error: a parallel section changes only the item it was given and what it makes itself:
+//        this list is shared with the other cores, so here it can be read and not changed
+```
+
+So a section hands its results back by returning them, and they are put together afterwards:
+
+| | |
+| --- | --- |
+| `forEach { }` | runs the lambda on every item |
+| `map { }`, `mapNotNull { }`, `filter { }` | give a stream to go on from; `toList()`, `toSet()`, `sorted()` end it. The order of the items is kept |
+| `sumOf { }`, `maxOf { }`, `minOf { }`, `count { }`, `any { }`, `all { }`, `none { }` | one value from all the items |
+
+`list.parallelStream()` and `range.parallelStream()` start one; `availableProcessors()` says
+how many cores a section has.
+
+- An item's own fields can be assigned, and an item that is a list or a map can be changed.
+  What an item *holds* was not dealt out and is shared: to change it, put something the core
+  has made in its place (`it.history = it.history + [entry]`).
+- The same object cannot be in a stream twice.
+- Nothing waits in a section: sleeping, locks, reading and writing, and setting a flow aside
+  are errors there. Neither does a section start another, or touch a window.
+- An error in the lambda stops the section and comes out of the call.
+- Starting the cores costs about 0.04 ms, so a section pays from a few hundred quick items,
+  or a few slow ones.
+
+**A buffer in parts.** `bytes` can be shared out by position: each core gets the positions of
+one part, and may write those and no others.
+
+```astra
+pixels.parallelChunks { positions -> for i in positions { pixels[i] = shade(i) } }
+```
+
 ### Streams, processes and sockets
 
 Anything here that waits is an ordinary call, and the same one everywhere:
@@ -1766,6 +1829,7 @@ source ──lexer──▶ tokens ──parser──▶ AST ──compiler─�
 | `src/threads.cpp` | Threads and the lock they share, locks for programs, the event loop, flows |
 | `src/io.cpp` | Streams, processes and sockets |
 | `src/worker.cpp` | Workers: a second runtime on its own thread, and the copying of messages |
+| `src/parallel.cpp` | Parallel sections: an interpreter for each core on one heap, and who owns what |
 | `src/std/*.astra` | Standard library, the part written in Astra; packed into `astra.exe` by the build (`cmake/embed.cmake`) and loaded before every program |
 | `src/gui.cpp` | Native backend of the GUI library (Windows) |
 | `lib/gui.astra` | The GUI library: widgets, layout and events, written in Astra |
@@ -1797,7 +1861,8 @@ and looks for the icon in the result.
 (one that ended a thread, say).
 
 Setting `ASTRA_THREAD_STRESS=1` makes the threads of a program change places at every
-opportunity, which is how the code that threads share is tested.
+opportunity, which is how the code that threads share is tested. `ASTRA_CORES=n` gives
+parallel sections `n` cores whatever the machine has.
 
 Setting the environment variable `ASTRA_GC_STRESS=1` makes the VM collect garbage at every
 opportunity, which is slow but useful for finding memory bugs when changing the VM.
@@ -1827,12 +1892,13 @@ opportunity, which is slow but useful for finding memory bugs when changing the 
 - `apply`, `run`, `synchronized` and `withLock` are ordinary calls, so a plain `return` inside
   their lambda is an error; it works in `let`, `also` and `takeIf`.
 - Streams, processes and sockets are there on Windows only. There is no way yet to fetch a URL.
-- Astra code that shares its objects does not run on several cores at once: threads take
-  turns, and workers, which do run side by side, share nothing.
+- Astra code runs on several cores at once only in a parallel section, on the items of one
+  list, or in workers, which share nothing. Threads take turns.
 - The old `gui` library draws one shape at a call, which is what limits an animation of
-  thousands of shapes: no thread or worker can draw for it. Three examples show it:
-  `gui_bounce.astra` moves and draws in one loop, `gui_bounce_threads.astra` moves the balls
-  on background threads, and `gui_bounce_workers.astra` on other cores.
+  thousands of shapes: no thread, worker or parallel section can draw for it. Four examples
+  show it: `gui_bounce.astra` moves and draws in one loop, `gui_bounce_parallel.astra` moves
+  the balls in a parallel section (one line different), `gui_bounce_threads.astra` on
+  background threads, and `gui_bounce_workers.astra` in workers.
 - An `object` is created where it is written, and top-level variables get their values in
   order (file by file for a folder), so one cannot be used by a statement that runs earlier.
 - Integer arithmetic wraps on overflow.

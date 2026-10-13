@@ -1,5 +1,7 @@
 #include "value.h"
 
+#include <mutex>
+
 #include <charconv>
 #include <cmath>
 #include <functional>
@@ -81,8 +83,14 @@ bool hasContentKey(const Value& v) {
 }
 }  // namespace
 
+// Whether the running thread may look into an object: always, except in a parallel section
+// for one that another core owns.
+static bool readableHere(const Value& v) { return v.as.obj->core == 0 || v.as.obj->core == currentCore; }
+
 bool keysEqual(const Value& a, const Value& b, int depth) {
     if (!hasContentKey(a) || !hasContentKey(b) || depth >= kMaxKeyDepth) return valuesEqual(a, b);
+    // What another core is working on is a key as itself only: its contents are not looked at.
+    if (!readableHere(a) || !readableHere(b)) return valuesEqual(a, b);
     if (a.as.obj == b.as.obj) return true;
     if (a.as.obj->type != b.as.obj->type) return false;
     switch (a.as.obj->type) {
@@ -119,7 +127,7 @@ bool keysEqual(const Value& a, const Value& b, int depth) {
 }
 
 size_t keyHash(const Value& v, int depth) {
-    if (!hasContentKey(v) || depth >= kMaxKeyDepth) return hashValue(v);
+    if (!hasContentKey(v) || depth >= kMaxKeyDepth || !readableHere(v)) return hashValue(v);
     auto mix = [](size_t seed, size_t next) { return seed ^ (next + 0x9e3779b97f4a7c15ULL + (seed << 6) + (seed >> 2)); };
     switch (v.as.obj->type) {
         case ObjType::List: {
@@ -230,12 +238,22 @@ size_t countCharacters(std::string_view s) {
     return count;
 }
 
+thread_local uint8_t currentCore = 0;
+
 void ObjString::index() const {
-    if (!starts_.empty()) return;
-    starts_.reserve(length + 1);
+    if (indexed_.load(std::memory_order_acquire)) return;
+    // A string is shared between cores, and two may ask for a position in it at the same
+    // moment: one of them makes the table and the other waits for it.
+    static std::mutex making;
+    std::lock_guard<std::mutex> hold(making);
+    if (indexed_.load(std::memory_order_relaxed)) return;
+    std::vector<uint32_t> starts;
+    starts.reserve(length + 1);
     for (size_t i = 0; i < chars.size(); i++)
-        if ((static_cast<unsigned char>(chars[i]) & 0xC0) != 0x80) starts_.push_back(static_cast<uint32_t>(i));
-    starts_.push_back(static_cast<uint32_t>(chars.size()));
+        if ((static_cast<unsigned char>(chars[i]) & 0xC0) != 0x80) starts.push_back(static_cast<uint32_t>(i));
+    starts.push_back(static_cast<uint32_t>(chars.size()));
+    starts_ = std::move(starts);
+    indexed_.store(true, std::memory_order_release);
 }
 
 size_t ObjString::byteAt(size_t at) const {
