@@ -24,7 +24,7 @@ class Panel(val name : string) {
     get() => "created " + field              // a val: read only, with a value of its own
 
   var visits = 0
-    private set                               // who may assign: accepted, not enforced yet
+    private set                               // who may assign: the code of the class only
 
   fun bump() {
     visits += 1

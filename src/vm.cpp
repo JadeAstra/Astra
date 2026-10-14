@@ -323,14 +323,196 @@ bool VM::hasMember(Value candidate, const ObjString* name) const {
     return type == ObjType::Range && (name == names.start || name == names.end || name == names.step);
 }
 
+// ---- Who may use a member ----
+//
+// A member written `private`, `protected` or `internal` belongs to some of the program's
+// code only. The compiler gives every class and every library a number, and every function
+// carries the numbers of the classes it is written inside of and of its library. The name
+// of such a member leads to a mark: the numbers a function has to carry one of.
+//
+//   private     the class that declared it, and a subclass that declared it again, private too
+//   protected   the class that declared it and each of its subclasses, down to the object's own
+//   internal    the library the class is in
+//
+// A mark has two halves of 32 bits, the lower for using the member at all and the upper for
+// assigning to it (`private set`). A half is count | kind << 8 | offset << 12, the offset
+// and count of a run of numbers in the class's `accessIds`; a count of 0 is open to all.
+
+namespace {
+
+enum AccessKind { kAccessOpen = 0, kAccessPrivate = 1, kAccessProtected = 2, kAccessInternal = 3, kAccessAsAbove = 4 };
+const int kAccessOfSetter = 0x10;
+
+inline uint32_t halfOf(const Value& mark, bool write) {
+    return static_cast<uint32_t>(static_cast<uint64_t>(mark.as.i) >> (write ? 32 : 0));
+}
+inline uint32_t halfCount(uint32_t half) { return half & 0xFF; }
+inline int halfKind(uint32_t half) { return static_cast<int>((half >> 8) & 0xF); }
+inline const uint16_t* halfRun(const ObjClass* cls, uint32_t half) { return cls->accessIds.data() + (half >> 12); }
+
+// Whether a half keeps the member from the code of `proto`.
+inline bool halfDenies(const ObjClass* cls, uint32_t half, const FunctionProto* proto) {
+    const uint32_t count = halfCount(half);
+    if (count == 0) return false;
+    const uint16_t* allowed = halfRun(cls, half);
+    for (uint16_t written : proto->classIds)
+        for (uint32_t i = 0; i < count; i++)
+            if (allowed[i] == written) return false;
+    return true;
+}
+
+inline bool writtenIn(const FunctionProto* proto, const ObjClass* cls) {
+    for (uint16_t written : proto->classIds)
+        if (written == cls->number) return true;
+    return false;
+}
+
+}  // namespace
+
+// Gives one half of the mark of `name` a run of numbers, or none: open.
+void VM::setAccess(ObjClass* cls, Table& marks, ObjString* name, bool write, const std::vector<uint16_t>& run, int kind) {
+    uint32_t half = 0;
+    if (!run.empty()) {
+        if (run.size() > 0xFF || cls->accessIds.size() + run.size() > 0xFFFFF)
+            throw runtimeError("class " + cls->name->chars + " has too many private, protected and internal members");
+        half = static_cast<uint32_t>(run.size()) | static_cast<uint32_t>(kind) << 8 |
+               static_cast<uint32_t>(cls->accessIds.size()) << 12;
+        cls->accessIds.insert(cls->accessIds.end(), run.begin(), run.end());
+        name->restricted |= (write ? 2 : 1) | (kind == kAccessPrivate ? 4 : 0);
+        if (&marks == &cls->accessMarks) cls->accessBits |= 1ull << (name->hash & 63);
+    }
+    const Value* before = marks.find(name);
+    uint64_t mark = before != nullptr ? static_cast<uint64_t>(before->as.i) : 0;
+    mark = write ? (mark & 0xFFFFFFFFull) | static_cast<uint64_t>(half) << 32 : (mark & ~0xFFFFFFFFull) | half;
+    marks.set(name, Value::integer(static_cast<int64_t>(mark)));
+}
+
+// What a class says of a member it declares: the access word in front of it, for the code
+// with the number `id`.
+void VM::declareAccess(ObjClass* cls, Table& marks, ObjString* name, int id, int kind, bool write) {
+    const Value* before = marks.find(name);
+    const uint32_t half = before != nullptr ? halfOf(*before, write) : 0;
+    if (kind == kAccessOpen || kind == kAccessAsAbove) {
+        // `public override` opens it. `override` alone leaves it as it was above, except
+        // that what was private above is a new, open member here.
+        if (halfCount(half) != 0 && (kind == kAccessOpen || halfKind(half) == kAccessPrivate)) setAccess(cls, marks, name, write, {}, 0);
+        return;
+    }
+    // Declared again by a subclass, it is the subclass's too.
+    std::vector<uint16_t> run(halfRun(cls, half), halfRun(cls, half) + halfCount(half));
+    if (std::find(run.begin(), run.end(), static_cast<uint16_t>(id)) == run.end()) run.push_back(static_cast<uint16_t>(id));
+    setAccess(cls, marks, name, write, run, kind);
+}
+
+// A class that has just been given its superclass: what is protected above is its own code's
+// to use as well, on its own objects, and so are the protected static members above.
+void VM::joinProtected(ObjClass* subclass) {
+    auto join = [&](ObjClass* owner, Table& marks) {
+        std::vector<ObjString*> names;
+        for (uint32_t at = 0; at < marks.capacity(); at++)
+            if (marks.entries()[at].key != nullptr) names.push_back(marks.entries()[at].key);
+        for (ObjString* name : names) {
+            for (bool write : {false, true}) {
+                const uint32_t half = halfOf(*marks.find(name), write);
+                if (halfCount(half) == 0 || halfKind(half) != kAccessProtected) continue;
+                std::vector<uint16_t> run(halfRun(owner, half), halfRun(owner, half) + halfCount(half));
+                if (std::find(run.begin(), run.end(), static_cast<uint16_t>(subclass->number)) != run.end()) continue;
+                run.push_back(static_cast<uint16_t>(subclass->number));
+                // A class above is everyone's: a core of a parallel section leaves it alone.
+                if (owner != subclass && coreId_ != 0)
+                    throw notOwned("class " + owner->name->chars + " has protected static members, and a subclass of it is declared for the whole program");
+                setAccess(owner, marks, name, write, run, kAccessProtected);
+            }
+        }
+    };
+    if (subclass->number == 0) return;
+    join(subclass, subclass->accessMarks);
+    for (ObjClass* above = subclass->super; above != nullptr; above = above->super) join(above, above->staticAccessMarks);
+}
+
+// Whether the code of `proto` may not use the member `name` of `target` (an object, or a
+// class for its static members), or may not assign to it. This is only asked for a name that
+// some class restricts (see CHECK_ACCESS).
+bool VM::accessDenied(Value target, const ObjString* name, const FunctionProto* proto, bool write) const {
+    if (!target.isObj()) return false;
+    const ObjClass* cls;
+    const Table* marks;
+    if (target.as.obj->type == ObjType::Instance) {
+        cls = asInstance(target)->cls;
+        marks = &cls->accessMarks;
+        // Code written in the object's own class may use all that the class has, or all but
+        // what a class above keeps private: then a name that is private nowhere is its to use.
+        if ((cls->accessBits >> (name->hash & 63) & 1) == 0) return false;
+        if ((cls->accessAllOwn || (cls->accessSharedOwn && (name->restricted & 4) == 0)) && writtenIn(proto, cls)) return false;
+    } else if (target.as.obj->type == ObjType::Class) {
+        cls = asClass(target);
+        marks = &cls->staticAccessMarks;
+        if (marks->size() == 0 || writtenIn(proto, cls)) return false;
+    } else {
+        return false;
+    }
+    const Value* mark = marks->find(name);
+    if (mark == nullptr) return false;
+    return halfDenies(cls, halfOf(*mark, false), proto) || (write && halfDenies(cls, halfOf(*mark, true), proto));
+}
+
+// What is said of a member used by code that may not.
+AstraThrow VM::accessError(Value target, const ObjString* name, const FunctionProto* proto) {
+    const bool isStatic = target.isObjType(ObjType::Class);
+    const ObjClass* cls = isStatic ? asClass(target) : asInstance(target)->cls;
+    const Value* mark = (isStatic ? cls->staticAccessMarks : cls->accessMarks).find(name);
+    if (mark == nullptr) return runtimeError("'" + name->chars + "' cannot be used here");
+    const bool write = !halfDenies(cls, halfOf(*mark, false), proto);
+    const uint32_t half = halfOf(*mark, write);
+    const int kind = halfKind(half);
+
+    // The class that said so: the highest one that has the member marked as this one does. A
+    // protected member's mark grows by a number with every subclass, so its start is compared.
+    const ObjClass* declaring = cls;
+    auto same = [&](const ObjClass* above) {
+        const Value* other = above->accessMarks.find(name);
+        const uint32_t theirs = other != nullptr ? halfOf(*other, write) : 0;
+        if (halfCount(theirs) == 0 || halfKind(theirs) != kind) return false;
+        if (kind == kAccessProtected) return halfRun(above, theirs)[0] == halfRun(cls, half)[0];
+        return halfCount(theirs) == halfCount(half) &&
+               std::equal(halfRun(cls, half), halfRun(cls, half) + halfCount(half), halfRun(above, theirs));
+    };
+    while (!isStatic && declaring->super != nullptr && same(declaring->super)) declaring = declaring->super;
+
+    const char* const word = kind == kAccessProtected ? "protected" : kind == kAccessInternal ? "internal" : "private";
+    const char* const who = kind == kAccessProtected ? "only code written in that class or in a subclass of it can "
+                            : kind == kAccessInternal ? "only code of the library it belongs to can "
+                            : "only code written in that class can ";
+    if (write)
+        return runtimeError("'" + name->chars + "' cannot be assigned here: its setter is " + word + " in class " +
+                            declaring->name->chars + ", so " + who + "assign to it");
+    return runtimeError("'" + name->chars + "' is " + word + " in class " + declaring->name->chars + ": " + who + "use it");
+}
+
 Value VM::implicitReceiver(const CallFrame* frame, const Value* base, const ObjString* name) const {
-    auto has = [&](Value candidate) { return hasMember(candidate, name); };
+    const FunctionProto* proto = frame->closure->proto;
+    auto has = [&](Value candidate) {
+        return hasMember(candidate, name) && !(name->restricted != 0 && accessDenied(candidate, name, proto, false));
+    };
     if (has(base[0])) return base[0];
-    for (uint16_t upvalue : frame->closure->proto->outerReceivers) {
+    for (uint16_t upvalue : proto->outerReceivers) {
         Value outer = *frame->closure->upvalues[upvalue]->location;
         if (has(outer)) return outer;
     }
     return Value::undefined();
+}
+
+// A bare name that is neither a member the code may use nor a variable: said plainly when
+// it is a member of the object the code runs on that the code may not use.
+AstraThrow VM::undefinedName(const CallFrame* frame, const Value* base, const ObjString* name, size_t global) {
+    const FunctionProto* proto = frame->closure->proto;
+    auto kept = [&](Value candidate) { return hasMember(candidate, name) && accessDenied(candidate, name, proto, false); };
+    if (kept(base[0])) return accessError(base[0], name, proto);
+    for (uint16_t upvalue : proto->outerReceivers) {
+        Value outer = *frame->closure->upvalues[upvalue]->location;
+        if (kept(outer)) return accessError(outer, name, proto);
+    }
+    return runtimeError("undefined variable '" + program_->globalNames[global] + "'");
 }
 
 // Runs a method that takes no arguments on `receiver` and returns its result.
@@ -1766,6 +1948,32 @@ void VM::run(int baseFrame) {
 // resumed and shows the right line in a stack trace.
 #define SAVE_IP() (frame->ip = ip)
 
+// Before a member is reached by a name written after an object (or a class, for a static
+// one): the code may not be allowed to use it, or to assign to it. `bits` is what about the
+// name matters here: 1 that some class restricts its use, 2 that some class restricts
+// assigning to it. A name no class restricts costs the one test. Of the rest, three cases
+// are passed without a call: the instructions the compiler writes where it knows the code
+// may (GetOwn and the like, for which `checked` is false); an object whose class restricts
+// no name like this one (ObjClass::accessBits); and code written in the class of the object
+// it works on, when that class's own code may use all its objects have.
+#define CHECK_ACCESS(target, bits, write, checked)                                               \
+    do {                                                                                         \
+        if (name->restricted & (bits)) [[unlikely]] {                                            \
+            const Value target_ = (target);                                                      \
+            const FunctionProto* const proto_ = frame->closure->proto;                           \
+            const bool own_ = !(checked) ||                                                      \
+                              (target_.isObjType(ObjType::Instance) &&                           \
+                               ((asInstance(target_)->cls->accessBits >> (name->hash & 63) & 1) == 0 || \
+                                (asInstance(target_)->cls->number == proto_->ownClass &&         \
+                                 (asInstance(target_)->cls->accessAllOwn ||                      \
+                                  (asInstance(target_)->cls->accessSharedOwn && (name->restricted & 4) == 0))))); \
+            if (!own_ && accessDenied(target_, name, proto_, (write))) {                         \
+                SAVE_IP();                                                                       \
+                throw accessError(target_, name, proto_);                                        \
+            }                                                                                    \
+        }                                                                                        \
+    } while (0)
+
 #define READ_U8() (*ip++)
 #define READ_U16() (ip += 2, static_cast<int>(ip[-2] | (ip[-1] << 8)))
 #define READ_I32()                                                                                        \
@@ -1886,8 +2094,7 @@ void VM::run(int baseFrame) {
                         Value receiver = implicitReceiver(frame, base, name);
                         if (receiver.kind == ValueKind::Undefined) {
                             Value value = globals_[index];
-                            if (value.kind == ValueKind::Undefined)
-                                throw runtimeError("undefined variable '" + program_->globalNames[index] + "'");
+                            if (value.kind == ValueKind::Undefined) throw undefinedName(frame, base, name, index);
                             *sp_++ = value;
                             break;
                         }
@@ -1953,8 +2160,7 @@ void VM::run(int baseFrame) {
                         Value receiver = implicitReceiver(frame, base, name);
                         if (receiver.kind == ValueKind::Undefined) {
                             Value callee = globals_[index];
-                            if (callee.kind == ValueKind::Undefined)
-                                throw runtimeError("undefined variable '" + program_->globalNames[index] + "'");
+                            if (callee.kind == ValueKind::Undefined) throw undefinedName(frame, base, name, index);
                             sp_[-argc - 1] = callee;
                             if (callValue(callee, argc)) LOAD_FRAME();
                         } else {
@@ -1970,14 +2176,14 @@ void VM::run(int baseFrame) {
                         if (receiver.kind == ValueKind::Undefined) {
                             if (coreId_ != 0) throw notOwned("the variable '" + program_->globalNames[index] + "' is shared");
                             Value& slot = globals_[index];
-                            if (slot.kind == ValueKind::Undefined)
-                                throw runtimeError("undefined variable '" + program_->globalNames[index] + "'");
+                            if (slot.kind == ValueKind::Undefined) throw undefinedName(frame, base, name, index);
                             const TypeConstraint& declared = globalTypes_[index];
                             if (declared.type != 0 && !matchesType(sp_[-1], declared.type, declared.cls))
                                 throw typeMismatch(program_->globalNames[index], declared.type, declared.cls, sp_[-1]);
                             slot = sp_[-1];
                             break;
                         }
+                        CHECK_ACCESS(receiver, 2, true, true);  // found, but its setter may be kept back
                         // Lay the object under the value, as an assignment to obj.name has them.
                         Value value = sp_[-1];
                         sp_[-1] = receiver;
@@ -2064,9 +2270,11 @@ void VM::run(int baseFrame) {
                         break;
                     }
 
+                    case Op::GetOwn:
                     case Op::GetProp: {
                         ObjString* name = asString(consts[READ_U16()]);
                         Value obj = sp_[-1];
+                        CHECK_ACCESS(obj, 1, false, static_cast<Op>(ip[-3]) != Op::GetOwn);
                         if (obj.isObjType(ObjType::Instance)) {
                             ObjInstance* instance = asInstance(obj);
                             guardRead(instance);
@@ -2087,10 +2295,12 @@ void VM::run(int baseFrame) {
                         sp_[-1] = getProperty(obj, name);
                         break;
                     }
+                    case Op::SetOwn:
                     case Op::SetProp: {
                         ObjString* name = asString(consts[READ_U16()]);
                         Value value = sp_[-1];
                         SAVE_IP();
+                        CHECK_ACCESS(sp_[-2], 3, true, static_cast<Op>(ip[-3]) != Op::SetOwn);
                         if (sp_[-2].isObjType(ObjType::Instance) && asInstance(sp_[-2])->cls->hasAccessors) {
                             // A property: the object and the value are already laid out as a call
                             // to the setter, which returns the value it was given.
@@ -2139,6 +2349,7 @@ void VM::run(int baseFrame) {
                     case Op::GetSuper: {
                         ObjString* name = asString(consts[READ_U16()]);
                         Value super = *--sp_;
+                        CHECK_ACCESS(sp_[-1], 1, false, true);
                         const Value* method = superMethod(super, sp_[-1], name);
                         if (method == nullptr && super.isNull())
                             throw runtimeError("there is no '" + name->chars + "' for super to mean: this class has no superclass, " +
@@ -2404,19 +2615,23 @@ void VM::run(int baseFrame) {
                         if (callSpread(named)) LOAD_FRAME();
                         break;
                     }
+                    case Op::InvokeOwn:
                     case Op::Invoke: {
                         ObjString* name = asString(consts[READ_U16()]);
                         int argc = READ_U8();
                         GC_SAFE_POINT();
                         SAVE_IP();
+                        CHECK_ACCESS(sp_[-argc - 1], 1, false, static_cast<Op>(ip[-4]) != Op::InvokeOwn);
                         if (invoke(name, argc)) LOAD_FRAME();
                         break;
                     }
+                    case Op::InvokeOwnTrailing:
                     case Op::InvokeTrailing: {
                         ObjString* name = asString(consts[READ_U16()]);
                         int argc = READ_U8();
                         GC_SAFE_POINT();
                         SAVE_IP();
+                        CHECK_ACCESS(sp_[-argc - 1], 1, false, static_cast<Op>(ip[-4]) != Op::InvokeOwnTrailing);
                         if (invoke(name, argc, true)) LOAD_FRAME();
                         break;
                     }
@@ -2427,6 +2642,7 @@ void VM::run(int baseFrame) {
                         int argc = READ_U8();
                         GC_SAFE_POINT();
                         Value super = *--sp_;
+                        CHECK_ACCESS(sp_[-argc - 1], 1, false, true);
                         const Value* method = superMethod(super, sp_[-argc - 1], name);
                         if (method == nullptr && super.isNull())
                             throw runtimeError("there is no '" + name->chars + "' for super to mean: this class has no superclass, " +
@@ -2544,6 +2760,9 @@ void VM::run(int baseFrame) {
                             subclass->getters.addAll(superclass->getters);
                             subclass->setters.addAll(superclass->setters);
                             subclass->hasAccessors = superclass->hasAccessors;
+                            subclass->accessMarks.addAll(superclass->accessMarks);
+                            subclass->accessIds = superclass->accessIds;
+                            subclass->accessBits = superclass->accessBits;
                             subclass->interfaces = superclass->interfaces;
                             subclass->required = superclass->required;  // what an abstract class left unwritten
                         }
@@ -2564,8 +2783,20 @@ void VM::run(int baseFrame) {
                             subclass->getters.addMissing(type->getters);
                             subclass->setters.addMissing(type->setters);
                             subclass->hasAccessors = subclass->hasAccessors || type->hasAccessors;
+                            for (uint32_t at = 0; at < type->accessMarks.capacity(); at++) {
+                                // What the interface keeps to itself, the class keeps so too.
+                                const Table::Entry& entry = type->accessMarks.entries()[at];
+                                if (entry.key == nullptr || subclass->accessMarks.find(entry.key) != nullptr) continue;
+                                for (bool write : {false, true}) {
+                                    const uint32_t half = halfOf(entry.value, write);
+                                    if (halfCount(half) == 0) continue;
+                                    setAccess(subclass, subclass->accessMarks, entry.key, write,
+                                              std::vector<uint16_t>(halfRun(type, half), halfRun(type, half) + halfCount(half)), halfKind(half));
+                                }
+                            }
                             subclass->required.insert(subclass->required.end(), type->required.begin(), type->required.end());
                         }
+                        joinProtected(subclass);
                         types[0] = superclass != nullptr ? Value::object(superclass) : Value::null();
                         sp_ = types + 1;
                         break;
@@ -2700,9 +2931,72 @@ void VM::run(int baseFrame) {
                         asClass(sp_[-1])->required.emplace_back(name, asClass(sp_[-1]));
                         break;
                     }
+                    case Op::ClassNumber: {
+                        const int number = READ_U16();
+                        const int library = READ_U16();
+                        if (!sp_[-1].isObjType(ObjType::Class)) throw runtimeError("invalid class declaration");
+                        asClass(sp_[-1])->number = number;
+                        asClass(sp_[-1])->library = library;
+                        break;
+                    }
+                    case Op::MemberAccess: {
+                        ObjString* name = asString(consts[READ_U16()]);
+                        const int id = READ_U16();
+                        const int flags = READ_U8();
+                        const int kind = flags & 0xF;
+                        const bool write = (flags & kAccessOfSetter) != 0;
+                        if (!sp_[-1].isObjType(ObjType::Class) || kind > kAccessAsAbove) throw runtimeError("invalid class declaration");
+                        ObjClass* cls = asClass(sp_[-1]);
+                        const Value* before = cls->accessMarks.find(name);
+                        const bool restricts = kind == kAccessPrivate || kind == kAccessProtected || kind == kAccessInternal;
+                        if (restricts && !write && (before == nullptr || halfCount(halfOf(*before, false)) == 0)) {
+                            // Restricted here and not above: then there must be nothing above
+                            // for it to replace, since what is open stays open.
+                            auto has = [&](const ObjClass* from) {
+                                return from->methods.find(name) != nullptr || from->declaredIndex.find(name) != nullptr ||
+                                       from->getters.find(name) != nullptr || from->setters.find(name) != nullptr;
+                            };
+                            const ObjClass* open = cls->super != nullptr && has(cls->super) ? cls->super : nullptr;
+                            for (const ObjClass* implemented : cls->interfaces)
+                                if (open == nullptr && has(implemented)) open = implemented;
+                            for (const auto& [wanted, by] : cls->required)
+                                if (open == nullptr && wanted == name && by != cls) open = by;
+                            if (open != nullptr)
+                                throw runtimeError("'" + name->chars + "' in class " + cls->name->chars + " cannot be " +
+                                                   (kind == kAccessPrivate ? "private" : kind == kAccessProtected ? "protected" : "internal") +
+                                                   ": it is open in " + (open->isInterface ? "interface " : "class ") + open->name->chars);
+                        }
+                        declareAccess(cls, cls->accessMarks, name, id, kind, write);
+                        break;
+                    }
+                    case Op::StaticAccess: {
+                        ObjString* name = asString(consts[READ_U16()]);
+                        const int id = READ_U16();
+                        const int flags = READ_U8();
+                        const int kind = flags & 0xF;
+                        if (!sp_[-1].isObjType(ObjType::Class) || id == 0 || kind < kAccessPrivate || kind > kAccessInternal)
+                            throw runtimeError("invalid class declaration");
+                        declareAccess(asClass(sp_[-1]), asClass(sp_[-1])->staticAccessMarks, name, id, kind, (flags & kAccessOfSetter) != 0);
+                        break;
+                    }
                     case Op::FinishClass: {
                         if (!sp_[-1].isObjType(ObjType::Class)) throw runtimeError("invalid class declaration");
                         ObjClass* cls = asClass(sp_[-1]);
+                        // Whether the class's own code may use every member its objects have:
+                        // then nothing has to be looked up for it (see CHECK_ACCESS).
+                        cls->accessAllOwn = cls->accessSharedOwn = true;
+                        for (uint32_t at = 0; at < cls->accessMarks.capacity(); at++) {
+                            const Table::Entry& entry = cls->accessMarks.entries()[at];
+                            if (entry.key == nullptr) continue;
+                            for (bool write : {false, true}) {
+                                const uint32_t half = halfOf(entry.value, write);
+                                const uint16_t* run = halfRun(cls, half);
+                                bool own = halfCount(half) == 0;
+                                for (uint32_t i = 0; i < halfCount(half); i++) own = own || run[i] == cls->number || run[i] == cls->library;
+                                cls->accessAllOwn = cls->accessAllOwn && own;
+                                if (halfKind(half) != kAccessPrivate) cls->accessSharedOwn = cls->accessSharedOwn && own;
+                            }
+                        }
                         if (cls->isInterface || cls->isAbstract) break;  // left for the classes below
                         for (const auto& [name, interface] : cls->required) {
                             if (cls->methods.find(name) != nullptr || cls->declaredIndex.find(name) != nullptr ||

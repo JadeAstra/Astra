@@ -1,0 +1,373 @@
+// Who may use a member: `private`, `protected`, `internal`, and `private set`.
+//
+// First `private`, and the blocks that run on an object: a private member is not what a bare
+// name means in a block written outside its class. There the name is the program's own, as
+// if the member were not there.
+
+class Box {
+  private val secret = 42
+  private var count = 0
+  private var level = 7
+    set(value) { field = value * 2 }
+  var open = 1
+
+  private fun helper() => "the helper of Box"
+  fun reveal() => [secret, count, level]
+
+  // Code written in the class finds them, in a lambda too, and on another object of the class.
+  fun inLambda() => [1, 2].map { it + secret }
+  fun callsHelper() => [1].map { helper() }[0]
+  fun of(other) {
+    var seen = null
+    other.apply { seen = [secret, helper()] }
+    return seen
+  }
+  fun setsIn(other) {
+    other.apply { count = 5; level = 4 }
+  }
+}
+
+fun helper() => "the program's helper"
+val secret = "the program's secret"
+var count = 100
+
+val box = Box()
+var seen = null
+box.apply { seen = secret }
+print(seen)                      // expect: the program's secret
+box.apply { seen = helper() }
+print(seen)                      // expect: the program's helper
+box.apply { seen = open }
+print(seen)                      // expect: 1
+box.apply { count = count + 1 }  // the program's count, not the box's
+print(count, box.reveal())       // expect: 101 [42, 0, 7]
+print(box.inLambda(), box.callsHelper())   // expect: [43, 44] the helper of Box
+
+val other = Box()
+print(box.of(other))             // expect: [42, "the helper of Box"]
+box.setsIn(other)
+print(other.reveal())            // expect: [42, 5, 8]
+
+// With no such name in the program, the error says what the name is.
+fun tell(block) {
+  try { block() } catch (e) { print(e.message) }
+}
+tell { box.apply { seen = level } }       // expect: 'level' is private in class Box: only code written in that class can use it
+tell { box.apply { level = 1 } }          // expect: 'level' is private in class Box: only code written in that class can use it
+print(box.reveal())                       // expect: [42, 0, 7]
+
+// A field of the header.
+class Pair(private val left, val right) {
+  fun both() => [left, right]
+}
+val left = "outside"
+val pair = Pair(1, 2)
+pair.apply { seen = [left, right] }
+print(seen, pair.both())                  // expect: ["outside", 2] [1, 2]
+
+// A builder: what it keeps to itself does not hide the program's functions inside its block.
+class Rows {
+  private val grid = []
+  fun row(text) { grid.add(text) }
+  fun result() => grid
+}
+fun rows(build : Rows.() -> unit) {
+  val r = Rows()
+  r.apply(build)
+  return r.result()
+}
+fun grid() => "a grid of the program"
+print(rows { row("one"); row(grid()) })   // expect: ["one", "a grid of the program"]
+
+// A class inside the class is written in it; a subclass and an extension function are not.
+class Outer {
+  private val key = "outer key"
+  class Inner {
+    fun peek(outer) {
+      var found = null
+      outer.apply { found = key }
+      return found
+    }
+  }
+}
+print(Outer.Inner().peek(Outer()))        // expect: outer key
+
+open class Base {
+  private fun own() => "own"
+  private val mark = "base mark"
+  fun viaBase() => own() + ", " + mark
+}
+class Derived : Base() {
+  fun viaDerived() => own()
+}
+tell { print(Derived().viaDerived()) }    // expect: 'own' is private in class Base: only code written in that class can use it
+print(Derived().viaBase())                // expect: own, base mark
+fun Base.fromOutside() => mark
+val mark = "the program's mark"
+print(Base().fromOutside(), Derived().fromOutside())   // expect: the program's mark the program's mark
+
+// A subclass that declares the name again, openly, makes it its own and open.
+open class Shape {
+  private fun area() => 0
+  fun describe() => "area " + area()
+}
+class Square(val side) : Shape() {
+  override fun area() => side * side
+}
+fun area() => "the program's area"
+Square(3).apply { seen = area() }
+print(seen, Square(3).describe())         // expect: 9 area 9
+Shape().apply { seen = area() }
+print(seen)                               // expect: the program's area
+
+// ---- Written out after the object's name ----
+
+// From outside the class a private member cannot be read, called or assigned.
+tell { print(box.secret) }                // expect: 'secret' is private in class Box: only code written in that class can use it
+tell { print(box.helper()) }              // expect: 'helper' is private in class Box: only code written in that class can use it
+tell { box.level = 3 }                    // expect: 'level' is private in class Box: only code written in that class can use it
+tell { box.count += 1 }                   // expect: 'count' is private in class Box: only code written in that class can use it
+tell { print(box?.secret) }               // expect: 'secret' is private in class Box: only code written in that class can use it
+tell { print(pair.left) }                 // expect: 'left' is private in class Pair: only code written in that class can use it
+tell { val f = box.helper; print(f()) }   // expect: 'helper' is private in class Box: only code written in that class can use it
+print(box.open, pair.right, box.reveal()) // expect: 1 2 [42, 0, 7]
+
+// The class's own code reaches it on any object of the class; a class inside it does too.
+class Account(private var balance) {
+  fun moveTo(other, amount) {
+    this.balance -= amount
+    other.balance += amount
+  }
+  fun same(other) => this.balance == other.balance
+  fun text() => "Account($balance)"
+  class Auditor {
+    fun read(account) => account.balance
+  }
+}
+val a = Account(10)
+val b = Account(1)
+a.moveTo(b, 4)
+print(a.text(), b.text(), a.same(b), Account.Auditor().read(b))   // expect: Account(6) Account(5) false 5
+
+// A subclass does not reach it, by `this`, by `super` or on another object.
+class Probe : Base() {
+  fun byThis() => this.own()
+  fun bySuper() => super.own()
+  fun onBase(base) => base.mark
+}
+tell { print(Probe().byThis()) }          // expect: 'own' is private in class Base: only code written in that class can use it
+tell { print(Probe().bySuper()) }         // expect: 'own' is private in class Base: only code written in that class can use it
+tell { print(Probe().onBase(Base())) }    // expect: 'mark' is private in class Base: only code written in that class can use it
+
+// Unless it declares the member again, private too: then both classes have it, and no one else.
+open class Figure {
+  private fun area() => 0
+  private val kind = "figure"
+  fun describe() => kind + " of area " + area()
+}
+class Circle(val r) : Figure() {
+  private override fun area() => 3 * r * r
+  private override val kind = "circle"
+  fun doubled() => area() * 2
+  fun plain() => super.area()
+}
+val circle = Circle(2)
+print(circle.describe(), circle.doubled(), circle.plain(), Figure().describe())   // expect: circle of area 12 24 0 figure of area 0
+tell { print(circle.area()) }             // expect: 'area' is private in class Circle: only code written in that class can use it
+tell { print(circle.kind) }               // expect: 'kind' is private in class Circle: only code written in that class can use it
+tell { print(Figure().area()) }           // expect: 'area' is private in class Figure: only code written in that class can use it
+circle.apply { seen = area() }
+print(seen)                               // expect: the program's area
+print(Square(3).area())                   // expect: 9
+
+// What is open above cannot be made private below.
+tell {
+  open class Door {
+    fun enter() => "in"
+  }
+  class Vault : Door() {
+    private override fun enter() => "no"
+  }
+  print(Vault().enter())
+}
+// expect: 'enter' in class Vault cannot be private: it is open in class Door
+
+// Static members, and a class declared inside.
+class Counter {
+  static {
+    private var total = 0
+    private fun bump() { total += 1 }
+    fun next() {
+      bump()
+      return total
+    }
+  }
+  private static val step = 5
+  private class Secret(val word)
+  fun steps() => Counter.step + step
+  fun whisper() => Secret("hush").word
+}
+print(Counter.next(), Counter.next(), Counter().steps(), Counter().whisper())   // expect: 1 2 10 hush
+tell { print(Counter.total) }             // expect: 'total' is private in class Counter: only code written in that class can use it
+tell { Counter.total = 9 }                // expect: 'total' is private in class Counter: only code written in that class can use it
+tell { Counter.bump() }                   // expect: 'bump' is private in class Counter: only code written in that class can use it
+tell { print(Counter.step) }              // expect: 'step' is private in class Counter: only code written in that class can use it
+tell { print(Counter.Secret("x").word) }  // expect: 'Secret' is private in class Counter: only code written in that class can use it
+print(Counter.next())                     // expect: 3
+
+// A data object is still printed, compared and taken apart with all its fields.
+data Point(private val x, val y) {
+  fun shifted() => Point(x + 1, y)
+}
+val (px, py) = Point(1, 2)
+print(Point(1, 2), Point(1, 2) == Point(1, 2), Point(1, 2).shifted(), px, py, Point(1, 2).copy(y = 5))   // expect: Point(x=1, y=2) true Point(x=2, y=2) 1 2 Point(x=1, y=5)
+tell { print(Point(1, 2).x) }             // expect: 'x' is private in class Point: only code written in that class can use it
+
+// An object declared by name keeps things to itself as a class does.
+object Registry {
+  private val names = []
+  fun add(name) { names.add(name); return names.size }
+}
+print(Registry.add("a"), Registry.add("b"))   // expect: 1 2
+tell { print(Registry.names) }            // expect: 'names' is private in class Registry: only code written in that class can use it
+
+// ---- protected: the class and its subclasses ----
+
+open class Widget {
+  protected var state = "idle"
+  protected fun paint() => "paint " + state
+  protected static val limit = 3
+  fun show() => paint()
+  fun sameAs(other) => state == other.state      // on another object, a subclass's too
+}
+class Knob : Widget() {
+  override fun paint() => "knob " + state         // `override` alone: protected as above
+  fun turn() {
+    state = "turned"
+    return paint()
+  }
+  fun viaThis() => this.paint() + ", " + super.paint()
+  fun inLambda() => [1].map { paint() }[0]
+  fun peek(other) => other.state
+  fun cap() => Widget.limit
+}
+class Dial : Knob() {
+  fun deep() => paint() + "!"
+}
+val state = "the program's state"
+val knob = Knob()
+print(knob.show(), knob.turn())                   // expect: knob idle knob turned
+print(knob.viaThis(), knob.inLambda(), knob.cap())   // expect: knob turned, paint turned knob turned 3
+print(Dial().deep(), knob.peek(Dial()), Widget().sameAs(knob))   // expect: knob idle! idle false
+tell { print(knob.state) }                // expect: 'state' is protected in class Widget: only code written in that class or in a subclass of it can use it
+tell { print(knob.paint()) }              // expect: 'paint' is protected in class Widget: only code written in that class or in a subclass of it can use it
+tell { knob.state = "set" }               // expect: 'state' is protected in class Widget: only code written in that class or in a subclass of it can use it
+tell { print(Widget.limit) }              // expect: 'limit' is protected in class Widget: only code written in that class or in a subclass of it can use it
+// A subclass uses it on its own objects, not on those of the class above or of a sibling.
+class Slider : Widget()
+tell { print(knob.peek(Widget())) }       // expect: 'state' is protected in class Widget: only code written in that class or in a subclass of it can use it
+tell { print(knob.peek(Slider())) }       // expect: 'state' is protected in class Widget: only code written in that class or in a subclass of it can use it
+// In a block written outside, the bare name is the program's; so it is in an extension function.
+knob.apply { seen = state }
+fun Widget.stateOutside() => state
+print(seen, knob.stateOutside())          // expect: the program's state the program's state
+// `public override` opens it, for the subclass and what is below.
+class Lamp : Widget() {
+  public override fun paint() => "lamp " + state
+}
+print(Lamp().paint(), Lamp().show())      // expect: lamp idle lamp idle
+tell {
+  open class Plain {
+    fun run() => 1
+  }
+  class Shy : Plain() {
+    protected override fun run() => 2
+  }
+  print(Shy().run())
+}
+// expect: 'run' in class Shy cannot be protected: it is open in class Plain
+
+// An abstract class asks for a protected member; the subclass writes it, protected still.
+abstract class Job {
+  protected abstract fun work()
+  fun run() => "ran " + work()
+}
+class Sum(val a, val b) : Job() {
+  override fun work() => a + b
+}
+print(Sum(2, 3).run())                    // expect: ran 5
+tell { print(Sum(2, 3).work()) }          // expect: 'work' is protected in class Job: only code written in that class or in a subclass of it can use it
+
+// ---- The setter of a property: `private set` ----
+
+open class Meter {
+  var reading = 0
+    private set
+  var level = 1
+    protected set
+  var total = 0
+    private set(value) { field = value * 10 }
+  fun tick() {
+    reading += 1
+    total = 2
+    return this
+  }
+  fun copyTo(other) { other.reading = reading }
+}
+class FineMeter : Meter() {
+  fun raise() {
+    level = 5
+    return level
+  }
+  fun cheat() { reading = 99 }
+  fun cheatThis() { this.total = 99 }
+}
+val meter = Meter().tick()
+print(meter.reading, meter.total, meter.level)   // expect: 1 20 1
+tell { meter.reading = 7 }                // expect: 'reading' cannot be assigned here: its setter is private in class Meter, so only code written in that class can assign to it
+tell { meter.reading += 1 }               // expect: 'reading' cannot be assigned here: its setter is private in class Meter, so only code written in that class can assign to it
+tell { meter.total = 1 }                  // expect: 'total' cannot be assigned here: its setter is private in class Meter, so only code written in that class can assign to it
+tell { meter.level = 2 }                  // expect: 'level' cannot be assigned here: its setter is protected in class Meter, so only code written in that class or in a subclass of it can assign to it
+tell { meter.apply { reading = 3 } }      // expect: 'reading' cannot be assigned here: its setter is private in class Meter, so only code written in that class can assign to it
+tell { FineMeter().cheat() }              // expect: 'reading' cannot be assigned here: its setter is private in class Meter, so only code written in that class can assign to it
+tell { FineMeter().cheatThis() }          // expect: 'total' cannot be assigned here: its setter is private in class Meter, so only code written in that class can assign to it
+val second = Meter()
+meter.copyTo(second)
+print(FineMeter().raise(), second.reading, meter.reading)   // expect: 5 1 1
+
+// A setter written on its own, and a static one.
+class Temp {
+  private var c = 0
+  get degrees() => c
+  private set degrees(value) { c = value }
+  fun warm() {
+    degrees = 30
+    return this
+  }
+}
+print(Temp().warm().degrees)              // expect: 30
+tell { Temp().degrees = 1 }               // expect: 'degrees' cannot be assigned here: its setter is private in class Temp, so only code written in that class can assign to it
+class Tally {
+  static var count = 0
+    private set
+  static fun add() {
+    count += 1
+    return count
+  }
+}
+print(Tally.add(), Tally.add(), Tally.count)   // expect: 1 2 2
+tell { Tally.count = 9 }                  // expect: 'count' cannot be assigned here: its setter is private in class Tally, so only code written in that class can assign to it
+
+// ---- internal: the library ----
+
+// A program is one library, so its own code uses what it marks internal. (A member of a
+// class of Jade marked so is kept from the program: tests/jade_grid.astra.)
+class Shared {
+  internal val token = "token"
+  internal fun hand() => token
+  var owner = "nobody"
+    internal set
+}
+val shared = Shared()
+shared.owner = "the program"
+print(shared.token, shared.hand(), shared.owner)   // expect: token token the program

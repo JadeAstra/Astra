@@ -42,6 +42,14 @@ struct TypeAnnotation : Node {
 };
 
 // `fun name(a : type, b = value) : returnType { ... }`. Types and default values are optional.
+// The access words: who may use a member of a class.
+enum AccessWord : uint8_t { kAccessWordNone, kAccessWordPublic, kAccessWordPrivate, kAccessWordProtected, kAccessWordInternal };
+
+inline uint8_t accessWord(const std::string& word) {
+    return word == "public" ? kAccessWordPublic : word == "private" ? kAccessWordPrivate
+           : word == "protected" ? kAccessWordProtected : word == "internal" ? kAccessWordInternal : kAccessWordNone;
+}
+
 struct FunctionDecl : Node {
     std::string name;
     std::vector<std::string> params;
@@ -60,6 +68,9 @@ struct FunctionDecl : Node {
 
     // Written `override`: it takes the place of a member the class would otherwise be given.
     bool isOverride = false;
+
+    // The access word in front of a member (an AccessWord): who may use it.
+    uint8_t access = 0;
 
     // Made by the compiler rather than written (the `copy` of a data class), so the rule about
     // saying `override` does not apply to it.
@@ -260,6 +271,8 @@ struct VarStmt : Stmt {
 
     bool isOverride = false;  // a field written `override`, as for FunctionDecl
     bool isAbstract = false;  // `abstract val x`: for a subclass to supply
+    uint8_t access = 0;       // the access word in front of a field of a class, as for FunctionDecl
+    uint8_t setAccess = 0;    // the one in front of `set` under it (`private set`): who may assign
 
     // A field of a class with accessors written under it, Kotlin's way:
     //   var gap = 4
@@ -431,6 +444,13 @@ struct EnumEntry : Node {
 // class Name(val a : T, var b, c) : Super(args) { fields and methods }
 struct ClassStmt : Stmt {
     std::string name;
+
+    // The number the compiler knows the class by where private members are concerned
+    // (0 until it is given one); see Op::MemberAccess.
+    mutable int privateId = 0;
+
+    // For a class declared inside another: the access word in front of it (an AccessWord).
+    uint8_t access = 0;
 
     // `object Name { ... }`: the class is made, then its one instance, and the name is the instance.
     bool isObject = false;

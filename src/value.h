@@ -127,6 +127,12 @@ size_t countCharacters(std::string_view s);
 struct ObjString final : Obj {
     const std::string chars;
     const uint32_t hash;
+
+    // Some class has a member of this name that not all code may use (1), or may assign to
+    // (2); and some class has one that is private (4). Set and never cleared: a member of
+    // any other name is reached without a look at who may use it.
+    uint8_t restricted = 0;
+
     const size_t length;  // in characters
 
     explicit ObjString(std::string s)
@@ -361,6 +367,21 @@ struct ObjClass final : Obj {
     Table getters;
     Table setters;
     bool hasAccessors = false;
+
+    // Members written `private`, `protected` or `internal`, inherited ones too, and static
+    // members written so, which are not inherited. A name leads to a mark, which says what
+    // numbers the code using the member has to carry one of; the numbers are in `accessIds`
+    // (see "Who may use a member" in vm.cpp, and Op::MemberAccess).
+    Table accessMarks;
+    Table staticAccessMarks;
+    std::vector<uint16_t> accessIds;
+    int number = 0;              // the class's own number, and its library's
+    int library = 0;
+    bool accessAllOwn = true;    // the class's own code may use every member its objects have,
+    bool accessSharedOwn = true; // or at least every one that is protected or internal
+    // One bit for each name in `accessMarks`, by the low six bits of its hash: a name whose
+    // bit is clear is certainly not among them, which is known without looking it up.
+    uint64_t accessBits = 0;
 
     std::vector<FieldDecl> declared;        // declared fields, including inherited ones
     Table declaredIndex;                    // field name -> index into `declared`

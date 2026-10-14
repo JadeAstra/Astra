@@ -1,0 +1,258 @@
+// Painting components: what is recorded, what style reaches a content, when a kept picture
+// is used and when it is painted again, and that a picture used again is wiped first. These
+// are JadeUI's own tests (RecordingCanvasTest, PaintStyleTest, PaintCacheTest,
+// RenderIntoTest), carried over with their names.
+import Jade.*
+
+val failed = []
+var checks = 0
+fun same(what, got, want) {
+  checks += 1
+  if (!(got == want)) { failed.add("$what: got $got, wanted $want") }
+}
+fun yes(what, condition) {
+  checks += 1
+  if (!condition) { failed.add(what) }
+}
+
+// -- RecordingCanvasTest --
+
+// labelRecordsItsText
+val hi = label("Hi").record(60, 20)
+yes("the label's text: $hi", hi.any { it is DrawOp.Text and it.text == "Hi" })
+
+// buttonRecordsFillAndTextInForeground
+val save = button("Save").foreground(Color.blue).record(80, 30)
+yes("no filled button body", save.any { it is DrawOp.RoundRect and it.fill })
+yes("the text in the foreground: $save", save.any { it is DrawOp.Text and it.text == "Save" and it.color == Color.blue })
+
+// backgroundOverrideRecordsAFilledRectInThatColor
+val red = label("x").background(Color.red).record(40, 20)
+yes("a rectangle in the background colour: $red", red.any { it is DrawOp.Rect and it.fill and it.color == Color.red })
+
+// gridRecordsChildrenInAbsoluteCoordinates: what is inside a grid is recorded where it is
+// in the whole, not in its cell.
+fun gridRecordsChildrenInAbsoluteCoordinates() {
+  val a = label("A").preferredSize(Dimension(20, 10)).minimumSize(Dimension(20, 10))
+  val b = label("B").preferredSize(Dimension(20, 10)).minimumSize(Dimension(20, 10))
+  val root = grid { row { cell(a); cell(b) } }
+  val texts = root.record(200, 40).filter { it is DrawOp.Text }
+  same("both", texts.map { it.text }.toSet(), setOf("A", "B"))
+  val ax = texts.first { it.text == "A" }.x
+  val bx = texts.first { it.text == "B" }.x
+  yes("B ($bx) should be right of A ($ax)", bx > ax)
+}
+gridRecordsChildrenInAbsoluteCoordinates()
+
+// hiddenChildRecordsNothing
+fun hiddenChildRecordsNothing() {
+  val a = label("A")
+  val b = label("B")
+  b.visible = false
+  val root = grid { row { cell(a); cell(b) } }
+  same("only A", root.record(200, 40).filter { it is DrawOp.Text }.map { it.text }.toSet(), setOf("A"))
+}
+hiddenChildRecordsNothing()
+print("RecordingCanvasTest:", checks, "checks,", failed)   // expect: RecordingCanvasTest: 7 checks, []
+
+// -- PaintStyleTest --
+
+class Probe : Content {
+  var seen = null
+  var paints = 0
+  override fun sizes() => Sizes(Dimension(10, 10), Dimension(40, 20), Dimension(400, 200))
+  override fun paint(canvas) {
+    seen = canvas.style
+    paints += 1
+  }
+}
+
+// On a canvas that really draws, and on one that records.
+fun live(c, given) {
+  val image = BufferedImage(40, 20, BufferedImage.typeIntArgb)
+  c.layout(40, 20)
+  c.paintInto(image.canvas().withStyle(given))
+}
+fun recorded(c, given) {
+  c.layout(40, 20)
+  c.paintInto(RecordingCanvas(40, 20, given, []))
+}
+val handed = Style(Color.yellow, Color.red, true, false)
+
+// whatTheComponentDoesNotSetIsTheParents
+for (paint in [live, recorded]) {
+  val p = Probe()
+  paint(Component(p), handed)
+  same("all of it, kept or not", p.seen, handed)
+}
+
+// whatTheComponentSetsItselfWins
+for (paint in [live, recorded]) {
+  val p = Probe()
+  val c = Component(p)
+  c.foreground = Color.blue
+  c.enabled = false
+  paint(c, handed)
+  same("its foreground and its being disabled", p.seen, Style(Color.yellow, Color.blue, false, false))
+}
+
+// aDisabledParentDisablesIt
+val disabledProbe = Probe()
+live(Component(disabledProbe), handed.copy(enabled = false))
+same("disabled from above", disabledProbe.seen.enabled, false)
+
+// anotherStyleHandedDownPaintsItAgain: the kept picture is good for the style it was
+// painted in, and no other.
+val styled = Probe()
+val styledComponent = Component(styled)
+live(styledComponent, handed)
+live(styledComponent, handed)
+same("the same style: the kept picture", styled.paints, 1)
+live(styledComponent, handed.copy(framed = true))
+same("another style: painted again", styled.paints, 2)
+same("and it saw the new one", styled.seen.framed, true)
+print("PaintStyleTest:", checks, "checks,", failed)   // expect: PaintStyleTest: 15 checks, []
+
+// -- PaintCacheTest --
+
+class Counter : Content {
+  var paints = 0
+  override fun sizes() => Sizes(Dimension(50, 20), Dimension(50, 20), Dimension(50, 20))
+  override fun paint(canvas) {
+    paints += 1
+    canvas.fillRect(0, 0, canvas.width, canvas.height)
+  }
+}
+
+// aLeafRepaintsOnlyWhenInvalidatedOrTheGenerationBumps: painted once, drawn from its
+// picture after that, and painted again when it says it has changed or when everything has.
+fun aLeafRepaintsOnlyWhenInvalidatedOrTheGenerationBumps() {
+  Jade.invalidateRenderCaches()
+  val ct = Counter()
+  val comp = Component(ct)
+  val buf = BufferedImage(50, 20, BufferedImage.typeIntArgb)
+  comp.renderInto(buf, 50, 20, 1.0, 1.0)
+  same("the first frame paints", ct.paints, 1)
+  comp.renderInto(buf, 50, 20, 1.0, 1.0)
+  same("unchanged: from its picture", ct.paints, 1)
+  comp.invalidate()
+  comp.renderInto(buf, 50, 20, 1.0, 1.0)
+  same("invalidated: painted again", ct.paints, 2)
+  Jade.invalidateRenderCaches()
+  comp.renderInto(buf, 50, 20, 1.0, 1.0)
+  same("everything may have changed: painted again", ct.paints, 3)
+}
+aLeafRepaintsOnlyWhenInvalidatedOrTheGenerationBumps()
+
+class OverlayLeaf : Content, OverlayContent {
+  var contentPaints = 0
+  var overlayPaints = 0
+  override fun sizes() => Sizes(Dimension(50, 20), Dimension(50, 20), Dimension(50, 20))
+  override fun paint(canvas) {
+    contentPaints += 1
+    canvas.fillRect(0, 0, canvas.width, canvas.height)
+  }
+  override fun paintOverlay(canvas) {
+    overlayPaints += 1
+    canvas.drawLine(0, 0, 0, 10)
+  }
+}
+
+// theOverlayLayerRedrawsEveryFrameWhileTheContentStaysCached: a caret is never kept in the
+// picture, or it would stay where it was.
+fun theOverlayLayerRedrawsEveryFrameWhileTheContentStaysCached() {
+  Jade.invalidateRenderCaches()
+  val leaf = OverlayLeaf()
+  val comp = Component(leaf)
+  val buf = BufferedImage(50, 20, BufferedImage.typeIntArgb)
+  comp.renderInto(buf, 50, 20, 1.0, 1.0)
+  comp.renderInto(buf, 50, 20, 1.0, 1.0)
+  comp.renderInto(buf, 50, 20, 1.0, 1.0)
+  same("the content is painted once and kept", leaf.contentPaints, 1)
+  same("the overlay is drawn every frame", leaf.overlayPaints, 3)
+}
+theOverlayLayerRedrawsEveryFrameWhileTheContentStaysCached()
+
+// aSizeChangeRepaintsEvenAtTheSameGeneration
+fun aSizeChangeRepaintsEvenAtTheSameGeneration() {
+  Jade.invalidateRenderCaches()
+  val ct = Counter()
+  val comp = Component(ct)
+  comp.renderInto(BufferedImage(50, 20, BufferedImage.typeIntArgb), 50, 20, 1.0, 1.0)
+  same("once", ct.paints, 1)
+  comp.renderInto(BufferedImage(60, 20, BufferedImage.typeIntArgb), 60, 20, 1.0, 1.0)
+  same("wider: painted again", ct.paints, 2)
+}
+aSizeChangeRepaintsEvenAtTheSameGeneration()
+print("PaintCacheTest:", checks, "checks,", failed)   // expect: PaintCacheTest: 23 checks, []
+
+// -- RenderIntoTest --
+
+fun pixels(image) => image.toPicture().pixels
+
+// reusedBufferMatchesAFreshRender: a picture used again is the same, pixel for pixel, as a new one.
+fun reusedBufferMatchesAFreshRender() {
+  val comp = button("Save")
+  val fresh = comp.renderToImage(120, 40)
+  val buf = BufferedImage(120, 40, BufferedImage.typeIntArgb)
+  comp.renderInto(buf, 120, 40, 1.0, 1.0)
+  yes("renderInto matches renderToImage pixel for pixel", pixels(fresh) == pixels(buf))
+  yes("and something was drawn", fresh.toPicture().inkBox() != null)
+}
+reusedBufferMatchesAFreshRender()
+
+// reusingABufferDoesNotGhostThePreviousFrame: the picture is wiped, not drawn over.
+fun reusingABufferDoesNotGhostThePreviousFrame() {
+  val buf = BufferedImage(200, 40, BufferedImage.typeIntArgb)
+  Component(Label("WWWWWWWWWW")).renderInto(buf, 200, 40, 1.0, 1.0)
+  Component(Label("i")).renderInto(buf, 200, 40, 1.0, 1.0)       // shorter, into the same picture
+  val fresh = Component(Label("i")).renderToImage(200, 40)
+  yes("the picture used again is a new render of the new content", pixels(fresh) == pixels(buf))
+}
+reusingABufferDoesNotGhostThePreviousFrame()
+print("RenderIntoTest:", checks, "checks,", failed)   // expect: RenderIntoTest: 26 checks, []
+
+// -- More --
+
+// A picture at a scale has that many pixels to the unit, and the same thing in them.
+val twice = button("Scale").renderToImage(80, 30, 2.0, 2.0)
+val once = button("Scale").renderToImage(80, 30)
+print(once, twice, twice.toPicture().inkBox()[2] > once.toPicture().inkBox()[2] * 2 - 4)   // expect: BufferedImage(80 x 30) BufferedImage(160 x 60) true
+
+// Only a part is painted when only a part is asked for: the rest of the picture stays.
+val part = BufferedImage(100, 40, BufferedImage.typeIntArgb)
+class Blank : Content {
+  override fun sizes() => Sizes(Dimension(1, 1), Dimension(1, 1), Dimension(1000, 1000))
+  override fun paint(canvas) {}
+}
+val filler = Component(Blank()).background(Color.red)
+filler.renderInto(part, 100, 40, 1.0, 1.0)
+filler.background = Color.blue
+filler.invalidate()
+filler.renderInto(part, 100, 40, 1.0, 1.0, false, Rectangle(10, 10, 20, 20))
+print(part.getRGB(5, 5) == 0xFFFF0000, part.getRGB(15, 15) == 0xFF0000FF, part.getRGB(29, 29) == 0xFF0000FF, part.getRGB(30, 15) == 0xFFFF0000, part.getRGB(15, 9) == 0xFFFF0000)   // expect: true true true true true
+
+// A button looks pressed while it is, and a disabled one draws its text in the disabled colour.
+val pressable = button("Press")
+pressable.layout(80, 30)
+val up = pressable.renderToImage(80, 30).toPicture()
+pressable.dispatch(Event.Click(10, 10))
+val down = pressable.renderToImage(80, 30).toPicture()
+pressable.dispatch(Event.Release(10, 10))
+val upAgain = pressable.renderToImage(80, 30).toPicture()
+print(up == down, up == upAgain)   // expect: false true
+// With the pointer over it its edge is in the accent colour, until the pointer goes.
+val edge = { c -> c.record(80, 30).first { it is DrawOp.RoundRect and !it.fill }.color }
+pressable.dispatch(Event.Hover(10, 10))
+val over = edge(pressable)
+pressable.dispatch(Event.Hover(-1, -1))
+print(over == Palette.accent, edge(pressable) == Palette.border, pressable.renderToImage(80, 30).toPicture() == up)   // expect: true true true
+val off = button("Off")
+off.enabled = false
+print(off.record(60, 30).first { it is DrawOp.Text }.color == Palette.disabled, button("On").record(60, 30).first { it is DrawOp.Text }.color == Palette.ink)   // expect: true true
+
+// elide: a text cut to fit a width.
+val font = Font(Font.sansSerif, Font.plain, 12)
+val long = "a text that is too long for the room it has"
+val cut = elide(long, font, 100)
+print(elide("short", font, 500), cut.endsWith("…"), FontMetrics(font).stringWidth(cut) <= 100, cut.length < long.length, elide(long, font, 0) == "", elide(long, font, 3) == "")   // expect: short true true true true true

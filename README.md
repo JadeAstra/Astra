@@ -834,8 +834,47 @@ class Square(val side : int) : Shape("square") {
 - `init { }` blocks run when an object is made, after the header's entries are set, in order
   with the initial values of the fields around them. A class has either such blocks or a
   hand-written `fun init`, not both.
-- `open`, `final`, `public`, `protected` and `private` on a member are accepted and change
-  nothing.
+- The access words say whose code may use a member. Using one from anywhere else is an
+  error, found when the line runs:
+  `'secret' is private in class Box: only code written in that class can use it`.
+
+  | In front of a member | Who may use it |
+  | --- | --- |
+  | `private` | code written in the class, on any object of the class, in a lambda in one of its methods too; and a class declared inside it |
+  | `protected` | that, and code written in a subclass, on objects of that subclass |
+  | `internal` | code of the same library (a program is one library; so is Jade) |
+  | `public`, or nothing | everyone |
+
+  ```astra
+  open class Meter {
+    private var ticks = 0              // Meter's own
+    protected fun format(n) => "$n"    // Meter's and its subclasses'
+    var reading = 0
+      private set                      // read by all, assigned by Meter only
+    fun tick() { ticks += 1; reading = ticks }
+  }
+  ```
+
+  - `private set`, `protected set` or `internal set` under a property says who may assign
+    to it, with the setter written after it (`private set(value) { ... }`) or with none.
+    Assigning from elsewhere: `'reading' cannot be assigned here: its setter is private in
+    class Meter, ...`.
+  - A subclass does not reach what is private above it, by `this`, by `super` or by a bare
+    name, and neither does an extension function. It may declare the member again,
+    `private override`, and then shares it: private to both classes.
+  - `override` alone leaves a protected or internal member as it was above; what was
+    private above becomes a new, open member of the subclass. `public override` opens any.
+    What is open above cannot be restricted below.
+  - A subclass uses a protected member on its own objects and those of classes below it,
+    not on an object of the class above or of another subclass.
+  - Static members and classes declared inside follow the same rules: `private static val`,
+    a `protected fun` in a `static { }` block, `private class Inner`.
+  - In a block that runs on an object (`box.apply { ... }`, a builder's `grid { ... }`)
+    a bare name does not mean a member of that object which the block's code may not use:
+    it is the program's own function or variable of that name. So what a builder keeps to
+    itself cannot hide a name of the program's.
+  - A data object is still printed, compared, copied and taken apart with all its fields.
+- `open` and `final` on a member are accepted and change nothing.
 
 #### Static members
 
@@ -1185,57 +1224,154 @@ and statements, runs in the order written, and for a folder file by file in alph
 order: a top-level variable can be used by a function at any time, but not by a statement
 that runs before the variable's own line.
 
-## Windows and drawing: Jade
+## Windows and widgets: Jade
 
-`import Jade.*` gives a program windows to draw in. **Jade is Astra's GUI library, and it is
-being built**: what is there today is its native layer, the part that opens windows, reports
-what the keyboard and the pointer do, and draws. The widgets (buttons, text fields, lists,
-menus, dialogs) are written on top of it and come next; the plan is in `docs\gui-plan.md`.
+`import Jade.*` gives a program windows. **Jade is Astra's GUI library, and it is being
+built**, as a port of JadeUI with the same names (the plan is in `docs\gui-plan.md`). What
+is there today: the native layer, which opens windows, reports what the keyboard and the
+pointer do and draws; and on top of it the first widgets, laid out by a grid. Text fields,
+lists, menus and dialogs come next.
 
-A window is a plain window of the system's with nothing in it but what the program draws,
-and everything is drawn by the graphics card, with OpenGL. Text comes from Astra's own text
-engine (below), so it measures and looks the same wherever the same font file is. Windows
-only so far, on OpenGL 3.3 or later.
+Everything is drawn by Jade itself, with OpenGL: there are no controls of the system's.
+Text comes from Astra's own text engine (below), so it measures and looks the same wherever
+the same font file is. Windows only so far, on OpenGL 3.3 or later.
 
 ```astra
 import Jade.*
 
-val window = NativeWindow("Hello", 400, 200)
+var count = 0
+val counter = label("Pressed 0 times")
 
-fun paint() {
-  val canvas = window.canvas()
-  canvas.color = Color.white
-  canvas.fillRect(0, 0, canvas.width, canvas.height)
-  canvas.color = Color(47, 129, 247)
-  canvas.fillRoundRect(20, 20, 160, 60, 16, 16)
-  canvas.color = Color.black
-  canvas.font = Font("Segoe UI", Font.bold, 20)
-  canvas.drawString("Hello", 40, 58)
-  window.present()                 // shows what has been drawn
+val root = grid {
+  insets = Insets(12, 12, 12, 12)
+  hgap = 8
+  row {
+    cell(label("Counter:"))
+    cell(counter, fill = Fill.horizontal, weightX = 1.0)
+    cell(button("+1") {
+      count += 1
+      counter.content.text = "Pressed $count times"
+    })
+  }
 }
 
-window.onResize = { width, height -> paint() }
-window.onInput = { event -> if event is RawInput.KeyDown and event.key == KeyCode.escape { window.close() } }
-paint()
-window.show()
+Window(root, "Counter", 360, 80).show()
 ```
 
 There is no loop to write. A program with a window showing goes on until its windows are
 closed: the window's events come through the same event loop as `EventLoop`'s tasks and
-timers (see "Doing several things at once"), which is also how an animation is made:
-`EventLoop.every(16) { ... }`. Windows and drawing belong to the main thread; a thread or a
-worker hands its result over with `EventLoop.post`.
+timers (see "Doing several things at once"). Windows and drawing belong to the main thread;
+a thread or a worker hands its result over with `EventLoop.post`.
 
-`examples\window.astra` draws every kind of shape and echoes the events it receives, and
-with `picture` on its command line draws the same picture into a PNG with no window at all.
-`examples\bounce.astra` animates fifty thousand balls.
+`examples\widgets.astra` is a window of labels and buttons. `examples\window.astra` draws
+on a bare window and echoes the events it receives, and `examples\bounce.astra` animates
+fifty thousand balls on one.
 
 **Units.** Everything a program gives and gets is in layout units: the pixels of an
-ordinary screen. On a dense screen a window has a `scale` (1.5, 2) and draws that many of
+ordinary screen. On a dense screen a window has a scale (1.5, 2) and draws that many of
 the screen's pixels to the unit; edges still fall on pixel edges and text is drawn at the
 screen's own size. A program's numbers do not change.
 
-### A window
+### Components and the grid
+
+A widget is a **`Component`** wrapping a **content**. The content knows how large it wants
+to be, paints itself and hears of events; the component adds what every widget has. These
+functions make the ones there are:
+
+| | |
+| --- | --- |
+| `label(text)` | one line of text |
+| `wrappedLabel(text)` | text that goes on to more lines at the width it is given |
+| `button(text) { ... }` | does what the block says when pressed and let go on it; lit while the pointer is over it |
+| `iconButton(image) { ... }` | a button showing a `BufferedImage` |
+| `toolbarSeparator()` | the thin rule between groups of buttons |
+| `grid { ... }` | a grid holding others |
+
+A component has `id`, `visible`, `enabled`, `tooltip`, `background`, `foreground`, `bounds`
+(where its container placed it), and sizes that can be set over what its content asks for.
+The setting calls return the component, so they chain:
+`button("OK").withId("ok").foreground(Color.blue).preferredSize(Dimension(80, 28))`.
+`content` is the content itself, where a widget's own settings are: `counter.content.text`.
+
+**The grid** is the one layout. In `grid { }`, `row { }` starts a row and `cell(component,
+...)` puts a component in its next free column:
+
+| | |
+| --- | --- |
+| `fill` | `Fill.none`, `horizontal`, `vertical`, `both`: whether the component takes all the room its cell has |
+| `anchor` | where it sits when it does not: `Anchor.center`, `north`, `east`, `southwest`, ... |
+| `weightX`, `weightY` | a share of the room left over when the grid is larger than it asks for |
+| `rowSpan`, `colSpan` | how many rows and columns the cell covers |
+
+A column is as wide as the widest thing in it would like, a row as high as its highest.
+Room to spare goes to the columns and rows with a weight, in proportion; with too little,
+each gives up what it can down to its least. `insets`, `hgap` and `vgap` are the room
+around the cells and between them. Outside a block, `grid.content.add(component, row, col,
+...)` and `remove(component)` do the same by number. Nothing is placed by hand, so a window
+of widgets follows the window's size by itself.
+
+**A window** is `Window(root, title, initialWidth = 900, initialHeight = 640)`, opened with
+`show()`. After those, by name: `onClose = { }`, `onFilesDropped = { files -> }`, `icons`,
+`exitOnClose`, and for a window that belongs to another `owner`, `dialog`, `sizeToContent`,
+`centerOnOwner`, `resizable`, `focus` and `keyFilter`. It has `title`, `root` (which can be
+replaced), `close()`, `toFront()`, `fitToContent()` and `requestRepaint()`. A window with no
+owner ends the program when it is closed; one with an owner does not.
+
+The window decides what the keyboard and the pointer mean. A press belongs to the widget
+under it, which then gets the drag and the release wherever the pointer goes. The keyboard
+belongs to the last widget pressed that takes keys, and Tab moves it on. Ctrl with a letter
+is a command, by the letter the keyboard's layout gives the key.
+
+`Palette` holds the theme's colours (`Palette.ink`, `surface`, `border`, `accent`, ...) and
+`Palette.dark = true` turns every window dark: a colour written `Palette.bg(0xECECEC)` is
+that grey by day and its counterpart by night.
+
+**A widget of your own** is a class with the three things a `Content` has:
+
+```astra
+class Swatch(val color) : Content {
+  override fun sizes() => Sizes(Dimension(16, 16), Dimension(48, 24), Dimension(1000, 1000))   // least, liked, most
+  override fun paint(canvas) {
+    canvas.color = color
+    canvas.fillRoundRect(0, 0, canvas.width - 1, canvas.height - 1, 6, 6)
+  }
+  override fun onEvent(event) {
+    if event is Event.Click { print("pressed at ${event.x}, ${event.y}") }
+  }
+}
+
+cell(Component(Swatch(Color.orange)))
+```
+
+`paint` gets a canvas of the component's own size (the canvas is described below), and its
+`canvas.style` says what was handed down: a foreground, a background, whether the widget is
+enabled. Events are `Event.Click`, `Drag`, `Release`, `Hover`, `Wheel`, `Context` (the
+other button), `KeyPress`, `KeyType` and `Shortcut`, with positions from the widget's own
+corner. A content that changes says so with `owner.invalidate()`, or `invalidateLayout()`
+if its size may have changed too (it is an `OwnedContent` then, and has `var owner`). A
+component keeps a picture of itself and is not painted again until it is invalidated.
+Being a `FocusTarget` makes it take the keyboard, a `CursorProvider` gives it its own
+pointer, and there are a few more such interfaces in `lib\Jade\Types.astra`.
+
+**Without a window.** A tree of components can be laid out, painted and sent events with
+nothing on the screen, which is how it is tested:
+
+```astra
+val ops = root.record(300, 100)                  // what it would draw, as a list of DrawOp
+ops.any { it is DrawOp.Text and it.text == "OK" }
+root.click(280, 20)                              // a press and a release at a point
+root.renderToImage(300, 100).save("root.png")    // or its picture
+
+Jade.windowOpener = HiddenWindowOpener()         // windows that are never shown
+window.show()
+window.handle.send(RawInput.PointerDown(280, 20, PointerButton.left, Modifiers.none))
+window.handle.snapshot()                         // the window's picture, as a Picture
+```
+
+### A bare window: NativeWindow
+
+Under the widgets is a window with nothing in it but what the program draws, which a
+program can use directly: for a game, a plot, anything that is all its own drawing.
 
 `NativeWindow(title = "", width = 900, height = 640, resizable = true, dialog = false,
 owner = null)` makes one, not yet shown. The size is of what can be drawn on. An `owner` is
@@ -2047,7 +2183,7 @@ source ──lexer──▶ tokens ──parser──▶ AST ──compiler─�
 | `src/jade/platform.h`, `platform_win.cpp` | Jade's native layer, the part written per system: a window, its events, the clipboard |
 | `src/jade/render.*`, `gl.*` | Drawing with OpenGL: one small record for each shape, the glyph atlas, pictures on the card |
 | `src/jade/api.cpp` | The built-in the Jade library is written on; where layout units become pixels |
-| `lib/Jade/*.astra` | The Jade library: so far its native layer and the types it takes from the JDK |
+| `lib/Jade/*.astra` | The Jade library: its native layer, the types it takes from the JDK, components, the grid, the first widgets, and the window with what it makes of the keyboard and the pointer |
 | `src/main.cpp` | Command line, REPL and building standalone programs |
 
 Every function is checked by the verifier before it can run, whether it came from the
@@ -2088,8 +2224,9 @@ opportunity, which is slow but useful for finding memory bugs when changing the 
 
 ## Limitations
 
-- Jade has its native layer so far: windows, raw input and drawing. There are no widgets yet,
-  and no file dialogs or pictures other than PNG. It is Windows-only and needs OpenGL 3.3.
+- Jade has its native layer and its first widgets: labels, buttons and the grid. There are no
+  text fields, lists, menus, tooltips or dialogs yet, and no pictures other than PNG. It is
+  Windows-only and needs OpenGL 3.3.
 - Types are checked while the program runs (only literals are checked at compile time), so
   a mismatch shows up when the offending line executes. Typed calls cost a little speed.
 - Loop variables cannot be typed, and the element types in `list<int>` or `(int) -> bool` are
@@ -2101,8 +2238,8 @@ opportunity, which is slow but useful for finding memory bugs when changing the 
 - `orEmpty()` cannot be called on `null` itself, since strings, lists and maps each have one
   and `null` does not say which is meant; write `text ?: ""` or `items ?: []`.
 - A compiled `.astc` file carries the Astra-written part of the standard library, about 160 KB.
-- `private` and the other access words are enforced for top-level declarations. On the members
-  of a class they are accepted and change nothing yet.
+- The access words on a member (`private`, `protected`, `internal`, `private set`) are
+  checked when the line runs, not when the program is compiled.
 - A class declared inside another does not belong to one object of the outer class (there is
   no `inner`), and an inherited static member needs the class name in front (`Base.max`).
 - `if` always needs its braces, also as a value: `if wide { 200 } else { 100 }`.

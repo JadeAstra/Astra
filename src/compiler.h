@@ -70,6 +70,8 @@ private:
     // Assignments to globals, checked against `val` once everything has been compiled.
     std::vector<std::tuple<const GlobalName*, std::string, std::string, int, int>> globalAssignments_;  // name, file, line, col
     std::unordered_map<std::string, int> modules_;  // canonical path -> module index
+    int classCount_ = 0;  // classes and libraries given a number so far (see Op::MemberAccess)
+    std::unordered_map<std::string, int> libraryIds_;  // library -> its number
 
     // For a file loaded as part of its folder: the modules of that folder, in the order they
     // run. Importing the file alone runs them all, since its classes are set up by the first.

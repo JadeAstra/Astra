@@ -1,0 +1,68 @@
+// The first widgets of Jade: a grid of labels and buttons in a window.
+//
+//   astra examples/widgets.astra
+//
+// The window's layout is one grid. Columns are as wide as the widest thing in them; the
+// column with a weight takes the room that is left when the window is made wider, and the
+// last row takes what is left of the height. Nothing is placed by hand.
+import Jade.*
+
+var count = 0
+val counter = label("Pressed 0 times")
+val theme = button("Dark theme")
+val reset = button("Reset") { bump(-count) }
+
+fun bump(by) {
+  count += by
+  counter.content.text = "Pressed $count time" + (count == 1 ? "" : "s")
+}
+
+val root = grid {
+  insets = Insets(14, 14, 14, 14)
+  hgap = 8
+  vgap = 8
+
+  row {
+    cell(Component(Label("Labels and buttons, laid out by a grid", Font("Segoe UI", Font.bold, 16))), colSpan = 4, anchor = Anchor.west)
+  }
+  row {
+    cell(label("Counter:"), anchor = Anchor.east)
+    cell(counter, fill = Fill.horizontal, weightX = 1.0)
+    cell(button("+1") { bump(1) })
+    cell(button("+10") { bump(10) })
+  }
+  row {
+    cell(label("Theme:"), anchor = Anchor.east)
+    cell(label("the same colours, by day and by night"), anchor = Anchor.west)
+    cell(theme, colSpan = 2, fill = Fill.horizontal)
+  }
+  row {
+    cell(label("Disabled:"), anchor = Anchor.east)
+    val off = button("Cannot be pressed") { bump(1000) }
+    off.enabled = false
+    cell(off, anchor = Anchor.west)
+    cell(reset, colSpan = 2, fill = Fill.horizontal)
+  }
+  row {
+    cell(wrappedLabel("This is a label that wraps. Make the window narrower and it goes on to more lines; " +
+                      "its height follows its width, and the grid gives it the room it then needs."),
+         colSpan = 4, fill = Fill.both, weightY = 1.0)
+  }
+}
+
+// A colour of the program's own is given through Palette, so that it has a counterpart in
+// the dark theme; a component's foreground is a colour, though, and is set again when the
+// theme changes.
+fun tint() {
+  reset.foreground(Palette.fg(0xB00020))
+}
+tint()
+
+theme.content.onClick = {
+  Palette.dark = !Palette.dark
+  theme.content.text = Palette.dark ? "Light theme" : "Dark theme"
+  tint()
+}
+
+val window = Window(root, "Jade: labels and buttons", 520, 260)
+window.show()

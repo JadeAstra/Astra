@@ -1,0 +1,225 @@
+// The grid layout and finding components by place. These are JadeUI's own tests
+// (JadeGridLayoutTest, GridHiddenTest, ComponentAtTest), carried over with their names, and
+// a few more beside them.
+import Jade.*
+
+val failed = []
+var checks = 0
+fun same(what, got, want) {
+  checks += 1
+  if (!(got == want)) { failed.add("$what: got $got, wanted $want") }
+}
+fun yes(what, condition) {
+  checks += 1
+  if (!condition) { failed.add(what) }
+}
+
+fun fixed(w, h) => label("x").preferredSize(Dimension(w, h)).minimumSize(Dimension(w, h))
+
+// Takes whatever room it is given: no size of its own to speak of.
+class Stretchy : Content {
+  override fun sizes() => Sizes(Dimension(4, 4), Dimension(4, 4), Dimension(100000, 100000))
+  override fun paint(canvas) {}
+}
+
+// -- JadeGridLayoutTest --
+
+// columnsAlignToWidestPreferredAndAnchorCenters: columns are as wide as the widest thing in
+// them would like, and a cell that does not fill sits in the middle of its column.
+fun columnsAlignToWidestPreferredAndAnchorCenters() {
+  val a = fixed(20, 10)
+  val b = fixed(50, 10)
+  val c = fixed(30, 12)
+  val g = Grid()
+  g.add(a, row = 0, col = 0)
+  g.add(b, row = 1, col = 0)             // the widest in column 0 sets its width
+  g.add(c, row = 0, col = 1)
+  g.layout(200, 100)
+  same("a", a.bounds, Rectangle(15, 1, 20, 10))    // column 0 is 50, a in the middle of it
+  same("b", b.bounds, Rectangle(0, 12, 50, 10))    // b is the whole column wide
+  same("c", c.bounds, Rectangle(50, 0, 30, 12))    // column 1 starts after column 0
+}
+
+// weightGrowsColumnAndFillStretches: weight shares out room to spare; fill stretches a
+// cell within the room it was given.
+fun weightGrowsColumnAndFillStretches() {
+  val left = fixed(40, 20)
+  val right = fixed(40, 20)
+  val g = Grid()
+  g.add(left, row = 0, col = 0)
+  g.add(right, row = 0, col = 1, fill = Fill.horizontal, weightX = 1.0)
+  g.layout(200, 50)
+  same("left width", left.bounds.width, 40)
+  same("right width", right.bounds.width, 160)     // it took all 120 that were spare
+  same("right x", right.bounds.x, 40)
+}
+
+// colSpanSpreadsDeficitAcrossColumns: a cell that spans columns and is wider than they are
+// spreads what it lacks over them, not all onto the last.
+fun colSpanSpreadsDeficitAcrossColumns() {
+  val top = fixed(100, 20)
+  val bl = fixed(30, 20)
+  val br = fixed(30, 20)
+  val g = Grid()
+  g.add(top, row = 0, col = 0, colSpan = 2)
+  g.add(bl, row = 1, col = 0)
+  g.add(br, row = 1, col = 1)
+  g.layout(100, 40)
+  same("top", top.bounds, Rectangle(0, 0, 100, 20))
+  same("bl x", bl.bounds.x, 10)          // column 0 grew from 30 to 50; a cell of 30 sits at 10
+  same("br x", br.bounds.x, 60)          // column 1 starts at 50
+}
+
+// rowBuilderSkipsCellsCoveredByRowSpan: a cell that spans rows takes the places below it,
+// and the builder passes over them.
+fun rowBuilderSkipsCellsCoveredByRowSpan() {
+  val g = Grid()
+  val tall = fixed(20, 40)
+  g.row {
+    cell(tall, rowSpan = 2)
+    cell(fixed(20, 20))
+  }
+  val bottom = fixed(20, 20)
+  g.row { cell(bottom) }                 // column 0 is taken by `tall`: this lands in column 1
+  g.layout(100, 100)
+  same("tall x", tall.bounds.x, 0)
+  same("bottom x", bottom.bounds.x, 20)
+}
+
+columnsAlignToWidestPreferredAndAnchorCenters()
+weightGrowsColumnAndFillStretches()
+colSpanSpreadsDeficitAcrossColumns()
+rowBuilderSkipsCellsCoveredByRowSpan()
+print("JadeGridLayoutTest:", checks, "checks,", failed)   // expect: JadeGridLayoutTest: 11 checks, []
+
+// -- GridHiddenTest --
+
+// aHiddenRowGivesItsShareToTheRest
+fun aHiddenRowGivesItsShareToTheRest() {
+  val top = Component(Stretchy())
+  val bottom = Component(Stretchy())
+  val g = grid {
+    row { cell(top, fill = Fill.both, weightX = 1.0, weightY = 1.0) }
+    row { cell(bottom, fill = Fill.both, weightX = 1.0, weightY = 1.0) }
+  }
+  g.layout(300, 400)
+  yes("shared while both show: ${bottom.bounds}", bottom.bounds.height >= 180 and bottom.bounds.height <= 220)
+  top.visible = false
+  g.layout(300, 400)
+  yes("the whole height once the other is hidden: ${bottom.bounds}", bottom.bounds.height >= 390)
+  yes("at the top", bottom.bounds.y <= 10)
+}
+aHiddenRowGivesItsShareToTheRest()
+
+// -- ComponentAtTest --
+
+// findsTheDeepestChildAtAPoint
+fun findsTheDeepestChildAtAPoint() {
+  val ok = button("OK").withId("ok")
+  val root = grid { row { cell(label("A")); cell(ok) } }
+  root.layout(200, 40)
+  val b = ok.bounds
+  same("the button", root.componentAt(b.x + b.width / 2, b.y + b.height / 2)?.id, "ok")
+}
+
+// emptyAreaFallsBackToTheContainer: a point with nothing under it is the container's, not
+// the nearest widget's.
+fun emptyAreaFallsBackToTheContainer() {
+  val ok = button("OK").withId("ok").preferredSize(Dimension(20, 10)).minimumSize(Dimension(20, 10))
+  val root = grid { row { cell(ok) } }
+  root.layout(200, 200)
+  same("the grid, which has no id", root.componentAt(190, 190)?.id, null)
+  yes("and it is the grid", root.componentAt(190, 190) === root)
+}
+findsTheDeepestChildAtAPoint()
+emptyAreaFallsBackToTheContainer()
+print("GridHiddenTest, ComponentAtTest:", checks, "checks,", failed)   // expect: GridHiddenTest, ComponentAtTest: 17 checks, []
+
+// -- More of the grid --
+
+// What a grid asks for: its columns and rows, the gaps between them and the room around.
+val form = grid {
+  insets = Insets(5, 7, 9, 11)
+  hgap = 4
+  vgap = 3
+  row { cell(fixed(30, 10)); cell(fixed(50, 20)) }
+  row { cell(fixed(40, 15)); cell(fixed(10, 10)) }
+}
+print(form.prefSize(), form.minSize(), form.content.cells.size, form.content.children.size)   // expect: Dimension(112 x 52) Dimension(112 x 52) 4 4
+print(grid { }.prefSize(), grid { insets = Insets(1, 2, 3, 4) }.prefSize(), grid { }.maxSize().width > 1000000)   // expect: Dimension(0 x 0) Dimension(6 x 4) true
+
+// Anchors: where a cell's widget sits in room larger than itself.
+fun anchored(anchor : Anchor) {
+  val item = fixed(10, 10)
+  val g = Grid()
+  g.add(item, 0, 0, anchor = anchor, weightX = 1.0, weightY = 1.0)
+  g.layout(100, 60)
+  return [item.bounds.x, item.bounds.y]
+}
+print(anchored(Anchor.center), anchored(Anchor.northwest), anchored(Anchor.north), anchored(Anchor.east), anchored(Anchor.southeast), anchored(Anchor.southwest))
+// expect: [45, 25] [0, 0] [45, 0] [90, 25] [90, 50] [0, 50]
+// The entry of an enum can be written by its bare name where a parameter says which enum.
+print(anchored(west), anchored(south))   // expect: [0, 25] [45, 50]
+
+// Fill: across, down, both, and never more than the widget may be.
+fun filled(fill : Fill, max = null) {
+  val item = fixed(10, 10)
+  item.maximumSize(max ?: Dimension(1000, 1000))
+  val g = Grid()
+  g.add(item, 0, 0, fill = fill, weightX = 1.0, weightY = 1.0)
+  g.layout(100, 60)
+  return item.bounds
+}
+print(filled(Fill.none), filled(Fill.horizontal), filled(Fill.vertical), filled(Fill.both, Dimension(70, 40)))
+// expect: Rectangle(45, 25, 10 x 10) Rectangle(0, 25, 100 x 10) Rectangle(45, 0, 10 x 60) Rectangle(15, 10, 70 x 40)
+
+// Too little room: taken from each column by how much it can give up.
+val a = label("x").preferredSize(Dimension(100, 10)).minimumSize(Dimension(20, 10))
+val b = label("x").preferredSize(Dimension(100, 10)).minimumSize(Dimension(60, 10))
+val tight = Grid()
+tight.add(a, 0, 0, fill = Fill.horizontal)
+tight.add(b, 0, 1, fill = Fill.horizontal)
+tight.layout(140, 10)
+print(a.bounds.width, b.bounds.width, a.bounds.width + b.bounds.width)   // expect: 60 80 140
+
+// Weights share room to spare in proportion.
+val one = fixed(10, 10)
+val three = fixed(10, 10)
+val weighted = Grid()
+weighted.add(one, 0, 0, fill = Fill.both, weightX = 1.0)
+weighted.add(three, 0, 1, fill = Fill.both, weightX = 3.0)
+weighted.layout(220, 10)
+print(one.bounds.width, three.bounds.width)   // expect: 60 160
+
+// A component is taken out again, and a span of less than one is refused.
+val removable = Grid()
+val kept = fixed(10, 10)
+val gone = fixed(30, 10)
+removable.add(kept, 0, 0)
+removable.add(gone, 0, 1)
+removable.remove(gone)
+print(removable.cells.size, removable.sizes().pref)   // expect: 1 Dimension(10 x 10)
+try {
+  removable.add(fixed(1, 1), 0, 0, rowSpan = 0)
+} catch (e) {
+  print(e.message)   // expect: spans must be at least 1 (got 0 x 1)
+}
+
+// A component knows what it is in, and where it is in the window.
+val inner = button("inner").withId("inner")
+val nested = grid("outer") {
+  insets = Insets(10, 20, 0, 0)
+  row { cell(grid("middle") { insets = Insets(3, 4, 0, 0); row { cell(inner) } }) }
+}
+nested.layout(300, 200)
+print(inner.parent.id, inner.parent.parent.id, nested.parent, inner.windowPosition(), nested.find("inner") === inner, nested.find("nothing"))   // expect: middle outer null Point(24, 13) true null
+print(nested.descendants().map { it.id ?: it.content.className }, nested.content.viewId, Jade.registeredGrids().size >= 2)   // expect: ["outer", "middle", "inner"] outer true
+print(checks, failed)   // expect: 17 []
+
+// What JadeUI keeps to the library is kept from the program: an internal member, and the
+// setter of a property that only the component itself assigns.
+try { inner.adopt(nested) } catch (e) { print(e.message) }   // expect: 'adopt' is internal in class Component: only code of the library it belongs to can use it
+try { inner.parent = null } catch (e) { print(e.message) }   // expect: 'parent' cannot be assigned here: its setter is private in class Component, so only code written in that class can assign to it
+try { print(inner.overlayDescendants) } catch (e) { print(e.message) }   // expect: 'overlayDescendants' is internal in class Component: only code of the library it belongs to can use it
+try { Jade.renderGeneration = 0 } catch (e) { print(e.message) }   // expect: 'renderGeneration' cannot be assigned here: its setter is private in class Jade, so only code written in that class can assign to it
+print(inner.parent.id, Jade.renderGeneration >= 0)   // expect: middle true

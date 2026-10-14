@@ -134,6 +134,13 @@ const OpInfo kOps[] = {
     {"CHECK_OVERRIDE", Operand::U16U8},
     {"INVOKE_TRAILING", Operand::U16U8},
     {"SUPER_INVOKE_TRAILING", Operand::U16U8},
+    {"CLASS_NUMBER", Operand::U16U16},
+    {"MEMBER_ACCESS", Operand::U16U16U8},
+    {"STATIC_ACCESS", Operand::U16U16U8},
+    {"GET_OWN", Operand::U16},
+    {"SET_OWN", Operand::U16},
+    {"INVOKE_OWN", Operand::U16U8},
+    {"INVOKE_OWN_TRAILING", Operand::U16U8},
 };
 
 const char* const kTypeNames[] = {"", "int", "float", "number", "string", "bool", "list", "map", "range", "function", "bytes"};
@@ -348,10 +355,12 @@ static int analyzeStack(FunctionProto& f, const Program& program, bool partial) 
                     }
                     break;
                 case Op::GetProp:
+                case Op::GetOwn:
                     requireName(a);
                     pops = pushes = 1;
                     break;
                 case Op::SetProp:
+                case Op::SetOwn:
                 case Op::GetSuper:
                 case Op::Method:
                 case Op::StaticMethod:
@@ -435,7 +444,12 @@ static int analyzeStack(FunctionProto& f, const Program& program, bool partial) 
                     pushes = 1;
                     break;
                 case Op::EnumNext:
+                case Op::MemberAccess:
+                case Op::StaticAccess:
                     requireName(a);
+                    pops = pushes = 1;
+                    break;
+                case Op::ClassNumber:
                     pops = pushes = 1;
                     break;
                 case Op::EnumSeal:
@@ -528,11 +542,13 @@ static int analyzeStack(FunctionProto& f, const Program& program, bool partial) 
                     pushes = 1;
                     break;
                 case Op::Invoke:
+                case Op::InvokeOwn:
                     requireName(a);
                     pops = b + 1;
                     pushes = 1;
                     break;
                 case Op::InvokeTrailing:
+                case Op::InvokeOwnTrailing:
                     requireName(a);
                     if (b < 1) fail("a call with a lambda after it has no arguments");
                     pops = b + 1;
@@ -724,6 +740,8 @@ void disassembleFunction(const FunctionProto& f, const Program& program, std::os
                 break;
             case Op::GetProp:
             case Op::SetProp:
+            case Op::GetOwn:
+            case Op::SetOwn:
             case Op::GetSuper:
             case Op::Class:
             case Op::Method:
@@ -736,6 +754,8 @@ void disassembleFunction(const FunctionProto& f, const Program& program, std::os
                 break;
             case Op::Invoke:
             case Op::InvokeTrailing:
+            case Op::InvokeOwn:
+            case Op::InvokeOwnTrailing:
             case Op::SuperInvoke:
             case Op::SuperInvokeTrailing:
                 out << " " << a << " argc=" << b << "  ; " << asString(f.constants[a])->chars;
@@ -817,7 +837,7 @@ void disassemble(const Program& program, std::ostream& out) {
 namespace {
 
 const char kMagic[4] = {'A', 'S', 'T', 'R'};
-const uint8_t kFormatVersion = 4;
+const uint8_t kFormatVersion = 5;
 const int kMaxProtoNesting = 200;
 
 enum ConstantTag : uint8_t { TagInt = 0, TagFloat = 1, TagString = 2 };
@@ -858,6 +878,9 @@ struct Writer {
         }
         u32(static_cast<uint32_t>(f.outerReceivers.size()));
         for (uint16_t upvalue : f.outerReceivers) u16(upvalue);
+        u32(static_cast<uint32_t>(f.classIds.size()));
+        for (uint16_t id : f.classIds) u16(id);
+        u16(f.ownClass);
 
         u32(static_cast<uint32_t>(f.code.size()));
         out.write(reinterpret_cast<const char*>(f.code.data()), static_cast<std::streamsize>(f.code.size()));
@@ -963,6 +986,9 @@ struct Reader {
             if (upvalue >= f->upvalues.size()) corrupt();
             f->outerReceivers.push_back(upvalue);
         }
+        uint32_t classCount = count(2);
+        for (uint32_t i = 0; i < classCount; i++) f->classIds.push_back(u16());
+        f->ownClass = u16();
 
         uint32_t codeSize = count(1);
         f->code.assign(data.begin() + static_cast<std::ptrdiff_t>(pos),

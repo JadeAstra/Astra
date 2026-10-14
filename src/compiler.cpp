@@ -179,6 +179,7 @@ struct InlineBlock {
 struct ClassState {
     ClassState* enclosing;
     bool hasSuper = false;
+    int id = 0;  // the number the code written in it carries
 
     // For names written bare inside the class: what it declares itself, how to reach the
     // class object, and the function the declaration is written in.
@@ -244,7 +245,7 @@ public:
     // in turn, the hoisted parts all going into one function that runs first.
     void beginScript(FunctionState& state, const std::string& source) {
         state.kind = FunctionKind::Script;
-        state.proto = session_.program.newProto();
+        state.proto = newProto();
         state.proto->name = "<script>";
         state.proto->source = source;
         state.add(Local{"", 0, VarInfo{}});
@@ -315,7 +316,7 @@ public:
         FunctionState state;
         state.enclosing = fs_;
         state.kind = FunctionKind::Function;
-        state.proto = session_.program.newProto();
+        state.proto = newProto();
         state.proto->name = "<class " + cls.name + ">";
         state.proto->source = file_;
         state.add(Local{"", 0, VarInfo{}});
@@ -912,6 +913,89 @@ private:
         return {};
     }
 
+    // A function, marked with the numbers of the classes it is written inside of, innermost
+    // first, and of its library: what it may use of the members that are private, protected
+    // or internal (see Op::MemberAccess).
+    FunctionProto* newProto() {
+        FunctionProto* proto = session_.program.newProto();
+        for (const ClassState* cls = class_; cls != nullptr; cls = cls->enclosing)
+            proto->classIds.push_back(static_cast<uint16_t>(cls->id));
+        proto->classIds.push_back(static_cast<uint16_t>(libraryId()));
+        proto->ownClass = class_ != nullptr ? static_cast<uint16_t>(class_->id) : 0;
+        return proto;
+    }
+
+    int nextNumber(const Node& at) {
+        if (session_.classCount_ >= 0xFFFF) throw error(at, "a program cannot have more than 65535 classes and libraries");
+        return ++session_.classCount_;
+    }
+
+    // The number a class is known by, the same each time a part of it is compiled.
+    int classId(const ClassStmt& s) {
+        if (s.privateId == 0) s.privateId = nextNumber(s);
+        return s.privateId;
+    }
+
+    // The number of the library this file belongs to, from the same series.
+    int libraryId() {
+        auto found = session_.libraryIds_.find(ns_->library);
+        if (found != session_.libraryIds_.end()) return found->second;
+        Node here;
+        here.line = line_;
+        here.col = 1;
+        const int id = nextNumber(here);
+        session_.libraryIds_[ns_->library] = id;
+        return id;
+    }
+
+    // Says who may use the members a class declares: the access word in front of each, and
+    // the one in front of `set` under a property.
+    void emitMemberAccess(const ClassStmt& s, const ClassState& cls) {
+        std::unordered_set<std::string> seen;
+        auto mark = [&](bool isStatic, const std::string& name, int access, bool isOverride, bool write, int line) {
+            int kind = 4, id = cls.id;  // nothing said: as it is above
+            if (access == kAccessWordPublic) kind = 0;
+            if (access == kAccessWordPrivate) kind = 1;
+            if (access == kAccessWordProtected) kind = 2;
+            if (access == kAccessWordInternal) {
+                kind = 3;
+                id = libraryId();
+            }
+            if (kind == 0 || kind == 4) {
+                // Only a member that takes the place of one above has anything to change.
+                if (isStatic || !isOverride || !s.hasSuper) return;
+                id = 0;
+            }
+            if (!seen.insert(std::string(isStatic ? "static " : "") + (write ? "set " : "") + name).second) return;
+            line_ = line;
+            emit(isStatic ? Op::StaticAccess : Op::MemberAccess);
+            emitU16(stringConstant(name));
+            emitU16(id);
+            emitByte(kind | (write ? 0x10 : 0));
+        };
+        auto field = [&](bool isStatic, const VarStmt& f) {
+            mark(isStatic, f.name, f.access, f.isOverride, false, f.line);
+            if (f.setAccess != 0) mark(isStatic, f.name, f.setAccess, false, true, f.line);
+        };
+        for (const auto& f : s.fields) field(false, *f);
+        for (const auto& f : s.staticFields) field(true, *f);
+        for (const auto& method : s.methods) {
+            if (!method->isStatic && method->name == "init") continue;
+            // A setter written on its own, `set name(value)`, speaks for assigning only.
+            mark(method->isStatic, method->name, method->access, method->isOverride,
+                 method->accessor == FunctionDecl::Accessor::Set, method->line);
+        }
+        for (const auto& inner : s.nested) mark(true, inner->name, inner->access, false, false, inner->line);
+    }
+
+    // Whether `object.name` is a member the class declares itself, reached through `this`
+    // by one of its methods. Its own code may always use it, on an object of a subclass too,
+    // so the instruction that asks nothing is written (GetOwn and the like).
+    bool ownMember(const Expr& object, const std::string& name) const {
+        return object.kind == ExprKind::This && class_ != nullptr && kindHasThis(fs_->kind) &&
+               classSide() == ClassSide::Instance && class_->members.count(name) != 0;
+    }
+
     bool mayBeMemberHere() const {
         const ClassSide side = classSide();
         return side == ClassSide::None ? namesFromReceiver() : mayBeMember(side);
@@ -1055,7 +1139,7 @@ private:
             emitI32(0);
         }
         emitGet(owner->storage, at);
-        emit(Op::GetProp, stringConstant(name));
+        emit(Op::GetOwn, stringConstant(name));
         if (toEnd >= 0) patchJump(toEnd);
         return true;
     }
@@ -1122,7 +1206,7 @@ private:
             if (side == ClassSide::Instance && class_->members.count(name) != 0) {
                 if (kindHasThis(fs_->kind)) {
                     emit(Op::GetLocal, 0);
-                    emit(Op::GetProp, stringConstant(name));
+                    emit(Op::GetOwn, stringConstant(name));
                 } else {
                     emitImplicit(Op::GetImplicit, name);  // in a function inside the method
                 }
@@ -1137,7 +1221,7 @@ private:
                     emitI32(0);
                 }
                 emitGet(class_->storage, at);
-                emit(Op::GetProp, stringConstant(name));
+                emit(Op::GetOwn, stringConstant(name));
                 if (toEnd >= 0) patchJump(toEnd);
                 return;
             }
@@ -1195,7 +1279,7 @@ private:
                 if (kindHasThis(fs_->kind)) {
                     emit(Op::GetLocal, 0);
                     emit(Op::Swap);
-                    emit(Op::SetProp, stringConstant(name));
+                    emit(Op::SetOwn, stringConstant(name));
                 } else {
                     emitImplicit(Op::SetImplicit, name);
                 }
@@ -1204,7 +1288,7 @@ private:
             if (class_->statics.count(name) != 0) {
                 emitGet(class_->storage, at);
                 emit(Op::Swap);
-                emit(Op::SetProp, stringConstant(name));
+                emit(Op::SetOwn, stringConstant(name));
                 return;
             }
             if (mayBeMember(side)) {
@@ -1901,6 +1985,7 @@ private:
         cls.definedIn = fs_;
         cls.hasSuper = s.hasSuper;
         cls.isEnum = s.isEnum;
+        cls.id = classId(s);
         if (!s.isInterface && !s.hasSuper && !s.fields.empty()) cls.closed = &s;
         for (const auto& field : s.fields) cls.members.insert(field->name);
         for (const auto& field : s.staticFields) cls.statics.insert(field->name);
@@ -1962,6 +2047,12 @@ private:
     }
 
     void compileClassStructure(const ClassStmt& s, const std::string& bound, const std::string& storage, ClassState& cls) {
+        line_ = s.line;
+        emitGet(storage, s);
+        emit(Op::ClassNumber);
+        emitU16(cls.id);
+        emitU16(libraryId());
+        emit(Op::Pop);
         if (s.isInterface || s.isAbstract) {
             emitGet(storage, s);
             emit(s.isInterface ? Op::MarkInterface : Op::MarkAbstract);
@@ -2090,6 +2181,7 @@ private:
                 emit(Op::Setter, stringConstant(field->name));
             }
         }
+        emitMemberAccess(s, cls);
         emit(Op::FinishClass);
         if (hasStaticValues(s)) compileStaticInit(s, bound, storage, cls);
         emit(Op::Pop);
@@ -2130,7 +2222,7 @@ private:
         FunctionState state;
         state.enclosing = fs_;
         state.kind = FunctionKind::StaticMethod;
-        state.proto = session_.program.newProto();
+        state.proto = newProto();
         state.proto->name = s.name + ".<static>";
         state.proto->source = file_;
         state.scopeDepth = 1;
@@ -2325,7 +2417,7 @@ private:
         FunctionState state;
         state.enclosing = fs_;
         state.kind = FunctionKind::Initializer;
-        state.proto = session_.program.newProto();
+        state.proto = newProto();
         state.proto->name = s.name + ".init";
         state.proto->source = file_;
         state.proto->arity = static_cast<int>(s.header.size());
@@ -2413,7 +2505,7 @@ private:
             line_ = param.line;
             emit(Op::GetLocal, 0);
             emit(Op::GetLocal, static_cast<int>(i + 1));
-            emit(Op::SetProp, stringConstant(param.name));
+            emit(Op::SetOwn, stringConstant(param.name));
             emit(Op::Pop);
         }
 
@@ -2433,7 +2525,7 @@ private:
             if (value != nullptr) compileExprFor(*value, resolveType(field->type));
             else emit(Op::Null);
             line_ = field->line;
-            emit(Op::SetProp, stringConstant(storedName(*field)));
+            emit(Op::SetOwn, stringConstant(storedName(*field)));
             emit(Op::Pop);
         }
         blocksBefore(s.fields.size());
@@ -2529,7 +2621,7 @@ private:
         FunctionState state;
         state.enclosing = fs_;
         state.kind = FunctionKind::Method;
-        state.proto = session_.program.newProto();
+        state.proto = newProto();
         state.proto->name = s.name + ".<fields>";
         state.proto->source = file_;
         state.scopeDepth = 1;
@@ -2543,7 +2635,7 @@ private:
             if (initialValues[i] != nullptr) compileExprFor(*initialValues[i], resolveType(f.type));
             else emit(Op::Null);
             line_ = f.line;
-            emit(Op::SetProp, stringConstant(storedName(f)));
+            emit(Op::SetOwn, stringConstant(storedName(f)));
             emit(Op::Pop);
         }
         emit(Op::Null);
@@ -2564,7 +2656,7 @@ private:
         FunctionState state;
         state.enclosing = fs_;
         state.kind = FunctionKind::Function;
-        state.proto = session_.program.newProto();
+        state.proto = newProto();
         state.proto->name = "<type " + className + ">";  // (the lookup itself is below)
         state.proto->source = file_;
         state.scopeDepth = 1;
@@ -2589,7 +2681,7 @@ private:
         FunctionState state;
         state.enclosing = fs_;
         state.kind = kind;
-        state.proto = session_.program.newProto();
+        state.proto = newProto();
         state.proto->name = displayName;
         state.proto->source = file_;
         state.proto->arity = static_cast<int>(decl.params.size());
@@ -2964,7 +3056,10 @@ private:
                     int toEnd = member.safe ? emitJump(Op::JumpIfNull) : -1;
                     compileArgs(e.args);
                     line_ = member.line;
-                    emit(e.trailingLambda ? Op::InvokeTrailing : Op::Invoke, stringConstant(member.name));
+                    if (ownMember(*member.object, member.name))
+                        emit(e.trailingLambda ? Op::InvokeOwnTrailing : Op::InvokeOwn, stringConstant(member.name));
+                    else
+                        emit(e.trailingLambda ? Op::InvokeTrailing : Op::Invoke, stringConstant(member.name));
                     emitByte(argc);
                     if (toEnd >= 0) patchJump(toEnd);
                 } else if (e.callee->kind == ExprKind::Name && compileBareCall(e)) {
@@ -2998,7 +3093,7 @@ private:
                 compileExpr(*e.object);
                 line_ = e.line;
                 int toEnd = e.safe ? emitJump(Op::JumpIfNull) : -1;
-                emit(Op::GetProp, stringConstant(e.name));
+                emit(ownMember(*e.object, e.name) ? Op::GetOwn : Op::GetProp, stringConstant(e.name));
                 if (toEnd >= 0) patchJump(toEnd);
                 break;
             }
@@ -3295,7 +3390,7 @@ private:
             emit(Op::GetLocal, 0);
             compileArgs(e.args);
             line_ = e.line;
-            emit(Op::Invoke, stringConstant(name));
+            emit(Op::InvokeOwn, stringConstant(name));
             emitByte(argc);
             return true;
         }
@@ -3306,7 +3401,7 @@ private:
             emitGet(class_->storage, callee);
             compileArgs(e.args);
             line_ = e.line;
-            emit(Op::Invoke, stringConstant(name));
+            emit(Op::InvokeOwn, stringConstant(name));
             emitByte(argc);
             return true;
         }
@@ -3407,10 +3502,10 @@ private:
                 int toEnd = target.safe ? emitJump(Op::JumpIfNull) : -1;
                 emit(Op::Dup);
                 line_ = e.line;
-                emit(Op::GetProp, stringConstant(target.name));
+                emit(ownMember(*target.object, target.name) ? Op::GetOwn : Op::GetProp, stringConstant(target.name));
                 emit(Op::Const, intConstant(1));
                 emit(change);
-                emit(Op::SetProp, stringConstant(target.name));
+                emit(ownMember(*target.object, target.name) ? Op::SetOwn : Op::SetProp, stringConstant(target.name));
                 if (toEnd >= 0) patchJump(toEnd);
                 break;
             }
@@ -3455,15 +3550,16 @@ private:
                 compileExpr(*target.object);
                 // `object?.field = value` does nothing, and works nothing out, with no object.
                 int toEnd = target.safe ? emitJump(Op::JumpIfNull) : -1;
+                const bool own = ownMember(*target.object, target.name);
                 if (compound) {
                     emit(Op::Dup);
-                    emit(Op::GetProp, stringConstant(target.name));
+                    emit(own ? Op::GetOwn : Op::GetProp, stringConstant(target.name));
                 }
                 if (compound) compileExpr(*e.value);
                 else compileExprFor(*e.value, declaredTypeOf(*e.target));
                 line_ = e.line;
                 if (compound) emit(binaryOp(e.op));
-                emit(Op::SetProp, stringConstant(target.name));
+                emit(own ? Op::SetOwn : Op::SetProp, stringConstant(target.name));
                 if (toEnd >= 0) patchJump(toEnd);
                 break;
             }

@@ -179,6 +179,24 @@ enum class Op : uint8_t {
     InvokeTrailing,     // u16 name, u8 argc               receiver args... lambda -> result
     SuperInvokeTrailing,  // u16 name, u8 argc             this args... lambda superclass -> result
 
+    // Who may use a member. ClassNumber gives a class its number and its library's, which
+    // the code written in it carries (FunctionProto::classIds). MemberAccess says what the
+    // class declares of a member: the kind is 1 private, 2 protected or 3 internal, for the
+    // code with that number (the class's, or for internal its library's); 0 open, whatever it
+    // was above; 4 as it was above, where what was private above is open here. With 0x10 it
+    // speaks of assigning only (`private set`). StaticAccess is the same for a static member.
+    ClassNumber,        // u16 class number, u16 library   class -> class
+    MemberAccess,       // u16 name, u16 number, u8 kind   class -> class
+    StaticAccess,       // u16 name, u16 number, u8 kind   class -> class
+
+    // GetProp, SetProp, Invoke and InvokeTrailing for a member the class declares itself,
+    // reached through `this` by the class's own code (or a static member of the class, by
+    // its name): that code may always use it, so who may is not looked at.
+    GetOwn,             // u16 name                        obj -> value
+    SetOwn,             // u16 name                        obj value -> value
+    InvokeOwn,          // u16 name, u8 argc               receiver args... -> result
+    InvokeOwnTrailing,  // u16 name, u8 argc               receiver args... lambda -> result
+
     Count_,
 };
 
@@ -250,6 +268,12 @@ struct FunctionProto {
     // For a lambda literal inside other lambda literals: the upvalues holding slot 0 of each
     // enclosing one, innermost first. That slot is the object the lambda was run on, if any.
     std::vector<uint16_t> outerReceivers;
+
+    // The numbers of the classes the function is written inside of, innermost first, and
+    // then of its library: a member that is private, protected or internal is open to the
+    // function when one of these is among the numbers the member is marked with.
+    std::vector<uint16_t> classIds;
+    uint16_t ownClass = 0;  // the first of them, when the function is written in a class
 };
 
 // A whole compiled program, ready to run or to write to a bytecode file.

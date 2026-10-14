@@ -433,6 +433,10 @@ class BufferedImage {
   // Something to draw on it with: the canvas of the toolkit, one unit to the pixel.
   fun canvas() => onCard().canvas(this)
 
+  // The same for a picture that stands for `width` by `height` units, at `scale` of its
+  // pixels to the unit: what a window's picture is on a dense screen.
+  fun canvasAt(width, height, scale) => onCard().canvasAt(width, height, scale, this)
+
   fun save(path) {
     memory().save(path)
   }

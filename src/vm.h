@@ -583,6 +583,12 @@ private:
 
     Value callWithReceiver(Value receiver, ObjClosure* method);
     Value implicitReceiver(const CallFrame* frame, const Value* base, const ObjString* name) const;
+    void setAccess(ObjClass* cls, Table& marks, ObjString* name, bool write, const std::vector<uint16_t>& run, int kind);
+    void declareAccess(ObjClass* cls, Table& marks, ObjString* name, int id, int kind, bool write);
+    void joinProtected(ObjClass* subclass);
+    bool accessDenied(Value target, const ObjString* name, const FunctionProto* proto, bool write) const;
+    AstraThrow accessError(Value target, const ObjString* name, const FunctionProto* proto);
+    AstraThrow undefinedName(const CallFrame* frame, const Value* base, const ObjString* name, size_t global);
     void ensureClassInit(ObjClass* cls);
 
 public:

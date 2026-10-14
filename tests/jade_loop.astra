@@ -1,0 +1,261 @@
+// The render loop's bookkeeping, the theme's colours, and the label that wraps. These are
+// JadeUI's own tests (RenderLoopTest, PaletteThemeTest, WrappedLabelTest), carried over
+// with their names. Two of PaletteThemeTest's are about widgets of later milestones.
+import Jade.*
+
+val failed = []
+var checks = 0
+fun same(what, got, want) {
+  checks += 1
+  if (!(got == want)) { failed.add("$what: got $got, wanted $want") }
+}
+fun yes(what, condition) {
+  checks += 1
+  if (!condition) { failed.add(what) }
+}
+
+// -- RenderLoopTest --
+
+fun settled() {
+  val loop = RenderLoop()
+  loop.drawn(loop.plan(400, 300, false), 400, 300)
+  return loop
+}
+
+// theFirstFrameLaysOut
+yes("the first frame lays out", RenderLoop().plan(400, 300, false).layout)
+
+// aSecondFrameAtTheSameSizeDoesNotLayOut
+yes("a second frame at the same size does not", !settled().plan(400, 300, false).layout)
+
+// aResizeLaysOut
+yes("a resize lays out", settled().plan(401, 300, false).layout)
+
+// aRequestedLayoutIsHonouredOnceThenForgotten
+fun aRequestedLayoutIsHonouredOnceThenForgotten() {
+  val loop = settled()
+  loop.requestLayout()
+  val f = loop.plan(400, 300, false)
+  yes("asked for: laid out", f.layout)
+  loop.drawn(f, 400, 300)
+  yes("and then forgotten", !loop.plan(400, 300, false).layout)
+}
+aRequestedLayoutIsHonouredOnceThenForgotten()
+
+// damageAloneGivesAPartialFrame
+fun damageAloneGivesAPartialFrame() {
+  val loop = settled()
+  loop.markDamage(Rectangle(10, 10, 20, 20))
+  loop.markDamage(Rectangle(50, 10, 20, 20))
+  same("two damaged rectangles: the one that holds both", loop.plan(400, 300, false).partial, Rectangle(10, 10, 60, 20))
+}
+damageAloneGivesAPartialFrame()
+
+// aPartialFrameIsRefusedWhenItLaysOutOrTheBuffersAreNew
+fun aPartialFrameIsRefusedWhenItLaysOutOrTheBuffersAreNew() {
+  val loop = settled()
+  loop.markDamage(Rectangle(10, 10, 20, 20))
+  same("a new picture has no old pixels", loop.plan(400, 300, true).partial, null)
+  loop.requestLayout()
+  same("a layout moves things outside it", loop.plan(400, 300, false).partial, null)
+}
+aPartialFrameIsRefusedWhenItLaysOutOrTheBuffersAreNew()
+
+// aPendingFullRepaintIsNotNarrowedByDamage
+fun aPendingFullRepaintIsNotNarrowedByDamage() {
+  val loop = settled()
+  loop.markDirty()
+  loop.markDamage(Rectangle(10, 10, 20, 20))
+  same("the whole window is still owed", loop.plan(400, 300, false).partial, null)
+}
+aPendingFullRepaintIsNotNarrowedByDamage()
+
+// damageOutsideTheWindowIsNotAFrame
+fun damageOutsideTheWindowIsNotAFrame() {
+  val loop = settled()
+  loop.markDamage(Rectangle(500, 500, 10, 10))
+  same("nothing of it is in the window", loop.plan(400, 300, false).partial, null)
+}
+damageOutsideTheWindowIsNotAFrame()
+
+// thePulseIdlesOnlyWhenNothingIsOwedOrHeld
+fun thePulseIdlesOnlyWhenNothingIsOwedOrHeld() {
+  val loop = RenderLoop()
+  yes("the first frame is owed", !loop.mayIdle(false))
+  loop.drawn(loop.plan(400, 300, false), 400, 300)
+  yes("nothing owed", loop.mayIdle(false))
+  yes("something held", !loop.mayIdle(true))
+  loop.markDirty()
+  yes("owed again", !loop.mayIdle(false))
+}
+thePulseIdlesOnlyWhenNothingIsOwedOrHeld()
+
+// ensureLayoutLaysOutOnlyWhenDue
+fun ensureLayoutLaysOutOnlyWhenDue() {
+  val root = Component(Label("x"))
+  val loop = RenderLoop()
+  loop.ensureLayout(root, 400, 300)
+  same("laid out when first due", root.bounds, Rectangle(0, 0, 400, 300))
+  root.bounds = Rectangle(0, 0, 1, 1)          // a mark a second layout would write over
+  loop.ensureLayout(root, 400, 300)
+  same("not laid out again: nothing changed", root.bounds, Rectangle(0, 0, 1, 1))
+  loop.requestLayout()
+  loop.ensureLayout(root, 400, 300)
+  same("laid out again once asked", root.bounds, Rectangle(0, 0, 400, 300))
+}
+ensureLayoutLaysOutOnlyWhenDue()
+print("RenderLoopTest:", checks, "checks,", failed)   // expect: RenderLoopTest: 17 checks, []
+
+// renderFrame plans, paints and notes the frame as drawn.
+val looped = RenderLoop()
+val shown = button("Frame")
+val buffer = BufferedImage(90, 30, BufferedImage.typeIntArgb)
+val first = looped.renderFrame(shown, buffer, 90, 30)
+val second = looped.renderFrame(shown, buffer, 90, 30)
+print(first.layout, second.layout, looped.isDirty, shown.bounds, buffer.toPicture().inkBox() != null)   // expect: true false false Rectangle(0, 0, 90 x 30) true
+
+// -- PaletteThemeTest --
+
+fun luma(c) => 0.299 * c.red + 0.587 * c.green + 0.114 * c.blue
+fun hue(c) => Color.RGBtoHSB(c.red, c.green, c.blue)[0]
+
+// lightIsUnchanged
+same("the surface", Palette.surface, Color.white)
+same("the ink", Palette.ink, Color(0x1a, 0x24, 0x20))
+same("a colour of the program's", Palette.bg(0xFFE98A), Color(0xFF, 0xE9, 0x8A))
+
+// darkTurnsSurfacesDarkAndTextLight
+Palette.dark = true
+yes("a dark surface: ${Palette.surface}", luma(Palette.surface) < 50)
+yes("light ink: ${Palette.ink}", luma(Palette.ink) > 180)
+yes("panels a shade off the surface", luma(Palette.headerBg) >= luma(Palette.surface) and luma(Palette.headerBg) <= 120.0)
+val tint = Palette.bg(0xFFE98A)
+yes("a dark tint of the same hue: $tint", luma(tint) < 90 and Math.abs(hue(tint) - hue(Color(0xFF, 0xE9, 0x8A))) < 0.02)
+yes("an accent that still reads on dark: ${Palette.accent}", luma(Palette.accent) > 120)
+same("a colour asked for as it is stays as it is", Palette.bg(0xFFE98A, false), Color(0xFF, 0xE9, 0x8A))
+Palette.dark = false
+
+// switchingNotifiesAndInvalidatesCaches
+fun switchingNotifiesAndInvalidatesCaches() {
+  var told = 0
+  val hook = { told += 1 }
+  Palette.onThemeChange(hook)
+  val gen = Jade.renderGeneration
+  Palette.dark = true
+  Palette.dark = true                     // no change, no second notice
+  same("told once", told, 1)
+  yes("the kept pictures are out of date", Jade.renderGeneration > gen)
+  Palette.removeThemeHook(hook)
+  Palette.dark = false
+  same("and not told once it has stopped listening", told, 1)
+}
+switchingNotifiesAndInvalidatesCaches()
+print("PaletteThemeTest:", checks, "checks,", failed)   // expect: PaletteThemeTest: 29 checks, []
+
+// A button is drawn in the theme's colours: dark when the theme is.
+val byDay = button("Theme").renderToImage(80, 30).toPicture()
+Palette.dark = true
+val byNight = button("Theme").renderToImage(80, 30).toPicture()
+Palette.dark = false
+fun lumaAt(picture, x, y) {
+  val c = picture.get(x, y)
+  return 0.299 * ((c >> 16) & 255) + 0.587 * ((c >> 8) & 255) + 0.114 * (c & 255)
+}
+print(lumaAt(byDay, 6, 15) > 180, lumaAt(byNight, 6, 15) < 100, Palette.border, Palette.disabled, Palette.selection)   // expect: true true Color(128, 128, 128) Color(144, 144, 144) Color(173, 216, 230)
+
+// -- WrappedLabelTest --
+
+val font = Font(Font.sansSerif, Font.plain, 12)
+val sentence = "the quick brown fox jumps over the lazy dog"
+
+// text wraps to the given width
+fun textWrapsToTheGivenWidth() {
+  val wrapped = WrappedLabel(sentence, font)
+  val narrow = wrapped.wrap(80)
+  val wide = wrapped.wrap(600)
+  yes("a narrower box needs more lines", narrow.size > wide.size)
+  same("the whole sentence fits on one wide line", wide.size, 1)
+  same("no word lost or out of order", narrow.joinToString(" "), sentence)
+}
+textWrapsToTheGivenWidth()
+
+// explicit newlines are kept
+same("three lines", WrappedLabel("first point\nsecond point\nthird", font).wrap(600).size, 3)
+
+// a word longer than the line overflows rather than vanishing
+val overlong = WrappedLabel("a supercalifragilisticexpialidocious word", font).wrap(20)
+yes("the long word is still there: $overlong", overlong.any { it.contains("supercalifragilistic") })
+
+// height follows the width
+yes("narrower is taller", WrappedLabel(sentence, font).heightForWidth(80) > WrappedLabel(sentence, font).heightForWidth(600))
+
+// empty text is one line high, not zero
+yes("no lines", WrappedLabel("", font).wrap(200).isEmpty())
+yes("but a row's height", WrappedLabel("", font).heightForWidth(200) > 0)
+
+// a degenerate width does not loop or throw
+same("no width", WrappedLabel("some text here", font).wrap(0), ["some text here"])
+same("less than none", WrappedLabel("some text here", font).wrap(-5), ["some text here"])
+
+// every line is drawn
+fun everyLineIsDrawn() {
+  val wrapped = WrappedLabel(sentence, font)
+  val component = Component(wrapped)
+  component.layout(90, 120)
+  val drawn = component.record(90, 120).filter { it is DrawOp.Text }.map { it.text }
+  same("the lines painted are the lines wrapped", drawn, wrapped.wrap(90))
+  yes("and there are several", drawn.size > 1)
+}
+everyLineIsDrawn()
+
+// a container short of space cannot squeeze the text to one line
+fun aContainerShortOfSpaceCannotSqueezeTheTextToOneLine() {
+  val wrapped = WrappedLabel("a sentence long enough that it needs several lines to fit", font)
+  val component = Component(wrapped)
+  component.layout(160, 500)
+  component.renderToImage(160, 500)
+  val needed = wrapped.heightForWidth(160)
+  yes("it needs more than one line", needed > component.minSize().height - 1)
+  same("the least it can be is what it needs", component.minSize().height, needed)
+}
+aContainerShortOfSpaceCannotSqueezeTheTextToOneLine()
+
+// every line survives a height-constrained grid
+fun everyLineSurvivesAHeightConstrainedGrid() {
+  val wrapped = WrappedLabel("a sentence long enough that it needs several lines to fit", font)
+  wrapped.preferredWidth = 200
+  val component = Component(wrapped)
+  val g = grid {
+    row { cell(component, anchor = Anchor.west, fill = Fill.horizontal, weightX = 1.0) }
+    row { cell(label("filler"), fill = Fill.both, weightY = 1.0) }
+  }
+  g.layout(200, 60)
+  yes("the label was squeezed and would be cut: ${component.bounds}", component.bounds.height >= wrapped.heightForWidth(Math.max(component.bounds.width, 1)))
+}
+everyLineSurvivesAHeightConstrainedGrid()
+
+// changing the text re-measures rather than only repainting
+fun changingTheTextRemeasures() {
+  var layouts = 0
+  val hook = { layouts += 1 }
+  Jade.onLayoutNeeded(hook)
+  val wrapped = WrappedLabel("short", font)
+  Component(wrapped)
+  wrapped.text = "a considerably longer piece of text that will need more lines"
+  yes("a change of text asks for a layout", layouts > 0)
+  Jade.removeLayoutHook(hook)
+}
+changingTheTextRemeasures()
+print("WrappedLabelTest:", checks, "checks,", failed)   // expect: WrappedLabelTest: 45 checks, []
+
+// A label too: its text and font are changed in place, and it asks to be measured again.
+var asked = 0
+val counting = { asked += 1 }
+Jade.onLayoutNeeded(counting)
+val named = label("Name")
+val before = named.prefSize().width
+named.content.text = "A much longer name"
+val after = named.prefSize().width
+named.content.font = Font(Font.sansSerif, Font.bold, 20)
+Jade.removeLayoutHook(counting)
+print(after > before, named.prefSize().width > after, asked, wrappedLabel("made by the function").content is WrappedLabel)   // expect: true true 2 true

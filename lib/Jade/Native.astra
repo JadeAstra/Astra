@@ -105,6 +105,9 @@ class Surface {
   // Something to draw on it with. Every pixel starts clear.
   fun canvas(owner = null) => NativeCanvas(handle, width, height, scale, 0, 0, 0, 0, deviceWidth, deviceHeight, owner)
 
+  // A canvas of another size in units over the same pixels: `scale` pixels to the unit.
+  fun canvasAt(width, height, scale, owner = null) => NativeCanvas(handle, width, height, scale, 0, 0, 0, 0, deviceWidth, deviceHeight, owner)
+
   // What it holds, as a Picture of its pixels.
   fun toPicture() => Picture(deviceWidth, deviceHeight, 0, __jade.surfaceRead(handle))
 
@@ -129,19 +132,17 @@ class Surface {
   override fun toString() => "Surface($width x $height" + (scale == 1 ? ")" : ", scale $scale)")
 }
 
-// What a text takes up in a font, in layout units.
-data TextMetrics(val width, val ascent, val descent, val height)
-
 // ---- The canvas ----
 
 // Draws on a window or a surface. The operations are the ones of JadeUI's canvas, with
 // Java's meanings: fillRect(x, y, w, h) covers w by h units; drawRect(x, y, w, h) is an
 // outline one unit thick that covers w + 1 by h + 1; drawString puts the text's baseline
 // at y. Shapes have smoothed edges; straight lines and rectangles sit on pixel edges.
-class NativeCanvas {
-  val width
-  val height
+class NativeCanvas : Canvas {
+  override val width
+  override val height
   val scale
+  override val style
   private val target
   private val originX      // in the target's own pixels
   private val originY
@@ -154,7 +155,8 @@ class NativeCanvas {
   private var currentFont = Font("Dialog", Font.plain, 12)
   private var fontSent = false
 
-  fun init(target, width, height, scale, originX, originY, clipLeft, clipTop, clipRight, clipBottom, owner = null) {
+  fun init(target, width, height, scale, originX, originY, clipLeft, clipTop, clipRight, clipBottom, owner = null, style = null) {
+    this.style = style ?: Style(null, null, true)
     this.target = target
     this.width = width
     this.height = height
@@ -168,17 +170,17 @@ class NativeCanvas {
     this.owner = owner
   }
 
-  get deviceScaleX() => float(scale)
-  get deviceScaleY() => float(scale)
+  override get deviceScaleX() => float(scale)
+  override get deviceScaleY() => float(scale)
 
-  get color() => currentColor
-  set color(value) {
+  override get color() => currentColor
+  override set color(value) {
     currentColor = value
     if (jadeActiveCanvas === this) { __jade.color(value.rgb) }
   }
 
-  get font() => currentFont
-  set font(value) {
+  override get font() => currentFont
+  override set font(value) {
     currentFont = value
     fontSent = false
   }
@@ -193,11 +195,11 @@ class NativeCanvas {
     fontSent = false
   }
 
-  fun fillRect(x, y, w, h) {
+  override fun fillRect(x, y, w, h) {
     use()
     __jade.fillRect(x, y, w, h)
   }
-  fun drawRect(x, y, w, h) {
+  override fun drawRect(x, y, w, h) {
     use()
     __jade.drawRect(x, y, w, h)
   }
@@ -206,42 +208,42 @@ class NativeCanvas {
     use()
     __jade.clearRect(x, y, w, h)
   }
-  fun fillRoundRect(x, y, w, h, arcW, arcH) {
+  override fun fillRoundRect(x, y, w, h, arcW, arcH) {
     use()
     __jade.roundRect(x, y, w, h, arcW, arcH, true)
   }
-  fun drawRoundRect(x, y, w, h, arcW, arcH) {
+  override fun drawRoundRect(x, y, w, h, arcW, arcH) {
     use()
     __jade.roundRect(x, y, w, h, arcW, arcH, false)
   }
-  fun fillOval(x, y, w, h) {
+  override fun fillOval(x, y, w, h) {
     use()
     __jade.oval(x, y, w, h, true)
   }
-  fun drawOval(x, y, w, h) {
+  override fun drawOval(x, y, w, h) {
     use()
     __jade.oval(x, y, w, h, false)
   }
-  fun drawLine(x1, y1, x2, y2) {
+  override fun drawLine(x1, y1, x2, y2) {
     use()
     __jade.line(x1, y1, x2, y2)
   }
-  fun drawPolyline(xs, ys, n = null) {
+  override fun drawPolyline(xs, ys, n = null) {
     use()
     __jade.polygon(xs, ys, n ?: xs.size, false, false)
   }
-  fun drawPolygon(xs, ys, n = null) {
+  override fun drawPolygon(xs, ys, n = null) {
     use()
     __jade.polygon(xs, ys, n ?: xs.size, false, true)
   }
-  fun fillPolygon(xs, ys, n = null) {
+  override fun fillPolygon(xs, ys, n = null) {
     use()
     __jade.polygon(xs, ys, n ?: xs.size, true, true)
   }
 
   // Text in the canvas's font and colour, starting at x with its baseline at y. Returns
   // the width it took.
-  fun drawString(text, x, y) {
+  override fun drawString(text, x, y) {
     use()
     val engine = currentFont.textFont(scale)
     if (!fontSent) {
@@ -254,7 +256,7 @@ class NativeCanvas {
 
   // A BufferedImage or a Surface at (x, y): at its own size, or scaled into w by h units.
   // `alpha` from 0.0 to 1.0 makes it see-through.
-  fun drawImage(image, x, y, w = null, h = null, alpha = 1.0) {
+  override fun drawImage(image, x, y, w = null, h = null, alpha = 1.0) {
     val source = image is Surface ? image : image.onCard()
     use()
     if (w == null) {
@@ -276,14 +278,14 @@ class NativeCanvas {
   }
 
   // What a text takes up in a font, on this canvas's screen.
-  fun measure(text, font) {
+  override fun measure(text, font) {
     val m = FontMetrics(font, scale)
     return TextMetrics(m.stringWidth(text), m.ascent, m.descent, m.height)
   }
   fun getFontMetrics(font = null) => FontMetrics(font ?: currentFont, scale)
 
   // The part of the canvas that can be drawn on: the rest is clipped away.
-  get visibleBounds() {
+  override get visibleBounds() {
     val left = Math.max(0, int(Math.floor((clipLeft - originX) / float(scale))))
     val top = Math.max(0, int(Math.floor((clipTop - originY) / float(scale))))
     val right = Math.min(width, int(Math.ceil((clipRight - originX) / float(scale))))
@@ -293,19 +295,40 @@ class NativeCanvas {
 
   // A canvas for a part of this one: its (0, 0) is at (x, y) here, and nothing it draws
   // lands outside the part.
-  fun sub(x, y, width, height) {
+  // The same canvas with another style to hand to what paints on it.
+  fun withStyle(style) {
+    val same = NativeCanvas(target, width, height, scale, originX, originY, clipLeft, clipTop, clipRight, clipBottom, owner, style)
+    same.color = currentColor
+    same.font = currentFont
+    return same
+  }
+
+  // The same canvas, drawing only inside a rectangle of it.
+  fun clipped(x, y, w, h) {
+    val left = originX + int(Math.round(x * scale))
+    val top = originY + int(Math.round(y * scale))
+    val right = originX + int(Math.round((x + w) * scale))
+    val bottom = originY + int(Math.round((y + h) * scale))
+    val same = NativeCanvas(target, width, height, scale, originX, originY,
+                            Math.max(clipLeft, left), Math.max(clipTop, top), Math.min(clipRight, right), Math.min(clipBottom, bottom), owner, style)
+    same.color = currentColor
+    same.font = currentFont
+    return same
+  }
+
+  override fun sub(x, y, width, height, style = null) {
     val left = originX + int(Math.round(x * scale))
     val top = originY + int(Math.round(y * scale))
     val right = originX + int(Math.round((x + width) * scale))
     val bottom = originY + int(Math.round((y + height) * scale))
     val child = NativeCanvas(target, width, height, scale, left, top,
-                             Math.max(clipLeft, left), Math.max(clipTop, top), Math.min(clipRight, right), Math.min(clipBottom, bottom), owner)
+                             Math.max(clipLeft, left), Math.max(clipTop, top), Math.min(clipRight, right), Math.min(clipBottom, bottom), owner, style ?: this.style)
     child.color = currentColor
     child.font = currentFont
     return child
   }
 
-  fun dispose() {}
+  override fun dispose() {}
 }
 
 // ---- A window ----

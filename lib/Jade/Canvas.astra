@@ -1,0 +1,158 @@
+// What a widget paints on. The operations have the meanings they have in Java: fillRect
+// covers w by h, drawRect is an outline one unit thick covering w + 1 by h + 1, and
+// drawString puts the text's baseline at y. (JadeUI: Canvas.kt.)
+//
+// There are two: NativeCanvas (Native.astra) draws on a window or a picture, and
+// RecordingCanvas here keeps a list of what it was asked to draw, which is how a widget
+// tree is tested with no window.
+
+// What a text takes up in a font, in layout units.
+data TextMetrics(val width, val ascent, val descent, val height)
+
+interface Canvas {
+  val width
+  val height
+  val style
+  var color
+  var font
+
+  fun fillRect(x, y, w, h)
+  fun drawRect(x, y, w, h)
+  fun fillRoundRect(x, y, w, h, arcW, arcH)
+  fun drawRoundRect(x, y, w, h, arcW, arcH)
+  fun fillOval(x, y, w, h)
+  fun drawOval(x, y, w, h)
+  fun drawLine(x1, y1, x2, y2)
+  fun drawString(text, x, y)
+  // A picture at (x, y), at its own size or scaled into w by h.
+  fun drawImage(image, x, y, w = null, h = null)
+
+  // The part of the canvas that can be drawn on: the rest is clipped away.
+  get visibleBounds() => Rectangle(0, 0, width, height)
+
+  // Through the points of two lists, the first `n` of them.
+  fun drawPolyline(xs, ys, n = null) {
+    val count = n ?: xs.size
+    for (i in 1..<count) { drawLine(xs[i - 1], ys[i - 1], xs[i], ys[i]) }
+  }
+  fun drawPolygon(xs, ys, n = null) {
+    val count = n ?: xs.size
+    if (count < 2) { return }
+    drawPolyline(xs, ys, count)
+    drawLine(xs[count - 1], ys[count - 1], xs[0], ys[0])
+  }
+  fun fillPolygon(xs, ys, n = null) {
+    drawPolygon(xs, ys, n)
+  }
+
+  // How many of the screen's pixels there are to a unit.
+  get deviceScaleX() => 1.0
+  get deviceScaleY() => 1.0
+
+  // What a text takes up in a font, on this canvas.
+  fun measure(text, font)
+
+  // A canvas for a part of this one: its (0, 0) is at (x, y) here and nothing it draws
+  // lands outside the part. With no style given it has this one's.
+  fun sub(x, y, width, height, style = null)
+
+  fun dispose() {}
+}
+
+// One thing a RecordingCanvas was asked to draw, with where (from the top left corner of
+// the outermost canvas) and in which colour.
+interface DrawOp {
+  data Rect(val x, val y, val w, val h, val fill, val color) : DrawOp
+  data RoundRect(val x, val y, val w, val h, val fill, val color) : DrawOp
+  data Oval(val x, val y, val w, val h, val fill, val color) : DrawOp
+  data Line(val x1, val y1, val x2, val y2, val color) : DrawOp
+  data Poly(val xs, val ys, val closed, val fill, val color) : DrawOp
+  data Text(val text, val x, val y, val color, val font) : DrawOp
+  data Image(val x, val y, val w, val h) : DrawOp
+}
+
+// A canvas that draws nothing and keeps a list of what it was asked to draw.
+class RecordingCanvas : Canvas {
+  override val width
+  override val height
+  override val style
+  override var color = Color.black
+  override var font = defaultFont
+  private val ops
+  private val ox
+  private val oy
+  private val clip
+
+  fun init(width, height, style, ops, ox = 0, oy = 0, clip = null) {
+    this.width = width
+    this.height = height
+    this.style = style
+    this.ops = ops
+    this.ox = ox
+    this.oy = oy
+    this.clip = clip
+  }
+
+  override get visibleBounds() {
+    val all = Rectangle(0, 0, width, height)
+    return clip == null ? all : clip.intersection(all)
+  }
+
+  override fun fillRect(x, y, w, h) {
+    ops.add(DrawOp.Rect(x + ox, y + oy, w, h, true, color))
+  }
+  override fun drawRect(x, y, w, h) {
+    ops.add(DrawOp.Rect(x + ox, y + oy, w, h, false, color))
+  }
+  override fun fillRoundRect(x, y, w, h, arcW, arcH) {
+    ops.add(DrawOp.RoundRect(x + ox, y + oy, w, h, true, color))
+  }
+  override fun drawRoundRect(x, y, w, h, arcW, arcH) {
+    ops.add(DrawOp.RoundRect(x + ox, y + oy, w, h, false, color))
+  }
+  override fun fillOval(x, y, w, h) {
+    ops.add(DrawOp.Oval(x + ox, y + oy, w, h, true, color))
+  }
+  override fun drawOval(x, y, w, h) {
+    ops.add(DrawOp.Oval(x + ox, y + oy, w, h, false, color))
+  }
+  override fun drawLine(x1, y1, x2, y2) {
+    ops.add(DrawOp.Line(x1 + ox, y1 + oy, x2 + ox, y2 + oy, color))
+  }
+  private fun poly(xs, ys, n, closed, fill) {
+    val count = n ?: xs.size
+    val px = []
+    val py = []
+    for (i in 0..<count) {
+      px.add(xs[i] + ox)
+      py.add(ys[i] + oy)
+    }
+    return DrawOp.Poly(px, py, closed, fill, color)
+  }
+  override fun drawPolyline(xs, ys, n = null) {
+    ops.add(poly(xs, ys, n, false, false))
+  }
+  override fun drawPolygon(xs, ys, n = null) {
+    ops.add(poly(xs, ys, n, true, false))
+  }
+  override fun fillPolygon(xs, ys, n = null) {
+    ops.add(poly(xs, ys, n, true, true))
+  }
+  override fun drawString(text, x, y) {
+    ops.add(DrawOp.Text(text, x + ox, y + oy, color, font))
+  }
+  override fun drawImage(image, x, y, w = null, h = null) {
+    ops.add(DrawOp.Image(x + ox, y + oy, w ?: image.width, h ?: image.height))
+  }
+
+  override fun measure(text, font) {
+    val fm = metrics(font)
+    return TextMetrics(fm.stringWidth(text), fm.ascent, fm.descent, fm.height)
+  }
+
+  override fun sub(x, y, width, height, style = null) {
+    val visible = visibleBounds
+    visible.translate(-x, -y)
+    return RecordingCanvas(width, height, style ?: this.style, ops, ox + x, oy + y, visible)
+  }
+}

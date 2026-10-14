@@ -1,0 +1,790 @@
+// A window showing a tree of components. (JadeUI: JadeHost, JadeWindow and WindowSpec in
+// one, and the part of its window backends that decides what the keyboard and the pointer
+// mean: which widget a press belongs to, who has the keyboard, what Tab does.)
+//
+//   val root = grid {
+//     row { cell(label("Name:")); cell(button("OK") { print("pressed") }) }
+//   }
+//   Window(root, "Example", 400, 200).show()
+//
+// Making a Window opens nothing: it holds its settings. show() hands it to
+// Jade.windowOpener, which makes the window on the screen. The program goes on while a
+// window is showing.
+
+// What an opener gives back for a window it has opened: the few things the Window passes on.
+interface WindowHandle {
+  fun setTitle(text)
+  fun toFront()
+  fun close()
+  fun fitToContent()
+  fun requestRepaint()
+  fun rootChanged(root)
+}
+
+// Turns a Window into a window. Jade.windowOpener is one.
+interface WindowOpener {
+  fun open(window)
+}
+
+class Window {
+  val initialWidth
+  val initialHeight
+  val exitOnClose
+  val menuBar
+  val onClose
+  val onFilesDropped
+  val onFilesDroppedAt
+  val icons
+  val onFront
+  val owner
+  val focus
+  val dialog
+  val sizeToContent
+  val centerOnOwner
+  val resizable
+  val keyFilter
+  private var currentRoot
+  private var currentTitle
+  // What the opener gave back once the window was shown; null before, and after it is closed.
+  var handle = null
+
+  // `root` is the component the window shows. After the settings JadeUI's host takes come,
+  // by name, the ones for a window that belongs to another: `owner`, `focus` (the component
+  // that has the keyboard at first), `dialog`, `sizeToContent`, `centerOnOwner`, `resizable`
+  // and `keyFilter` (sees every key before the widgets do, and says whether it used it).
+  //
+  // A window with no owner ends the program when it is closed, and one with an owner does
+  // not, unless `exitOnClose` says otherwise.
+  fun init(root, title = "Jade", initialWidth = 900, initialHeight = 640, exitOnClose = null, menuBar = null, onClose = {},
+           onFilesDropped = {}, onFilesDroppedAt = null, icons = null, onFront = {},
+           owner = null, focus = null, dialog = false, sizeToContent = false, centerOnOwner = false, resizable = true, keyFilter = null) {
+    this.currentRoot = root
+    this.currentTitle = title
+    this.initialWidth = initialWidth
+    this.initialHeight = initialHeight
+    this.exitOnClose = exitOnClose ?: (owner == null)
+    this.menuBar = menuBar
+    this.onClose = onClose
+    this.onFilesDropped = onFilesDropped
+    this.onFilesDroppedAt = onFilesDroppedAt
+    this.icons = icons ?: []
+    this.onFront = onFront
+    this.owner = owner
+    this.focus = focus
+    this.dialog = dialog
+    this.sizeToContent = sizeToContent
+    this.centerOnOwner = centerOnOwner
+    this.resizable = resizable
+    this.keyFilter = keyFilter
+  }
+
+  get root() => currentRoot
+  set root(value) {
+    currentRoot = value
+    handle?.rootChanged(value)
+  }
+
+  get title() => currentTitle
+  set title(text) {
+    currentTitle = text
+    handle?.setTitle(text)
+  }
+  fun setTitle(text) {
+    title = text
+  }
+
+  get isShowing() => handle != null
+
+  // Opens the window, or brings it to the front if it is open already.
+  fun show() {
+    if (handle != null) {
+      handle.toFront()
+      return
+    }
+    handle = Jade.windowOpener.open(this)
+  }
+
+  fun close() {
+    val open = handle
+    if (open != null) { open.close() }
+  }
+
+  // Called by the handle once the window is gone.
+  fun closed() {
+    handle = null
+  }
+
+  fun requestRepaint() {
+    handle?.requestRepaint()
+  }
+
+  // Makes the window the size its root would like to be.
+  fun fitToContent() {
+    handle?.fitToContent()
+  }
+
+  fun toFront() {
+    handle?.toFront()
+  }
+  fun bringToFront() {
+    handle?.toFront()
+  }
+
+  override fun toString() => "Window($currentTitle)"
+}
+
+// The opener that makes real windows.
+class NativeWindowOpener : WindowOpener {
+  override fun open(window) {
+    val host = WindowHost(window, false, null)
+    host.start()
+    return host
+  }
+}
+
+// An opener for tests: its windows are never shown. Everything else is as in a real one:
+// the tree is laid out and painted, and events sent to it go the way real ones do.
+// `window.handle` is then the WindowHost, which a test drives and looks at.
+class HiddenWindowOpener : WindowOpener {
+  private val scale
+  val opened = []
+
+  fun init(scale = 1) {
+    this.scale = scale
+  }
+
+  override fun open(window) {
+    val host = WindowHost(window, true, scale)
+    host.start()
+    opened.add(host)
+    return host
+  }
+}
+
+// Counts presses that follow one another closely in time and place: 2 is a double click.
+internal class ClickCounter {
+  private val intervalNanos
+  private val slop
+  private var lastButton = -1
+  private var lastAt = null
+  private var lastX = 0
+  private var lastY = 0
+  private var count = 0
+
+  fun init(intervalNanos = 500000000, slop = 4) {
+    this.intervalNanos = intervalNanos
+    this.slop = slop
+  }
+
+  fun press(button, x, y, nowNanos) {
+    val continues = button == lastButton and lastAt != null and nowNanos - lastAt <= intervalNanos and
+                    Math.abs(x - lastX) <= slop and Math.abs(y - lastY) <= slop
+    count = continues ? count + 1 : 1
+    lastButton = button
+    lastAt = nowNanos
+    lastX = x
+    lastY = y
+    return count
+  }
+
+  fun reset() {
+    lastButton = -1
+    lastAt = null
+    count = 0
+  }
+}
+
+// One open window: the native window, the tree it shows, and what the pointer and the
+// keyboard are doing in it. It turns raw input into the events widgets are told of.
+class WindowHost : WindowHandle {
+  val window
+  val native
+  private val hidden
+  private var tree
+  private val loop = RenderLoop()
+  private var framePending = false
+  private var lastW = -1
+  private var lastH = -1
+  private var lastScale = 0.0
+  private var disposed = false
+
+  // The keyboard.
+  private var focusedComponent = null
+  private var focusedAware = null
+  private var keyboardFocus = true
+  private var shiftHeld = false
+  private var ctrlHeld = false
+  private val consumedKeys = mutableSetOf()
+
+  // The pointer.
+  private var captured = null        // what the main button was pressed on, which gets the drag and the release
+  private var rightCaptured = null   // the same for the other button
+  private var rightMoved = false
+  private var lastHovered = null
+  private var pressedMask = 0
+  private var pointerInside = false
+  private var lastPointer = null
+  private var lastX = 0
+  private var lastY = 0
+  private val clicks
+  private var currentCursor : CursorKind = CursorKind.default
+
+  private val repaintHook
+  private val layoutHook
+  private val frameHook
+  private val themeHook
+
+  fun init(window, hidden, scale) {
+    this.window = window
+    this.hidden = hidden
+    this.tree = window.root
+    this.clicks = hidden ? ClickCounter() : ClickCounter(Native.doubleClickTime * 1000000)
+
+    var width = window.initialWidth
+    var height = window.initialHeight
+    // What the tree asks for depends on the screen: until the window exists, the main screen's.
+    useScale(hidden ? (scale ?: 1) : (scale ?: Native.screenScale))
+    if (window.sizeToContent) {
+      val pref = tree.prefSize()
+      width = pref.width
+      height = pref.height
+    }
+    val ownerHandle = window.owner?.handle
+    this.native = NativeWindow(window.title, width, height, window.resizable, window.dialog, ownerHandle?.native, hidden ? (scale ?: 1) : scale)
+
+    repaintHook = { requestRepaint() }
+    layoutHook = { loop.requestLayout() }
+    frameHook = { scheduleFrame() }
+    themeHook = { requestRepaint() }
+  }
+
+  // Text is measured for this window's screen from here on. If that is another scale than
+  // the last thing measured for, what widgets asked for is asked again.
+  private fun useScale(scale) {
+    if (Jade.layoutScale == scale) { return }
+    Jade.layoutScale = scale
+    Jade.invalidateRenderCaches()
+    loop.requestLayout()
+  }
+
+  // Connects the window to the toolkit and the system, draws its first frame and shows it.
+  fun start() {
+    Jade.onRepaintNeeded(repaintHook)
+    Jade.onLayoutNeeded(layoutHook)
+    Jade.onFrameNeeded(frameHook)
+    Palette.onThemeChange(themeHook)
+    takeGlobals()
+
+    native.onInput = { event -> onInput(event) }
+    native.onResize = { width, height ->
+      loop.markDirty()
+      frame()                          // from inside the call: an edge is being dragged
+    }
+    native.onScaleChanged = { scale ->
+      useScale(scale)
+      requestRepaint()
+    }
+    native.onCloseRequest = { close() }
+    native.onFilesDropped = { paths, x, y ->
+      val files = paths.map { File(it) }
+      val at = window.onFilesDroppedAt
+      if (at == null or !at(files, x, y)) { (window.onFilesDropped)(files) }
+    }
+    if (!window.icons.isEmpty()) { native.setIcon(window.icons.last()) }
+    if (window.centerOnOwner and window.owner?.handle != null) {
+      val over = window.owner.handle.native
+      val at = over.position
+      val s = over.scale
+      native.setPosition(at.x + int((over.width - native.width) * s / 2), at.y + int((over.height - native.height) * s / 2))
+    }
+
+    if (window.focus != null) { setFocus(window.focus) }
+    frame()
+    if (!hidden) { native.show() }
+  }
+
+  // What the window in front owns of the toolkit's shared things.
+  private fun takeGlobals() {
+    Jade.scheduler = { delayMs, task -> EventLoop.after(delayMs, task) }
+    Jade.onFocusRequested { comp ->
+      setKeyboardFocus(true)
+      ensureLayout()
+      setFocus(comp)
+      loop.markDirty()
+      scheduleFrame()
+    }
+    (window.onFront)()
+  }
+
+  get focused() => focusedComponent
+  get cursor() : CursorKind => currentCursor
+  get shownTree() => tree
+
+  // ---- The handle ----
+
+  override fun setTitle(text) {
+    native.title = text
+  }
+  override fun toFront() {
+    native.toFront()
+  }
+  override fun requestRepaint() {
+    loop.markDirty()
+    scheduleFrame()
+  }
+  override fun fitToContent() {
+    useScale(native.scale)
+    val pref = tree.prefSize()
+    native.setSize(pref.width, pref.height)
+  }
+  override fun rootChanged(root) {
+    tree = root
+    captured = null
+    rightCaptured = null
+    lastHovered = null
+    pressedMask = 0
+    focusedComponent = null
+    updateTextFocus(null)
+    loop.requestLayout()
+    requestRepaint()
+  }
+  override fun close() {
+    if (disposed) { return }
+    disposed = true
+    updateTextFocus(null)
+    Jade.removeRepaintHook(repaintHook)
+    Jade.removeLayoutHook(layoutHook)
+    Jade.removeFrameNeededHook(frameHook)
+    Palette.removeThemeHook(themeHook)
+    native.close()
+    window.closed()
+    (window.onClose)()
+    if (window.exitOnClose and !hidden) { exit(0) }
+  }
+
+  // ---- Frames ----
+
+  // A frame soon: once, however many times it is asked for before it is drawn.
+  private fun scheduleFrame() {
+    if (framePending or disposed) { return }
+    framePending = true
+    EventLoop.post {
+      framePending = false
+      frame()
+    }
+  }
+
+  private fun ensureLayout() {
+    if (!native.isOpen) { return }
+    useScale(native.scale)
+    loop.ensureLayout(tree, native.width, native.height)
+  }
+
+  // Draws what needs drawing, if anything does, and shows it. A test calls this to have
+  // the window's picture up to date before it looks at it.
+  fun frame() {
+    if (disposed or !native.isOpen) { return }
+    if (Jade.wantsFrames) {
+      Jade.runFrameHooks(Native.nanoTime())
+      EventLoop.after(16) { scheduleFrame() }       // an animation: another frame after this one
+    }
+    val scale = native.scale
+    useScale(scale)
+    if (!loop.isDirty) { return }
+    val w = native.width
+    val h = native.height
+    if (w <= 0 or h <= 0) { return }
+    val resized = w != lastW or h != lastH or scale != lastScale
+    lastW = w
+    lastH = h
+    lastScale = scale
+    val plan = loop.plan(w, h, resized)
+    if (plan.layout) { tree.layout(w, h) }
+    val part = plan.partial
+    val all = native.canvas()
+    val onto = part == null ? all : all.clipped(part.x, part.y, part.width, part.height)
+    onto.color = Palette.headerBg       // what shows where the tree draws nothing
+    onto.fillRect(0, 0, w, h)
+    tree.paintInto(onto.withStyle(tree.style()))
+    loop.drawn(plan, w, h)
+    native.present()
+  }
+
+  // The window's picture as it now is.
+  fun snapshot() {
+    frame()
+    return native.snapshot()
+  }
+
+  // Sends the window an event the way the system would: for tests.
+  fun send(event) {
+    native.send(event)
+  }
+
+  // ---- Raw input, turned into what widgets are told ----
+
+  private fun onInput(event) {
+    if (disposed) { return }
+    useScale(native.scale)
+    when (event) {
+      is RawInput.PointerMove -> {
+        shiftHeld = event.mods.shift
+        ctrlHeld = event.mods.shortcut
+        pointerMoved(event.x, event.y)
+      }
+      is RawInput.PointerDown -> pointerDown(event)
+      is RawInput.PointerUp -> pointerUp(event)
+      is RawInput.Wheel -> wheel(event)
+      is RawInput.KeyDown -> keyDown(event)
+      is RawInput.KeyUp -> keyUp(event)
+      is RawInput.Text -> typed(event.text)
+      is RawInput.Focus -> windowFocus(event.focused)
+      is RawInput.Hover -> {
+        if (!event.inside and pointerInside and pressedMask == 0) { pointerLeft() }
+      }
+      else -> {}
+    }
+    scheduleFrame()
+  }
+
+  private fun contains(x, y) => x >= 0 and y >= 0 and x < native.width and y < native.height
+
+  private fun pointerMoved(x, y) {
+    lastX = x
+    lastY = y
+    if (pressedMask != 0) {
+      val rc = rightCaptured
+      if (rc != null and pressedMask & 2 != 0) {
+        noteInput(true)
+        rightMoved = true                  // the other button dragged: the caret follows it
+        rc.component.dispatch(Event.Context(x - rc.offsetX, y - rc.offsetY, true))
+        return
+      }
+      val cap = captured
+      val overlayDrag = cap != null and cap.component.content is OverlayContent
+      noteInput(true, false, false, overlayDrag ? capturedRect() : null)
+      if (cap != null) {                   // a drag belongs to what was pressed, wherever the pointer goes
+        cap.component.dispatch(Event.Drag(x - cap.offsetX, y - cap.offsetY, shiftHeld))
+        if (!overlayDrag) { cap.component.invalidate() }
+      }
+      return
+    }
+    if (!contains(x, y)) {
+      if (pointerInside) { pointerLeft() }
+      return
+    }
+    pointerInside = true
+    noteInput(true)
+    hover(x, y)
+  }
+
+  private fun pointerDown(event) {
+    val m = event.mods
+    shiftHeld = m.shift
+    ctrlHeld = m.shortcut
+    lastX = event.x
+    lastY = event.y
+    if (!contains(event.x, event.y)) {
+      setKeyboardFocus(false)
+      return
+    }
+    val clickCount = clicks.press(event.button.ordinal, event.x, event.y, Native.nanoTime())
+    pressedMask = pressedMask | (1 << event.button.ordinal)
+    setKeyboardFocus(true)
+    noteInput()
+    press(event.button, event.x, event.y, clickCount, m)
+  }
+
+  private fun pointerUp(event) {
+    val bit = 1 << event.button.ordinal
+    if (pressedMask & bit == 0) { return }
+    pressedMask = pressedMask & ~bit
+    noteInput()
+    release(event.button, event.x, event.y, event.mods)
+  }
+
+  private fun press(button, x, y, clickCount, m) {
+    Jade.pointerPressed(x, y)
+    if (button == PointerButton.back or button == PointerButton.forward) {
+      if (Jade.navigate != null) { (Jade.navigate)(button == PointerButton.forward) }
+      loop.markDirty()
+      return
+    }
+    ensureLayout()
+    val target = tree.componentPathAt(x, y)
+    focusedComponent = focusAfterPress(focusedComponent, target, x, y)    // only onto what takes keys
+    updateTextFocus(focusedComponent)
+    if (button == PointerButton.left) {
+      captured = target
+      if (target != null) {
+        target.component.dispatch(Event.Click(x - target.offsetX, y - target.offsetY, clickCount, m.shift, m.ctrl))
+      } else {
+        tree.dispatch(Event.Click(x, y, clickCount, m.shift, m.ctrl))
+      }
+    } else if (button == PointerButton.right) {
+      rightCaptured = target
+      rightMoved = false
+      if (target != null) { target.component.dispatch(Event.Context(x - target.offsetX, y - target.offsetY, false)) }
+    }
+  }
+
+  private fun release(button, x, y, m) {
+    if (button == PointerButton.right) {
+      val rc = rightCaptured
+      if (rc == null) { return }
+      if (rightMoved) { rc.component.dispatch(Event.Context(x - rc.offsetX, y - rc.offsetY, true)) }
+      rightCaptured = null
+      return
+    }
+    if (button == PointerButton.left) {
+      val cap = captured
+      if (cap == null) { return }
+      cap.component.dispatch(Event.Release(x - cap.offsetX, y - cap.offsetY, m.shift))
+      captured = null
+    }
+  }
+
+  private fun hover(mx, my) {
+    ensureLayout()
+    lastPointer = Point(mx, my)
+    val path = tree.componentPathAt(mx, my)
+    val hovered = path?.component
+    Jade.shortcutDown = ctrlHeld
+    setCursor(cursorFor(path, mx, my))
+    tree.dispatch(Event.Hover(mx, my, shiftHeld, ctrlHeld))
+    if (hovered !== lastHovered) {
+      val was = lastHovered
+      if (was != null) {
+        was.invalidate()
+        was.dispatch(Event.Hover(-1, -1))       // it is told the pointer has gone
+      }
+      hovered?.invalidate()
+      lastHovered = hovered
+    }
+  }
+
+  private fun pointerLeft() {
+    pointerInside = false
+    lastPointer = null
+    noteInput()
+    Jade.pointerExited()
+    val was = lastHovered
+    if (was != null) {
+      was.invalidate()                   // what marked it as under the pointer goes,
+      was.dispatch(Event.Hover(-1, -1))  // and it is told, as when the pointer goes to a neighbour
+      lastHovered = null
+    }
+    setCursor(CursorKind.default)
+    clicks.reset()
+  }
+
+  private fun rehover() {
+    val at = lastPointer
+    if (at == null) { return }
+    tree.dispatch(Event.Hover(at.x, at.y, shiftHeld, ctrlHeld))
+    loop.markDirty()
+  }
+
+  private fun cursorFor(path, mx, my) : CursorKind {
+    if (path == null) { return CursorKind.default }
+    val c = path.component.content
+    return c is CursorProvider ? c.cursorAt(mx - path.offsetX, my - path.offsetY) : CursorKind.default
+  }
+
+  private fun setCursor(kind : CursorKind) {
+    if (kind == currentCursor) { return }
+    currentCursor = kind
+    native.cursor = kind
+  }
+
+  private fun wheel(event) {
+    if (!contains(event.x, event.y)) { return }
+    ensureLayout()
+    noteInput(false, true)
+    // One click of a wheel is forty units; with Shift an up-and-down wheel goes sideways.
+    var dy = int(Math.round(-event.dy * 40))
+    var dx = int(Math.round(-event.dx * 40))
+    if (shiftHeld and dx == 0) {
+      dx = dy
+      dy = 0
+    }
+    tree.dispatch(Event.Wheel(event.x, event.y, dy, shiftHeld, dx))
+  }
+
+  // ---- Keys ----
+
+  private static val modifierKeys = [KeyCode.shiftLeft, KeyCode.shiftRight, KeyCode.controlLeft, KeyCode.controlRight,
+                                     KeyCode.altLeft, KeyCode.altRight, KeyCode.metaLeft, KeyCode.metaRight]
+  private static fun isModifier(key) => WindowHost.modifierKeys.contains(key)
+
+  // The keys a widget is told of by name.
+  private static val namedKeys = {
+    "left": Key.left, "right": Key.right, "up": Key.up, "down": Key.down, "pageUp": Key.pageUp, "pageDown": Key.pageDown,
+    "home": Key.home, "end": Key.end, "backspace": Key.backspace, "delete": Key.delete, "enter": Key.enter,
+    "numpadEnter": Key.enter, "escape": Key.escape, "tab": Key.tab, "f2": Key.f2, "f5": Key.f5, "f10": Key.f10, "f11": Key.f11
+  }
+  private static fun keyFor(key) => WindowHost.namedKeys[key.name]
+
+  private static val navKeys = [KeyCode.left, KeyCode.right, KeyCode.up, KeyCode.down, KeyCode.home, KeyCode.end, KeyCode.pageUp, KeyCode.pageDown]
+  private static fun isNavKey(key) => WindowHost.navKeys.contains(key)
+
+  // What a key does with Ctrl held: by the letter the keyboard's layout gives it.
+  private static val editCommands = {
+    "Y": EditCommand.redo, "C": EditCommand.copy, "X": EditCommand.cut, "V": EditCommand.paste,
+    "A": EditCommand.selectAll, "D": EditCommand.fillDown, "R": EditCommand.fillRight
+  }
+  private static fun editCommandFor(key, letter, shift) {
+    if (key == KeyCode.space) { return EditCommand.complete }
+    if (letter == "Z") { return shift ? EditCommand.redo : EditCommand.undo }
+    return letter == null ? null : WindowHost.editCommands[letter]
+  }
+
+  // The letter or digit of a key: what the layout says, or failing that where the key is.
+  private static fun letterFor(event) {
+    if (event.letter != null) { return event.letter }
+    val name = event.key.name
+    if (name.length == 1) { return name.uppercase() }
+    if (name.startsWith("digit") or name.startsWith("numpad")) {
+      val last = name.substring(name.length - 1)
+      if (last >= "0" and last <= "9") { return last }
+    }
+    return null
+  }
+
+  private fun keyDown(event) {
+    val key = event.key
+    val m = event.mods
+    if (WindowHost.isModifier(key)) {
+      if (key == KeyCode.shiftLeft or key == KeyCode.shiftRight) {
+        shiftHeld = true
+        rehover()
+      }
+      if (key == KeyCode.controlLeft or key == KeyCode.controlRight) {
+        ctrlHeld = true
+        Jade.shortcutDown = true
+        rehover()
+      }
+      return
+    }
+    shiftHeld = m.shift
+    ctrlHeld = m.shortcut
+    val letter = WindowHost.letterFor(event)
+    val word = m.ctrl or m.alt            // the keys that make an arrow go a word at a time
+    val named = WindowHost.keyFor(key)
+    val filter = window.keyFilter
+    if (filter != null and named != null) {
+      if (filter(Event.KeyPress(named, m.shift, word), focusedComponent)) {
+        noteInput()
+        consumedKeys.add(key)
+        return
+      }
+    }
+    if (m.shortcut) {
+      val command = WindowHost.editCommandFor(key, letter, m.shift)
+      if (command != null) {
+        noteInput()
+        (focusedComponent ?: tree).dispatch(Event.Shortcut(command))
+        consumedKeys.add(key)
+        return
+      }
+    }
+    noteInput(false, false, WindowHost.isNavKey(key))
+    consumedKeys.add(key)
+    if (key == KeyCode.tab) {
+      val f = focusedComponent
+      val c = f?.content
+      if (c is TabAware and c.acceptsTab()) {
+        f.dispatch(Event.KeyPress(Key.tab, m.shift))      // it uses Tab itself
+      } else {
+        traverseFocus(!m.shift)
+      }
+      return
+    }
+    if (named != null) { (focusedComponent ?: tree).dispatch(Event.KeyPress(named, m.shift, word)) }
+  }
+
+  private fun keyUp(event) {
+    val key = event.key
+    if (WindowHost.isModifier(key)) {
+      if (key == KeyCode.shiftLeft or key == KeyCode.shiftRight) {
+        shiftHeld = false
+        rehover()
+      }
+      if (key == KeyCode.controlLeft or key == KeyCode.controlRight) {
+        ctrlHeld = false
+        Jade.shortcutDown = false
+        rehover()
+      }
+      return
+    }
+    if (consumedKeys.remove(key)) { noteInput() }
+  }
+
+  private fun typed(text) {
+    noteInput()
+    (focusedComponent ?: tree).dispatch(Event.KeyType(text))
+  }
+
+  private fun windowFocus(focused) {
+    if (focused) {
+      takeGlobals()
+      return
+    }
+    shiftHeld = false
+    ctrlHeld = false
+    Jade.shortcutDown = false
+    consumedKeys.clear()
+    clicks.reset()
+    loop.markDirty()
+  }
+
+  // ---- Who has the keyboard ----
+
+  private fun traverseFocus(forward) {
+    ensureLayout()
+    val next = nextFocus(tree.focusables(), focusedComponent, forward)
+    if (next != null) { setFocus(next) }
+  }
+
+  private fun setFocus(comp) {
+    focusedComponent = comp
+    updateTextFocus(comp)
+  }
+
+  // Tells the content that has the keyboard, and the one that had it.
+  private fun updateTextFocus(comp) {
+    val c = keyboardFocus ? comp : null
+    val content = c?.content
+    val aware = content is FocusAware ? content : null
+    if (aware !== focusedAware) {
+      if (focusedAware != null) { focusedAware.setFocused(false) }
+      focusedAware = aware
+      if (aware != null) { aware.setFocused(true) }
+    }
+  }
+
+  private fun setKeyboardFocus(on) {
+    if (keyboardFocus == on) { return }
+    keyboardFocus = on
+    updateTextFocus(focusedComponent)
+    if (!on) { consumedKeys.clear() }
+    loop.markDirty()
+  }
+
+  // ---- What an input costs ----
+
+  // Something happened: a frame is needed, and unless it was only the pointer moving, the
+  // wheel, or a caret, every widget's kept picture may be out of date.
+  private fun noteInput(pointerMotion = false, scroll = false, caretNav = false, damage = null) {
+    if (damage != null) { loop.markDamage(damage) } else { loop.markDirty() }
+    val caretOnlyNav = caretNav and focusedComponent != null and focusedComponent.content is OverlayContent
+    if (!caretOnlyNav and !scroll and !pointerMotion) { Jade.invalidateRenderCaches() }
+  }
+
+  private fun capturedRect() {
+    val c = captured
+    if (c == null) { return null }
+    val b = c.component.bounds
+    return Rectangle(c.offsetX - 2, c.offsetY - 2, b.width + 4, b.height + 4)
+  }
+}

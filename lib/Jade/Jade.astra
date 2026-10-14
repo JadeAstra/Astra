@@ -1,0 +1,186 @@
+// The object called like the library: what belongs to the toolkit as a whole and not to
+// any one widget or window. Widgets ask it for a repaint or a layout; windows listen.
+// (JadeUI: the object JadeUi.)
+//
+//   Jade.requestRepaint()
+//   Jade.onFrame { time -> spin(time.delta) }
+//   Jade.windowOpener = HiddenWindowOpener()      // in a test: windows that are never shown
+
+// The time handed to a frame hook: seconds since the first frame, seconds since the last,
+// and how many frames there have been.
+class FrameTime(val time, val delta, val frame)
+
+object Jade {
+  // Runs a task after a delay, in milliseconds. The window that is in front sets it.
+  var scheduler = null
+
+  // How many of the screen's pixels there are to a layout unit where text is now being
+  // measured for layout: the scale of the window being laid out or painted, which sets it.
+  // Text is measured in the screen's own pixels and the result rounded up to units, so
+  // what a widget asks for is room its text really fits in on that screen.
+  var layoutScale = 1
+
+  // Whether the key that commands go with (Ctrl) is held: a link shows a hand only then.
+  var shortcutDown = false
+
+  // Goes up whenever something happened that may have changed how any widget looks. A
+  // widget's kept picture is good only for the number it was painted at.
+  var renderGeneration = 0
+    private set
+  fun invalidateRenderCaches() {
+    renderGeneration += 1
+  }
+
+  // ---- Asking for a repaint and a layout ----
+
+  private val repaintHooks = []
+  private val layoutHooks = []
+
+  fun onRepaintNeeded(hook) {
+    repaintHooks.add(hook)
+  }
+  fun removeRepaintHook(hook) {
+    repaintHooks.remove(hook)
+  }
+  // Has every window draw a frame soon.
+  fun requestRepaint() {
+    for (hook in repaintHooks.toList()) { hook() }
+  }
+
+  fun onLayoutNeeded(hook) {
+    layoutHooks.add(hook)
+  }
+  fun removeLayoutHook(hook) {
+    layoutHooks.remove(hook)
+  }
+  // Has every window lay its tree out again before its next frame.
+  fun requestLayout() {
+    for (hook in layoutHooks.toList()) { hook() }
+    requestRepaint()
+  }
+
+  fun clearHostHooks() {
+    repaintHooks.clear()
+    layoutHooks.clear()
+    frameNeededHooks.clear()
+    focusHook = null
+  }
+
+  // ---- Windows ----
+
+  // What turns a Window into a window on the screen when it is shown. A test puts another
+  // here: HiddenWindowOpener, or one of its own that makes nothing and records what it was asked.
+  private var opener = null
+  get windowOpener() {
+    if (opener == null) { opener = NativeWindowOpener() }
+    return opener
+  }
+  set windowOpener(value) {
+    opener = value
+  }
+
+  // ---- Something to do every frame ----
+
+  private val frameNeededHooks = []
+  private val frameHooks = []
+  private var clockStart = 0
+  private var lastFrameAt = 0
+  private var frameCount = 0
+
+  fun onFrameNeeded(hook) {
+    frameNeededHooks.add(hook)
+  }
+  fun removeFrameNeededHook(hook) {
+    frameNeededHooks.remove(hook)
+  }
+  fun requestFrame() {
+    for (hook in frameNeededHooks.toList()) { hook() }
+  }
+
+  // Calls the hook before every frame from now on, with a FrameTime: for an animation.
+  fun onFrame(hook) {
+    frameHooks.add(hook)
+    requestFrame()
+  }
+  fun removeFrameHook(hook) {
+    frameHooks.remove(hook)
+  }
+  get wantsFrames() => !frameHooks.isEmpty()
+
+  fun runFrameHooks(nowNanos) {
+    if (frameHooks.isEmpty()) { return }
+    if (clockStart == 0) { clockStart = nowNanos }
+    if (lastFrameAt != 0 and nowNanos - lastFrameAt < 1000000) { return }
+    val delta = lastFrameAt == 0 ? 0.0 : (nowNanos - lastFrameAt) / 1e9
+    lastFrameAt = nowNanos
+    val t = FrameTime((nowNanos - clockStart) / 1e9, delta, frameCount)
+    frameCount += 1
+    for (hook in frameHooks.toList()) { hook(t) }
+  }
+
+  // ---- The pointer ----
+
+  // What the back and forward buttons of a mouse do.
+  var navigate = null
+
+  private val pressListeners = []
+  fun onPointerPressed(listener) {
+    pressListeners.add(listener)
+  }
+  fun removePointerPressed(listener) {
+    pressListeners.remove(listener)
+  }
+  fun pointerPressed(x, y) {
+    for (listener in pressListeners.toList()) { listener(x, y) }
+  }
+
+  private var pointerExitHook = null
+  fun onPointerExit(hook) {
+    pointerExitHook = hook
+  }
+  fun pointerExited() {
+    if (pointerExitHook != null) { pointerExitHook() }
+  }
+
+  // ---- Things shown over the window ----
+
+  private var overlayHook = null
+  fun onOverlayNeeded(hook) {
+    overlayHook = hook
+  }
+  fun showOverlay(comp, x = 0, y = 0) {
+    if (overlayHook != null) { overlayHook(comp, x, y) }
+  }
+
+  private var tipHook = null
+  fun onTipNeeded(hook) {
+    tipHook = hook
+  }
+  fun showTip(comp, x = 0, y = 0) {
+    if (tipHook != null) { tipHook(comp, x, y) }
+  }
+
+  // ---- The keyboard ----
+
+  private var focusHook = null
+  fun onFocusRequested(hook) {
+    focusHook = hook
+  }
+  // Gives a component the keyboard.
+  fun requestFocus(comp) {
+    if (focusHook != null) {
+      focusHook(comp)
+      return
+    }
+    val c = comp.content
+    if (c is FocusAware) { c.setFocused(true) }
+  }
+
+  // ---- Grids by name ----
+
+  private val registry = {:}
+  fun register(id, grid) {
+    registry[id] = grid
+  }
+  fun registeredGrids() => registry.values.toList()
+}

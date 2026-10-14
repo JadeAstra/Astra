@@ -8,7 +8,8 @@ way is under "As built in M3" in 5.5 (and "As built in M2" in 5.4). M3.5, parall
 sections, is built too (5.5, point 7). M4, the text engine, has its first part built
 ("As built in M4, part one" in section 4); its second part goes alongside M5 to M8. M5,
 the native layer and the types from the JDK, is built ("As built in M5" in section 4), and
-the old `gui` library is gone. M6 is next.
+the old `gui` library is gone. M6, the first part of the root package (components, the
+grid, labels and buttons, and `Window`), is built ("As built in M6", 6.3). M7 is next.
 
 ## 1. Goal and ground rules
 
@@ -1139,7 +1140,7 @@ What a port changes:
 
 The opener's interface changes with this: it realises a `Window` and returns a handle where
 it used to take a spec and return a window. The handle is a new, small type with the four
-operations that pass through; its name is still to be chosen.
+operations that pass through; it is called `WindowHandle` (6.3).
 
 ### 6.2 The `Jade` prefix is dropped, and how names are cased
 
@@ -1212,6 +1213,121 @@ The other 66 are renamed by the rule:
   `TextField` in JadeGen and `Block` in Snips. Folder namespaces (5.1) keep both apart from
   Jade's: the app's own class wins inside the app, and Snips reaches Jade's `Block` through
   an alias.
+
+### 6.3 As built in M6
+
+The first part of the root package is ported, in `lib/Jade`:
+
+| Astra | From | Holds |
+| --- | --- | --- |
+| `Types.astra` | `Jade.kt` | `Sizes`, `Style`, `Fill`, `Anchor`, `Key`, `EditCommand`, `Event`, `Content`, the capability interfaces, `Palette`, `elide`, `metrics` |
+| `Canvas.astra` | `Canvas.kt` | `Canvas`, `TextMetrics`, `DrawOp`, `RecordingCanvas` (`NativeCanvas` of M5 is now a `Canvas`) |
+| `Component.astra` | `JadeComponent.kt` | `Component` with its kept picture, layout, dispatch, finding and focus helpers; `label`, `button`, `grid` |
+| `Grid.astra` | `JadeGrid.kt` | `Grid`, `Grid.Cell`, `Grid.RowScope` |
+| `Widgets.astra` | `Widgets.kt` | `Label`, `WrappedLabel`, `Button`, `IconButton`, `ToolbarSeparator` |
+| `RenderLoop.astra` | `RenderLoop.kt` | `RenderLoop` |
+| `Jade.astra` | the object `JadeUi` | `Jade`: repaint and layout hooks, frame hooks, the opener, focus |
+| `Window.astra` | `Host.kt`, and `JadeGlSurface.kt` of the GLFW backend | `Window`, `WindowHandle`, `WindowOpener`, and `WindowHost`, the policy |
+
+**The names left open in 6.1.** The handle an opener gives back is a `WindowHandle`
+(`setTitle`, `toFront`, `close`, `fitToContent`, `requestRepaint`, `rootChanged`), and an
+opener is a `WindowOpener` with the one method `open(window)`. `NativeWindowOpener` is the
+usual one, `HiddenWindowOpener` the test mode (its windows are real and never shown), and a
+test's own fake is a class of a few lines. A shown window's handle is its `WindowHost`,
+which a test drives with `send(event)` and looks at with `snapshot()`.
+
+**The policy** (`WindowHost`) is the Kotlin surface's, without what later milestones bring.
+In: press capture for both buttons, drag and release to what was pressed, click counting by
+the system's double-click time, hover with the leaving widget told, the pointer's shape,
+the wheel with its Shift rule, who has the keyboard after a press, `FocusAware`, Tab and
+Shift+Tab, named keys, typed text, the edit commands by the layout's letter, the key
+filter, the back and forward buttons, files dropped, and when the kept pictures are
+thrown away. Waiting for M7, with the things they act on: the screen (menu bar, popups,
+drop-downs, context menus, accelerators), tooltips, the blinking caret, hold-to-repeat,
+and raw input for 3D views.
+
+**How a window is drawn.** A request for a repaint marks the window's loop dirty and posts
+one task to the event loop, however many requests come before it runs; that task plans the
+frame (`RenderLoop`), lays out if it must, and paints either everything or the damaged
+rectangle through a clipped canvas onto the window's kept picture. A component's kept
+picture is a `Surface` at the window's scale, drawn back pixel for pixel.
+
+**Text is measured for the screen it is drawn on.** JadeUI measures with a scratch image
+and lets Java scale the drawing. With the rule of section 4, point 8, a line is a few
+units wider on a dense screen than the same line measured at a scale of 1 (up to 8 for a
+long one at 2x), so layout that measured at 1 would cut text short. `Jade.layoutScale` is
+the scale of the window being laid out or painted, set by its host, and `metrics(font)`
+measures at it.
+
+**Differences from the Kotlin, to be known when porting.**
+
+- JadeUI's extension functions on `JadeComponent` (`layout`, `dispatch`, `record`,
+  `renderToImage`, `componentAt`, `find`, ...) are methods of `Component`: a call reads the
+  same. The one on a list, `nextFocus`, is a function: `nextFocus(list, current, forward)`.
+- `filterIsInstance<T>()` is `filter { it is T }`.
+- `renderInto` takes a `BufferedImage` as in Kotlin; `renderOnto(canvas, ...)` beside it
+  paints on any canvas, which is what a window uses.
+- A window's default title is "Jade", not "jadelib-ui".
+- An error in a frame hook is reported like any other; JadeUI swallows it.
+- A button is lit while the pointer is over it (asked for when M6 was shown): its edge is
+  in `Palette.accent` and its body takes a little of that colour. JadeUI's button looks
+  the same under the pointer as away from it; only its icon button changes.
+- When the pointer leaves the window, the widget it was over is sent the same
+  `Event.Hover(-1, -1)` as when the pointer goes to a neighbour. JadeUI only repaints it
+  then, so an icon button at a window's edge can stay lit after the pointer has gone.
+- A grid's layout written outside the program (`.ovr` files, and the `commands` file) is
+  not read yet: it needs the XML reader of tier N5. `viewId` and `Jade.register` are there
+  for it. `OverrideTest`, `CommandsTest` and `RobustnessTest` wait with it.
+- `Jade` has what M6 uses. The dialogs, the clipboard and drafts come with their
+  milestones.
+
+**A gap in the language, found here and closed.** `private` on a member was accepted and
+changed nothing, and inside a block that runs on an object (`grid { }`, `row { }`) a bare
+name is looked for among the object's members before the program's top-level names.
+`RowScope` keeps its grid in a private field called `grid`, which hid the function
+`grid()` from every `row { }` block: a grid in a grid failed. Now the access words are
+enforced for members: `private`, `protected`, `internal`, and the one in front of `set`
+under a property. A member the code may not use is not what a bare name means in a block
+written outside its class, so a builder can keep what it likes to itself (`Grid` has
+`place`, `tracks`, `effective`, `occupied`) without hiding a name of the program's; and
+`object.name` on such a member is an error.
+
+How it is done: the compiler gives every class and every library a number and marks each
+function with the numbers of the classes it is written inside of and of its library. A
+class is told what it declares of each member (`Op::MemberAccess`, `Op::StaticAccess`):
+the name then leads to the numbers the code using it has to carry one of. For a private
+member that is the class that declared it, and any subclass that declared it again with
+`private override`; for a protected one the class and, added as each is made, its
+subclasses down to the object's own; for an internal one the library. Assigning has a
+mark of its own beside it, for `private set`. Subclasses inherit the marks. Reading,
+assigning or calling a member by name, with an object in front or bare in a block, is
+refused when the function doing it carries none of the numbers.
+
+The cost is kept off ordinary code. A name that no class restricts is passed with one
+test. A member a class declares itself, reached through `this` by its own code, needs no
+check at all, and the compiler writes an instruction that makes none (`GetOwn`, `SetOwn`,
+`InvokeOwn`). Code written in the class of the object it works on, and an object whose
+class restricts no name like the one asked for, are passed without a lookup. Four loops
+of nothing but member access (no restricted members; a class's own private members; a
+subclass using what it inherits; a public member whose name is private in another class)
+run level with the build that checks nothing, within the 2% the timings scatter by.
+Tests: `tests/member_access.astra`, and for a library's side `tests/jade_grid.astra`.
+
+In Jade the words are as in JadeUI where a program cannot tell the difference:
+`Component.parent`, `overlayDescendants` and `Jade.renderGeneration` have `private set`,
+and `adopt`, `release`, `invalidateSizes`, `overlayDescendants` and `effectiveComponents`
+are internal. `WrappedLabel.wrap`, `Jade.register` and `Jade.registeredGrids`, internal
+in JadeUI, are left open: JadeUI's tests are part of its module and may use them, and
+the tests carried over here are a program outside the library.
+
+**Tests carried over** from JadeUI, with their names: `JadeGridLayoutTest` (4),
+`GridHiddenTest` (1), `ComponentAtTest` (2), `RecordingCanvasTest` (5), `PaintStyleTest`
+(4), `PaintCacheTest` (3), `RenderIntoTest` (2), `RenderLoopTest` (10), `PaletteThemeTest`
+(3 of 5; two are about a list and a code view) and `WrappedLabelTest` (10): 44 tests, all
+passing, in `tests/jade_grid.astra`, `jade_paint.astra` and `jade_loop.astra`. The host's
+policy has a test of its own, `jade_host.astra`, since JadeUI's are written against GLFW.
+`examples/widgets.astra` is the grid of labels and buttons in a real window; a click
+posted to it by a script pressed its button.
 
 ## 7. Order of work
 
@@ -1305,7 +1421,8 @@ is that script; see "As built in M5" in section 4.)
 (label, button), `RenderLoop.kt`, the `Jade` object, and `Window`. File names here are the
 Kotlin sources being ported. The root package refers to `doc`, `gl`,
 `sheet` and `dialogs`, so those get stubs for now. Ends with a grid of labels and buttons in
-a real window and the matching Kotlin tests passing.
+a real window and the matching Kotlin tests passing. (Built: `examples/widgets.astra`, and
+44 of JadeUI's tests carried over; see 6.3.)
 
 **M7. Core, part two.** `Text.kt`, `TextNav.kt`, `TextArea.kt` (text model, field, area,
 undo, selection), `Scroll`, `HScrollBar`, `Split`, `Tabs`, `Controls` (check box, radio,

@@ -1,0 +1,334 @@
+// The simplest widgets: a label, a label that wraps, a button, a button with a picture,
+// and the rule between groups of a toolbar. (JadeUI: Widgets.kt.)
+
+internal val defaultFont = Font(Font.sansSerif, Font.plain, 12)
+
+// A colour part of the way from one to another: a share of 0 is the first, of 1 the second.
+internal fun mixed(from, to, share) =>
+  Color(int(from.red + (to.red - from.red) * share), int(from.green + (to.green - from.green) * share),
+        int(from.blue + (to.blue - from.blue) * share), from.alpha)
+
+// One line of text.
+class Label : Content, OwnedContent {
+  override var owner = null
+  var text = null
+    set(value) {
+      field = value
+      owner?.invalidateLayout()
+    }
+  var font = null
+    set(value) {
+      field = value
+      owner?.invalidateLayout()
+    }
+
+  fun init(text, font = null) {
+    this.text = text
+    this.font = font ?: defaultFont
+  }
+
+  override fun sizes() {
+    val fm = metrics(font)
+    val pref = Dimension(fm.stringWidth(text) + 8, fm.height + 4)
+    return Sizes(pref, pref, Dimension(maxInt, pref.height))
+  }
+
+  override fun paint(canvas) {
+    canvas.font = font
+    canvas.color = canvas.style.foreground ?: Palette.ink
+    val m = canvas.measure(text, font)
+    canvas.drawString(text, 4, (canvas.height - m.height) / 2 + m.ascent)
+  }
+}
+
+// Text that goes on to further lines when it reaches the width it is given, and whose
+// height therefore depends on that width.
+class WrappedLabel : Content, OwnedContent, HeightForWidth {
+  override var owner = null
+  var text = null
+    set(value) {
+      field = value
+      owner?.invalidateLayout()
+    }
+  var font = null
+    set(value) {
+      field = value
+      owner?.invalidateLayout()
+    }
+  // The width it asks for before it has been given one.
+  var preferredWidth = 420
+    set(value) {
+      field = value
+      owner?.invalidateLayout()
+    }
+  private var lastWidth = -1
+
+  fun init(text, font = null) {
+    this.text = text
+    this.font = font ?: defaultFont
+  }
+
+  // The lines the text makes at a width: broken between words, a word too long for a
+  // line left whole, and a line break in the text kept.
+  fun wrap(width) {
+    if (text.isEmpty()) { return [] }
+    if (width <= 0) { return [text] }
+    val fm = metrics(font)
+    val out = []
+    for (paragraph in text.split("\n")) {
+      if (paragraph.isEmpty()) {
+        out.add("")
+        continue
+      }
+      var line = ""
+      for (word in paragraph.split(" ")) {
+        val candidate = line.isEmpty() ? word : "$line $word"
+        if (fm.stringWidth(candidate) <= width or line.isEmpty()) {
+          line = candidate
+        } else {
+          out.add(line)
+          line = word
+        }
+      }
+      out.add(line)
+    }
+    return out
+  }
+
+  override fun heightForWidth(width) => Math.max(wrap(width).size, 1) * metrics(font).height + 4
+
+  override fun sizes() {
+    val width = lastWidth > 0 ? lastWidth : preferredWidth
+    val height = heightForWidth(width)
+    return Sizes(Dimension(60, height), Dimension(width, height), Dimension(maxInt, maxInt))
+  }
+
+  override fun paint(canvas) {
+    if (canvas.width != lastWidth and canvas.width > 0) {
+      lastWidth = canvas.width
+      owner?.invalidateLayout()
+    }
+    canvas.font = font
+    canvas.color = canvas.style.foreground ?: Palette.ink
+    val fm = metrics(font)
+    var y = fm.ascent + 2
+    for (line in wrap(canvas.width)) {
+      canvas.drawString(line, 0, y)
+      y += fm.height
+    }
+  }
+}
+
+fun wrappedLabel(text, font = null) => Component(WrappedLabel(text, font))
+
+// A button: it does what `onClick` says when it is pressed and let go while the pointer is
+// still on it. While the pointer is over it, it is lit: its edge takes the accent colour
+// and its body a little of it. (JadeUI's button has no such look; its icon button has.)
+class Button : Content, OwnedContent {
+  override var owner = null
+  var onClick
+  var text = null
+    set(value) {
+      field = value
+      owner?.invalidateLayout()
+    }
+  var font = null
+    set(value) {
+      field = value
+      owner?.invalidateLayout()
+    }
+  private var armed = false       // pressed on this button and not yet let go
+  private var pressed = false     // armed, and the pointer is over it: it looks pressed
+  private var hovered = false     // the pointer is over it, as far as it has been told
+  private var w = 0
+  private var h = 0
+
+  fun init(text, onClick = {}, font = null) {
+    this.text = text
+    this.onClick = onClick
+    this.font = font ?: defaultFont
+  }
+
+  override fun sizes() {
+    val fm = metrics(font)
+    val pref = Dimension(fm.stringWidth(text) + 24, fm.height + 12)
+    val min = Dimension(fm.stringWidth(text) + 12, fm.height + 6)
+    return Sizes(min, pref, Dimension(maxInt, pref.height))   // it may be made wider, not taller
+  }
+
+  override fun paint(canvas) {
+    w = canvas.width
+    h = canvas.height
+    val base = canvas.style.background ?: Palette.bg(0xE0E0E0)
+    val lit = hovered and canvas.style.enabled
+    canvas.color = pressed ? base.darker() : (lit ? mixed(base, Palette.accent, 0.12) : base)
+    canvas.fillRoundRect(0, 0, canvas.width - 1, canvas.height - 1, 8, 8)
+    canvas.color = lit ? Palette.accent : Palette.border
+    canvas.drawRoundRect(0, 0, canvas.width - 1, canvas.height - 1, 8, 8)
+    canvas.font = font
+    canvas.color = canvas.style.enabled ? (canvas.style.foreground ?: Palette.ink) : Palette.disabled
+    val m = canvas.measure(text, font)
+    val down = pressed ? 1 : 0           // the text goes down a little while it is pressed
+    canvas.drawString(text, (canvas.width - m.width) / 2, (canvas.height - m.height) / 2 + m.ascent + down)
+  }
+
+  override fun onEvent(event) {
+    if (event is Event.Click) {
+      armed = true
+      pressed = true
+    } else if (event is Event.Drag) {
+      if (armed) {
+        pressed = isOver(event.x, event.y)
+        if (!pressed) { setHovered(false) }                    // dragged off it
+      }
+    } else if (event is Event.Release) {
+      val over = isOver(event.x, event.y)
+      if (armed and over) { onClick() }                        // only if let go over it
+      armed = false
+      pressed = false
+      if (!over) { setHovered(false) }
+    } else if (event is Event.Hover) {
+      setHovered(isOver(event.x, event.y))
+    }
+  }
+
+  // The host repaints what the pointer comes onto and what it leaves; a button that learns
+  // of it some other way asks for itself.
+  private fun setHovered(now) {
+    if (now != hovered) {
+      hovered = now
+      owner?.invalidate()
+    }
+  }
+
+  private fun isOver(x, y) => x >= 0 and x < w and y >= 0 and y < h
+}
+
+// A button that shows a picture, for toolbars.
+class IconButton : Content, OwnedContent {
+  override var owner = null
+  var onClick
+  var image = null
+    set(value) {
+      field = value
+      owner?.invalidate()
+    }
+  var size = null
+    set(value) {
+      field = value
+      owner?.invalidateLayout()
+    }
+  var enabled = true
+    set(value) {
+      field = value
+      if (!value) {
+        armed = false
+        pressed = false
+      }
+      owner?.invalidate()
+    }
+  private var armed = false
+  private var pressed = false
+  private var hovered = false
+  private var w = 0
+  private var h = 0
+  private var fadedOf = null
+  private var fadedSource = null
+
+  fun init(image, onClick = {}, size = 30) {
+    this.image = image
+    this.onClick = onClick
+    this.size = size
+  }
+
+  override fun sizes() {
+    val d = Dimension(size, size)
+    return Sizes(d, d, Dimension(d.width, d.height))
+  }
+
+  override fun paint(canvas) {
+    w = canvas.width
+    h = canvas.height
+    if (enabled and (pressed or hovered)) {
+      canvas.color = pressed ? Palette.bg(0xC6D2E0) : Palette.bg(0xE2E7EC)
+      canvas.fillRoundRect(1, 1, w - 3, h - 3, 6, 6)
+    }
+    canvas.drawImage(enabled ? image : faded(image), (w - image.width) / 2, (h - image.height) / 2)
+  }
+
+  // The picture as it looks when the button cannot be used: mostly see-through.
+  private fun faded(source) {
+    if (fadedSource === source) { return fadedOf }
+    val out = BufferedImage(source.width, source.height, BufferedImage.typeIntArgb)
+    out.canvas().drawImage(source, 0, 0, null, null, 0.35)
+    fadedSource = source
+    fadedOf = out
+    return out
+  }
+
+  override fun onEvent(event) {
+    if (!enabled) { return }
+    if (event is Event.Click) {
+      armed = true
+      pressed = true
+    } else if (event is Event.Drag) {
+      if (armed) { pressed = isOver(event.x, event.y) }
+    } else if (event is Event.Release) {
+      if (armed and isOver(event.x, event.y)) { onClick() }    // only if let go over it
+      armed = false
+      pressed = false
+    } else if (event is Event.Hover) {
+      hovered = isOver(event.x, event.y)
+    }
+  }
+
+  private fun isOver(x, y) => x >= 0 and x < w and y >= 0 and y < h
+}
+
+fun iconButton(image, onClick = {}) => Component(IconButton(image, onClick))
+
+// The thin upright rule between groups of buttons in a toolbar.
+class ToolbarSeparator : Content {
+  private val color
+  private val height
+
+  fun init(color = null, height = 20) {
+    this.color = color
+    this.height = height
+  }
+
+  override fun sizes() {
+    val d = Dimension(9, height)
+    return Sizes(d, d, Dimension(d.width, maxInt))
+  }
+
+  override fun paint(canvas) {
+    val h = Math.min(canvas.height, height)
+    val top = (canvas.height - h) / 2
+    canvas.color = color ?: Palette.line(0xC8CED4)
+    canvas.fillRect(canvas.width / 2, top, 1, h)
+  }
+}
+
+fun toolbarSeparator() => Component(ToolbarSeparator())
+
+// Takes up room and draws nothing but a background, if it is given one.
+internal class Spacer : Content {
+  private val w
+  private val h
+
+  fun init(w = 0, h = 0) {
+    this.w = w
+    this.h = h
+  }
+
+  override fun sizes() => Sizes(Dimension(w, h), Dimension(w, h), Dimension(maxInt, maxInt))
+
+  override fun paint(canvas) {
+    val fill = canvas.style.background
+    if (fill != null) {
+      canvas.color = fill
+      canvas.fillRect(0, 0, canvas.width, canvas.height)
+    }
+  }
+}

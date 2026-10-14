@@ -463,11 +463,13 @@ StmtPtr Parser::classDeclaration(bool isEnum, bool isInterface, const Token* ano
             // Kotlin's modifiers in front of a header field: `override` is noted, the rest accepted.
             skipAnnotations();
             bool overrides = false;
+            uint8_t access = 0;
             while (check(TokenType::Identifier) &&
                    (peekNext().type == TokenType::Val || peekNext().type == TokenType::Var || peekNext().type == TokenType::Identifier) &&
                    (peek().text == "override" || peek().text == "private" || peek().text == "internal" || peek().text == "public" ||
                     peek().text == "protected" || peek().text == "open" || peek().text == "final")) {
                 overrides = overrides || peek().text == "override";
+                if (accessWord(peek().text) != 0) access = accessWord(peek().text);
                 advance();
             }
             // `val x : T` and `var x : T` are fields; a bare `x : T` is only a parameter.
@@ -493,6 +495,7 @@ StmtPtr Parser::classDeclaration(bool isEnum, bool isInterface, const Token* ano
                 field->isVal = isVal;
                 field->type = param.type;
                 field->isOverride = overrides;
+                field->access = access;
                 s->fields.push_back(std::move(field));
             }
             s->header.push_back(std::move(param));
@@ -651,12 +654,14 @@ void Parser::addDataMembers(ClassStmt& s, const Token& at) {
 void Parser::fieldAccessors(VarStmt& field) {
     const Token& at = peek();
     for (;;) {
-        // `private set`: who may assign. Accepted, and not enforced yet.
+        // `private set`: who may assign, with the setter written after it or with none, for
+        // the plain one. (In front of `get` an access word says nothing new: a property is
+        // read by whoever may use it.)
         const Token& third = toks_[p_ + 2 < toks_.size() ? p_ + 2 : toks_.size() - 1];
-        if (check(TokenType::Identifier) && (nextWord("set") || nextWord("get")) && third.type != TokenType::LParen &&
-            (peek().text == "private" || peek().text == "protected" || peek().text == "internal" || peek().text == "public")) {
+        if (check(TokenType::Identifier) && (nextWord("set") || nextWord("get")) && accessWord(peek().text) != 0) {
+            if (nextWord("set")) field.setAccess = accessWord(peek().text);
             advance();
-            advance();
+            if (third.type != TokenType::LParen) advance();
             continue;
         }
         const bool isGetter = word("get");
@@ -743,10 +748,11 @@ void Parser::classMember(ClassStmt& s, bool inStatic) {
         return;
     }
 
-    // Kotlin's modifiers on a member are accepted. `override` is noted; the others change
-    // nothing for now.
+    // Kotlin's modifiers on a member. `override`, `abstract` and the access words are noted;
+    // `open` and `final` change nothing.
     bool overrides = false;
     bool abstracts = false;
+    uint8_t access = 0;
     for (; check(TokenType::Identifier) && !peekNext().newlineBefore &&
            (peek().text == "private" || peek().text == "internal" || peek().text == "public" || peek().text == "protected" ||
             peek().text == "override" || peek().text == "open" || peek().text == "final" || peek().text == "abstract" ||
@@ -756,6 +762,7 @@ void Parser::classMember(ClassStmt& s, bool inStatic) {
          advance()) {
         overrides = overrides || peek().text == "override";
         abstracts = abstracts || peek().text == "abstract" || peek().text == "sealed";
+        if (accessWord(peek().text) != 0) access = accessWord(peek().text);
     }
     struct AbstractMember {
         bool& flag;
@@ -781,6 +788,7 @@ void Parser::classMember(ClassStmt& s, bool inStatic) {
         StmtPtr declared = declaration();
         s.nested.emplace_back(static_cast<ClassStmt*>(declared.release()));
         if (abstracts) s.nested.back()->isAbstract = true;
+        s.nested.back()->access = access;
         return;
     }
 
@@ -804,6 +812,7 @@ void Parser::classMember(ClassStmt& s, bool inStatic) {
         auto field = varDeclaration(true);
         field->isOverride = overrides;
         field->isAbstract = abstracts;
+        field->access = access;
         if (abstracts && field->init) throw error(keyword, "'" + field->name + "' is abstract, so it has no value here");
         fieldAccessors(*field);
         if (!isStatic) {
@@ -817,12 +826,14 @@ void Parser::classMember(ClassStmt& s, bool inStatic) {
         auto property = accessor();
         property->isStatic = isStatic;
         property->isOverride = overrides;
+        property->access = access;
         s.methods.push_back(std::move(property));
     } else {
         if (inStatic && word("op")) throw error(peek(), "operators cannot be static");
         auto member = method();
         if (inStatic) member->isStatic = true;
         member->isOverride = overrides;
+        member->access = access;
         s.methods.push_back(std::move(member));
     }
 }
