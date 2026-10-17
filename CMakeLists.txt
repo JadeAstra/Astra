@@ -59,6 +59,7 @@ add_executable(astra
   src/text/api.cpp
   src/image/png.cpp
   src/main.cpp
+  src/checker.cpp
   # M0 spike: an OpenGL window and a text engine of our own, as the `Spike` class.
   src/spike/font.cpp
   src/spike/png.cpp

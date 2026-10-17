@@ -1,0 +1,76 @@
+// Correct, typed code: the checker reports nothing here. It guards against reports that are
+// wrong, as the other files guard against reports that are missing.
+
+data Pair2(val first : int, val second : string)
+
+interface Shape {
+  fun area() : float
+}
+class Circle(val radius : float) : Shape {
+  override fun area() : float => 3.14 * radius * radius
+}
+class Square(val side : float) : Shape {
+  override fun area() : float => side * side
+}
+
+fun largest(shapes : list<Shape>) : Shape? {
+  var best : Shape? = null
+  for (s in shapes) {
+    if (best == null or s.area() > best.area()) { best = s }
+  }
+  return best
+}
+
+val shapes : list<Shape> = [Circle(1.0), Square(2.0)]
+val big = largest(shapes)
+val area : float = big?.area() ?: 0.0
+print(area > 0.0)
+
+fun describe(n : int) : string => when {
+  n < 0 -> "negative"
+  n == 0 -> "zero"
+  else -> "positive"
+}
+print(describe(3))
+
+val words = ["a", "bb", "ccc"]
+var letters = 0
+for (w in words) { letters += w.length }
+for (i in 0..<3) { letters += i }
+print(letters)
+
+val counts = {"a": 1, "b": 2}
+val a : int? = counts["a"]
+print(a ?: 0)
+
+val p = Pair2(1, "one")
+print(p.first + 1, p.second + "!")
+
+fun apply(n : int, f : (int) -> int) : int => f(n)
+print(apply(3) { it * 2 })
+print(apply(3, fun(x : int) : int => x + 1))
+
+class Counter {
+  var count : int = 0
+  fun bump() { count += 1 }
+  fun reset() { count = 0 }
+}
+val counter = Counter()
+counter.bump()
+print(counter.count)
+
+enum Light { red, green }
+val light = Light.red
+print(light == Light.green)
+
+var text = "a"
+text += "b"
+text = text + 1
+print(text)
+
+val nums = [1, 2, 3]
+var sum = 0
+nums.forEach { sum += it }
+print(sum, nums[0] + 1, nums.size)
+
+fun later() : nothing => throw Error("never")

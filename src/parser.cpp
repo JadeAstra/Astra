@@ -225,25 +225,26 @@ StmtPtr Parser::declaration() {
         case TokenType::Class:
             return classDeclaration();
         case TokenType::Fun:
-            if (peekNext().type == TokenType::Identifier) {
+            if (peekNext().type == TokenType::Identifier || peekNext().type == TokenType::Lt) {
                 const Token& kw = advance();
-                const Token* name = &advance();
+                // `fun <T> first(items : list<T>) : T`: type parameters come first.
+                std::vector<TypeParam> typeParams;
+                if (check(TokenType::Lt)) typeParams = typeParameters();
+                TypeParamScope typeParamsInReach(*this, typeParams);
+                const Token* name = &expect(TokenType::Identifier, "the name of the function");
                 auto s = node<FunctionStmt>(kw);
                 // fun Shape.describe(), fun list<Shape>.total(), fun string?.orEmpty(): what stands
                 // before the last dot is the type the function is added to.
                 if (check(TokenType::Dot) || check(TokenType::Lt) || check(TokenType::QuestionDot)) {
                     s->receiver = name->text;
+                    s->receiverType.line = name->line;
+                    s->receiverType.col = name->col;
                     for (;;) {
                         if (check(TokenType::Lt)) {
-                            // What a list or map holds is read past: the function is for every list.
-                            int depth = 0;
-                            do {
-                                if (check(TokenType::Lt)) depth++;
-                                else if (check(TokenType::Gt)) depth--;
-                                else if (check(TokenType::Shr)) depth -= 2;
-                                else if (check(TokenType::Eof) || check(TokenType::LParen)) throw error(peek(), "expected '>' to end the type arguments");
-                                advance();
-                            } while (depth > 0);
+                            // What a list or map holds: kept for the type checker; when the
+                            // program runs the function is for every list.
+                            advance();
+                            s->receiverType.args = typeArgumentsRest();
                         }
                         if (match(TokenType::QuestionDot)) s->receiverNullable = true;
                         else expect(TokenType::Dot, "'.' and the name of the function");
@@ -251,9 +252,14 @@ StmtPtr Parser::declaration() {
                         if (check(TokenType::LParen)) break;
                         if (s->receiverNullable) throw error(*name, "expected '(' after the name of the function");
                         s->receiver += "." + name->text;
+                        s->receiverType.args.clear();
                     }
+                    s->receiverType.name = s->receiver;
+                    s->receiverType.nullable = s->receiverNullable;
+                    if (isTypeParam(s->receiver)) s->receiverType.typeParam = true;
                 }
                 s->fn = functionRest(name->text, kw);
+                s->fn->typeParams = std::move(typeParams);
                 return s;
             }
             return statement();
@@ -272,8 +278,8 @@ TypeAnnotation Parser::optionalType() {
 }
 
 // A type: `int`, `Animal?`, `list<string>`, `(int, string) -> bool`, `Grid.() -> Unit`.
-// Type arguments and the parts of a function type are read and then dropped: only "list",
-// "map" or "function" is checked when the program runs.
+// Everything is kept for the type checker; when the program runs only "list", "map" or
+// "function" is checked.
 TypeAnnotation Parser::typeExpression() {
     DepthGuard guard(*this);
     TypeAnnotation type;
@@ -285,9 +291,8 @@ TypeAnnotation Parser::typeExpression() {
         advance();
 
     // What was between the parentheses, for telling `(int) -> bool` from `(int)`.
-    int inside = 0;
     bool named = false;
-    TypeAnnotation only;
+    std::vector<TypeAnnotation> inside;
     auto functionRest = [&] {
         // The '(' has been read: parameter types, ')', '->' and the result type.
         const bool tight = tightNullable_;
@@ -298,8 +303,7 @@ TypeAnnotation Parser::typeExpression() {
                 advance();
                 named = true;
             }
-            only = typeExpression();
-            inside++;
+            inside.push_back(typeExpression());
             if (!match(TokenType::Comma)) break;
         }
         tightNullable_ = tight;
@@ -309,12 +313,17 @@ TypeAnnotation Parser::typeExpression() {
     if (match(TokenType::LParen)) {
         functionRest();
         if (match(TokenType::ThinArrow)) {
-            typeExpression();
+            type.result.push_back(typeExpression());
+            type.params = std::move(inside);
             type.name = "function";
-        } else if (inside == 1 && !named) {
+        } else if (inside.size() == 1 && !named) {
             // A type in parentheses, there so that a '?' can follow: ((int) -> bool)?
-            type.name = only.name;
-            type.nullable = only.nullable;
+            const bool nullable = type.nullable;
+            const int line = type.line, col = type.col;
+            type = std::move(inside[0]);
+            type.nullable = type.nullable || nullable;
+            type.line = line;
+            type.col = col;
         } else {
             throw error(peek(), "expected '->' after the parameter types of a function type");
         }
@@ -326,29 +335,20 @@ TypeAnnotation Parser::typeExpression() {
             advance();
             type.name += "." + advance().text;
         }
-        if (match(TokenType::Lt)) {
-            do {
-                if (!match(TokenType::Star)) typeExpression();  // `list<*>`: any element type
-            } while (match(TokenType::Comma));
-            // `map<string, list<int>>` ends in what the lexer reads as one '>>'.
-            if (check(TokenType::Shr)) {
-                if (pendingTypeClose_) {
-                    pendingTypeClose_ = false;
-                    advance();
-                } else {
-                    pendingTypeClose_ = true;
-                }
-            } else {
-                expect(TokenType::Gt, "'>' to end the type arguments");
-            }
-        }
+        if (type.name.find('.') == std::string::npos && isTypeParam(type.name)) type.typeParam = true;
+        if (match(TokenType::Lt)) type.args = typeArgumentsRest();
         if (check(TokenType::Dot) && peekNext().type == TokenType::LParen) {
             // A function that runs on an object of this type: `Grid.() -> Unit`.
             advance();
             advance();
             functionRest();
             expect(TokenType::ThinArrow, "'->' in a function type");
-            typeExpression();
+            TypeAnnotation receiver = type;
+            receiver.result.clear();
+            type.result.push_back(typeExpression());
+            type.params = std::move(inside);
+            type.receiver.push_back(std::move(receiver));
+            type.args.clear();
             type.name = "function";
         }
     }
@@ -357,6 +357,97 @@ TypeAnnotation Parser::typeExpression() {
         type.nullable = true;
     }
     return type;
+}
+
+// After '<': type arguments up to the '>'. `list<*>` takes any element type, and
+// `map<string, list<int>>` ends in what the lexer reads as one '>>'.
+std::vector<TypeAnnotation> Parser::typeArgumentsRest() {
+    std::vector<TypeAnnotation> args;
+    do {
+        if (check(TokenType::Star)) {
+            TypeAnnotation any;
+            any.line = peek().line;
+            any.col = peek().col;
+            advance();
+            any.star = true;
+            args.push_back(std::move(any));
+        } else {
+            args.push_back(typeExpression());
+        }
+    } while (match(TokenType::Comma));
+    if (check(TokenType::Shr)) {
+        if (pendingTypeClose_) {
+            pendingTypeClose_ = false;
+            advance();
+        } else {
+            pendingTypeClose_ = true;
+        }
+    } else if (pendingTypeClose_) {
+        // The outer list's '>' was the second half of a '>>' already read.
+        pendingTypeClose_ = false;
+    } else {
+        expect(TokenType::Gt, "'>' to end the type arguments");
+    }
+    return args;
+}
+
+// `<T, U : Comparable<U>>`: the type parameters of a class or function. Each is in reach of
+// the bounds after it, so a bound may name it.
+std::vector<TypeParam> Parser::typeParameters() {
+    expect(TokenType::Lt, "'<'");
+    std::vector<TypeParam> params;
+    typeParamScopes_.emplace_back();
+    do {
+        const Token& name = expect(TokenType::Identifier, "a type parameter's name");
+        for (const TypeParam& earlier : params)
+            if (earlier.name == name.text) throw error(name, "type parameter '" + name.text + "' is named twice");
+        TypeParam p;
+        p.line = name.line;
+        p.col = name.col;
+        p.name = name.text;
+        typeParamScopes_.back().push_back(p.name);
+        if (match(TokenType::Colon)) p.bound = typeExpression();
+        params.push_back(std::move(p));
+    } while (match(TokenType::Comma));
+    typeParamScopes_.pop_back();
+    if (check(TokenType::Shr) && pendingTypeClose_) {
+        pendingTypeClose_ = false;
+        advance();
+    } else if (pendingTypeClose_) {
+        pendingTypeClose_ = false;
+    } else {
+        expect(TokenType::Gt, "'>' to end the type parameters");
+    }
+    return params;
+}
+
+bool Parser::isTypeParam(const std::string& name) const {
+    for (const auto& scope : typeParamScopes_)
+        for (const std::string& n : scope)
+            if (n == name) return true;
+    return false;
+}
+
+// `first<int>(xs)`, `Box<string>(null)`, `emptyList<int>()`: type arguments written before a
+// call's arguments. A '<' there could also be a comparison (`a < b`), so the type arguments
+// are tried, and taken only if they read as types and a '(' or a lambda follows them.
+bool Parser::typeArgumentsBeforeCall(std::vector<TypeAnnotation>& into) {
+    if (!check(TokenType::Lt) || peek().newlineBefore) return false;
+    const size_t start = p_;
+    const bool savedClose = pendingTypeClose_;
+    try {
+        advance();
+        std::vector<TypeAnnotation> args = typeArgumentsRest();
+        // A lambda after them only outside the head of an if or while, where `a < b {` is a comparison.
+        if (!pendingTypeClose_ && (check(TokenType::LParen) || (check(TokenType::LBrace) && !headerExpr_)) && !peek().newlineBefore) {
+            into = std::move(args);
+            return true;
+        }
+    } catch (const CompileError&) {
+    }
+    p_ = start;
+    pendingTypeClose_ = savedClose;
+    return false;
 }
 
 // The type after `is` or `as`. There a '?' only makes the type nullable when it is written
@@ -469,6 +560,10 @@ StmtPtr Parser::classDeclaration(bool isEnum, bool isInterface, const Token* ano
         ~InterfaceBody() { flag = saved; }
     } interfaceBody(inInterface_, isInterface);
 
+    // `class Box<T>`: type parameters, in reach of everything that follows.
+    if (check(TokenType::Lt) && !peek().newlineBefore) s->typeParams = typeParameters();
+    TypeParamScope typeParamsInReach(*this, s->typeParams);
+
     // Header: class Name(val a : T, var b : U)
     if (match(TokenType::LParen)) {
         s->hasHeader = true;
@@ -535,6 +630,16 @@ StmtPtr Parser::classDeclaration(bool isEnum, bool isInterface, const Token* ano
                 if (earlier == superName) throw error(super, "'" + superName + "' is listed twice");
             if (superName == s->name) throw error(super, "'" + s->name + "' cannot inherit from itself");
             s->supertypes.push_back(superName);
+            TypeAnnotation superType;
+            superType.line = super.line;
+            superType.col = super.col;
+            superType.name = superName;
+            // `: Comparable<Money>`, `: Box<T>`: what the supertype is given for its type parameters.
+            if (check(TokenType::Lt) && !peek().newlineBefore) {
+                advance();
+                superType.args = typeArgumentsRest();
+            }
+            s->supertypeTypes.push_back(std::move(superType));
 
             // : Super(args) passes arguments to the superclass initializer.
             if (check(TokenType::LParen) && !peek().newlineBefore) {
@@ -918,9 +1023,14 @@ std::unique_ptr<FunctionDecl> Parser::method() {
         return decl;
     }
 
+    // `fun <T> wrap(item : T) : Box<T>`: a method's own type parameters.
+    std::vector<TypeParam> typeParams;
+    if (check(TokenType::Lt)) typeParams = typeParameters();
+    TypeParamScope typeParamsInReach(*this, typeParams);
     const Token& name = expectName("a method name");
     auto decl = functionRest(name.text, start);
     decl->isStatic = isStatic;
+    decl->typeParams = std::move(typeParams);
     return decl;
 }
 
@@ -979,6 +1089,7 @@ std::unique_ptr<FunctionDecl> Parser::functionRest(std::string name, const Token
         TypeAnnotation type = optionalType();
         // A type written on a vararg parameter is that of each argument; the parameter is a list.
         decl->paramTypes.push_back(vararg ? TypeAnnotation() : type);
+        if (vararg) decl->varargType = type;
         if (vararg && check(TokenType::Eq)) throw error(peek(), "a vararg parameter cannot have a default value");
         if (match(TokenType::Eq)) decl->paramDefaults.push_back(expression());
         else decl->paramDefaults.push_back(nullptr);
@@ -1554,10 +1665,29 @@ ExprPtr Parser::postfix() {
         }
     };
     for (;;) {
+        // `first<int>(xs)`: type arguments written before the arguments.
+        std::vector<TypeAnnotation> typeArgs;
+        if ((e->kind == ExprKind::Name || e->kind == ExprKind::Member) && typeArgumentsBeforeCall(typeArgs)) {
+            if (check(TokenType::LBrace)) {
+                // `build<Grid> { ... }`: the lambda is the only argument.
+                const Token& open = advance();
+                auto call = node<CallExpr>(open);
+                call->names.emplace_back();
+                call->spread.push_back(0);
+                call->trailingLambda = true;
+                call->args.push_back(lambdaLiteral(open, lambdaHasParams()));
+                call->callee = std::move(e);
+                call->typeArgs = std::move(typeArgs);
+                labelLambdas(*call);
+                e = std::move(call);
+                continue;
+            }
+        }
         const Token& t = peek();
         if (t.type == TokenType::LParen && !t.newlineBefore) {
             advance();
             auto call = node<CallExpr>(t);
+            call->typeArgs = std::move(typeArgs);
             HeaderGuard inside(*this, false);
             while (!check(TokenType::RParen)) {
                 // `name = value` passes an argument by name.

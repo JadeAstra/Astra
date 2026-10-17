@@ -1,0 +1,48 @@
+// The type checker (astra check, M6.5 part one): types worked out from initial values,
+// assignments, operators and conditions. Each `// check:` names a report expected on its line.
+
+var count = 0
+count = 1
+count = "one"                 // check: 'count' is an int; it cannot be given a string
+var sum = 0
+sum += 1
+sum += 0.5                    // check: 'sum' is an int; this makes it a float
+var ratio = 0.5
+ratio += 1
+var label = "a"
+label += 1
+label = null                  // check: 'label' is a string; it cannot be given null
+var total : number = 0
+total = 2.5
+val typed : string = "x"
+var later = null              // check: 'later' starts as null, so its type must be written (later : Type? = null)
+var maybe : string? = null
+maybe = "set"
+
+// Operators
+val a = 1 + 2
+val b = 1 + 2.5
+val c = "n" + 1
+val d = 1 + true              // check: '+' cannot be used on an int and a bool
+val e = "a" < 1               // check: '<' cannot compare a string with an int
+val f = 3 & 1.5               // check: '&' works on ints; these are an int and a float
+val g = -"x"                  // check: '-' needs a number; this is a string
+val h = !1                    // check: '!' takes a bool; this is an int
+var n = 1
+n = a
+n = b                         // check: 'n' is an int; it cannot be given a float
+
+// Conditions and and/or take only bool
+if (1 > 0) { print("yes") }
+if (count) { print("no") }    // check: the condition of an if must be a bool, not an int
+while ("x") { break }         // check: the condition of a while must be a bool, not a string
+val both = true and 1         // check: 'and' takes bool values; this is an int
+val either = false or true
+val pick = count ? 1 : 2      // check: the condition of '? :' must be a bool, not an int
+
+// What is not known is never wrong
+fun untyped(x) => x
+var free = untyped(1)
+free = "anything"
+val r = 1..10
+val bad = 1.."x"              // check: a range is made of ints; this is a string

@@ -1,5 +1,7 @@
 #include "compiler.h"
 
+#include "checker.h"
+
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -1316,7 +1318,7 @@ private:
     TypeSpec resolveType(const TypeAnnotation& s) {
         TypeSpec type;
         // `any` takes every value; `unit` is what a function that returns nothing is declared as.
-        if (!s.present() || s.name == "any" || s.name == "unit") return type;
+        if (!s.present() || s.typeParam || s.name == "any" || s.name == "unit") return type;
 
         uint8_t id = builtinTypeId(s.name);
         if (id == 0) {
@@ -1620,6 +1622,7 @@ private:
                 for (const Import& earlier : imports_)
                     known = known || (earlier.ns == imported && earlier.alias == s.alias && earlier.all == s.all);
                 if (!known) imports_.push_back(Import{imported, s.alias, s.path, s.all});
+                if (session_.checker != nullptr) session_.checker->addImport(fileKey_, s.alias, s.all, imported);
                 break;
             }
 
@@ -1770,7 +1773,8 @@ private:
         const FunctionDecl& fn = *s.fn;
         line_ = s.line;
         uint8_t type = 0;
-        if (s.receiver != "any") {
+        // `fun <T> T.describe()`: a type parameter as the receiver is for every value, as `any` is.
+        if (s.receiver != "any" && !s.receiverType.typeParam) {
             type = builtinTypeId(s.receiver);
             if (type == 0) {
                 type = kTypeInstance;
@@ -3587,7 +3591,7 @@ private:
 
 // ---- CompilerSession ----
 
-CompilerSession::CompilerSession(VM& vm) : vm_(vm) {
+CompilerSession::CompilerSession(VM& vm, Checker* checker) : checker(checker), vm_(vm) {
     auto builtins = std::make_unique<Namespace>();
     builtins->directory = "<builtin>";
     builtins->library = "<builtin>";
@@ -3720,7 +3724,9 @@ FunctionProto* CompilerSession::compileUnit(const std::string& source, const std
     Namespace* ns = into != nullptr ? into : namespaceOf(directory);
     predeclare(*ns, fileKey, name, statements, shell);
     ModuleCompiler compiler(*this, name, directory == "<builtin>" ? "" : directory, ns, fileKey);
-    return compiler.compile(statements, shell);
+    FunctionProto* proto = compiler.compile(statements, shell);
+    if (checker != nullptr) checker->addUnit(std::move(statements), name, fileKey, ns, directory == "<builtin>");
+    return proto;
 }
 
 // The script named in `Worker("physics.astra")`, looked for next to the file that names it.
@@ -3893,6 +3899,8 @@ void CompilerSession::loadFolder(const std::string& folder, const std::string& d
             compilers[i]->endScript(rest);
             program.modules[static_cast<size_t>(units[i].index)] = rest.proto;
         }
+        if (checker != nullptr)
+            for (Unit& unit : units) checker->addUnit(std::move(unit.statements), unit.name, unit.key, ns, false);
     } catch (...) {
         for (const Unit& unit : units) {
             modules_.erase(unit.key);

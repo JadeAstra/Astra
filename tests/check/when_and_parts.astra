@@ -1,0 +1,37 @@
+// A when over an enum or a bool covers every kind or has an else (L21); taking a value apart
+// gives its parts their types.
+
+enum Way { up, down, left }
+
+fun describe(w : Way) : string => when (w) {
+  Way.up -> "up"
+  Way.down -> "down"
+  Way.left -> "left"
+}
+fun partial(w : Way) : string => when (w) {   // check: this when does not cover Way.left; add it, or an else branch
+  Way.up -> "up"
+  Way.down -> "down"
+}
+fun withElse(w : Way) : string => when (w) {
+  Way.up -> "up"
+  else -> "other"
+}
+fun maybe(w : Way?) : string => when (w) {    // check: this when does not cover null; add it, or an else branch
+  Way.up -> "up"
+  Way.down -> "down"
+  Way.left -> "left"
+}
+fun yesNo(b : bool) : int => when (b) {       // check: this when does not cover false; add it, or an else branch
+  true -> 1
+}
+
+// Destructuring
+data Point(val x : int, val y : string)
+val (px, py) = Point(1, "a")
+val px2 : int = px
+val py2 : int = py                            // check: 'py2' is an int; it cannot start as a string
+val points = [Point(1, "a"), Point(2, "b")]
+for ((x, y) in points) {
+  val sum : int = x + 1
+  val label : int = y                         // check: 'label' is an int; it cannot start as a string
+}

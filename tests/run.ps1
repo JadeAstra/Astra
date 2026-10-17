@@ -122,6 +122,40 @@ foreach ($test in Get-ChildItem (Join-Path $PSScriptRoot '*.astra') | Sort-Objec
     }
 }
 
+# The type checker (M6.5): `astra check` on each tests\check\*.astra. A line ending in
+# `// check: <message>` must be reported with that message, on that line; nothing else may
+# be reported.
+foreach ($test in Get-ChildItem (Join-Path $PSScriptRoot 'check\*.astra') | Sort-Object Name) {
+    $wanted = @{}
+    $lineNumber = 0
+    foreach ($line in [IO.File]::ReadAllLines($test.FullName, [Text.Encoding]::UTF8)) {
+        $lineNumber++
+        if ($line -match '// check: (.*)$') { $wanted["$($lineNumber): $($Matches[1].TrimEnd())"] = $true }
+    }
+    $run = Invoke-Astra @('check', $test.FullName)
+    $problems = @()
+    $found = @{}
+    foreach ($line in $run.Lines) {
+        if ($line -match '^[^:]+:(\d+):\d+: error: (.*)$') {
+            $key = "$($Matches[1]): $($Matches[2].TrimEnd())"
+            $found[$key] = $true
+            if (-not $wanted.ContainsKey($key)) { $problems += "unexpected: $key" }
+        } elseif ($line.Trim()) {
+            $problems += "unexpected output: $line"
+        }
+    }
+    foreach ($key in $wanted.Keys) {
+        if (-not $found.ContainsKey($key)) { $problems += "not reported: $key" }
+    }
+    $exitCode = if ($wanted.Count -gt 0) { 65 } else { 0 }
+    if ($run.Code -ne $exitCode) { $problems += "exit code $($run.Code), expected $exitCode; stderr: $($run.Error.Trim())" }
+    if ($problems.Count -eq 0) {
+        $passed++
+    } else {
+        $failures += "$($test.Name) [check]`n    " + ($problems -join "`n    ")
+    }
+}
+
 # The --icon option of `astra build`: a program built with an icon runs as before, and
 # Windows finds the icon in the file. The icon is one 32 pixel picture in a single colour.
 $iconColor = 220, 30, 40

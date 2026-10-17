@@ -1,0 +1,43 @@
+// What tests show about a value: after `x != null`, `x is Box`, an early return, or giving
+// it a value, a local has the narrower type for as long as that holds.
+
+class Box(val item : int) {
+  fun twice() : int => item * 2
+}
+class Crate(val items : list<Box>)
+
+fun first(maybe : Box?) : int {
+  if (maybe == null) { return 0 }
+  return maybe.item
+}
+fun second(maybe : Box?) : int {
+  if (maybe != null and maybe.item > 0) { return maybe.twice() }
+  return maybe.item           // check: a Box? may be null, so .item cannot be used on it; use ?.item, or check it first
+}
+fun third(maybe : Box?) : int {
+  val box = maybe ?: return 0
+  return box.item
+}
+fun fourth(maybe : Box?) : int => maybe == null ? 0 : maybe.item
+fun fifth(value : any) : int {
+  if (value is Box) { return value.item }
+  if (value !is Crate) { return 0 }
+  return value.items.size
+}
+fun sixth(maybe : Box?) : int {
+  var box = maybe
+  box = Box(1)
+  return box.item
+}
+fun seventh(maybe : Box?) : int {
+  if (maybe == null) { throw Error("none") }
+  return maybe.item
+}
+fun eighth(maybe : Box?) : int {
+  while (maybe != null) { return maybe.item }
+  return 0
+}
+fun ninth(maybe : Box?) : int => when {
+  maybe == null -> 0
+  else -> 1
+}

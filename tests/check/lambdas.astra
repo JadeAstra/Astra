@@ -1,0 +1,36 @@
+// Lambdas take their parameter types from where they are passed; a lambda passed as
+// `Type.() -> R` runs on an object of that type, whose members its bare names reach.
+
+fun apply(n : int, f : (int) -> int) : int => f(n)
+apply(3) { it * 2 }
+apply(3) { it + "x" }               // check: this lambda gives an int; it cannot end with a string
+apply(3) { x -> x * 2 }
+fun each(items : list<string>, action : (string) -> unit) { }
+each(["a"]) { print(it.length) }
+each(["a"]) { s -> val n : int = s }   // check: 'n' is an int; it cannot start as a string
+
+fun <T, R> transform(items : list<T>, f : (T) -> R) : list<R> => []
+val lengths : list<int> = transform(["a", "bb"]) { it.length }
+val wrongs : list<string> = transform(["a", "bb"]) { it.length }   // check: 'wrongs' is a list<string>; it cannot start as a list<int>
+
+// A lambda that runs on an object
+class Grid {
+  var gap : int = 0
+  fun row(label : string) { }
+}
+fun grid(build : Grid.() -> unit) : Grid => Grid()
+grid {
+  gap = 4
+  gap = "wide"                      // check: 'gap' is an int; it cannot be given a string
+  row("first")
+  row(1)                            // check: row(...) takes a string for 'label', not an int
+}
+
+// Where the type a lambda is passed as cannot be told, its bare names are not checked
+fun untyped(block) { }
+untyped { anything = 1 }
+
+// A function value with a written type
+val double : (int) -> int = { it * 2 }
+val bad : (int) -> int = { it + "!" }   // check: this lambda gives an int; it cannot end with a string
+double(2)

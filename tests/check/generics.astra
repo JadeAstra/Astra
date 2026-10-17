@@ -1,0 +1,51 @@
+// Generic classes and functions: type parameters, bounds, type arguments worked out from
+// what is given or written at the call, and members seen through a generic class.
+
+class Box<T>(val item : T) {
+  fun get() : T => item
+  fun <R> map(f : (T) -> R) : Box<R> => Box(f(item))
+}
+
+val ints = Box(3)
+val n : int = ints.item
+val s : string = ints.item          // check: 's' is a string; it cannot start as an int
+val g : int = ints.get()
+val named = Box<string>("x")
+val wrong = Box<string>(1)          // check: Box(...) takes a string for 'item', not an int
+val mapped = ints.map { it * 2.5 }
+val f : float = mapped.item
+val bad : int = mapped.item         // check: 'bad' is an int; it cannot start as a float
+
+fun <T> first(items : list<T>) : T => items[0]
+val one : int = first([1, 2])
+val text : string = first([1, 2])   // check: 'text' is a string; it cannot start as an int
+val explicit = first<string>(["a"])
+first<string>([1])                  // check: first(...) takes a list<string> for 'items', not a list<int>
+
+fun <T> pair(a : T, b : T) : list<T> => [a, b]
+val both : list<int> = pair(1, 2)
+
+// A subclass that fixes its superclass's type parameter
+class IntBox(value : int) : Box<int>(value)
+val ib = IntBox(4)
+val i2 : int = ib.item
+val s2 : string = ib.get()          // check: 's2' is a string; it cannot start as an int
+val asBox : Box<int> = ib
+val asOther : Box<string> = ib      // check: 'asOther' is a Box<string>; it cannot start as an IntBox
+
+// Bounds: members of the bound can be used on the type parameter
+interface Named {
+  fun name() : string
+}
+class Person(val who : string) : Named {
+  override fun name() : string => who
+}
+fun <T : Named> greet(x : T) : string => "Hi " + x.name()
+greet(Person("Ann"))
+
+// Generic extension functions
+fun <T> list<T>.second() : T => this[1]
+val sec : int = [1, 2, 3].second()
+val sec2 : string = [1, 2, 3].second()   // check: 'sec2' is a string; it cannot start as an int
+fun <T> T.twice() : list<T> => [this, this]
+val tw : list<string> = "a".twice()

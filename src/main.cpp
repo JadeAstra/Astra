@@ -9,6 +9,7 @@
 #include <string>
 #include <vector>
 
+#include "checker.h"
 #include "compiler.h"
 #include "vm.h"
 
@@ -44,6 +45,7 @@ const char* const kUsage =
     "                                        compile it into a program of its own;\n"
     "                                        --windowed gives it no console window,\n"
     "                                        --icon gives it an icon\n"
+    "  astra check <file>                    check a source file's types, running nothing\n"
     "  astra dis <file>                      list the bytecode of a source or bytecode file\n"
     "  astra --version\n"
     "  astra --help\n";
@@ -336,6 +338,30 @@ int loadProgram(const std::string& path, VM& vm, CompilerSession*& session, Prog
     return 0;
 }
 
+// `astra check`: compiles the file and what it imports, then checks their types (M6.5).
+// Each problem is printed as a compile error is; nothing runs.
+int checkFile(const std::string& path) {
+    std::string data;
+    if (!readFile(path, data)) {
+        std::cerr << "astra: cannot read '" << path << "'\n";
+        return kExitNoInput;
+    }
+    VM vm;
+    Checker checker;
+    CompilerSession session(vm, &checker);
+    session.libraryPaths = libraryPaths();
+    try {
+        session.compileFile(path);
+    } catch (const CompileError& e) {
+        std::cerr << e.format() << "\n";
+        return kExitCompileError;
+    }
+    checker.run();
+    for (const CheckDiagnostic& d : checker.diagnostics)
+        std::cout << d.file << ":" << d.line << ":" << d.col << ": error: " << d.message << "\n";
+    return checker.diagnostics.empty() ? 0 : kExitCompileError;
+}
+
 int runFile(const std::string& path, std::vector<std::string> scriptArgs) {
     VM vm;
     vm.scriptArgs = std::move(scriptArgs);
@@ -602,6 +628,14 @@ int dispatch(const std::vector<std::string>& args) {
         // Asking for an .exe by name is asking for a program.
         if (std::filesystem::path(output).extension() == ".exe") asExecutable = true;
         return buildFile(input, output, asExecutable, windowed, icon);
+    }
+
+    if (command == "check") {
+        if (args.size() != 2) {
+            std::cerr << "astra: usage: astra check <file>\n";
+            return kExitUsage;
+        }
+        return checkFile(args[1]);
     }
 
     if (command == "dis") {

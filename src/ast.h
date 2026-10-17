@@ -33,12 +33,36 @@ using ExprPtr = std::unique_ptr<Expr>;
 struct Stmt;
 using StmtPtr = std::unique_ptr<Stmt>;
 
-// A written type, as in `x : int` or `x : Shape?`. Its position is that of the type name.
+// A written type, as in `x : int`, `x : Shape?`, `list<string>` or `(int) -> bool`. Its
+// position is that of the type name. When the program runs only `name` and `nullable` are
+// looked at; the type checker reads the rest.
 struct TypeAnnotation : Node {
-    std::string name;       // empty when no type was written
+    std::string name;       // empty when no type was written; "function" for a function type
     bool nullable = false;  // ends in '?'
 
-    bool present() const { return !name.empty(); }
+    // `list<int>`, `map<string, Shape>`: the type arguments. `list<*>` has one star.
+    std::vector<TypeAnnotation> args;
+    bool star = false;  // this is the `*` of `list<*>`: any type there
+
+    // A function type, `(int, string) -> bool` or `Grid.() -> unit`: `params` are the parameter
+    // types, `result` the result type, and `receiver` the type of the object it runs on (absent
+    // when there is none).
+    std::vector<TypeAnnotation> params;
+    std::vector<TypeAnnotation> result;    // one when it is a function type, otherwise empty
+    std::vector<TypeAnnotation> receiver;  // one for `Grid.() -> unit`, otherwise empty
+
+    // The name is a type parameter of the class or function around it (`T` in `class Box<T>`):
+    // any value fits it when the program runs.
+    bool typeParam = false;
+
+    bool present() const { return !name.empty() || star; }
+    bool isFunction() const { return !result.empty(); }
+};
+
+// One type parameter: `T` in `class Box<T>`, or `T : Comparable<T>` with a bound.
+struct TypeParam : Node {
+    std::string name;
+    TypeAnnotation bound;  // absent when none is written
 };
 
 // `fun name(a : type, b = value) : returnType { ... }`. Types and default values are optional.
@@ -52,6 +76,7 @@ inline uint8_t accessWord(const std::string& word) {
 
 struct FunctionDecl : Node {
     std::string name;
+    std::vector<TypeParam> typeParams;  // `fun <T> first(items : list<T>) : T`
     std::vector<std::string> params;
     std::vector<TypeAnnotation> paramTypes;  // one per parameter
     std::vector<ExprPtr> paramDefaults;      // one per parameter; null when it has no default value
@@ -62,6 +87,7 @@ struct FunctionDecl : Node {
 
     // `vararg items`: the parameter that gathers any number of arguments into a list, or -1.
     int varargIndex = -1;
+    TypeAnnotation varargType;  // `vararg items : int`: the type of each argument
 
     // In an interface: `fun name(params)` with no body, for the implementing class to supply.
     bool isAbstract = false;
@@ -173,6 +199,9 @@ struct CallExpr : Expr {
 
     // The last argument is a lambda written after the ')': `button("OK") { ... }`.
     bool trailingLambda = false;
+
+    // Type arguments written at the call: `emptyList<int>()`, `Box<string>(null)`.
+    std::vector<TypeAnnotation> typeArgs;
 
     // One per argument: `*list` passes each element of the list as an argument of its own.
     std::vector<char> spread;
@@ -420,6 +449,7 @@ struct FunctionStmt : Stmt {
     // named, a class or a built-in type, for every value of that type; `this` is the value.
     std::string receiver;
     bool receiverNullable = false;  // `fun string?.orEmpty()`: null takes it too
+    TypeAnnotation receiverType;    // the receiver in full, type arguments included: `list<T>`
     FunctionStmt() : Stmt(StmtKind::Function) {}
 };
 
@@ -485,6 +515,10 @@ struct ClassStmt : Stmt {
     // written. Which is which is settled when the program runs, except that only a superclass
     // can be given arguments. `superName` is the first of them.
     std::vector<std::string> supertypes;
+    std::vector<TypeAnnotation> supertypeTypes;  // one per supertype, with its type arguments
+
+    // `class Box<T>`: the type parameters, in reach of the header, the supertypes and the body.
+    std::vector<TypeParam> typeParams;
 
     bool hasSuper = false;
     std::string superName;

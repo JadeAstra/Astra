@@ -1,0 +1,57 @@
+// Calls to declared functions, methods and constructors: how many arguments, their names,
+// defaults, varargs, trailing lambdas, and their types; results worked out from bodies.
+
+fun add(a : int, b : int) : int => a + b
+fun greet(name : string, greeting = "Hello") => greeting + ", " + name
+fun total(vararg ns : int) : int => 0
+fun later(delay : int, action : () -> unit) { }
+fun repeat(times : int, action) { }
+
+val x : int = add(1, 2)
+add(1, "two")                 // check: add(...) takes an int for 'b', not a string
+add(1)                        // check: add(...) needs a value for 'b'
+add(1, 2, 3)                  // check: add(...) takes 2 arguments, not more
+add(a = 1, b = 2)
+add(a = 1, c = 2)             // check: add(...) has no parameter 'c'
+add(1, a = 2)                 // check: 'a' is given twice
+greet("Ann")
+greet("Ann", greeting = "Hi")
+greet(greeting = "Hi")        // check: greet(...) needs a value for 'name'
+total()
+total(1, 2, 3)
+total(1, "2")                 // check: total(...) takes an int for 'ns', not a string
+later(10) { print("done") }
+repeat(3) { print(it) }
+
+// A result worked out from the body
+fun half(n : int) => n / 2.0
+var h = 1
+h = half(4)                   // check: 'h' is an int; it cannot be given a float
+fun nothingBack(n : int) { print(n) }
+
+// Returns against a written result
+fun name(n : int) : string {
+  if (n > 0) { return "positive" }
+  return n                    // check: this function gives a string; it cannot return an int
+}
+
+// Constructors: from a header, or from init
+class Point(val x : int, val y : int = 0)
+Point(1)
+Point(1, 2)
+Point("1")                    // check: Point(...) takes an int for 'x', not a string
+Point()                       // check: Point(...) needs a value for 'x'
+Point(y = 2, x = 1)
+class Account {
+  val owner : string
+  fun init(owner : string) { this.owner = owner }
+}
+Account("eve")
+Account(1)                    // check: Account(...) takes a string for 'owner', not an int
+
+// Function values
+val twice = fun(n : int) : int => n * 2
+twice(2)
+twice("x")                    // check: 'twice' takes an int here, not a string
+val number = 5
+number()                      // check: 'number' is an int, which cannot be called

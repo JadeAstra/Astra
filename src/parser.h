@@ -57,6 +57,22 @@ private:
     bool tightNullable_ = false;     // after `is` and `as`, the '?' of a nullable type must touch the type
     bool adjacentToPrevious() const;
     bool pendingTypeClose_ = false;  // half of a '>>' that closed an inner type argument list
+    std::vector<TypeAnnotation> typeArgumentsRest();  // after '<': the type arguments and '>'
+    std::vector<TypeParam> typeParameters();            // `<T, U : Bound>`; the '<' is next
+
+    // The type parameters in reach, innermost last: a written type naming one is marked.
+    // A class or function puts its type parameters in reach for as long as it lasts.
+    std::vector<std::vector<std::string>> typeParamScopes_;
+    struct TypeParamScope {
+        Parser& parser;
+        TypeParamScope(Parser& p, const std::vector<TypeParam>& params) : parser(p) {
+            parser.typeParamScopes_.emplace_back();
+            for (const TypeParam& t : params) parser.typeParamScopes_.back().push_back(t.name);
+        }
+        ~TypeParamScope() { parser.typeParamScopes_.pop_back(); }
+    };
+    bool isTypeParam(const std::string& name) const;
+    bool typeArgumentsBeforeCall(std::vector<TypeAnnotation>& into);  // `f<int>(`: reads them if so
     std::unique_ptr<VarStmt> varDeclaration(bool isField);
     std::vector<std::string> destructuringPattern();
     void fieldAccessors(VarStmt& field);

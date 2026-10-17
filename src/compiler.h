@@ -14,6 +14,7 @@
 namespace astra {
 
 class VM;
+class Checker;
 
 // A name declared at the top level of a file.
 struct GlobalName {
@@ -42,7 +43,10 @@ bool readFile(const std::string& path, std::string& out);
 class CompilerSession {
 public:
     // The VM supplies interned strings for the constants; it must outlive the program.
-    explicit CompilerSession(VM& vm);
+    // With a checker, every file compiled is handed to it as well (`astra check`).
+    explicit CompilerSession(VM& vm, Checker* checker = nullptr);
+
+    Checker* const checker;
 
     Program program;
 

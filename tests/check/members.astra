@@ -1,0 +1,70 @@
+// Members of known classes: fields, properties, methods, statics, enums and objects; members
+// that do not exist; null and `any`.
+
+class Box(val item : int) {
+  var label : string = "box"
+  fun twice() : int => item * 2
+  get doubled() => item * 2
+  static val empty = 0
+  static fun make(n : int) => Box(n)
+}
+
+val box = Box(3)
+val n : int = box.item
+box.label = "crate"
+box.label = 4                 // check: 'label' is a string; it cannot be given an int
+box.twice()
+box.doubled
+box.missing                   // check: Box has no member 'missing'
+box.nope()                    // check: Box has no method 'nope'
+box.toString()
+Box.empty
+Box.make(1)
+Box.make("1")                 // check: Box.make(...) takes an int for 'n', not a string
+
+// Subclasses see what is above them
+class Animal(val name : string) {
+  fun speak() : string => name
+}
+class Dog(name : string) : Animal(name)
+val dog = Dog("Rex")
+val said : string = dog.speak()
+dog.bark()                    // check: Dog has no method 'bark'
+val pet : Animal = dog
+val other : Dog = Animal("x")     // check: 'other' is a Dog; it cannot start as an Animal
+
+// Null
+var spare : Box? = null
+spare.item                    // check: a Box? may be null, so .item cannot be used on it; use ?.item, or check it first
+spare.twice()                 // check: a Box? may be null, so .twice() cannot be called on it; use ?.twice(), or check it first
+val safe = spare?.item
+var count : int = 0
+count = spare?.item           // check: 'count' is an int; it cannot be given an int?
+count = spare?.item ?: 0
+count = spare!!.item
+if (spare != null) { count = spare.item }
+if (spare == null) { print("none") } else { count = spare.item }
+
+// any needs a cast or a test first
+var thing : any = box
+thing.item                    // check: 'item' cannot be used on a value of type any; cast it first (x as Type) or test it (if (x is Type))
+(thing as Box).item
+if (thing is Box) { count = thing.item }
+
+// Enums and objects
+enum Way { up, down }
+val w = Way.up
+w.ordinal
+w.name
+object Registry {
+  val names : list<string> = []
+  fun add(name : string) { }
+}
+Registry.add("x")
+Registry.add(1)               // check: Registry.add(...) takes a string for 'name', not an int
+
+// A class that declares no fields stays open: its members are made by assignment
+class Loose {
+  fun init() { this.anything = 1 }
+}
+Loose().whatever
