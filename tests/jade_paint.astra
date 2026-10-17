@@ -111,7 +111,30 @@ same("the same style: the kept picture", styled.paints, 1)
 live(styledComponent, handed.copy(framed = true))
 same("another style: painted again", styled.paints, 2)
 same("and it saw the new one", styled.seen.framed, true)
-print("PaintStyleTest:", checks, "checks,", failed)   // expect: PaintStyleTest: 15 checks, []
+
+// tooBigToKeepStillPaintsInItsOwnStyle: past the size a picture is kept for, the content
+// is painted live, and in its own style, as when it is kept.
+val bigProbe = Probe()
+val big = Component(bigProbe)
+big.foreground = Color.blue
+big.layout(3000, 3000)
+big.paintInto(BufferedImage(40, 20, BufferedImage.typeIntArgb).canvas().withStyle(handed).sub(0, 0, 3000, 3000))
+same("too big to keep: its own foreground", bigProbe.seen.foreground, Color.blue)
+
+// theOverlayIsPaintedInItsOwnStyleToo: the caret and selection are drawn live over the kept
+// picture, in the component's style, not its parent's.
+class OverlayProbe : Content, OverlayContent {
+  var seen = null
+  override fun sizes() => Sizes(Dimension(10, 10), Dimension(40, 20), Dimension(400, 200))
+  override fun paint(canvas) {}
+  override fun paintOverlay(canvas) { seen = canvas.style }
+}
+val overlayProbe = OverlayProbe()
+val overlaid = Component(overlayProbe)
+overlaid.foreground = Color.blue
+live(overlaid, handed)
+same("the overlay over a kept picture: its own foreground", overlayProbe.seen.foreground, Color.blue)
+print("PaintStyleTest:", checks, "checks,", failed)   // expect: PaintStyleTest: 17 checks, []
 
 // -- PaintCacheTest --
 
@@ -184,7 +207,7 @@ fun aSizeChangeRepaintsEvenAtTheSameGeneration() {
   same("wider: painted again", ct.paints, 2)
 }
 aSizeChangeRepaintsEvenAtTheSameGeneration()
-print("PaintCacheTest:", checks, "checks,", failed)   // expect: PaintCacheTest: 23 checks, []
+print("PaintCacheTest:", checks, "checks,", failed)   // expect: PaintCacheTest: 25 checks, []
 
 // -- RenderIntoTest --
 
@@ -210,7 +233,7 @@ fun reusingABufferDoesNotGhostThePreviousFrame() {
   yes("the picture used again is a new render of the new content", pixels(fresh) == pixels(buf))
 }
 reusingABufferDoesNotGhostThePreviousFrame()
-print("RenderIntoTest:", checks, "checks,", failed)   // expect: RenderIntoTest: 26 checks, []
+print("RenderIntoTest:", checks, "checks,", failed)   // expect: RenderIntoTest: 28 checks, []
 
 // -- More --
 

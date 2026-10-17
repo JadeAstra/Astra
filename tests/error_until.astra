@@ -1,0 +1,4 @@
+// Kotlin's `until` is not a keyword: a range that stops before its end is a..<b.
+print("never runs")
+for i in 0 until 3 { print(i) }
+// expect compile error: error_until.astra:3:12: error: 'until' is not a keyword; a range that stops before its end is written a..<b

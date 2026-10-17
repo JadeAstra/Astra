@@ -37,7 +37,7 @@ struct Namespace {
 // Reads a whole file; returns false if it cannot be opened. Strips a UTF-8 byte order mark.
 bool readFile(const std::string& path, std::string& out);
 
-// Compiles source files into one Program. A session outlives a single compile so the REPL
+// Compiles source files into one Program. A session outlives a single compile so the shell
 // can keep adding code that sees earlier globals. All of its entry points throw CompileError.
 class CompilerSession {
 public:
@@ -52,10 +52,10 @@ public:
     // Compiles a file and everything it imports. Returns the entry module index.
     int compileFile(const std::string& path);
 
-    // Compiles source text as a new module. In REPL mode a trailing expression becomes the
+    // Compiles source text as a new module. In shell mode a trailing expression becomes the
     // module's result.
     int compileSource(const std::string& source, const std::string& name, const std::string& baseDirectory,
-                      bool repl = false);
+                      bool shell = false);
 
 private:
     friend class ModuleCompiler;
@@ -82,13 +82,13 @@ private:
     Namespace* namespaceOf(const std::string& directory);
     int newSlot(const std::string& name);
     void predeclare(Namespace& ns, const std::string& fileKey, const std::string& file,
-                    const std::vector<StmtPtr>& statements, bool repl);
+                    const std::vector<StmtPtr>& statements, bool shell);
     void loadFolder(const std::string& folder, const std::string& displayPath, const std::string& file, const Node& at,
                     std::vector<int>& modules);
 
     // `into`: the namespace the file's names go in, if not that of its folder.
     FunctionProto* compileUnit(const std::string& source, const std::string& name, const std::string& directory,
-                               const std::string& fileKey, bool repl, Namespace* into = nullptr);
+                               const std::string& fileKey, bool shell, Namespace* into = nullptr);
     // The script of a worker, compiled into the program. Returns its module index.
     int loadWorker(const std::string& path, const std::string& fromDirectory, const std::string& file, const Node& at);
     int loadModule(const std::string& path, const std::string& displayPath, const std::string& file, const Node* at);

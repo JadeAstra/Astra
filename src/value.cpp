@@ -1,6 +1,7 @@
 #include "value.h"
 
 #include <mutex>
+#include <new>
 
 #include <charconv>
 #include <cmath>
@@ -212,8 +213,10 @@ void Table::grow() {
     uint32_t oldCapacity = capacity_;
     Entry* old = entries_;
 
+    // The new entries first: if there is no memory for them, the table is left as it was.
+    Entry* fresh = new Entry[oldCapacity == 0 ? 4 : oldCapacity * 2];
     capacity_ = oldCapacity == 0 ? 4 : oldCapacity * 2;
-    entries_ = new Entry[capacity_];
+    entries_ = fresh;
     count_ = 0;
 
     for (uint32_t i = 0; i < oldCapacity; i++)
@@ -281,8 +284,15 @@ void ValueMap::set(const Value& key, const Value& value) {
         entries_[it->second].value = value;
         return;
     }
-    index_.emplace(key, static_cast<uint32_t>(entries_.size()));
+    // The entry first, then its place in the index; if the index cannot grow, the entry goes
+    // again, so that the two never disagree.
     entries_.push_back(Entry{key, value, true});
+    try {
+        index_.emplace(key, static_cast<uint32_t>(entries_.size() - 1));
+    } catch (...) {
+        entries_.pop_back();
+        throw;
+    }
 }
 
 bool ValueMap::remove(const Value& key) {
@@ -292,17 +302,23 @@ bool ValueMap::remove(const Value& key) {
     entries_[it->second] = Entry{};
     index_.erase(it);
 
-    // Squeeze out removed entries once they outnumber the live ones.
+    // Squeeze out removed entries once they outnumber the live ones. Built aside and then
+    // swapped in; without the memory to build it, the map simply stays as it is.
     if (entries_.size() > 32 && entries_.size() > index_.size() * 2) {
-        std::vector<Entry> compacted;
-        compacted.reserve(index_.size());
-        index_.clear();
-        for (const Entry& e : entries_) {
-            if (!e.live) continue;
-            index_.emplace(e.key, static_cast<uint32_t>(compacted.size()));
-            compacted.push_back(e);
+        try {
+            std::vector<Entry> compacted;
+            compacted.reserve(index_.size());
+            decltype(index_) rebuilt;
+            rebuilt.reserve(index_.size());
+            for (const Entry& e : entries_) {
+                if (!e.live) continue;
+                rebuilt.emplace(e.key, static_cast<uint32_t>(compacted.size()));
+                compacted.push_back(e);
+            }
+            entries_ = std::move(compacted);
+            index_ = std::move(rebuilt);
+        } catch (const std::bad_alloc&) {
         }
-        entries_ = std::move(compacted);
     }
     return true;
 }

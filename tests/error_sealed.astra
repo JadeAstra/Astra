@@ -1,0 +1,4 @@
+// `sealed` is not a keyword: a fixed set of kinds is an `enum class`.
+print("never runs")
+sealed class Event {}
+// expect compile error: error_sealed.astra:3:1: error: 'sealed' is not a keyword; a fixed set of kinds is an 'enum class', and an 'abstract class' can stand in for one

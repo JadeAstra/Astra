@@ -1,4 +1,4 @@
-// The `astra` command: runs, compiles and disassembles Astra programs, and hosts the REPL.
+// The `astra` command: runs, compiles and disassembles Astra programs, and hosts the shell.
 
 #include <cstdio>
 #include <cstring>
@@ -36,7 +36,7 @@ const char* const kUsage =
     "Astra " ASTRA_VERSION " - an object-oriented scripting language\n"
     "\n"
     "Usage:\n"
-    "  astra                                 start the interactive prompt\n"
+    "  astra                                 start the interactive shell\n"
     "  astra <file> [args...]                run a source (.astra) or bytecode (.astc) file\n"
     "  astra run <file> [args...]            same as above\n"
     "  astra build <file> [-o <out.astc>]    compile a source file to a bytecode file\n"
@@ -502,7 +502,7 @@ int disassembleFile(const std::string& path) {
 
 bool isBlank(const std::string& s) { return s.find_first_not_of(" \t\r\n") == std::string::npos; }
 
-int repl() {
+int shell() {
     VM vm;
     CompilerSession session(vm);
     session.libraryPaths = libraryPaths();
@@ -528,7 +528,7 @@ int repl() {
 
         int module;
         try {
-            module = session.compileSource(buffer, "<repl>", ".", true);
+            module = session.compileSource(buffer, "<shell>", ".", true);
         } catch (const CompileError& e) {
             // Input that merely stops too early continues on the next line; a blank line gives up.
             if (e.atEof && !isBlank(line)) continue;
@@ -554,7 +554,7 @@ int repl() {
 }
 
 int dispatch(const std::vector<std::string>& args) {
-    if (args.empty()) return repl();
+    if (args.empty()) return shell();
 
     const std::string& command = args[0];
     if (command == "--help" || command == "-h" || command == "help") {
@@ -565,7 +565,7 @@ int dispatch(const std::vector<std::string>& args) {
         std::cout << "astra " ASTRA_VERSION "\n";
         return 0;
     }
-    if (command == "repl") return repl();
+    if (command == "shell") return shell();
 
     if (command == "run") {
         if (args.size() < 2) {

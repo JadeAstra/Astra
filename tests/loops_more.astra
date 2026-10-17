@@ -73,7 +73,7 @@ again@ do {
 print(tries)                                // expect: 3
 
 // downTo counts down to its end; step takes every nth.
-print((5 downTo 1).toList(), (1..10 step 3).toList(), (10 downTo 1 step 4).toList(), (0 until 10 step 5).toList(), (0..<7 step 2).toList())
+print((5 downTo 1).toList(), (1..10 step 3).toList(), (10 downTo 1 step 4).toList(), (0..<10 step 5).toList(), (0..<7 step 2).toList())
 // expect: [5, 4, 3, 2, 1] [1, 4, 7, 10] [10, 6, 2] [0, 5] [0, 2, 4, 6]
 var total = 0
 for i in 10 downTo 0 step 5 { total = total * 100 + i }

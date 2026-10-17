@@ -6,7 +6,7 @@
 //
 // This is the version with no threads at all. bounce_parallel.astra is this with one line
 // changed, so that every core moves balls; bounce_threads.astra moves them on background
-// threads, and bounce_workers.astra in workers.
+// threads, bounce_flows.astra in flows on the main thread, and bounce_workers.astra in workers.
 import Jade.*
 
 val startingBalls = 50000

@@ -235,7 +235,7 @@ public:
 
     // ---- Running programs ----
 
-    // Makes `program` current. May be called again after the program has grown (REPL).
+    // Makes `program` current. May be called again after the program has grown (shell).
     void load(Program& program);
 
     // Runs a module's top-level code and returns its result. Throws AstraThrow or AstraExit.
@@ -258,6 +258,8 @@ public:
     AstraThrow runtimeError(const std::string& message);
     // An error of a class the standard library declares (IOException, say), by its name.
     AstraThrow errorOf(const char* className, const std::string& message);
+    AstraThrow outOfMemory();
+    void checkRoomFor(uint64_t bytes);
     std::string stringify(Value v);  // as print() shows it
     std::string repr(Value v);       // with strings quoted
     std::string typeName(Value v) const;

@@ -136,12 +136,9 @@ class Component {
     val h = canvas.height
     val st = styleIn(canvas.style)
     if (!(canvas is NativeCanvas) or !cacheable() or w <= 0 or h <= 0) {
-      val c = st == canvas.style ? canvas : canvas.sub(0, 0, w, h, st)
-      try {
+      inStyle(canvas, st) { c ->
         content.paint(c)
         if (content is OverlayContent) { content.paintOverlay(c) }   // caret and selection, live
-      } finally {
-        if (c !== canvas) { c.dispose() }
       }
       return
     }
@@ -152,8 +149,10 @@ class Component {
     if (pw * ph > maxCachePixels) {
       cache = null                       // one kept from when it was smaller
       cacheDirty = true
-      content.paint(canvas)
-      if (content is OverlayContent) { content.paintOverlay(canvas) }
+      inStyle(canvas, st) { c ->
+        content.paint(c)
+        if (content is OverlayContent) { content.paintOverlay(c) }
+      }
       return
     }
     val gen = Jade.renderGeneration
@@ -172,7 +171,21 @@ class Component {
       cacheDirty = false
     }
     canvas.drawImage(cache, 0, 0)        // pixel for pixel: it was painted at the canvas's own scale
-    if (content is OverlayContent) { content.paintOverlay(canvas) }   // never kept
+    if (content is OverlayContent) {     // never kept
+      inStyle(canvas, st) { c -> content.paintOverlay(c) }
+    }
+  }
+
+  // Draws on `canvas` in the style `st`: on the canvas itself when it already has that
+  // style, else on one over the same pixels that has. However the content is painted, kept
+  // or live, and its overlay too, it sees its own style and not its parent's.
+  private fun inStyle(canvas, st, draw) {
+    val c = st == canvas.style ? canvas : canvas.sub(0, 0, canvas.width, canvas.height, st)
+    try {
+      draw(c)
+    } finally {
+      if (c !== canvas) { c.dispose() }
+    }
   }
 
   // ---- Setting it up, one call after another ----

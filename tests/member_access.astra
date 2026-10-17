@@ -92,7 +92,7 @@ class Outer {
 }
 print(Outer.Inner().peek(Outer()))        // expect: outer key
 
-open class Base {
+class Base {
   private fun own() => "own"
   private val mark = "base mark"
   fun viaBase() => own() + ", " + mark
@@ -107,7 +107,7 @@ val mark = "the program's mark"
 print(Base().fromOutside(), Derived().fromOutside())   // expect: the program's mark the program's mark
 
 // A subclass that declares the name again, openly, makes it its own and open.
-open class Shape {
+class Shape {
   private fun area() => 0
   fun describe() => "area " + area()
 }
@@ -160,7 +160,7 @@ tell { print(Probe().bySuper()) }         // expect: 'own' is private in class B
 tell { print(Probe().onBase(Base())) }    // expect: 'mark' is private in class Base: only code written in that class can use it
 
 // Unless it declares the member again, private too: then both classes have it, and no one else.
-open class Figure {
+class Figure {
   private fun area() => 0
   private val kind = "figure"
   fun describe() => kind + " of area " + area()
@@ -182,7 +182,7 @@ print(Square(3).area())                   // expect: 9
 
 // What is open above cannot be made private below.
 tell {
-  open class Door {
+  class Door {
     fun enter() => "in"
   }
   class Vault : Door() {
@@ -233,7 +233,7 @@ tell { print(Registry.names) }            // expect: 'names' is private in class
 
 // ---- protected: the class and its subclasses ----
 
-open class Widget {
+class Widget {
   protected var state = "idle"
   protected fun paint() => "paint " + state
   protected static val limit = 3
@@ -277,7 +277,7 @@ class Lamp : Widget() {
 }
 print(Lamp().paint(), Lamp().show())      // expect: lamp idle lamp idle
 tell {
-  open class Plain {
+  class Plain {
     fun run() => 1
   }
   class Shy : Plain() {
@@ -300,7 +300,7 @@ tell { print(Sum(2, 3).work()) }          // expect: 'work' is protected in clas
 
 // ---- The setter of a property: `private set` ----
 
-open class Meter {
+class Meter {
   var reading = 0
     private set
   var level = 1

@@ -226,7 +226,7 @@ public:
     // A file on its own. Before anything else of it runs, its imports are loaded, its functions
     // defined and the structure of its classes set up, so that the order they are written in
     // does not matter; the rest then runs from top to bottom.
-    FunctionProto* compile(const std::vector<StmtPtr>& statements, bool repl) {
+    FunctionProto* compile(const std::vector<StmtPtr>& statements, bool shell) {
         FunctionState state;
         beginScript(state, file_);
         noteEnums(statements);
@@ -236,7 +236,7 @@ public:
         std::vector<std::string> names{file_};
         for (const UnitClass& cls : orderClasses(files, names)) hoistClass(*cls.stmt);
         hoistExtensions(statements);
-        compileRemainder(statements, repl);
+        compileRemainder(statements, shell);
         endScript(state);
         return state.proto;
     }
@@ -338,7 +338,7 @@ public:
 
     // Everything that was not hoisted, in the order written. A class whose structure was set
     // up ahead gets its values here.
-    void compileRemainder(const std::vector<StmtPtr>& statements, bool repl) {
+    void compileRemainder(const std::vector<StmtPtr>& statements, bool shell) {
         for (size_t i = 0; i < statements.size(); i++) {
             const Stmt& stmt = *statements[i];
             if (hoisted_.count(&stmt) != 0) {
@@ -348,7 +348,7 @@ public:
                 }
                 continue;
             }
-            if (repl && i + 1 == statements.size() && stmt.kind == StmtKind::Expr &&
+            if (shell && i + 1 == statements.size() && stmt.kind == StmtKind::Expr &&
                 static_cast<const ExprStmt&>(stmt).expr->kind != ExprKind::IncDec) {
                 compileExpr(*static_cast<const ExprStmt&>(stmt).expr);
                 emit(Op::Return);
@@ -3612,9 +3612,9 @@ int CompilerSession::compileFile(const std::string& path) {
 }
 
 int CompilerSession::compileSource(const std::string& source, const std::string& name,
-                                   const std::string& baseDirectory, bool repl) {
+                                   const std::string& baseDirectory, bool shell) {
     try {
-        FunctionProto* proto = compileUnit(source, name, baseDirectory, name, repl);
+        FunctionProto* proto = compileUnit(source, name, baseDirectory, name, shell);
         checkConstAssignments();
         program.modules.push_back(proto);
     } catch (...) {
@@ -3665,14 +3665,14 @@ int CompilerSession::newSlot(const std::string& name) {
 
 // Notes what a file declares at its top level, before any of it is compiled: a use of a name
 // can then tell a declaration further down, or in another file of the folder, from a name of
-// an import. Declaring a name twice in one folder is an error (the REPL may declare again).
+// an import. Declaring a name twice in one folder is an error (the shell may declare again).
 void CompilerSession::predeclare(Namespace& ns, const std::string& fileKey, const std::string& file,
-                                 const std::vector<StmtPtr>& statements, bool repl) {
+                                 const std::vector<StmtPtr>& statements, bool shell) {
     auto declare = [&](const std::string& name, bool isVal, const Stmt& at) {
         if (name == "_") return;
         const bool isPrivate = at.visibility == GlobalName::Private;
         auto& mine = privates_[fileKey];
-        if (!repl) {
+        if (!shell) {
             // The same name both private and not, in one file.
             auto other = isPrivate ? ns.names.find(name) : mine.find(name);
             auto end = isPrivate ? ns.names.end() : mine.end();
@@ -3682,7 +3682,7 @@ void CompilerSession::predeclare(Namespace& ns, const std::string& fileKey, cons
         GlobalName& entry = isPrivate ? mine[name] : ns.names[name];
         if (entry.declared) {
             if (entry.isVal) throw CompileError(file, at.line, at.col, "cannot redeclare val '" + name + "'");
-            if (!repl)
+            if (!shell)
                 throw CompileError(file, at.line, at.col,
                                    "'" + name + "' is already declared" + (entry.file != file ? " in " + entry.file : "") +
                                        "; a name can be declared only once in a folder");
@@ -3711,16 +3711,16 @@ void CompilerSession::predeclare(Namespace& ns, const std::string& fileKey, cons
 }
 
 FunctionProto* CompilerSession::compileUnit(const std::string& source, const std::string& name,
-                                            const std::string& directory, const std::string& fileKey, bool repl,
+                                            const std::string& directory, const std::string& fileKey, bool shell,
                                             Namespace* into) {
     Lexer lexer(source, name);
     std::vector<Token> tokens = lexer.scan();
     Parser parser(tokens, name);
     std::vector<StmtPtr> statements = parser.parseProgram();
     Namespace* ns = into != nullptr ? into : namespaceOf(directory);
-    predeclare(*ns, fileKey, name, statements, repl);
+    predeclare(*ns, fileKey, name, statements, shell);
     ModuleCompiler compiler(*this, name, directory == "<builtin>" ? "" : directory, ns, fileKey);
-    return compiler.compile(statements, repl);
+    return compiler.compile(statements, shell);
 }
 
 // The script named in `Worker("physics.astra")`, looked for next to the file that names it.

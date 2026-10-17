@@ -1,8 +1,10 @@
 # Astra
 
-Astra is a small object-oriented scripting language. Source code is compiled to bytecode and
-run on a stack-based virtual machine with a garbage collector. You can run a script directly,
-or compile it ahead of time to a bytecode file and run that.
+Astra is a self-contained object-oriented scripting language: `astra script.astra` runs a
+script with nothing else installed, and a program built with `astra build --exe` runs without
+`astra.exe`. Source code is compiled to bytecode and run on a stack-based virtual machine with
+a garbage collector. You can run a script directly, or compile it ahead of time to a bytecode
+file and run that.
 
 The implementation is C++20 with no dependencies beyond the standard library.
 
@@ -39,7 +41,7 @@ works too (`cmake -S . -B build && cmake --build build`); GCC and Clang flags ar
 ## Usage
 
 ```
-astra                                 start the interactive prompt
+astra                                 start the interactive shell
 astra <file> [args...]                run a source (.astra) or bytecode (.astc) file
 astra build <file> [-o <out.astc>]    compile a source file to a bytecode file
 astra build <file> --exe [-o <app.exe>] [--windowed] [--icon <file.ico>]
@@ -181,7 +183,7 @@ Key.if        token.class        token.is(other)        Token(class = "word")   
 
 On its own a keyword keeps its meaning, so inside the class above the field is written
 `this.class`. `op`, `static`, `get`, `set`, `data`, `enum`, `interface`, `object`, `vararg`,
-`as`, `until`, `private`, `internal` and `finally` are not keywords at all: each means
+`as`, `private`, `internal` and `finally` are not keywords at all: each means
 something only in the one place it belongs, and is an ordinary name everywhere else.
 
 ### Variables and types
@@ -247,7 +249,7 @@ Operators, from the ones that bind tightest:
 | `&` | bitwise and |
 | `^` | bitwise exclusive or |
 | `\|` | bitwise or |
-| `..` `..<` `until` | ranges: `a..b` includes `b`; `a..<b` and `a until b` stop before it |
+| `..` `..<` | ranges: `a..b` includes `b`; `a..<b` stops before it (Kotlin's `a until b` is an error that says so) |
 | `?:` | `a ?: b` is `a`, or `b` when `a` is null |
 | `<` `<=` `>` `>=` `is` `!is` `in` `!in` | |
 | `==` `!=` `===` `!==` | equal in value; `===` is "the very same object" |
@@ -323,7 +325,7 @@ if n < 0 { ... } else if n == 0 { ... } else { ... }
 while i < 10 { i += 1 }
 for x in [1, 2, 3] { ... }      // also strings (characters), maps (keys), ranges
 for i in 1..10 { ... }          // 1 to 10: a range includes its end
-for i in 0..<10 { ... }         // 0 to 9;  `0 until 10` says the same;  range(10, 0, -2) steps
+for i in 0..<10 { ... }         // 0 to 9;  range(10, 0, -2) steps
 break    continue
 ```
 
@@ -402,7 +404,7 @@ and how a callback names the thing it was registered as:
 
 ```astra
 val factorial = fun(n) => n <= 1 ? 1 : n * factorial(n - 1)
-val timer = App.every(1000, fun() { App.cancel(timer) })
+val timer = EventLoop.every(1000, fun() { timer.cancel() })
 ```
 
 That is the one way a variable can appear in its own initial value: `val x = x + 1` is a
@@ -810,7 +812,7 @@ is then the plain one. The accessors take the property's type.
 abstract class Shape(val name : string) {
   abstract fun area()                      // for a subclass to write
   abstract val sides : int
-  open fun describe() => "$name, area ${area()}"
+  fun describe() => "$name, area ${area()}"
 }
 
 class Square(val side : int) : Shape("square") {
@@ -824,7 +826,8 @@ class Square(val side : int) : Shape("square") {
 ```
 
 - An abstract class is never created itself, and a class that extends it has to supply what
-  it left `abstract`, or be abstract too. `sealed class` is read the same way.
+  it left `abstract`, or be abstract too. `sealed` is not a keyword: a fixed set of kinds is an
+  `enum class` (from M6.6).
 - `override` says that a member takes the place of one the class would otherwise have: a
   method, field or property of its superclass, one that comes with an interface, or one that
   an interface or abstract class asks for. The word is required for all of these, and it is
@@ -846,7 +849,7 @@ class Square(val side : int) : Shape("square") {
   | `public`, or nothing | everyone |
 
   ```astra
-  open class Meter {
+  class Meter {
     private var ticks = 0              // Meter's own
     protected fun format(n) => "$n"    // Meter's and its subclasses'
     var reading = 0
@@ -874,7 +877,7 @@ class Square(val side : int) : Shape("square") {
     it is the program's own function or variable of that name. So what a builder keeps to
     itself cannot hide a name of the program's.
   - A data object is still printed, compared, copied and taken apart with all its fields.
-- `open` and `final` on a member are accepted and change nothing.
+- `open` and `final` are not keywords: every class can be subclassed and every member overridden, so either one in front of a declaration is an error.
 
 #### Static members
 
@@ -1137,7 +1140,10 @@ try {
 ```
 
 Any value can be thrown. Runtime errors (division by zero, undefined variables, a stack
-overflow, ...) are `Error` instances and can be caught the same way. An uncaught error
+overflow, ...) are `Error` instances and can be caught the same way. So is running out of memory:
+a list, a string or a buffer larger than the system can give throws an `OutOfMemoryError`
+(a subclass of `Error`), and the program can catch it and go on. Sizes have no limit of their
+own below that. An uncaught error
 prints a stack trace and exits with code 70.
 
 A `catch` can be for one class of error, and several can follow a `try`; an error that none
@@ -1848,6 +1854,9 @@ startCoroutine {
   goes to whoever was running it: the caller of `startCoroutine`, or of the `resume` that
   took it up.
 
+`examples\dots.astra` is a small game written as flows, and `examples\bounce_flows.astra`
+animates balls with them.
+
 A flow can be set aside anywhere in the program's own code, however many calls deep,
 including inside a lambda given to `map`, `forEach`, `apply`, `with` and the rest of the
 library. It cannot be set aside inside a built-in function that is calling back into the
@@ -2184,7 +2193,7 @@ source ──lexer──▶ tokens ──parser──▶ AST ──compiler─�
 | `src/jade/render.*`, `gl.*` | Drawing with OpenGL: one small record for each shape, the glyph atlas, pictures on the card |
 | `src/jade/api.cpp` | The built-in the Jade library is written on; where layout units become pixels |
 | `lib/Jade/*.astra` | The Jade library: its native layer, the types it takes from the JDK, components, the grid, the first widgets, and the window with what it makes of the keyboard and the pointer |
-| `src/main.cpp` | Command line, REPL and building standalone programs |
+| `src/main.cpp` | Command line, the shell, and building standalone programs |
 
 Every function is checked by the verifier before it can run, whether it came from the
 compiler or from a `.astc` file: operands must be in range and the stack depth consistent on
@@ -2259,9 +2268,10 @@ opportunity, which is slow but useful for finding memory bugs when changing the 
 - Astra code runs on several cores at once only in a parallel section, on the items of one
   list, or in workers, which share nothing. Threads take turns.
 - Drawing is done from the main thread only: no thread, worker or parallel section can draw.
-  Four examples animate fifty thousand balls: `bounce.astra` moves and draws them in one loop,
+  Five examples animate fifty thousand balls: `bounce.astra` moves and draws them in one loop,
   `bounce_parallel.astra` moves them in a parallel section (one line different),
-  `bounce_threads.astra` on background threads, and `bounce_workers.astra` in workers.
+  `bounce_threads.astra` on background threads, `bounce_flows.astra` in flows on the main
+  thread, and `bounce_workers.astra` in workers.
 - An `object` is created where it is written, and top-level variables get their values in
   order (file by file for a folder), so one cannot be used by a statement that runs earlier.
 - Integer arithmetic wraps on overflow.
@@ -2273,3 +2283,13 @@ opportunity, which is slow but useful for finding memory bugs when changing the 
   bytecode, not encrypted.
 - `--icon` takes `.ico` files only, not PNG or other pictures. Explorer remembers icons, so a
   program rebuilt with a different icon can show its old one there for a while.
+
+## License
+
+Astra, its standard library and Jade are released under the Apache License, Version 2.0,
+with a runtime library exception: a program built with Astra carries parts of Astra inside
+it (the runtime, the standard library, and Jade if it imports it), and may be distributed on
+any terms, without the attribution the license otherwise asks for. The full text is in
+`LICENSE`.
+
+Copyright 2026 Jade.

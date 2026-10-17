@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <iostream>
 #include <new>
+#include <stdexcept>
 
 namespace astra {
 
@@ -553,6 +554,11 @@ AstraThrow VM::errorOf(const char* className, const std::string& message) {
         return thrown;
     }
     return runtimeError(message);
+}
+
+// What the program is told when memory runs out: an OutOfMemoryError, which it can catch.
+AstraThrow VM::outOfMemory() {
+    return errorOf("OutOfMemoryError", "out of memory");
 }
 
 std::vector<std::string> VM::captureTrace() const {
@@ -2021,6 +2027,19 @@ void VM::run(int baseFrame) {
         break;                                                            \
     }
 
+    // An error the program may catch: the innermost handler that takes it gets it, or, with
+    // none in this run, it goes on to whoever called. Returns false in that case.
+    auto handled = [&](AstraThrow& thrown) {
+        frames_[static_cast<size_t>(frameCount_ - 1)].ip = ip;
+        if (!thrown.hasTrace && handlers_.empty()) {
+            thrown.trace = captureTrace();
+            thrown.hasTrace = true;
+        }
+        if (tryHandle(thrown.value, baseFrame)) return true;
+        unwindTo(baseFrame);
+        return false;
+    };
+
     for (;;) {
         try {
             LOAD_FRAME();
@@ -3274,15 +3293,16 @@ void VM::run(int baseFrame) {
                 }
             }
         } catch (AstraThrow& thrown) {
-            frames_[static_cast<size_t>(frameCount_ - 1)].ip = ip;
-            if (!thrown.hasTrace && handlers_.empty()) {
-                thrown.trace = captureTrace();
-                thrown.hasTrace = true;
-            }
-            if (!tryHandle(thrown.value, baseFrame)) {
-                unwindTo(baseFrame);
-                throw;
-            }
+            if (!handled(thrown)) throw;
+        } catch (const std::bad_alloc&) {
+            // Asking for memory failed. That is almost always one large request (a list, a
+            // string, a buffer), so what is left is plenty for the error itself; if even that
+            // fails, the program ends as before.
+            AstraThrow thrown = outOfMemory();
+            if (!handled(thrown)) throw thrown;
+        } catch (const std::length_error&) {
+            AstraThrow thrown = outOfMemory();  // more than a list or a string can ever hold
+            if (!handled(thrown)) throw thrown;
         }
     }
 

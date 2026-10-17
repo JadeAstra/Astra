@@ -1,0 +1,409 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Astra lists of values</title>
+<style>
+:root {
+  --bg: #fbfaf7; --surface: #ffffff; --ink: #1d2422; --muted: #5d6763; --line: #dfe3e0;
+  --accent: #1f5fa8; --accent-soft: #e8f0fa; --decide: #a8551f; --decide-soft: #fbefe5;
+  --code-bg: #eef1ef;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #161a19; --surface: #1d2221; --ink: #e4e9e6; --muted: #9aa5a0; --line: #2e3533;
+    --accent: #7fb2ec; --accent-soft: #1e2a38; --decide: #e7a06b; --decide-soft: #3a2a1f;
+    --code-bg: #262c2a;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #161a19; --surface: #1d2221; --ink: #e4e9e6; --muted: #9aa5a0; --line: #2e3533;
+  --accent: #7fb2ec; --accent-soft: #1e2a38; --decide: #e7a06b; --decide-soft: #3a2a1f;
+  --code-bg: #262c2a;
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body {
+  margin: 0; background: var(--bg); color: var(--ink);
+  font: 16px/1.6 "Segoe UI", system-ui, -apple-system, sans-serif;
+}
+main { max-width: 880px; margin: 0 auto; padding: 40px 16px 80px; }
+h1 { font-size: 1.9rem; line-height: 1.25; margin: 0 0 8px; }
+.lede { color: var(--muted); margin: 0 0 28px; }
+h2 { font-size: 1.3rem; line-height: 1.3; margin: 0 0 12px; }
+p { margin: 0 0 12px; }
+ul { margin: 0 0 12px; padding-left: 22px; }
+li { margin: 2px 0; }
+a { color: var(--accent); }
+code {
+  font: 0.88em/1.4 Consolas, "Cascadia Mono", monospace; background: var(--code-bg);
+  padding: 1px 5px; border-radius: 4px; white-space: nowrap;
+}
+nav {
+  background: var(--surface); border: 1px solid var(--line); border-radius: 10px;
+  padding: 16px 20px; margin: 0 0 32px;
+}
+nav h2 { font-size: 1rem; margin: 0 0 8px; color: var(--muted); }
+h3 { font-size: 1.05rem; margin: 18px 0 8px; }
+nav ul { list-style: none; padding: 0; margin: 0; columns: 2 280px; column-gap: 24px; }
+nav li { break-inside: avoid; }
+nav a { text-decoration: none; color: var(--ink); display: flex; gap: 6px; }
+nav a .code { flex: none; }
+nav a:hover { color: var(--accent); }
+.code {
+  display: inline-block; min-width: 2.6em; font-weight: 600; color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+section { margin: 0 0 28px; }
+section.decision {
+  background: var(--surface); border: 1px solid var(--line); border-radius: 10px;
+  padding: 22px 24px 18px;
+}
+section.part { padding: 4px 0; }
+.table { overflow-x: auto; margin: 4px 0 14px; }
+table { border-collapse: collapse; width: 100%; font-size: 0.93rem; }
+th, td { text-align: left; vertical-align: top; padding: 8px 10px; border-top: 1px solid var(--line); }
+th { color: var(--muted); font-weight: 600; border-top: none; border-bottom: 2px solid var(--line); }
+td:first-child { min-width: 11em; }
+.advice {
+  background: var(--accent-soft); border-left: 3px solid var(--accent); border-radius: 6px;
+  padding: 10px 14px; margin: 14px 0 12px;
+}
+.advice p { margin: 2px 0 0; }
+.label { font-size: 0.78rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
+.advice .label { color: var(--accent); }
+.verdict {
+  display: flex; align-items: center; gap: 14px; background: var(--decide-soft);
+  border: 1px dashed var(--decide); border-radius: 6px; padding: 10px 14px;
+}
+.verdict .label { color: var(--decide); white-space: nowrap; }
+.verdict .blank { flex: 1; border-bottom: 1px solid var(--decide); height: 1.2em; opacity: 0.6; }
+.verdict .note { font-size: 0.92rem; }
+.verdict.decided { border-style: solid; align-items: flex-start; }
+.verdict.decided .label { padding-top: 2px; }
+pre { background: var(--code-bg); border-radius: 8px; padding: 12px 14px; overflow-x: auto; margin: 4px 0 14px; }
+pre code { background: none; padding: 0; white-space: pre; }
+ol { margin: 0 0 12px; padding-left: 22px; }
+ol li { margin: 6px 0; }
+@media (max-width: 600px) {
+  main { padding-top: 24px; }
+  h1 { font-size: 1.5rem; }
+  section.decision { padding: 16px 14px 12px; }
+  code { white-space: normal; }
+}
+</style>
+</head>
+<body>
+<main>
+<h1>Lists of values: compact storage</h1>
+<p class="lede">How a list whose items are values (numbers, characters, bytes, booleans and <code>value</code> types) keeps them one after another in memory: a million points in 16 MB instead of about 190, read without allocating, with every list operation and nothing new for a program to choose. Decided 2026-10-14 to be built in M6.6 (L1 and L2 in <a href="language-choices.html">language-choices.html</a>), with the questions of section 18 still open.</p>
+
+<nav><h2>Contents</h2><ul>
+<li><a href="#goal">1. What it is for</a></li>
+<li><a href="#kinds">2. Lists of values and lists of objects</a></li>
+<li><a href="#needs">3. What it needs first</a></li>
+<li><a href="#values">4. Values outside lists</a></li>
+<li><a href="#layout">5. A list in memory</a></li>
+<li><a href="#reading">6. Reading an item: in place or a copy</a></li>
+<li><a href="#making">7. Making new values where they go</a></li>
+<li><a href="#changing">8. Changing a value through its place</a></li>
+<li><a href="#ops">9. Each operation</a></li>
+<li><a href="#generic">10. Generic code</a></li>
+<li><a href="#threads">11. Threads, flows and parallel sections</a></li>
+<li><a href="#safety">12. Safety nets</a></li>
+<li><a href="#rest">13. The rest of the language and the VM</a></li>
+<li><a href="#bounce">14. A worked case: the bounce example on every core</a></li>
+<li><a href="#cost">15. What it costs</a></li>
+<li><a href="#steps">16. Building it, in steps</a></li>
+<li><a href="#later">17. A possible later upgrade: references that follow an item</a></li>
+<li><a href="#open">18. Questions for you</a></li>
+</ul></nav>
+
+<section class="part" id="goal">
+<h2>1. What it is for</h2>
+<p>Today a <code>Point(1, 2)</code> is an object of about 170 bytes in two allocations, and a list of a million takes about 190 MB and a million entries for the collector. A <code>list&lt;Point&gt;</code> of value-type points should be:</p>
+<ul>
+<li><strong>Compact:</strong> 16 bytes an item, one after another, as a C array holds them.</li>
+<li><strong>Free to read:</strong> <code>pts[i].x</code>, <code>for p in pts</code> and <code>draw(pts[i])</code> make nothing.</li>
+<li><strong>A whole list:</strong> <code>add</code>, <code>insert</code>, <code>removeAt</code>, <code>pts[i] = q</code>, <code>sort</code>, <code>clear</code> and every other list function work.</li>
+<li><strong>Nothing to choose:</strong> the program writes <code>list&lt;Point&gt;</code>; that its items are values is what makes it compact.</li>
+<li><strong>Plain to reason about:</strong> what the program reads from it is a value; keeping it keeps a copy, which nothing done to the list afterwards can change.</li>
+</ul>
+</section>
+
+<section class="part" id="kinds">
+<h2>2. Lists of values and lists of objects</h2>
+<div class="verdict decided"><span class="label">Decided</span><span class="note">2026-10-14: one sequence type, the list, stored by what its items are. An earlier draft had a separate <code>pack&lt;T&gt;</code>; it is merged into the list.</span></div>
+<ul>
+<li><strong>A list of a class</strong> (<code>list&lt;Component&gt;</code>) holds references to its objects, exactly as today: an item read from it is the object itself.</li>
+<li><strong>A list of a value type</strong> (<code>list&lt;int&gt;</code>, <code>list&lt;float&gt;</code>, <code>list&lt;char&gt;</code>, <code>list&lt;byte&gt;</code>, <code>list&lt;bool&gt;</code>, <code>list&lt;Point&gt;</code> for a <code>value Point</code>) holds its values one after another, each at its own width. <code>bytes</code> is <code>list&lt;byte&gt;</code>.</li>
+<li><strong>A list of a type that may hold anything</strong> (<code>list&lt;any&gt;</code>, <code>list&lt;number&gt;</code>) or of a nullable value type (<code>list&lt;int?&gt;</code>, <code>list&lt;Point?&gt;</code>) holds 16-byte values as today, since each item has to say what it is, or whether it is null.</li>
+</ul>
+<p><strong>Why this is safe.</strong> Packing a list of objects would change what programs mean: a kept item would be a copy, not the same object. A value has no identity (<code>===</code> is refused), so a copy cannot be told from the original, and packed and boxed storage of values differ only in speed and memory. Value types are new, so no existing program changes meaning.</p>
+<p><strong>What others do.</strong> C#'s <code>List&lt;struct&gt;</code>, Swift's <code>[Struct]</code>, Rust's <code>Vec&lt;T&gt;</code> and Go's <code>[]T</code> all store value items inline, with no separate packed type. Kotlin and Java, without value types, add <code>IntArray</code> and its kind beside their lists.</p>
+<p><strong>Which kind of type to make.</strong> Since a value is copied where an object is shared, the author of a type decides: <code>value</code> for small things that are what they contain (a point, a colour, a size), <code>class</code> for things with identity or of large size that are kept and reordered a great deal (section 15). C#'s advice is the same.</p>
+</section>
+
+<section class="part" id="needs">
+<h2>3. What it needs first</h2>
+<ul>
+<li><strong>Value types</strong> (L2), written <code>value Point(var x : int, var y : int)</code>. No identity, <code>==</code> by contents, never changed where anyone else can see it: a <code>var</code> field changes only through the place that holds the value (section 8). They may hold strings and objects. That is what lets a value be copied, or read in place, without anyone being able to tell the difference.</li>
+<li><strong>A fixed layout per value type</strong>, worked out when compiling: each field at a known offset and width (<code>int</code> and <code>float</code> 8 bytes, <code>char</code> 4, <code>byte</code> and <code>bool</code> 1, a reference 8, a nested value type its own size), aligned to its width. <code>Point</code> is 16 bytes; <code>Rectangle(x, y, width, height)</code> 32.</li>
+<li><strong>Item types kept when running</strong> (decided in 5.7), so a list knows its layout.</li>
+<li><strong>Static types</strong> (M6.5), so the compiler knows where an item is read and what becomes of it (section 6).</li>
+</ul>
+</section>
+
+<section class="part" id="values">
+<h2>4. Values outside lists</h2>
+<div class="verdict decided"><span class="label">Decided</span><span class="note">2026-10-14: all three ways below.</span></div>
+<p>A value that is not in a list of values is kept in one of three ways, whichever its type and place allow. The program sees no difference between them.</p>
+<p><strong>In a box.</strong> One small allocation with a header (its type) and its fields in the fixed layout, without the field table objects have today. A <code>Point</code> box is about 32 bytes. A box never changes, so it can be shared: <code>val b = a</code> copies the reference to the box, not the fields. The general case: any value, kept anywhere.</p>
+<p><strong>Small values in place.</strong> A value type of at most 8 bytes is kept in the value slot itself, with no box: its fields in the slot's 8-byte payload, its type's number in the spare bytes beside the kind. With L0's types, that is a value type of one <code>int</code>, <code>float</code> or <code>char</code> (a <code>Color</code> as its ARGB number, an id, a unit), or of up to eight <code>byte</code>s and <code>bool</code>s. Such a value costs nothing to make or keep, wherever it is. <code>Point</code>, <code>Dimension</code> and <code>Rectangle</code> are too big and use the other two ways.</p>
+<p><strong>Inside their object.</strong> A field whose type is a value type holds the value's fields within the object, in its fixed layout: a <code>Component</code>'s <code>bounds</code> is 32 bytes of the component. It works as a list of one item:</p>
+<ul>
+<li>Reading <code>comp.bounds</code> gives a <em>reference into the object</em> (the same kind of value as a reference into a list: the object, and an offset in the spare bytes) where the compiler can show the field does not change while the reference exists, by the rules of section 6; the compiler works out which fields of which classes every function may assign. Otherwise a box with a copy.</li>
+<li><code>comp.bounds = r</code> copies the fields into the object; <code>comp.bounds.x = 5</code> writes one field (section 8); a function returning a <code>Rectangle</code> into <code>comp.bounds</code> builds it there (section 7).</li>
+<li>The collector follows the object's layout into the value, for the references it holds. Threads and parallel sections follow the object's own rules, and the scan at thread switches covers references into objects too.</li>
+</ul>
+<p>So a value is, when the program runs, a box, a value in place, a reference into a list, or a reference into an object. Reading one of its fields checks which (one test, two branches) and reads at the field's offset.</p>
+</section>
+
+<section class="part" id="layout">
+<h2>5. A list in memory</h2>
+<p>A list is one object: its item type, its size, its capacity, and one block of memory with room for <em>capacity</em> items, the first <em>size</em> of them in use. What an item takes in the block follows from the item type:</p>
+<ul>
+<li><strong>A class:</strong> an 8-byte reference.</li>
+<li><strong>A value type:</strong> its own size, from 1 byte (<code>byte</code>, <code>bool</code>) and 4 (<code>char</code>) to 8 (<code>int</code>, <code>float</code>) and as many as its fields need (<code>Point</code> 16, <code>Ball</code> 48).</li>
+<li><strong><code>any</code>, <code>number</code>, nullable types:</strong> a 16-byte value, as every list item is today.</li>
+</ul>
+<p>Nothing else: no index, no bits, nothing for the collector beyond the block and, for items holding references, the map of where they are. A list grows by moving to a block twice as large.</p>
+</section>
+
+<section class="part" id="reading">
+<h2>6. Reading an item: in place or a copy</h2>
+<p>Reading an item of a list of values gives either a <strong>reference into the list</strong> (a value of a new kind: its payload points to the list, its spare bytes hold the item's position and an offset within it) or a <strong>box</strong> with a copy. Items of 8 bytes or less are simply copied out, as numbers are today, and need neither. Which of the two is the compiler's choice; the program sees a value either way.</p>
+<p>A reference into the list is used only where the list cannot change while the reference exists. Everywhere else a copy is made:</p>
+<ul>
+<li><strong>Within an expression:</strong> <code>pts[i].x</code>, <code>total += pts[i].y</code>, <code>pts[i] = pts[i].moved(dt)</code> (the read is finished before the write), <code>pts[i] == q</code>. In place.</li>
+<li><strong>Passed to a parameter that does not keep it:</strong> the compiler sees the whole program, so it works out for every function which parameters it only reads: never stored in a field or a list, never returned, never captured in a lambda, passed on only to parameters that do not keep either. A method that may be overridden counts only if all its versions agree; a call through a function value only if the lambda is known. <code>draw(pts[i])</code>, where <code>draw</code> only reads <code>p.x</code> and <code>p.y</code>, is in place.</li>
+<li><strong>In a local that goes nowhere:</strong> <code>val p = pts[i]</code>, used only that way, with nothing that might change a list of <code>Point</code>s while <code>p</code> is alive. The compiler works out for every function whether it may change a list of a given item type, directly or through what it calls. In place.</li>
+<li><strong>Anything else</strong> (stored in a field or a list, returned, captured, passed to a parameter that keeps, alive across something that may change the list, or the compiler cannot tell): a copy in a box.</li>
+</ul>
+<p>The analysis only ever errs towards a copy, which costs a small allocation and is never wrong. A reference into a list only ever lives on a thread's stack, never in the heap: storing a value anywhere in the heap stores a box, so no object can keep a large list alive through one small value.</p>
+</section>
+
+<section class="part" id="making">
+<h2>7. Making new values where they go</h2>
+<div class="verdict decided"><span class="label">Decided</span><span class="note">2026-10-14: both rules below, (a) and (b).</span></div>
+<p>A value of more than 8 bytes does not fit in a value slot, so a function returning one, as <code>moved</code> returns a <code>Ball</code> (section 14), would have to put its result in a box: an allocation per call. Two rules keep new values out of boxes.</p>
+<p><strong>(b) Stores of a new value.</strong> When what is stored into an item (<code>pts[i] = ...</code>, <code>pts.add(...)</code>, <code>pts.insert(i, ...)</code>) is a constructor call, <code>Ball(...)</code>, or a <code>copy</code>, <code>pts[i].copy(x = 5)</code>, the compiler writes the fields straight into the item. All the arguments are worked out first, so a new value may be made from the old one in the same place.</p>
+<p><strong>(a) Results built where they go.</strong> A function that returns a value type is given a hidden argument: where its result goes. The caller chooses:</p>
+<ul>
+<li><strong>An item of a list,</strong> for <code>balls[i] = it.moved(...)</code>. Given as the list and the position, not as an address, and found only when the result is written, so that the block moving (the list growing) cannot leave it pointing at freed memory; the position is checked against the size then. Used only where the function does not change lists of that item type (section 6); otherwise the result goes to the thread's scratch space and is copied into the item after the call.</li>
+<li><strong>A box,</strong> when the result is kept. The caller makes it and passes it.</li>
+<li><strong>The thread's scratch space,</strong> when the result is used and dropped within an expression: a small stack of result areas per thread, taken before the call and given back after the use.</li>
+</ul>
+<p>Inside the function the destination is written only by <code>return</code>, after everything in the returned expression is worked out, so <code>balls[i] = balls[i].moved(...)</code> reads all of the old ball before writing any of the new. Constructors and value types nested in others work the same way. C++ and Swift return large values like this (return value optimisation; indirect results).</p>
+</section>
+
+<section class="part" id="changing">
+<h2>8. Changing a value through its place</h2>
+<div class="verdict decided"><span class="label">Decided</span><span class="note">2026-10-14: the four rules for assigning a field, and <code>mutating</code> methods.</span></div>
+<p>A value is never changed where someone else can see it, but a <em>place</em> holding one (a <code>var</code>, a <code>var</code> field, an item of a list) can be given a new value with one field different, written as an assignment to the field, as Swift does.</p>
+<p><strong>Assigning a field.</strong> <code>pts[i].x = 4</code> means <code>pts[i] = pts[i].copy(x = 4)</code>, under four rules:</p>
+<ol>
+<li><strong>Only fields declared <code>var</code></strong> in the value type: <code>value Point(var x : int, var y : int)</code> allows it; with <code>val x</code> it is an error.</li>
+<li><strong>Only through a place:</strong> <code>pts[i].x = 4</code>; <code>p.x = 4</code> for a <code>var p</code>; <code>obj.pos.x = 4</code> for a <code>var</code> field; nested values, <code>rects[i].topLeft.x = 4</code>. On a <code>val</code> or a temporary (<code>f().x = 4</code>) it is an error.</li>
+<li><strong>Each part worked out once:</strong> in <code>pts[next()].x += 1</code>, <code>next()</code> is called once.</li>
+<li><strong>In a list of values, or inside an object,</strong> it writes that one field where the value is: <code>pts[i].x += dx</code> is a load and a store. A value in a box gets a new box with the field changed.</li>
+</ol>
+<p><strong><code>mutating</code> methods.</strong> A method marked <code>mutating</code> may assign the value's <code>var</code> fields. Called on a place, it works on the value there, and the place then holds the result:</p>
+<ul>
+<li>On an item of a list of values, or a value inside an object, <code>this</code> is the value where it is: its assignments are written straight there, nothing copied.</li>
+<li>On a <code>var</code> holding a box, the method works on a copy in the scratch space, written back to the place when it returns.</li>
+<li>Calling one on a <code>val</code> or a temporary is a compile error. Inside it, <code>this</code> may not be kept (stored, returned, captured); it may call other <code>mutating</code> methods of the same value.</li>
+<li>A lambda's <code>it</code> is a place when a list of values hands it its own item and the lambda keeps nothing: <code>pts.forEach { it.move(...) }</code>, in a parallel section too, changes each item in place. Where <code>it</code> is a copy (the lambda keeps it), calling a <code>mutating</code> method on it is a compile error that says the change would be lost.</li>
+</ul>
+<p><strong>For the reader of a program:</strong> <code>var q = p; q.x = 5</code> leaves <code>p</code> as it was, where with objects both would change. Turning a class into a value type changes what such code means without an error; a type should be a value type only when that is what it is.</p>
+</section>
+
+<section class="part" id="ops">
+<h2>9. Each operation</h2>
+<p>Nothing outside a list of values points at an item for longer than the compiler has allowed, so every operation works on the items directly:</p>
+<ul>
+<li><code>pts[i] = v</code>: copies <code>v</code>'s fields into item <em>i</em>. <code>add</code>, <code>insert</code>, <code>removeAt</code>, <code>clear</code>: as on any list, moving items within the block.</li>
+<li><strong>Sorting large items through their positions.</strong> For items over 32 bytes, <code>sort</code>, <code>sortBy</code> and their kin first sort a list of positions, 4-byte numbers, with the same comparisons, then rearrange the items in one pass that moves each item once: a million 200-byte records move once instead of about twenty times. Automatic; programs see no difference.</li>
+<li><strong>Inserting and removing in the middle</strong> shifts the items after the position, in one memory copy: for a million 200-byte records about 100 MB, some 10 ms, where references would move 8 MB. The same growth as any list, with a larger constant; accepted, as C#, Swift and Rust accept it. (Storing the list in chunks, or section 17, would remove it, at a cost on every read.)</li>
+<li><code>for p in pts</code>: walks the block in order; <code>p</code> is in place or a copy by section 6.</li>
+<li><code>replaceAll { }</code>: replaces each item with what the lambda gives for it, built in place by section 7.</li>
+<li>A comparator lambda gets items in place when it keeps nothing, copies otherwise.</li>
+</ul>
+</section>
+
+<section class="part" id="generic">
+<h2>10. Generic code</h2>
+<p>A generic function, <code>fun &lt;T&gt; first(items : list&lt;T&gt;) : T</code>, does not know when compiled how its list is stored. This matters, because <code>map</code>, <code>filter</code>, <code>forEach</code>, <code>sumOf</code>, <code>sort</code> and most of the standard library's list functions are generic.</p>
+<ul>
+<li><strong>First, a check.</strong> Types are kept when running, so a generic function is given <code>T</code> as a hidden argument and knows the item's layout from it. Each access reads the layout and takes a branch that goes the same way for every item of one list. Estimated 1 to 3% in generic list loops; nothing in code whose types are known.</li>
+<li><strong>Then, copies made per layout.</strong> The compiler sees the whole program, so it can make, for a generic function, one copy shared by all classes (references are all alike) and one per value type the program uses it with, as C# does. No check at all, for some size of bytecode and time to compile. Done first for the standard library's list functions, where the check would show; for the program's own generic functions if measurements say so.</li>
+</ul>
+</section>
+
+<section class="part" id="threads">
+<h2>11. Threads, flows and parallel sections</h2>
+<p>The analysis of section 6 looks at what <em>this</em> thread does; another thread could change a list while a reference into it is on this thread's stack, letting a method read <code>x</code> from an old point and <code>y</code> from a new one.</p>
+<ul>
+<li><strong>Threads and flows:</strong> whenever the VM switches away from a thread, or a flow sets itself aside to wait, it replaces every reference into a list or an object on that stack by a box with a copy. One short scan per switch.</li>
+<li><strong>Parallel sections,</strong> by M3.5's rule (a core may change the item it was given and what it makes itself, and may read everything else except another core's items):
+<ul>
+<li><strong>A list of values being dealt out</strong> (<code>pts.parallelStream()</code>, or <code>pts.parallelChunks { }</code> as for <code>bytes</code> today): each core is given a range of positions; within it, it may read the items and change them (assign <code>var</code> fields, call <code>mutating</code> methods, replace them). Reading an item in another core's range is an error, as looking into another core's object is today; changing the list's size or order during the section is an error. The list records the ranges, since its items have no owner field as objects do, and each access inside a section checks the position against them; outside sections nothing is checked.</li>
+<li><strong>A list of objects</strong> is dealt out item by item, as now.</li>
+<li><strong>Any other list</strong> that existed before the section is shared: read by all, changed by none. A list a core makes in the section is its own.</li>
+</ul></li>
+<li><strong>Workers:</strong> a list of values is sent to another worker as one block of memory.</li>
+</ul>
+</section>
+
+<section class="part" id="safety">
+<h2>12. Safety nets</h2>
+<ul>
+<li><strong>Bounds:</strong> reading through a reference into a list checks its position against the list's size, so a mistake in the compiler's analysis gives an error, never a read outside the block.</li>
+<li><strong>A stress setting</strong>, beside the thread and collector ones, that makes every read a copy. The test suite runs both ways and must print the same.</li>
+<li><strong>The shell</strong> (what <code>astra</code> starts with no file): code there is compiled one entry at a time, so a class entered later can add an override that earlier code did not know of. In the shell, calls through methods that can be overridden count as keeping.</li>
+</ul>
+</section>
+
+<section class="part" id="rest">
+<h2>13. The rest of the language and the VM</h2>
+<ul>
+<li><strong>Equality and hashing</strong> go field by field, so a box, a value in place and a reference into a list with the same fields are equal and hash alike; floats compare as <code>==</code> does (<code>-0.0</code> equals <code>0.0</code>) and hash to match.</li>
+<li><strong><code>is</code>, printing, <code>copy(...)</code>, destructuring</strong> treat all four forms of a value alike.</li>
+<li><strong>Nested values:</strong> <code>rects[i].topLeft</code> is a reference with an offset inside the item: the spare bytes hold the position (40 bits, a trillion items) and the offset (16 bits, items up to 64 KB).</li>
+<li><strong>Value types holding references</strong> (strings, objects): each value type has a map of the offsets that hold references, which the collector traces in every item and every value inside an object.</li>
+<li><strong>Built-in functions in C++</strong> receive a copy of a value's fields, never a pointer into a block, which moves when the list grows.</li>
+<li><strong>L9:</strong> if a read-only <code>list</code> comes, a <code>list&lt;Point&gt;</code> passes for a read-only <code>list&lt;any&gt;</code>, reads giving values by section 6.</li>
+<li><strong>The name:</strong> there is one type, the list, and it is printed as <code>list&lt;int&gt;</code>, <code>list&lt;Point&gt;</code>; <code>bytes</code> is printed as <code>bytes</code>.</li>
+</ul>
+</section>
+
+<section class="part" id="bounce">
+<h2>14. A worked case: the bounce example on every core</h2>
+<p><code>examples/bounce_parallel.astra</code> moves 50,000 balls a frame on every core and draws them on one. Today each ball is an object that <code>move</code> changes in place:</p>
+<pre><code>class Ball(var x : number, var y : number, var dx : number, var dy : number, val radius : number, val color) {
+  fun move(width : number, height : number, steps : number) {
+    x += dx * steps
+    y += dy * steps
+    if x &lt; radius { x = radius; dx = dx.absoluteValue }
+    if x &gt; width - radius { x = Math.max(radius, width - radius); dx = -dx.absoluteValue }
+    if y &lt; radius { y = radius; dy = dy.absoluteValue }
+    if y &gt; height - radius { y = Math.max(radius, height - radius); dy = -dy.absoluteValue }
+  }
+}
+
+val balls = []
+balls.parallelStream().forEach { it.move(width, height, steps) }      // the one line
+for ball in balls {
+  canvas.color = ball.color
+  canvas.fillOval(ball.x - ball.radius, ball.y - ball.radius, 2 * ball.radius, 2 * ball.radius)
+}</code></pre>
+
+<h3>With a <code>mutating</code> method</h3>
+<p>The ball becomes a value type with <code>var</code> position and speed, <code>move</code> is marked <code>mutating</code>, and the list is a list of balls. Everything else, the one parallel line included, is as it was:</p>
+<pre><code>value Ball(var x : float, var y : float, var dx : float, var dy : float, val radius : float, val color : Color) {
+  mutating fun move(width : float, height : float, steps : float) {
+    x += dx * steps
+    y += dy * steps
+    if x &lt; radius { x = radius; dx = dx.absoluteValue }
+    if x &gt; width - radius { x = Math.max(radius, width - radius); dx = -dx.absoluteValue }
+    if y &lt; radius { y = radius; dy = dy.absoluteValue }
+    if y &gt; height - radius { y = Math.max(radius, height - radius); dy = -dy.absoluteValue }
+  }
+}
+
+val balls = list&lt;Ball&gt;()
+balls.parallelStream().forEach { it.move(width, height, steps) }      // each core moves its own share, in place
+for ball in balls {                                                    // read in place
+  canvas.color = ball.color
+  canvas.fillOval(ball.x - ball.radius, ball.y - ball.radius, 2 * ball.radius, 2 * ball.radius)
+}</code></pre>
+<ul>
+<li><strong>What changed:</strong> <code>class</code> to <code>value</code>; <code>number</code> to <code>float</code> and a type for <code>color</code> (M6.5's types); <code>mutating</code> in front of <code>move</code>; and <code>[]</code> to <code>list&lt;Ball&gt;()</code>, which M6.5 asks for anyway, since an empty list has no item type to infer. <code>balls.add(Ball(...))</code> in <code>addBall</code> is unchanged and writes the new ball straight into the list (section 7).</li>
+<li><strong>How it runs:</strong> each core is dealt a range of positions (section 11); <code>it</code> is the item itself, since the list hands it over and the lambda keeps nothing; <code>move</code> writes straight into the item. Nothing is copied or allocated.</li>
+<li><strong>What the compiler checks:</strong> that <code>move</code> assigns only <code>var</code> fields (<code>radius</code> and <code>color</code> are <code>val</code>), and that <code>it</code> is a place where <code>move</code> is called on it.</li>
+</ul>
+
+<h3>Without one: a method that returns the moved ball</h3>
+<pre><code>value Ball(val x : float, val y : float, val dx : float, val dy : float, val radius : float, val color : Color) {
+  fun moved(width : float, height : float, steps : float) : Ball {
+    var nx = x + dx * steps
+    var ndx = dx
+    if nx &lt; radius { nx = radius; ndx = dx.absoluteValue }
+    // ... the other edge, and the same for y ...
+    return Ball(nx, ny, ndx, ndy, radius, color)
+  }
+}
+
+balls.parallelStream().replaceAll { it.moved(width, height, steps) }   // each core its own share</code></pre>
+<p>No allocation either: <code>it</code> is read in place, and <code>moved</code> builds its result straight into the item (section 7), after reading all of the old ball.</p>
+
+<h3>What it saves</h3>
+<ul>
+<li><strong>Memory:</strong> today a ball is about 300 bytes (the object, a field table grown to 8 entries, and its place in the list), about 15 MB for 50,000; as a value in a list, 48 bytes (five floats and a reference to its <code>Color</code>), 2.4 MB. (From the layouts, not measured.)</li>
+<li><strong>Speed:</strong> <code>move</code> today finds <code>x</code>, <code>y</code>, <code>dx</code> and <code>dy</code> by name in each ball's field table, about ten look-ups per ball per frame; as a value, each is at a fixed offset. Drawing walks one block of memory.</li>
+</ul>
+</section>
+
+<section class="part" id="cost">
+<h2>15. What it costs</h2>
+<p><strong>Memory</strong>, for a million <code>Point</code>s: about 190 MB as objects today; 16 MB as a list of values (32 MB at most while it grows).</p>
+<p><strong>Speed</strong> (estimates, to be measured):</p>
+<ul>
+<li>Reading a field of an item: an address calculation and a load, cheaper than today's look-up by name. Walking a list of values: memory read straight through.</li>
+<li>Reading a field of any value: one test for which of its four forms it is.</li>
+<li>Replacing an item: copying its bytes, where today a new object is made.</li>
+<li><strong>Keeping an item</strong> of more than 8 bytes: one box (about 32 bytes for a <code>Point</code>), where a list of objects hands out the object it has. A program that keeps many items of a large value type does better with a class.</li>
+<li><strong>Large items reordered:</strong> sorting moves each item once (section 9); inserting and removing in the middle copy the items after the position, more bytes than references would be.</li>
+<li><strong>Generic list code:</strong> the check of section 10, 1 to 3%, until copies per layout remove it.</li>
+<li>Switching threads: one scan of the outgoing stack. Collection: a list is one object to trace instead of a million.</li>
+<li>Lists of objects: nothing changes for them.</li>
+</ul>
+<p><strong>Build cost:</strong> large, though in steps that each stand alone: value types and boxes, three storage kinds for lists, references into lists and objects, the compiler's analyses (parameters that keep, functions that change lists or assign fields), results built where they go, assignment through places and <code>mutating</code> methods, small values in place, values inside objects, the scan at thread switches, the sort through positions, and copies of generic functions per layout.</p>
+</section>
+
+<section class="part" id="steps">
+<h2>16. Building it, in steps</h2>
+<p>Each step works and is measured on its own. All of it is M6.6.</p>
+<ol>
+<li><strong>Value types as boxes.</strong> <code>value</code>, fixed layout, equality, printing, <code>copy</code>. Needs M6.5's types and the fixed field layouts of its part 4. Measured: Jade's layout with <code>Dimension</code>, <code>Rectangle</code>, <code>Point</code> and <code>Insets</code> as values.</li>
+<li><strong>Lists of values, copying on every read that leaves its expression.</strong> The storage kinds, the operations, the sort through positions, references into lists within an expression, the thread-switch scan, the check in generic code, and constructor calls and <code>copy</code> stored straight into items (section 7, rule b). Measured: a million points built, summed, sorted, walked.</li>
+<li><strong>The compiler's analyses.</strong> Parameters that do not keep, functions that change lists, locals that go nowhere. Checked with the copy-every-read stress setting. Measured: a million particles updated and drawn for a hundred frames, with no copy made.</li>
+<li><strong>Results built where they go</strong> (section 7, rule a): the hidden destination, the scratch space, the new forms of call and return. Measured: the bounce example on every core, returning moved balls, with no allocation in a frame.</li>
+<li><strong>Changing through a place</strong> (section 8): field assignment through places, <code>mutating</code> methods, <code>it</code> as a place. Measured: the bounce example with its <code>move</code> unchanged.</li>
+<li><strong>Small values in place</strong> (section 4). Measured: a <code>Color</code>-heavy drawing loop, with no box made.</li>
+<li><strong>Values inside their objects</strong> (section 4), with the analysis of which functions assign which fields. Measured: Jade's layout, with <code>bounds</code> and the cached <code>Sizes</code> inside their components.</li>
+<li><strong>Copies of generic functions per layout</strong> (section 10), for the standard library's list functions first. Measured: <code>map</code>, <code>filter</code>, <code>sumOf</code> and <code>sort</code> on a list of points, with and without.</li>
+</ol>
+</section>
+
+<section class="part" id="later">
+<h2>17. A possible later upgrade: references that follow an item</h2>
+<p>An earlier version of this design made <code>val p = pts[42]</code> a reference that stays with its item through sorts, inserts and removals, without a copy: each item in a storage slot that never moves while referenced, an index from positions to slots, a bit per slot marking those that may be referenced, and the collector clearing the bits and freeing slots left behind. It would take away two of the costs of section 15, the box when an item is kept and the moving of large items when inserting, sorting or removing (only 4-byte positions would move), at the price of an extra step on reads once indexed and work for the collector. Worth building only if measurements show those two costs matter; with values a copy reads exactly the same, so it would change speed, not meaning.</p>
+</section>
+
+<section class="part" id="open">
+<h2>18. Questions for you</h2>
+<ul>
+<li><strong>Value types holding strings and objects:</strong> decided: yes.</li>
+<li><strong>The word for a value type:</strong> decided: <code>value Point(...)</code>.</li>
+<li><strong><code>bytes</code>:</strong> decided: <code>list&lt;byte&gt;</code> (which the earlier <code>pack&lt;byte&gt;</code> now is).</li>
+<li><strong>Size:</strong> any size of value type may go in a list of values, or only up to some limit? Suggested: any, up to the 64 KB that a reference's offset allows; the type's author chooses <code>class</code> for large things that are kept and reordered.</li>
+<li><strong>Nullable value types</strong> (<code>list&lt;Point?&gt;</code>, <code>list&lt;int?&gt;</code>): kept as 16-byte values, as today, or packed with a bit per item for null? Suggested: as 16-byte values; simpler, and such lists are rarer.</li>
+<li><strong>The sort through positions:</strong> from 32 bytes an item? Suggested: yes, to be tuned by measurement.</li>
+<li><strong><code>replaceAll { }</code></strong>, Kotlin's name for replacing every item with what a lambda gives for it: keep it? Suggested: yes.</li>
+</ul>
+</section>
+</main>
+</body>
+</html>

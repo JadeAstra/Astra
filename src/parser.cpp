@@ -8,6 +8,18 @@ namespace {
 
 const int kMaxNesting = 256;
 
+// Kotlin's `open`, `final` and `sealed` are not words of Astra: every class can be subclassed
+// and every member overridden, and a fixed set of kinds is an `enum class`. Written in front
+// of a declaration, any of them is an error.
+bool kotlinOnlyWord(const std::string& word) { return word == "open" || word == "final" || word == "sealed"; }
+
+std::string notAstraWord(const std::string& word) {
+    if (word == "sealed")
+        return "'sealed' is not a keyword; a fixed set of kinds is an 'enum class', and an 'abstract class' "
+               "can stand in for one";
+    return "'" + word + "' is not a keyword; every class can be subclassed and every member overridden";
+}
+
 std::string describe(const Token& t) {
     return t.type == TokenType::Eof ? "end of input" : "'" + t.text + "'";
 }
@@ -148,15 +160,16 @@ StmtPtr Parser::declaration() {
             if (word.text == "fn" && after.type == TokenType::Identifier && !after.newlineBefore)
                 throw error(word, "'fn' is not a keyword; declare functions with 'fun'");
             // Who may see a declaration: `private` its file, `internal` its library, and
-            // otherwise everyone. `public`, `open` and `final` are accepted and change nothing.
-            const bool makesAbstract = word.text == "abstract" || word.text == "sealed";
+            // otherwise everyone. `public` is accepted and changes nothing.
+            const bool makesAbstract = word.text == "abstract";
             // `suspend fun` marks a function that may set a flow aside. Any function may, so the
             // word says so to the reader and changes nothing.
             const bool modifier = word.text == "private" || word.text == "internal" || word.text == "public" ||
-                                  word.text == "open" || word.text == "final" || makesAbstract ||
+                                  makesAbstract ||
                                   (word.text == "suspend" && (after.type == TokenType::Fun || after.type == TokenType::Identifier));
             const bool declares = after.type == TokenType::Val || after.type == TokenType::Var || after.type == TokenType::Fun ||
                                   after.type == TokenType::Class || after.type == TokenType::Identifier;
+            if (kotlinOnlyWord(word.text) && declares && !after.newlineBefore) throw error(word, notAstraWord(word.text));
             if (modifier && declares && !after.newlineBefore) {
                 advance();
                 StmtPtr declared = declaration();
@@ -460,14 +473,16 @@ StmtPtr Parser::classDeclaration(bool isEnum, bool isInterface, const Token* ano
     if (match(TokenType::LParen)) {
         s->hasHeader = true;
         while (!check(TokenType::RParen)) {
-            // Kotlin's modifiers in front of a header field: `override` is noted, the rest accepted.
+            // Kotlin's modifiers in front of a header field: `override` and the access words are
+            // noted, `public` accepted, `open`, `final` and `sealed` refused.
             skipAnnotations();
             bool overrides = false;
             uint8_t access = 0;
             while (check(TokenType::Identifier) &&
                    (peekNext().type == TokenType::Val || peekNext().type == TokenType::Var || peekNext().type == TokenType::Identifier) &&
                    (peek().text == "override" || peek().text == "private" || peek().text == "internal" || peek().text == "public" ||
-                    peek().text == "protected" || peek().text == "open" || peek().text == "final")) {
+                    peek().text == "protected" || kotlinOnlyWord(peek().text))) {
+                if (kotlinOnlyWord(peek().text)) throw error(peek(), notAstraWord(peek().text));
                 overrides = overrides || peek().text == "override";
                 if (accessWord(peek().text) != 0) access = accessWord(peek().text);
                 advance();
@@ -749,19 +764,20 @@ void Parser::classMember(ClassStmt& s, bool inStatic) {
     }
 
     // Kotlin's modifiers on a member. `override`, `abstract` and the access words are noted;
-    // `open` and `final` change nothing.
+    // `open`, `final` and `sealed` are refused.
     bool overrides = false;
     bool abstracts = false;
     uint8_t access = 0;
     for (; check(TokenType::Identifier) && !peekNext().newlineBefore &&
            (peek().text == "private" || peek().text == "internal" || peek().text == "public" || peek().text == "protected" ||
-            peek().text == "override" || peek().text == "open" || peek().text == "final" || peek().text == "abstract" ||
-            peek().text == "sealed" || peek().text == "suspend") &&
+            peek().text == "override" || kotlinOnlyWord(peek().text) || peek().text == "abstract" ||
+            peek().text == "suspend") &&
            (peekNext().type == TokenType::Val || peekNext().type == TokenType::Var || peekNext().type == TokenType::Fun ||
             peekNext().type == TokenType::Class || peekNext().type == TokenType::Identifier);
          advance()) {
+        if (kotlinOnlyWord(peek().text)) throw error(peek(), notAstraWord(peek().text));
         overrides = overrides || peek().text == "override";
-        abstracts = abstracts || peek().text == "abstract" || peek().text == "sealed";
+        abstracts = abstracts || peek().text == "abstract";
         if (accessWord(peek().text) != 0) access = accessWord(peek().text);
     }
     struct AbstractMember {
@@ -1395,11 +1411,12 @@ ExprPtr Parser::pairing() {
 
 ExprPtr Parser::range() {
     ExprPtr left = bitOr();
-    // a..b runs from a to b; a..<b and `a until b` stop before b.
-    // `a downTo b` counts down to b, and `step n` after any of them takes every nth.
-    const bool until = word("until") && !peek().newlineBefore;
+    // a..b runs from a to b; a..<b stops before b. Kotlin's `a until b` is refused in favour
+    // of a..<b. `a downTo b` counts down to b, and `step n` after any of them takes every nth.
+    if (word("until") && !peek().newlineBefore)
+        throw error(peek(), "'until' is not a keyword; a range that stops before its end is written a..<b");
     const bool downTo = word("downTo") && !peek().newlineBefore;
-    if (check(TokenType::DotDot) || check(TokenType::DotDotLt) || until || downTo) {
+    if (check(TokenType::DotDot) || check(TokenType::DotDotLt) || downTo) {
         const Token& op = advance();
         auto e = node<RangeExpr>(op);
         e->inclusive = op.type == TokenType::DotDot || downTo;

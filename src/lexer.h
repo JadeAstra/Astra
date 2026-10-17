@@ -69,7 +69,7 @@ struct CompileError : std::runtime_error {
     int line;
     int col;
 
-    // The error was hit at end of input, so more input might fix it (used by the REPL).
+    // The error was hit at end of input, so more input might fix it (used by the shell).
     bool atEof;
 
     CompileError(std::string file, int line, int col, const std::string& message, bool atEof = false);

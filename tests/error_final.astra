@@ -1,0 +1,6 @@
+// `final` is not a keyword either: every member can be overridden.
+print("never runs")
+class Base {
+  final fun f() => 1
+}
+// expect compile error: error_final.astra:4:3: error: 'final' is not a keyword; every class can be subclassed and every member overridden

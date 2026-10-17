@@ -82,6 +82,10 @@ if(MSVC)
   target_compile_definitions(astra PRIVATE _CRT_SECURE_NO_WARNINGS)
   # The parser and compiler recurse over nested source; give them room.
   target_link_options(astra PRIVATE /STACK:16777216)
+  # OpenGL and the shell are loaded when first used, not when astra starts: loading
+  # opengl32.dll costs about 57 ms, which every script paid, window or not.
+  target_link_libraries(astra PRIVATE delayimp)
+  target_link_options(astra PRIVATE /DELAYLOAD:opengl32.dll /DELAYLOAD:shell32.dll)
 else()
   target_compile_options(astra PRIVATE -Wall -Wextra)
 endif()

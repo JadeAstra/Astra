@@ -23,6 +23,19 @@
 
 namespace astra {
 
+// A request for more memory than the machine could ever give, its memory and page file together,
+// is refused at once, with the same error that running out gives; below that the allocator
+// decides. (Asking anyway would also stop a program built with the address sanitizer, whose
+// allocator does not fail in the ordinary way.)
+void VM::checkRoomFor(uint64_t bytes) {
+    static const uint64_t limit = [] {
+        MEMORYSTATUSEX status{};
+        status.dwLength = sizeof status;
+        return GlobalMemoryStatusEx(&status) ? static_cast<uint64_t>(status.ullTotalPageFile) : UINT64_MAX;
+    }();
+    if (bytes > limit) throw outOfMemory();
+}
+
 // ---- Helpers (declared in builtins.h; stdlib.cpp uses them too) ----
 
 // Clamps a possibly negative position into [0, length], as slice() bounds.
@@ -533,8 +546,9 @@ void registerStringMethods(VM& vm) {
         const std::string& s = asString(self)->chars;
         int64_t times = vm.toInt(args[0], "repeat count");
         if (times < 0) throw vm.runtimeError("repeat count cannot be negative");
-        if (!s.empty() && static_cast<uint64_t>(times) > (uint64_t{1} << 30) / s.size())
-            throw vm.runtimeError("repeated string would be too large");
+        // As large as memory allows; a size past what can be counted cannot be asked for at all.
+        if (!s.empty() && static_cast<uint64_t>(times) > SIZE_MAX / s.size()) throw vm.outOfMemory();
+        vm.checkRoomFor(static_cast<uint64_t>(times) * s.size());
         std::string result;
         result.reserve(s.size() * static_cast<size_t>(times));
         for (int64_t i = 0; i < times; i++) result += s;
@@ -732,7 +746,8 @@ void registerRangeMethods(VM& vm) {
     vm.defineMethod(T, "toList", 0, 0, [](VM& vm, Value self, int, Value*) -> Value {
         ObjRange* range = asRange(self);
         int64_t count = range->count();
-        if (count > 50000000) throw vm.runtimeError("range is too large to turn into a list");
+        if (static_cast<uint64_t>(count) > SIZE_MAX / sizeof(Value)) throw vm.outOfMemory();
+        vm.checkRoomFor(static_cast<uint64_t>(count) * sizeof(Value));
         std::vector<Value> items;
         items.reserve(static_cast<size_t>(count));
         uint64_t next = static_cast<uint64_t>(range->start);
@@ -759,6 +774,7 @@ void registerBytes(VM& vm) {
         Value from = args[0];
         if (from.isInt()) {
             if (from.as.i < 0) throw vm.runtimeError("bytes() cannot make a negative number of bytes");
+            vm.checkRoomFor(static_cast<uint64_t>(from.as.i));
             made->data.assign(static_cast<size_t>(from.as.i), 0);
         } else if (from.isObjType(ObjType::List)) {
             for (Value item : asList(from)->items) {

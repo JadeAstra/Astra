@@ -1,0 +1,489 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Astra decision review</title>
+<style>
+:root {
+  --bg: #fbfaf7; --surface: #ffffff; --ink: #1d2422; --muted: #5d6763; --line: #dfe3e0;
+  --accent: #1f5fa8; --accent-soft: #e8f0fa; --decide: #a8551f; --decide-soft: #fbefe5;
+  --code-bg: #eef1ef; --warn: #9a3b2e; --warn-soft: #f8e9e6;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #161a19; --surface: #1d2221; --ink: #e4e9e6; --muted: #9aa5a0; --line: #2e3533;
+    --accent: #7fb2ec; --accent-soft: #1e2a38; --decide: #e7a06b; --decide-soft: #3a2a1f;
+    --code-bg: #262c2a; --warn: #f0a596; --warn-soft: #3a2320;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #161a19; --surface: #1d2221; --ink: #e4e9e6; --muted: #9aa5a0; --line: #2e3533;
+  --accent: #7fb2ec; --accent-soft: #1e2a38; --decide: #e7a06b; --decide-soft: #3a2a1f;
+  --code-bg: #262c2a; --warn: #f0a596; --warn-soft: #3a2320;
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body {
+  margin: 0; background: var(--bg); color: var(--ink);
+  font: 16px/1.6 "Segoe UI", system-ui, -apple-system, sans-serif;
+}
+main { max-width: 880px; margin: 0 auto; padding: 40px 16px 80px; }
+h1 { font-size: 1.9rem; line-height: 1.25; margin: 0 0 8px; }
+.lede { color: var(--muted); margin: 0 0 28px; }
+h2 { font-size: 1.3rem; line-height: 1.3; margin: 0 0 12px; }
+h3 { font-size: 1.05rem; margin: 30px 0 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+p { margin: 0 0 12px; }
+ul { margin: 0 0 12px; padding-left: 22px; }
+li { margin: 2px 0; }
+a { color: var(--accent); }
+code {
+  font: 0.88em/1.4 Consolas, "Cascadia Mono", monospace; background: var(--code-bg);
+  padding: 1px 5px; border-radius: 4px; white-space: nowrap;
+}
+nav {
+  background: var(--surface); border: 1px solid var(--line); border-radius: 10px;
+  padding: 16px 20px; margin: 0 0 32px;
+}
+nav h2 { font-size: 1rem; margin: 0 0 8px; color: var(--muted); }
+nav ul { list-style: none; padding: 0; margin: 0; columns: 2 280px; column-gap: 24px; }
+nav li { break-inside: avoid; }
+nav a { text-decoration: none; color: var(--ink); display: flex; gap: 6px; align-items: baseline; }
+nav a .code { flex: none; }
+nav a:hover { color: var(--accent); }
+.code {
+  display: inline-block; min-width: 2.6em; font-weight: 600; color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+section { margin: 0 0 28px; }
+section.decision {
+  background: var(--surface); border: 1px solid var(--line); border-radius: 10px;
+  padding: 22px 24px 18px;
+}
+.about { font-size: 0.9rem; color: var(--muted); margin: -6px 0 12px; }
+.kind { display: inline-block; font-size: 0.72rem; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase;
+  padding: 0 7px; border-radius: 9px; margin-right: 6px; }
+.kind.goal { background: var(--warn-soft); color: var(--warn); }
+.kind.risk { background: var(--decide-soft); color: var(--decide); }
+.kind.gap { background: var(--accent-soft); color: var(--accent); }
+.table { overflow-x: auto; margin: 4px 0 14px; }
+table { border-collapse: collapse; width: 100%; font-size: 0.93rem; }
+th, td { text-align: left; vertical-align: top; padding: 8px 10px; border-top: 1px solid var(--line); }
+th { color: var(--muted); font-weight: 600; border-top: none; border-bottom: 2px solid var(--line); }
+td:first-child { min-width: 11em; }
+.advice {
+  background: var(--accent-soft); border-left: 3px solid var(--accent); border-radius: 6px;
+  padding: 10px 14px; margin: 14px 0 12px;
+}
+.advice p { margin: 2px 0 0; }
+.label { font-size: 0.78rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
+.advice .label { color: var(--accent); }
+.verdict {
+  display: flex; align-items: center; gap: 14px; background: var(--decide-soft);
+  border: 1px dashed var(--decide); border-radius: 6px; padding: 10px 14px;
+}
+.verdict .label { color: var(--decide); white-space: nowrap; }
+.verdict .blank { flex: 1; border-bottom: 1px solid var(--decide); height: 1.2em; opacity: 0.6; }
+.verdict .note { font-size: 0.92rem; }
+.verdict.decided { border-style: solid; align-items: flex-start; }
+.state {
+  flex: none; margin-left: auto; padding: 0 7px; border-radius: 9px;
+  font-size: 0.72rem; font-weight: 600; letter-spacing: 0.03em; line-height: 1.6;
+}
+.state.done { background: var(--decide-soft); color: var(--decide); }
+.state.open { color: var(--muted); border: 1px solid var(--line); }
+li.is-decided a { color: var(--muted); }
+pre { background: var(--code-bg); padding: 10px 12px; border-radius: 6px; overflow-x: auto; margin: 6px 0 12px; }
+pre code { background: none; padding: 0; white-space: pre; font-size: 0.86rem; }
+@media (max-width: 600px) {
+  main { padding-top: 24px; }
+  h1 { font-size: 1.5rem; }
+  section.decision { padding: 16px 14px 12px; }
+  code { white-space: normal; }
+}
+</style>
+</head>
+<body>
+<main>
+<h1>Decision review: the language choices, read together</h1>
+<p class="lede">A review of the 118 decisions on <a href="language-choices.html">language-choices.html</a> (L0 to L117), read as one design on 2026-10-17. Each point here is a place where a decision pulls against Astra's goals, carries a risk, or leaves a gap. Each has options, a recommendation and a line for your decision, as on the main page. Counts of "the apps" are of the code being ported: JadeLib, JadeMem, Snips, JadeMail, JadesDomain, JadeNet and JadeGen.</p>
+<div class="advice"><span class="label">The user's principle, set at R8</span><p>Astra being a good, useful language comes before porting Kotlin easily. Porting is done once, perhaps with a few passes after testing, and then costs nothing more. What matters is Astra's speed, stability and readability; the porting question is whether Astra can do what the code does as well or better. Porting effort alone is no reason to choose an option.</p></div>
+<p class="lede">The goals they are read against: a scripting language that is fast enough (M6.5 to M14); Kotlin apps ported by translating syntax, not redesigning; no third-party code; no word that is accepted and does nothing; one name for one thing; and <code>astra code.astra</code> always working. The labels say which kind of point each is: <span class="kind goal">goal</span> against a goal, <span class="kind risk">risk</span> a choice that may cause trouble, <span class="kind gap">gap</span> something not yet decided.</p>
+
+<nav><h2>Contents: 23 of 23 decided</h2><ul>
+<li class="is-decided"><a href="#r1"><span class="code">R1</span> <code>suspend</code> and <code>reified</code>: words that do nothing<span class="state done">Decided</span></a></li>
+<li class="is-decided"><a href="#r2"><span class="code">R2</span> <code>const val</code><span class="state done">Decided</span></a></li>
+<li class="is-decided"><a href="#r3"><span class="code">R3</span> <code>has</code>, <code>contains</code>, <code>containsKey</code><span class="state done">Decided</span></a></li>
+<li class="is-decided"><a href="#r4"><span class="code">R4</span> <code>getRGB</code> and <code>setRGB</code> on <code>Image</code><span class="state done">Decided</span></a></li>
+<li class="is-decided"><a href="#r5"><span class="code">R5</span> <code>n.char</code> and <code>char(n)</code><span class="state done">Decided</span></a></li>
+<li class="is-decided"><a href="#r6"><span class="code">R6</span> Font's two constructors<span class="state done">Decided</span></a></li>
+<li class="is-decided"><a href="#r7"><span class="code">R7</span> <code>enum class</code> means something else in Kotlin<span class="state done">Decided</span></a></li>
+<li class="is-decided"><a href="#r8"><span class="code">R8</span> Checked exceptions in callbacks<span class="state done">Decided</span></a></li>
+<li class="is-decided"><a href="#r9"><span class="code">R9</span> "A small language"<span class="state done">Decided</span></a></li>
+<li class="is-decided"><a href="#r10"><span class="code">R10</span> Whole-program checks on every run<span class="state done">Decided</span></a></li>
+<li class="is-decided"><a href="#r11"><span class="code">R11</span> Negative indexes and off-by-one<span class="state done">Decided</span></a></li>
+<li class="is-decided"><a href="#r12"><span class="code">R12</span> Kotlin's 32-bit arithmetic on a 64-bit <code>int</code><span class="state done">Decided</span></a></li>
+<li class="is-decided"><a href="#r13"><span class="code">R13</span> Value types larger than 8 bytes in variables<span class="state done">Decided</span></a></li>
+<li class="is-decided"><a href="#r14"><span class="code">R14</span> <code>Path</code>: properties or functions<span class="state done">Decided</span></a></li>
+<li class="is-decided"><a href="#r15"><span class="code">R15</span> What a bare <code>catch (e)</code> catches<span class="state done">Decided</span></a></li>
+<li class="is-decided"><a href="#r16"><span class="code">R16</span> <code>size</code> on two-dimensional things<span class="state done">Decided</span></a></li>
+<li class="is-decided"><a href="#r17"><span class="code">R17</span> Kotlin's annotations in ported code<span class="state done">Decided</span></a></li>
+<li class="is-decided"><a href="#r18"><span class="code">R18</span> An automatic fixer: <code>astra fix</code><span class="state done">Decided</span></a></li>
+<li class="is-decided"><a href="#r19"><span class="code">R19</span> Stale wording on the decisions page<span class="state done">Decided</span></a></li>
+<li class="is-decided"><a href="#r20"><span class="code">R20</span> Bundles of named arguments: <code>params(...)</code><span class="state done">Decided</span></a></li>
+<li class="is-decided"><a href="#r21"><span class="code">R21</span> The case of type names<span class="state done">Decided</span></a></li>
+<li class="is-decided"><a href="#r22"><span class="code">R22</span> A generic grid: <code>Grid&lt;T&gt;</code><span class="state done">Decided</span></a></li>
+<li class="is-decided"><a href="#r23"><span class="code">R23</span> <code>.=</code>: assigning a member's result back<span class="state done">Decided</span></a></li>
+<li><a href="#summary">Summary</a></li>
+</ul></nav>
+
+<h3>Against Astra's goals</h3>
+
+<section class="decision" id="r1">
+<h2><span class="code">R1</span> <code>suspend</code> and <code>reified</code>: words that do nothing</h2>
+<p class="about"><span class="kind goal">goal</span>About L7 and L55; the rule of L47.</p>
+<p><strong>The point.</strong> Your rule is that no word is accepted and does nothing: <code>open</code>, <code>final</code>, <code>sealed</code>, <code>public</code> and <code>@Volatile</code> are errors for that reason. <code>suspend</code> breaks it: L7 keeps it "accepted and changes nothing", and L55 keeps it again. Kotlin's <code>reified</code> is in the same place: Astra keeps type arguments when running (L14), so it would mark nothing.</p>
+<p><strong>Evidence.</strong> The apps write <code>suspend fun</code> 26 times and <code>reified</code> 3 times. The parser accepts <code>suspend</code> today (<code>src/parser.cpp</code>).</p>
+<p><strong>Options.</strong></p>
+<div class="table"><table><thead><tr><th></th><th>Gain</th><th>Lose</th><th>Run speed</th></tr></thead><tbody>
+<tr><td><strong>a. Both errors</strong>, saying the word is not needed (any function may wait; type arguments are always kept); if L7's later check that works out which functions may wait is built, <code>suspend</code> can come back then with that meaning</td><td>The rule holds without exceptions.</td><td>29 words deleted when porting.</td><td>None.</td></tr>
+<tr><td><strong>b. <code>suspend</code> given a meaning now</strong>: a function marked <code>suspend</code> may wait, and calling it where waiting is impossible (a sort's comparison, a getter, <code>toString()</code>) is a compile error; <code>reified</code> an error</td><td>A real check; ported code unchanged.</td><td>Work in M6.5 that L7 put off; the mark must then be written wherever waiting happens.</td><td>None.</td></tr>
+<tr><td><strong>c. As decided</strong>: both accepted, doing nothing</td><td>Nothing to change.</td><td>Against the rule.</td><td>None.</td></tr>
+</tbody></table></div>
+<div class="advice"><span class="label">Recommendation</span><p>(a).</p></div>
+<div class="verdict decided"><span class="label">Decided</span><span class="note">2026-10-17: <strong>(b), <code>suspend</code> given a meaning now, with errors that explain.</strong> <code>suspend fun</code> marks a function that may wait, setting its task aside; the standard library marks its own calls that do (<code>delay</code>, a channel's <code>send</code> and <code>receive</code>, <code>Job.get</code>, <code>Countdown.await</code>, <code>waitUntil</code>, <code>suspendTask</code>, <code>Thread.sleep</code>). A function that calls one may wait too, and says so: an unmarked function calling a <code>suspend</code> one is a compile error, as in Kotlin, so ported code, marked already, compiles as written. A <code>suspend</code> function may be called from another, and from code that starts its own task or thread to run it: <code>task { }</code>, <code>thread { }</code>, a pool's or queue's <code>submit { }</code>, and the top level of a script. It is refused wherever waiting is impossible, even inside a <code>suspend</code> function: a sort's comparison, a getter or setter, <code>toString</code>, <code>==</code> and <code>hashCode</code>, a generator's block (where only <code>yield</code> waits, L78) and a parallel section. <strong>The error says why, and how to call it safely</strong>, naming the call and the place: <code>'fetch' may wait (it is a suspend function), and a getter must give its value at once: whoever reads 'title' would be held up. Call it from a suspend function, or start it in a task and use the result when it is ready: task { fetch() }.then { title = it }</code>; and for an unmarked caller, <code>'load' calls 'fetch', which may wait, so 'load' may wait too: mark it 'suspend fun load()', or run the call in a task of its own: task { fetch() }</code>. <code>reified</code> is an error saying why it is not needed: type arguments are kept when the program runs (L14), so <code>x is T</code> works in any generic function. <strong>Blocking input and output is not marked</strong> (the user, the same day, as in Kotlin): reading and writing files, sockets and other programs' streams block the thread they run on, as Java's do, and never set a task aside, so a function that reads a socket needs no <code>suspend</code> and the apps' socket code (about 130 places) ports as written. This changes L99's "sets a task aside" for sockets: a server serves each connection from a thread or a pool's job; a task that reads a socket holds its thread meanwhile. Built in M6.5. Changes L7 (D30) and L99 (D120).</span></div>
+</section>
+
+<section class="decision" id="r2">
+<h2><span class="code">R2</span> <code>const val</code></h2>
+<p class="about"><span class="kind gap">gap</span>No decision covers it.</p>
+<p><strong>The point.</strong> Kotlin's <code>const val</code> is a value known when compiling. No decision says what it is in Astra. The parser refuses <code>const x = 1</code>, but nothing settles <code>const val</code>.</p>
+<p><strong>Evidence.</strong> The apps write <code>const val</code> <strong>690 times</strong>, more than any other Kotlin word this review found.</p>
+<p><strong>Options.</strong></p>
+<div class="table"><table><thead><tr><th></th><th>Gain</th><th>Lose</th><th>Run speed</th></tr></thead><tbody>
+<tr><td><strong>a. A check, as <code>tail</code> is</strong>: <code>const val</code> must be given a value worked out from literals and other constants (numbers, strings, characters, bools), or it is a compile error; its value is written into each use. The compiler folds any such <code>val</code> anyway; <code>const</code> is the promise that it stays one</td><td>Ported code unchanged (690); a real meaning, so no do-nothing word; a change that makes it no longer constant is caught where it was promised.</td><td>One more word in the language.</td><td>Faster: no load of the value, and arithmetic on constants done when compiling.</td></tr>
+<tr><td><strong>b. An error</strong> saying to write <code>val</code>; the compiler folds constants by itself</td><td>One word fewer.</td><td>690 deletions when porting; no way to promise a value stays constant.</td><td>The same as (a).</td></tr>
+</tbody></table></div>
+<div class="advice"><span class="label">Recommendation</span><p>(a).</p></div>
+<div class="verdict decided"><span class="label">Decided</span><span class="note">2026-10-17: <strong>(a), a constant is a check, as <code>tail</code> is, written <code>const</code> alone.</strong> <code>const maxRows = 1000</code> declares it, with no <code>val</code>: <code>const val</code> and <code>val const</code> are compile errors saying to write <code>const maxRows = 1000</code>. It must be given a value worked out from literals and other constants (numbers, strings, characters, bools, and arithmetic, string joining and comparisons on them), or it is a compile error saying what in the value is not constant. Its value is written into each use, so reading it costs no load and arithmetic on constants is done when compiling. Allowed at the top level, in an <code>object</code> and in a class's <code>static { }</code> block, as in Kotlin; not on a local or an instance field. The compiler folds any <code>val</code> it can see is constant anyway; <code>const</code> is the promise that it stays one, so a change that makes it depend on something worked out when running is caught where it was promised. The apps' 690 <code>const val</code> lose their <code>val</code> when ported (one word each). Today's error for <code>const x</code> ("declare variables with 'val'") goes. Built in M6.5. (D139)</span></div>
+</section>
+
+<section class="decision" id="r3">
+<h2><span class="code">R3</span> <code>has</code>, <code>contains</code>, <code>containsKey</code></h2>
+<p class="about"><span class="kind goal">goal</span>About L49, against the rule of one name for one thing that L117 applied to <code>size</code>.</p>
+<p><strong>The point.</strong> L49 kept all three, where every other pair it looked at kept one name. Since L117 made <code>size</code> the only word for a count, this is the one place left with several names for one question.</p>
+<p><strong>Today.</strong> <code>has</code> is Astra's own; <code>contains</code> is Kotlin's, for lists, sets and strings, and the <code>in</code> operator calls it; <code>containsKey</code> is Kotlin's for maps, with <code>containsValue</code> beside it.</p>
+<p><strong>Options.</strong></p>
+<div class="table"><table><thead><tr><th></th><th>Gain</th><th>Lose</th><th>Run speed</th></tr></thead><tbody>
+<tr><td><strong>a. Kotlin's</strong>: <code>contains</code> (and <code>in</code>), <code>containsKey</code> and <code>containsValue</code> for maps; <code>has</code> an error saying which</td><td>One name each; ported code unchanged; a map says whether it asks about keys or values.</td><td>Astra's own <code>has</code> rewritten.</td><td>None.</td></tr>
+<tr><td><strong>b. <code>has</code> only</strong>: <code>has</code> for everything, on a map asking about keys</td><td>Short.</td><td>Every ported <code>contains</code> and <code>containsKey</code> rewritten.</td><td>None.</td></tr>
+<tr><td><strong>c. As decided</strong>: all three</td><td>Nothing to change.</td><td>Three names for one question.</td><td>None.</td></tr>
+</tbody></table></div>
+<div class="advice"><span class="label">Recommendation</span><p>(a).</p></div>
+<div class="verdict decided"><span class="label">Decided</span><span class="note">2026-10-17, the user's design: <strong><code>contains</code> and <code>in</code> only; a map is asked through its keys or values, or about a whole entry.</strong> Lists, sets and strings have <code>contains</code>, and <code>x in xs</code> calls it. A map's keys are asked with <code>map.keys.contains(k)</code> or <code>k in map.keys</code>, its values with <code>map.values.contains(v)</code> or <code>v in map.values</code>: the live views of L51, so nothing is copied, and asking the keys is the same hash lookup as Kotlin's <code>containsKey</code>, with no view object made. <code>map.contains(...)</code> and <code>... in map</code> take only a whole entry, a key and a value together (<code>map.contains("a" to 1)</code>, <code>("a" to 1) in map</code>, or a <code>MapEntry</code>), true when the map holds that key with that value, matching a <code>for</code> over a map giving its entries (L40); given anything else they are a compile error saying to write <code>map.keys.contains(k)</code> or <code>k in map.keys</code> (or the values form). <code>has</code>, <code>containsKey</code> and <code>containsValue</code> are compile errors naming the form to write; Kotlin's <code>k in map</code>, which asks about keys, is caught by the same error. Built in M6.6. Changes L49. (D140)</span></div>
+</section>
+
+<section class="decision" id="r4">
+<h2><span class="code">R4</span> <code>getRGB</code> and <code>setRGB</code> on <code>Image</code></h2>
+<p class="about"><span class="kind gap">gap</span>Left open by L101 ("unless L49's rule drops them").</p>
+<p><strong>The point.</strong> <code>Image</code> has <code>get(x, y)</code> and <code>set(x, y, color)</code>, and since L110 a <code>Bitmap</code> with <code>[x, y]</code>, <code>get</code> and <code>set</code>. Java's <code>getRGB</code> and <code>setRGB</code> were left beside them, undecided. They also differ in kind: Java's take and give one <code>int</code> (<code>0xAARRGGBB</code>); <code>get</code> gives a <code>Color</code>.</p>
+<p><strong>Options.</strong></p>
+<div class="table"><table><thead><tr><th></th><th>Gain</th><th>Lose</th><th>Run speed</th></tr></thead><tbody>
+<tr><td><strong>a. Errors</strong> saying to write <code>get</code> and <code>set</code>; a colour as one number is <code>color.argb</code> and <code>Color(argb)</code></td><td>One name; colours always <code>Color</code>.</td><td>Ported <code>getRGB</code> and <code>setRGB</code> rewritten.</td><td>None: a <code>Color</code> is a value type.</td></tr>
+<tr><td><strong>b. Kept</strong>, as the forms that take and give the <code>int</code></td><td>Ported code unchanged.</td><td>Two names for one pixel, differing only in how the colour is written.</td><td>None.</td></tr>
+</tbody></table></div>
+<div class="advice"><span class="label">Recommendation</span><p>(a).</p></div>
+<div class="verdict decided"><span class="label">Decided</span><span class="note">2026-10-17: <strong>(a), <code>getRGB</code> and <code>setRGB</code> are errors.</strong> A pixel is read and written with <code>get(x, y)</code> and <code>set(x, y, color)</code> on an <code>Image</code>, and with <code>bitmap[x, y]</code>, <code>get</code> and <code>set</code> on a <code>Bitmap</code> (L110), always as a <code>Color</code>. Where a colour is wanted as one number, <code>color.argb</code> gives <code>0xAARRGGBB</code> and <code>Color(argb)</code> makes one from it. <code>getRGB</code> and <code>setRGB</code> are compile errors saying to write <code>get(x, y).argb</code> and <code>set(x, y, Color(argb))</code>. A <code>Color</code> is a value type, so this costs nothing. Built in M6.6. Settles what L101 left open. (D141)</span></div>
+</section>
+
+<section class="decision" id="r5">
+<h2><span class="code">R5</span> <code>n.char</code> and <code>char(n)</code></h2>
+<p class="about"><span class="kind goal">goal</span>About L49.</p>
+<p><strong>The point.</strong> Both were kept for the character with a number, against the rule of one name. L49 dropped Astra's other free conversion functions (<code>str(x)</code>, <code>int(x)</code>, <code>float(x)</code>, <code>len(x)</code>) for members, so <code>char(n)</code> is the last of them.</p>
+<p><strong>Options.</strong></p>
+<div class="table"><table><thead><tr><th></th><th>Gain</th><th>Lose</th><th>Run speed</th></tr></thead><tbody>
+<tr><td><strong>a. <code>n.char</code> only</strong>, matching <code>c.code</code> the other way; <code>char(n)</code> an error saying so</td><td>One name; members throughout, as L49 chose for the rest.</td><td>Astra's own <code>char(n)</code> rewritten.</td><td>None.</td></tr>
+<tr><td><strong>b. As decided</strong>: both</td><td>Nothing to change.</td><td>Two names.</td><td>None.</td></tr>
+</tbody></table></div>
+<div class="advice"><span class="label">Recommendation</span><p>(a).</p></div>
+<div class="verdict decided"><span class="label">Decided</span><span class="note">2026-10-17: <strong>(a), <code>n.char</code> only.</strong> The character with a number is <code>n.char</code>, matching <code>c.code</code> the other way; <code>char(n)</code> is a compile error saying to write <code>n.char</code>, and so is Kotlin's <code>toChar()</code>, as L49 has it. With it the last of Astra's free conversion functions goes; conversions are members throughout. Built in M6.6. Changes L49. (D142)</span></div>
+</section>
+
+<section class="decision" id="r6">
+<h2><span class="code">R6</span> Font's two constructors</h2>
+<p class="about"><span class="kind risk">risk</span>About L80 and L102.</p>
+<p><strong>The point.</strong> L102 kept Java's <code>Font(name, Font.bold, 14)</code> beside the new <code>Font(name, 14, bold = true)</code>. Besides being two ways to write one font, they can be confused: in Java's form the second number is the style, an <code>int</code> made of flags; in the new form it is the size. <code>Font("X", 1, 12)</code> is a bold 12-point font; <code>Font("X", 12)</code> is a plain 12-point one; a slip between them compiles.</p>
+<p><strong>Options.</strong></p>
+<div class="table"><table><thead><tr><th></th><th>Gain</th><th>Lose</th><th>Run speed</th></tr></thead><tbody>
+<tr><td><strong>a. Named options only</strong>: <code>Font(name, size, bold = ..., italic = ..., weight = ...)</code>; Java's form an error showing the new one; <code>deriveFont</code> becomes <code>font.with(size = ..., bold = ...)</code> or stays, asked separately</td><td>One way; no number that means different things by position.</td><td>Ported <code>Font(..., Font.BOLD, n)</code> rewritten; a change to JadeUI's API (L57).</td><td>None.</td></tr>
+<tr><td><strong>b. Both, with the style its own type</strong>: <code>Font.bold</code> a <code>FontStyle</code>, not an <code>int</code>, so the two forms can never be mixed up</td><td>Ported code unchanged; no confusion.</td><td>Still two ways.</td><td>None.</td></tr>
+<tr><td><strong>c. As decided</strong></td><td>Nothing to change.</td><td>Two ways, and the slip above compiles.</td><td>None.</td></tr>
+</tbody></table></div>
+<div class="advice"><span class="label">Recommendation</span><p>(a), or (b) if ported code should keep compiling.</p></div>
+<div class="verdict decided"><span class="label">Decided</span><span class="note">2026-10-17: <strong>(a), named options only.</strong> A font is made one way: <code>Font(name, size, bold = ..., italic = ..., weight = ...)</code>, or from a <code>Typeface</code> with a size and the same options (L102). Java's <code>Font(name, Font.BOLD, 14)</code>, whose second number is a style made of flags, is a compile error showing the named form (<code>Font("Segoe UI", 14, bold = true)</code>), so a number can never mean a style in one place and a size in another; <code>Font.bold</code>, <code>Font.italic</code> and <code>Font.plain</code> go with it. A change to JadeUI's API, agreed here (L57): ported <code>Font(..., Font.BOLD, n)</code> is rewritten. <code>deriveFont</code> becomes <code>font.copy(size = 16, bold = true)</code>, changing only the options given, the same <code>copy</code> as data classes, value types and bundles (R20); <code>deriveFont</code> is a compile error pointing to it (16 in the apps). Built in M6.6. Changes L80 and L102. (D144)</span></div>
+</section>
+
+<section class="decision" id="r7">
+<h2><span class="code">R7</span> <code>enum class</code> means something else in Kotlin</h2>
+<p class="about"><span class="kind goal">goal</span>About L21, against porting by translating syntax.</p>
+<p><strong>The point.</strong> In Kotlin, <code>enum class Color { RED, GREEN }</code> is a plain enum. In Astra since L21, <code>enum class</code> is Kotlin's sealed class, and a plain enum is written <code>enum</code>. The same spelling means different things in the two languages. The bare-entries error catches every ported enum, so nothing goes wrong silently, but every one must be rewritten, and every Kotlin reader of Astra code has to learn the switch.</p>
+<p><strong>Evidence.</strong> The apps have 85 <code>enum class</code> (all plain enums) and 41 <code>sealed class</code> or <code>sealed interface</code>.</p>
+<p><strong>Options.</strong></p>
+<div class="table"><table><thead><tr><th></th><th>Gain</th><th>Lose</th><th>Run speed</th></tr></thead><tbody>
+<tr><td><strong>a. As decided</strong> (L21, your design)</td><td>No new word; <code>enum</code> and <code>enum class</code> read as related, as they are.</td><td>126 rewrites; the same words mean different things to Kotlin readers.</td><td>None.</td></tr>
+<tr><td><strong>b. Kotlin's spellings</strong>: <code>enum class</code> a plain enum (with <code>enum</code> an error saying so, or kept as its short form), and the fixed set of kinds <code>sealed class</code> / <code>sealed interface</code> again, with L21's rules otherwise unchanged (kinds in one file, bare names, exhaustive <code>when</code>)</td><td>All 126 port unchanged; what Kotlin readers expect.</td><td>Undoes the <code>sealed</code> error, which was built; <code>sealed</code> becomes a word again.</td><td>None.</td></tr>
+<tr><td><strong>c. A new word for the sealed form</strong>, such as <code>kinds class Event</code> or <code>closed class Event</code>, and <code>enum class</code> a plain enum as in Kotlin</td><td>Ported enums unchanged; no word meaning one thing in Kotlin and another here.</td><td>A word of Astra's own to learn; the 41 sealed classes rewritten.</td><td>None.</td></tr>
+</tbody></table></div>
+<div class="advice"><span class="label">Recommendation</span><p>(b) serves the porting goal best; (a) is the design as you wanted it, and works, at the cost of the rewrites.</p></div>
+<div class="verdict decided"><span class="label">Decided</span><span class="note">2026-10-17: <strong>(a), kept as L21 decided.</strong> <code>enum</code> is a plain enum and <code>enum class</code> a fixed set of kinds (Kotlin's sealed class); <code>sealed</code> stays an error. Ported Kotlin <code>enum class</code> (85 in the apps) meets the bare-entries error, which says to write <code>enum</code>, and <code>sealed class</code> (41) the <code>sealed</code> error, which says to write <code>enum class</code>; each error says what to write.</span></div>
+</section>
+
+<section class="decision" id="r8">
+<h2><span class="code">R8</span> Checked exceptions in callbacks</h2>
+<p class="about"><span class="kind goal">goal</span>About L12, L29 to L32 and L68, against porting by translating syntax.</p>
+<p><strong>The point.</strong> Kotlin has no checked exceptions, so nothing in the apps declares any. Under L30 a stored function value may throw only what its type says, and callbacks (<code>onClick</code>, timers, <code>then { }</code>) say nothing, so every handler that reads a file or the network must catch its exceptions itself before it compiles. Interfaces ported from Kotlin gain <code>throws</code> where their implementations do I/O (L29). <code>Job.get()</code> throws a checked <code>ExecutionException</code> (L68). Inference keeps ordinary code clean, but a UI is mostly callbacks.</p>
+<p><strong>Evidence.</strong> Not yet measured. The apps catch <code>Exception</code> or <code>Throwable</code> 148 times already, many of them in handlers.</p>
+<p><strong>Options.</strong></p>
+<div class="table"><table><thead><tr><th></th><th>Gain</th><th>Lose</th><th>Run speed</th></tr></thead><tbody>
+<tr><td><strong>a. Keep, and measure first</strong>: early in M6.5, check one app's handlers (JadeMem, the smallest) and count what porting must add; decide (b) if it is heavy</td><td>The safety stays; the cost becomes known.</td><td>Possible rework of the rule after M6.5 starts.</td><td>None.</td></tr>
+<tr><td><strong>b. Callbacks may throw</strong>: a checked exception leaving a stored callback goes to the event loop's error handler, reported as an uncaught exception at the top of a script is; everything else as decided</td><td>Handlers port as written; library functions and interfaces still promise what they throw.</td><td>A handler can fail without its writer having thought about it.</td><td>None.</td></tr>
+<tr><td><strong>c. No checked exceptions</strong>, as Kotlin</td><td>Simplest; every port as written.</td><td>The compiler no longer says which calls can fail.</td><td>None.</td></tr>
+</tbody></table></div>
+<div class="advice"><span class="label">Recommendation</span><p>(a), with (b) ready if the measure shows the cost.</p></div>
+<div class="verdict decided"><span class="label">Decided</span><span class="note">2026-10-17: <strong>(a), checked exceptions kept as decided, even where porting takes longer.</strong> Callbacks (<code>onClick</code>, timers, <code>then { }</code>) handle the checked exceptions of what they do, as L30 says, and interfaces gain the <code>throws</code> their implementations need (L29). No relaxing for porting's sake: the user's principle, set here, is that Astra being a good language comes before porting Kotlin easily. Porting is done once, perhaps with a few passes after testing, and then has no further cost; Astra's speed, stability and readability are what matter, and the porting question is whether Astra can do what the code does as well or better. The measure on JadeMem's handlers in M6.5 stays useful to know the work, not to decide the rule.</span></div>
+</section>
+
+<section class="decision" id="r9">
+<h2><span class="code">R9</span> "A small language"</h2>
+<p class="about"><span class="kind goal">goal</span>About the README's first line, and the decisions taken together.</p>
+<p><strong>The point.</strong> The README calls Astra "a small object-oriented scripting language". The decided language has union types, inferred checked exceptions, value types, <code>enum class</code> and <code>enum interface</code>, <code>accepts</code>, <code>extend</code>, reflection with flow analysis, generators, tasks and jobs, atomic fields, <code>gather</code>, <code>SharedMap</code> and more. That is no longer small. Either the goal has changed, or some features wait.</p>
+<p><strong>What the apps do not need.</strong> Union types (Kotlin has none, so no ported code uses them); the parallel-section extras of L72 to L74 (atomic fields, <code>gather</code>, <code>SharedMap</code>), since the apps use JVM threads, which port to Astra's threads, pools and jobs.</p>
+<p><strong>Options.</strong></p>
+<div class="table"><table><thead><tr><th></th><th>Gain</th><th>Lose</th><th>Run speed</th></tr></thead><tbody>
+<tr><td><strong>a. Restate the goal</strong>: the README describes Astra as a statically typed scripting language for porting and running Kotlin-style apps, fast; everything decided stays planned</td><td>The README says what Astra is.</td><td>Nothing.</td><td>None.</td></tr>
+<tr><td><strong>b. (a), and move what the apps do not need after M13</strong>: union types and L72 to L74 stay decided but are built once the apps run</td><td>M6.5 and M6.6, already the largest milestones, get smaller; the apps arrive sooner.</td><td>Those features later.</td><td>None.</td></tr>
+<tr><td><strong>c. Keep "small"</strong> and cut features</td><td>A smaller language.</td><td>Undoes decisions you made.</td><td>None.</td></tr>
+</tbody></table></div>
+<div class="advice"><span class="label">Recommendation</span><p>(b).</p></div>
+<div class="verdict decided"><span class="label">Decided</span><span class="note">2026-10-17, the user: <strong>"small" meant self-contained, not few features.</strong> The goal is portability: <code>astra something.astra</code> just runs, with nothing else installed, and a program built with <code>astra build --exe</code> needs no <code>astra.exe</code>, sources or <code>lib</code> beside it. Both hold today, and the decided features do not change them, so nothing is cut or put off. The README's first line says self-contained in place of small. Every later milestone keeps both true: M12's TLS and cryptography are Astra's own, in C++, one implementation on every system, since some apps run as dedicated servers on Linux and must agree with themselves on Windows (the user, the same day): Windows' SChannel and CNG exist only on Windows, and on Linux the system's libraries (OpenSSL and the like) are third-party code that may not be installed; and M14's native code stays an option beside today's built programs, which need no C++ compiler on the machine that builds them.</span></div>
+</section>
+
+<section class="decision" id="r10">
+<h2><span class="code">R10</span> Whole-program checks on every run</h2>
+<p class="about"><span class="kind goal">goal</span>About L11, L12, L20 and L28, against <code>astra code.astra</code> starting quickly.</p>
+<p><strong>The point.</strong> A script is compiled each time it is run. Several decisions are analyses over the whole program: which checked exceptions leave each function (L12), which classes reflection can reach (L28), whether a key's hash can change (L11), whether two <code>extend</code> declarations conflict anywhere (L20). Each is cheap alone; together, on a program the size of an app, they may make starting slow.</p>
+<p><strong>Options.</strong></p>
+<div class="table"><table><thead><tr><th></th><th>Gain</th><th>Lose</th><th>Run speed</th></tr></thead><tbody>
+<tr><td><strong>a. A budget, measured</strong>: M6.5 sets a target (say, a 20,000-line program compiles in under half a second) and measures it on a ported app; if over, results are kept per file beside the <code>.astc</code> and only changed files are worked out again</td><td>Starting time stays known and bounded.</td><td>Work in M6.5 if the budget is missed.</td><td>None when running; starting faster.</td></tr>
+<tr><td><strong>b. Nothing now</strong></td><td>No work.</td><td>Found late if it is slow.</td><td>Unknown.</td></tr>
+</tbody></table></div>
+<div class="advice"><span class="label">Recommendation</span><p>(a).</p></div>
+<div class="verdict decided"><span class="label">Decided</span><span class="note">2026-10-17: <strong>(a), a budget, measured, and building only what changed</strong> (the user's addition). M6.5 sets three targets, measured on this machine with a release build, first on a 20,000-line program made of the standard library, Jade, the examples and the tests, then on a ported app: <strong>a first run</strong>, nothing cached, checked and compiled in under half a second; <strong>a second run</strong> with nothing changed in under 20 ms on top of <code>astra.exe</code> starting; <strong>a run after a one-line change</strong> inside a function in under 100 ms (both added by the user the same day). Each is a timing test reported at the milestone's checkpoint; one that is missed keeps M6.5 open until the checker or the cache is fixed. To meet it, and so a one-line change never rebuilds everything: (1) <strong>Each file is compiled once and kept</strong>, keyed by a hash of its text, in a cache of Astra's own (beside <code>astra.exe</code>'s per-user data, not beside the scripts). (2) <strong>Each declaration has a summary</strong> of what others can see of it: its type, the checked exceptions it may throw (L12, worked out), whether it may wait (R1), whether its <code>==</code> and hash are stable (L11), a <code>const</code>'s value (R2), an <code>inline</code> function's body (L60). A file is compiled again only if it changed or a summary it uses changed; changing a function's body without changing its summary rebuilds that file alone, and a change that does alter one (a new checked exception, say) rechecks only the files that call it. (3) <strong>The standard library and Jade are compiled when <code>astra.exe</code> is built</strong>, their summaries carried inside it, so no script's start checks them again. (4) <strong>The work that needs the whole program is done on the summaries</strong>, not the sources, and the part only a built program needs (leaving out unreachable code and reflection's reach, L28) runs only in <code>astra build</code>; a script run from its source keeps everything. (5) M14's native code compiles each part's C++ separately and links, so its C++ too is rebuilt only where changed. (6) <strong>A script's run is kept for the next one</strong> (the user's addition): running <code>astra something.astra</code> also keeps the whole compiled program in a cache of this machine's own, so a second run with nothing changed loads it and starts at once, with no reading, checking or compiling. "Nothing changed" is told by each file's size and time, then its hash where those differ, for the script and everything it imports, and by <code>astra.exe</code>'s own version; any difference rebuilds only what changed, as above. The cache is the machine's: kept in the user's local data (<code>%LOCALAPPDATA%\Astra\cache</code> on Windows, <code>~/.cache/astra</code> on Linux), never beside the script or copied with it, so it may hold what suits this processor only (the instructions it has, later M14's native code); another machine builds its own on its first run. Astra's own: no setting to turn on, and deleting it only costs one slower start. <strong>How the cache is kept</strong> (the user, the same day): two kinds of entry, one per source file (its compiled code and its declarations' summaries, keyed by path, size, time, hash and <code>astra.exe</code>'s version) and one per program (the linked program, keyed by the script and the keys of everything it imports). Entries are written after the program has started, each to a temporary file renamed into place, so two runs at once see a whole entry or none; a damaged or unreadable entry counts as missing and is rebuilt, so the cache can never stop a script. A file touched but unchanged (same hash) counts as unchanged. Entries of an older <code>astra.exe</code> stop matching and are cleared. <strong>A size cap:</strong> the cache holds at most 500 MB; past that, the entries used longest ago are removed, oldest first, until it is under, the check made after a run, never delaying one. A script on a read-only drive or a network share caches the same way, the cache being in the user's own folder. Kotlin's, Swift's and Rust's compilers work this way. Built in M6.5, beside the checker. (D145)</span></div>
+</section>
+
+<h3>Choices that carry a risk</h3>
+
+<section class="decision" id="r11">
+<h2><span class="code">R11</span> Negative indexes and off-by-one</h2>
+<p class="about"><span class="kind risk">risk</span>About L18, against the reasoning of L4 and L111.</p>
+<p><strong>The point.</strong> A negative index counts from the end, for strings and lists. So <code>items[i - 1]</code> with <code>i</code> at 0 quietly gives the last item, where Kotlin throws. L111 chose an error for pixels outside an image so that "an off-by-one shows at once", and L4 traps overflow for the same reason; negative indexes do the opposite.</p>
+<p><strong>Evidence.</strong> The apps index with <code>[name - 1]</code> 78 times; every one that can reach 0 is a place where a Kotlin exception becomes a wrong value.</p>
+<p><strong>Options.</strong></p>
+<div class="table"><table><thead><tr><th></th><th>Gain</th><th>Lose</th><th>Run speed</th></tr></thead><tbody>
+<tr><td><strong>a. Literals only</strong>: <code>s[-1]</code>, <code>items[-2]</code>, written as a negative number, count from the end; an index worked out when running that is below 0 is an <code>IndexOutOfBoundsException</code></td><td>The handy form stays; ported off-by-ones fail as in Kotlin.</td><td>A computed "from the end" index is written <code>items[items.size - k]</code>.</td><td>A little faster: no test for negative on computed indexes beyond the bounds check.</td></tr>
+<tr><td><strong>b. None</strong>, Kotlin's way: <code>last()</code>, <code>items[items.size - 1]</code></td><td>Kotlin's rule exactly.</td><td><code>s[-1]</code> in Astra's own code rewritten.</td><td>As (a).</td></tr>
+<tr><td><strong>c. As decided</strong></td><td>Nothing to change.</td><td>Silent wrong values from off-by-ones.</td><td>None.</td></tr>
+<tr><td><strong>d. <code>^k</code> from the end, no negative indexes</strong> (C#'s index from the end): <code>items[^1]</code> is the last item, <code>items[^k]</code> is <code>items[items.size - k]</code> with <code>k</code> worked out when running; a negative index is never "from the end": <code>items[-1]</code> is a compile error saying <code>items[^1]</code>, and one computed below 0 an <code>IndexOutOfBoundsException</code></td><td>One way to count from the end, literal or computed, and always on purpose; an off-by-one fails as in Kotlin.</td><td><code>s[-1]</code> in Astra's own code becomes <code>s[^1]</code>.</td><td>None: <code>^k</code> compiles to <code>size - k</code>.</td></tr>
+</tbody></table></div>
+<div class="advice"><span class="label">Recommendation</span><p>(a).</p></div>
+<div class="verdict decided"><span class="label">Decided</span><span class="note">2026-10-17: <strong>(d), <code>^k</code> counts from the end, and no index is negative.</strong> In an index, <code>^k</code> means <code>size - k</code>, for lists, strings and anything else indexed by position: <code>items[^1]</code> is the last item, <code>items[^2]</code> the one before, <code>items[^k]</code> with <code>k</code> worked out when running, and <code>items[^1] = x</code> sets it. It counts from 1, as C#'s does, so <code>^0</code> is an error, as is a <code>k</code> past the start. <code>^</code> before an index cannot be confused with <code>^</code> between two values (bitwise xor). A negative number never counts from the end: <code>items[-1]</code> is a compile error saying to write <code>items[^1]</code>, and an index worked out below 0 is an <code>IndexOutOfBoundsException</code>, so an off-by-one such as <code>items[i - 1]</code> at <code>i = 0</code> fails as in Kotlin instead of giving the last item. <code>last()</code>, <code>lastOrNull()</code>, <code>last { }</code> and <code>lastIndex</code> stay. No cost: <code>^k</code> compiles to <code>size - k</code>. <strong>Slices</strong> (the user's addition, D147): a range in an index gives that part, inclusive as <code>..</code> is everywhere: <code>items[1..]</code> from 1 to the end, <code>items[0..^1]</code> the whole, <code>items[0..^2]</code> all but the last, <code>items[..^2]</code> the same with the start left at 0, <code>items[2..4]</code> items 2, 3 and 4, <code>items[0..&lt;^1]</code> with the end left out; strings and <code>bytes</code> alike (<code>s[1..^2]</code>). Written with <code>..</code>, as Kotlin, C#, Swift and Rust write ranges, not Python's <code>:</code>, which Astra uses for types and in <code>? :</code>. A slice is a copy (a new open list, L23, string or <code>bytes</code>), as <code>subList</code> and <code>substring</code> gave; <code>splitAt</code> (L76) stays the way to views. Out of range is an error, as an index is, but a slice may end right at the end (<code>items[3..]</code> of three items is empty); a slice that runs backwards (<code>items[3..1]</code>) is an error. <code>subList</code> and <code>substring</code> become errors pointing to it (<code>items.subList(1, 4)</code> is <code>items[1..&lt;4]</code>). One copy of the range, no other cost. <strong><code>^n</code> in anyone's functions</strong> (the user, the same day), as C# does it: <code>^n</code> makes an <code>Index</code>, a value type of 8 bytes (a number and whether it counts from the end), so it makes no object. A function that takes <code>at : Index</code> accepts <code>3</code> and <code>^1</code> alike, an <code>int</code> passing as an <code>Index</code> counted from the start, and resolves it against its own length with <code>at.of(size)</code>, an <code>int</code>, a position outside 0 to <code>size</code> being an <code>IndexOutOfBoundsException</code>. A parameter typed <code>int</code> does not take <code>^1</code> (a compile error: nothing there knows a length to count from). Ranges carry it the same way: a <code>Range</code> may have <code>^</code> ends, <code>r.of(size)</code> giving its start and end as <code>int</code>s, so <code>op [](i : Index)</code> and <code>op [](r : Range)</code> give a program's own class <code>thing[^1]</code> and <code>thing[2..^1]</code>; a range with a <code>^</code> end cannot be gone through by itself (<code>for i in 0..^1</code> is a compile error asking for the length: <code>(0..^1).of(xs.size)</code>, or <code>xs.indices</code>). For <code>List</code>, <code>String</code>, <code>Bytes</code> and <code>Grid</code> the compiler still makes <code>xs[^k]</code> into <code>size - k</code> directly. <strong>Two-dimensional slices</strong> (the user's addition): <code>bitmap[3..5, 10..50]</code> gives a new <code>Bitmap</code> of columns 3 to 5 and rows 10 to 50, by the same rules (inclusive, <code>^</code> from the end, <code>..&lt;</code>, a part left out meaning to the edge: <code>bitmap[.., ..^2]</code> all but the last row); a number in place of a range takes one column or row, giving a <code>Bitmap</code> one pixel wide or high. A copy, as one-dimensional slices are. A class may declare the same for itself, <code>op [](xs, ys)</code> with ranges, beside <code>op [](x, y)</code> with numbers (L110, D56). <strong>Writing into a region</strong> (the user, the same day): inside <code>editPixels</code>, <code>bitmap[3..5, 10..50] = other</code> copies a <code>Bitmap</code> of the same size into that region, its pixels replacing those there, see-through ones included (drawing one picture over another with blending stays the canvas's <code>draw</code>); a size that does not match is an error naming both sizes, and outside an edit block the bitmap is read-only, so it does not compile. The image is marked changed for that rectangle only, so only it is sent to the graphics card (D124). A class may declare <code>op []=(xs, ys, value)</code> likewise. Built in M6.6. Changes L18 and L49. (D146)</span></div>
+</section>
+
+<section class="decision" id="r12">
+<h2><span class="code">R12</span> Kotlin's 32-bit arithmetic on a 64-bit <code>int</code></h2>
+<p class="about"><span class="kind risk">risk</span>About L0, L3, L4 and L22 together.</p>
+<p><strong>The point.</strong> Kotlin's <code>Int</code> is 32 bits and wraps silently. Astra has one 64-bit <code>int</code> that traps on overflow. Two kinds of ported code change meaning:</p>
+<ul>
+<li><strong>Hash loops</strong> such as <code>h = 31 * h + c</code> wrap in Kotlin; in Astra they trap once the input is long enough (about 12 characters for a string hash), found only when running.</li>
+<li><strong>Bit tricks written for 32 bits</strong> give other answers at 64: <code>x ushr 16</code> of a negative number, sign-extended masks, rotations, noise and checksum functions.</li>
+</ul>
+<p><strong>Evidence.</strong> The apps have 33 <code>31 *</code> hash lines, 68 <code>ushr</code>, 89 <code>.toInt() and 0xFF</code>, and a few <code>and 0xFFFFFFFF</code>.</p>
+<p><strong>Options.</strong></p>
+<div class="table"><table><thead><tr><th></th><th>Gain</th><th>Lose</th><th>Run speed</th></tr></thead><tbody>
+<tr><td><strong>a. Helpers and a hash function</strong>: <code>x.wrap32()</code> (the low 32 bits as a signed number), <code>rotateLeft32</code> and <code>rotateRight32</code>, and <code>hash(a, b, c...)</code> (Java's <code>Objects.hash</code>, wrapping inside) so <code>hashCode</code> needs no <code>31 *</code>; the porting notes list the patterns to look at</td><td>Ported 32-bit code has a direct translation; hash codes stop being a trap.</td><td>A handful of functions.</td><td>None; <code>hash</code> faster than a hand loop.</td></tr>
+<tr><td><strong>b. An <code>int32</code> type</strong> after all, wrapping like Kotlin's</td><td>32-bit code ports as written.</td><td>Reverses L0; two integer types everywhere.</td><td>None.</td></tr>
+<tr><td><strong>c. Porting notes only</strong></td><td>Nothing added.</td><td>Each case rewritten by hand, and found when it traps.</td><td>None.</td></tr>
+<tr><td><strong>d. Storage types, as <code>byte</code> is, and (a)'s helpers</strong>: <code>int16</code>, <code>int32</code>, <code>uint16</code>, <code>uint32</code> and <code>float32</code> hold numbers compactly in packed lists, value types' fields and fields, read as <code>int</code> or <code>float</code>, arithmetic always 64-bit; storing a number that does not fit is an error; plus <code>wrap32</code>, the 32-bit rotations and <code>hash(...)</code></td><td>Half or a quarter of the memory for large data (meshes, voxels, tiles, 16-bit sound, file and network formats); value types fit in place more often; data in the graphics card's own layout; one arithmetic still.</td><td>Five more type names.</td><td>Faster over large data: fewer cache misses; a range check on each store.</td></tr>
+</tbody></table></div>
+<div class="advice"><span class="label">Recommendation</span><p>(a).</p></div>
+<div class="verdict decided"><span class="label">Decided</span><span class="note">2026-10-17: <strong>(d), storage types as <code>byte</code> is, and (a)'s helpers.</strong> <code>int16</code>, <code>int32</code>, <code>uint16</code>, <code>uint32</code> and <code>float32</code> hold numbers compactly: in packed lists (<code>list&lt;int16&gt;</code> at 2 bytes an item, L1), in value types' fields (<code>value Vertex(val x : int32, val y : int32)</code>, 8 bytes, so kept in place everywhere) and in fields. Read, they give an <code>int</code> (or a <code>float</code> for <code>float32</code>); arithmetic is always the 64-bit <code>int</code> and <code>float</code>, so there is still one arithmetic. Storing a number that does not fit (40000 into an <code>int16</code>, -1 into a <code>uint32</code>) is an error, as for <code>byte</code>; <code>toInt16Wrapped()</code> and the like keep the low bits where that is meant. A <code>float32</code> stores the nearest 32-bit value. A <code>list&lt;float32&gt;</code> or <code>list&lt;int32&gt;</code> is already in the layout the graphics card takes for vertex and index buffers (M11, M13). For 32-bit hashing and bit work, (a)'s helpers: <code>x.wrap32()</code> (the low 32 bits as a signed number), <code>rotateLeft32</code> and <code>rotateRight32</code>, and <code>hash(a, b, c...)</code> (wrapping inside, so <code>hashCode</code> needs no <code>31 *</code>); the porting notes list the patterns to look at (<code>31 *</code> hash loops, <code>ushr</code> on negative values, 32-bit masks). Built in M6.6, with packed lists and value types. Changes L0 and L3. (D148)</span></div>
+</section>
+
+<section class="decision" id="r13">
+<h2><span class="code">R13</span> Value types larger than 8 bytes in variables</h2>
+<p class="about"><span class="kind risk">risk</span>About L2, L48 and L82 to L85, against the speed plan.</p>
+<p><strong>The point.</strong> A value type is kept in place when it fits in 8 bytes; a larger one is boxed when held in a plain variable. <code>Point</code> and <code>Size</code> are 16 bytes, <code>Rect</code> and <code>Insets</code> 32, <code>Pair</code> 16 or more. These are the types layout and painting code keeps in local variables, so <code>val r = c.bounds</code> would allocate, in the hottest code Jade has.</p>
+<p><strong>Options.</strong></p>
+<div class="table"><table><thead><tr><th></th><th>Gain</th><th>Lose</th><th>Run speed</th></tr></thead><tbody>
+<tr><td><strong>a. Several slots</strong>: once M6.5 knows the types, a value type up to 32 bytes takes consecutive slots in a function's locals, parameters and results, and is boxed only where its type is not known (<code>any</code>, a union, an untyped list)</td><td>Values never allocate in ordinary code, which is what they are for.</td><td>More work in M6.6's value types and the compiler's slot allocation.</td><td>Faster: no allocation in layout and painting.</td></tr>
+<tr><td><strong>b. As decided</strong>: over 8 bytes boxed in variables</td><td>Simpler.</td><td>An allocation per <code>Rect</code> held in a variable.</td><td>Slower in exactly the code that uses them most.</td></tr>
+</tbody></table></div>
+<div class="advice"><span class="label">Recommendation</span><p>(a).</p></div>
+<div class="verdict decided"><span class="label">Decided</span><span class="note">2026-10-17: <strong>(a), several slots.</strong> Once M6.5 knows the types, a value type up to 32 bytes takes consecutive slots in a function's locals, its parameters and its results, so <code>val r = c.bounds</code>, a <code>Point</code> passed to a function or a <code>Pair</code> returned from one makes no object. It is boxed only where its type is not known: <code>any</code>, a union, a list or map of items not of that type, a captured variable shared by a lambda that outlives the call. Larger value types (over 32 bytes) are boxed in variables as before. With R12's storage types many fit in 8 bytes anyway (<code>Point(x : int32, y : int32)</code>). Built in M6.6, with value types, beside its 8-byte slots. Changes L2, L48 and L82 to L85. (D149)</span></div>
+</section>
+
+<section class="decision" id="r14">
+<h2><span class="code">R14</span> <code>Path</code>: properties or functions</h2>
+<p class="about"><span class="kind risk">risk</span>About L106, L112 and L117.</p>
+<p><strong>The point.</strong> As decided, <code>isFile</code>, <code>isDirectory</code> and <code>size</code> are properties, while <code>exists()</code> and <code>lastModified()</code> are functions, though all five ask the disk. <code>canonical</code> is a property that can throw an <code>IOException</code>, unusual for a property. There is no rule a reader can guess from.</p>
+<p><strong>Options.</strong></p>
+<div class="table"><table><thead><tr><th></th><th>Gain</th><th>Lose</th><th>Run speed</th></tr></thead><tbody>
+<tr><td><strong>a. By what is asked</strong>: properties for what is in the path itself (<code>name</code>, <code>extension</code>, <code>nameWithoutExtension</code>, <code>parent</code>, <code>text</code>, <code>absolute</code>); functions for what asks the disk (<code>exists()</code>, <code>isFile()</code>, <code>isDirectory()</code>, <code>size()</code>, <code>lastModified()</code>, <code>canonical()</code>)</td><td>A rule anyone can guess; brackets mean "this goes to the disk and may fail or change".</td><td>Ported <code>file.isFile</code> (119) and <code>isDirectory</code> (32) gain brackets.</td><td>None.</td></tr>
+<tr><td><strong>b. Properties throughout</strong>, <code>exists</code> and <code>lastModified</code> included</td><td>Shorter.</td><td>Properties that read the disk and throw.</td><td>None.</td></tr>
+<tr><td><strong>c. As decided</strong></td><td>Ported code closest to Java's <code>File</code>.</td><td>No rule.</td><td>None.</td></tr>
+</tbody></table></div>
+<div class="advice"><span class="label">Recommendation</span><p>(a).</p></div>
+<div class="verdict decided"><span class="label">Decided</span><span class="note">2026-10-17: <strong>(a), by what is asked.</strong> What is in the path itself is a property: <code>name</code>, <code>extension</code>, <code>nameWithoutExtension</code>, <code>parent</code>, <code>text</code>, <code>absolute</code> (worked out from the current directory, without asking the disk). What asks the disk is a function: <code>exists()</code>, <code>isFile()</code>, <code>isDirectory()</code>, <code>isExecutable()</code>, <code>size()</code>, <code>lastModified()</code>, <code>canonical()</code>, <code>list()</code>, <code>walk()</code>. So brackets on a <code>Path</code> mean "this goes to the disk, and may fail or give another answer next time"; a property never throws. Written without brackets, the disk's are compile errors saying to add them (ported <code>file.isFile</code>, 119, and <code>isDirectory</code>, 32). Built in M6.6. Changes L106, L112 (<code>canonical()</code>) and L117 (a path's <code>size()</code>). (D150)</span></div>
+</section>
+
+<section class="decision" id="r15">
+<h2><span class="code">R15</span> What a bare <code>catch (e)</code> catches</h2>
+<p class="about"><span class="kind risk">risk</span>About L12.</p>
+<p><strong>The point.</strong> L12 makes <code>catch (e)</code> with no type catch every <code>Throwable</code>, so also <code>StackOverflowError</code> and <code>OutOfMemoryError</code>, which mean the VM itself is in trouble. A bare catch around ordinary work can swallow them and carry on.</p>
+<p><strong>Evidence.</strong> The apps write <code>catch (e: Exception)</code> or <code>catch (e: Throwable)</code> 148 times, most of them <code>Exception</code>.</p>
+<p><strong>Options.</strong></p>
+<div class="table"><table><thead><tr><th></th><th>Gain</th><th>Lose</th><th>Run speed</th></tr></thead><tbody>
+<tr><td><strong>a. A bare catch means <code>Exception</code></strong>; an <code>Error</code> is caught only when named (<code>catch (e : Error)</code> or <code>Throwable</code>)</td><td>What ported code means by its catch; a dying VM is not hidden.</td><td>Code that really wants everything says <code>Throwable</code>.</td><td>None.</td></tr>
+<tr><td><strong>b. As decided</strong>: every <code>Throwable</code></td><td>Catches everything.</td><td>Hides stack overflows and running out of memory.</td><td>None.</td></tr>
+</tbody></table></div>
+<div class="advice"><span class="label">Recommendation</span><p>(a).</p></div>
+<div class="verdict decided"><span class="label">Decided</span><span class="note">2026-10-17: <strong>(a), a bare catch means <code>Exception</code>.</strong> <code>catch (e)</code> with no type catches every <code>Exception</code>, checked or not, and nothing else; an <code>Error</code> (<code>StackOverflowError</code>, <code>OutOfMemoryError</code>, and the rest of what stops the VM) is caught only where it is named: <code>catch (e : Error)</code>, or <code>catch (e : Throwable)</code> for everything. So a catch around ordinary work never hides a VM in trouble, and the ported <code>catch (e: Exception)</code> means what it meant. Built in M6.5, where the checker types catch clauses. Changes L12. (D151)</span></div>
+</section>
+
+<section class="decision" id="r16">
+<h2><span class="code">R16</span> <code>size</code> on two-dimensional things</h2>
+<p class="about"><span class="kind gap">gap</span>About L84 and L117.</p>
+<p><strong>The point.</strong> Since L117 <code>size</code> is a count (items, characters, bytes on disk). L84 also gives <code>Rect</code> a <code>size</code> that is a <code>Size</code> (width and height). What <code>image.size</code>, <code>surface.size</code>, <code>bitmap.size</code> and a component's <code>size</code> give is not decided: a <code>Bitmap</code>'s could be its number of pixels or its width and height.</p>
+<p><strong>Options.</strong></p>
+<div class="table"><table><thead><tr><th></th><th>Gain</th><th>Lose</th><th>Run speed</th></tr></thead><tbody>
+<tr><td><strong>a. On a thing with a width and a height, <code>size</code> is a <code>Size</code></strong>: <code>Rect</code>, <code>Image</code>, <code>Surface</code>, <code>Bitmap</code>, <code>Component</code>, <code>Window</code>; elsewhere a count</td><td>What Java's <code>getSize()</code> and JadeUI mean; the type tells the two apart.</td><td><code>size</code> has two meanings, kept apart by kind of thing.</td><td>None.</td></tr>
+<tr><td><strong>b. Another name for the two-dimensional one</strong>, such as <code>dimensions</code>, so <code>size</code> is always a count</td><td>One meaning.</td><td>A rename in JadeUI's API (L57) and in <code>Rect</code>.</td><td>None.</td></tr>
+</tbody></table></div>
+<div class="advice"><span class="label">Recommendation</span><p>(a).</p></div>
+<div class="verdict decided"><span class="label">Decided</span><span class="note">2026-10-17: <strong>(a), on a thing with a width and a height, <code>size</code> is a <code>Size</code>.</strong> <code>Rect</code>, <code>Image</code>, <code>Surface</code>, <code>Bitmap</code>, <code>Component</code> and <code>Window</code> have <code>size</code> giving their width and height as a <code>Size</code> (a value type, so free), as Java's <code>getSize()</code> and JadeUI mean it; everything that holds a number of things (lists, maps, sets, strings, <code>bytes</code>) has <code>size</code> as that number, and a path's <code>size()</code> is its bytes on disk (R14). The type keeps the two apart. A <code>Bitmap</code>'s number of pixels is <code>width * height</code>, and its raw bytes' length <code>bitmap.bytes.size</code>. Built in M6.6. Settles what L117 left for such things. (D152)</span></div>
+</section>
+
+<h3>Gaps and smaller points</h3>
+
+<section class="decision" id="r17">
+<h2><span class="code">R17</span> Kotlin's annotations in ported code</h2>
+<p class="about"><span class="kind gap">gap</span>About L47 ("no annotation is accepted at all") and L65.</p>
+<p><strong>The point.</strong> With every annotation an error, each kind the apps use needs its message to say what to write. The parser skips annotations today.</p>
+<p><strong>Evidence.</strong> <code>@Synchronized</code> 43, <code>@Suppress</code> 39, <code>@JvmStatic</code> 4, <code>@Throws</code> 1, beside the 64 <code>@Volatile</code> already decided.</p>
+<p><strong>Options.</strong></p>
+<div class="table"><table><thead><tr><th></th><th>Gain</th><th>Lose</th><th>Run speed</th></tr></thead><tbody>
+<tr><td><strong>a. Errors that say what to write</strong>: <code>@Synchronized</code> → a <code>Lock</code> and <code>useKey { }</code> around the body (L65); <code>@Suppress</code> → delete (Astra has no warnings to silence); <code>@JvmStatic</code> → the class's <code>static { }</code> block (L43); <code>@Throws(X::class)</code> → <code>throws X</code> (L32)</td><td>Each port knows what to do; the rule holds.</td><td>Hand work at 87 places.</td><td>None.</td></tr>
+<tr><td><strong>b. <code>@Synchronized</code> given a meaning</strong> (the method's body under a lock of its object), the rest errors</td><td>43 port as written.</td><td>One annotation in a language that has none.</td><td>None.</td></tr>
+</tbody></table></div>
+<div class="advice"><span class="label">Recommendation</span><p>(a).</p></div>
+<div class="verdict decided"><span class="label">Decided</span><span class="note">2026-10-17: <strong>annotations added, as checked data, and Kotlin's JVM ones errors that say what to write.</strong> An annotation is declared like a class, <code>annotation JsonField(val name : string = "", val optional : bool = false)</code>, and attached to classes, functions, fields and parameters, <code>@JsonField(name = "user_id") val userId : int</code>; one not declared, or given wrong arguments, is a compile error, so a typo never silently does nothing. They are read through reflection (L14): <code>field.annotation&lt;JsonField&gt;()</code> gives it or null, <code>method.annotations</code> lists them; L28's analysis keeps them in a built program only where reflection reads them, so they cost nothing when running otherwise. No code generation and no annotation processors. The compiler gives meaning only to the standard library's own: <code>@Test</code>, <code>@BeforeTest</code>, <code>@AfterTest</code>, <code>@BeforeAll</code>, <code>@AfterAll</code>, <code>@Timeout(duration)</code> and a temporary directory for a test, read by <strong><code>astra test</code></strong>, a test runner built in M6.6 (it finds the tests in a file or directory, runs each with its set-up and tidy-up, and reports what passed and failed, with <code>assertEquals</code>, <code>assertTrue</code>, <code>assertFails</code> and the like); and <code>@Deprecated("use x")</code>, which begins to mean something at 1.0 (L16). Kotlin's JVM annotations are compile errors that say what to write: <code>@Volatile</code> (not needed, L47), <code>@Synchronized</code> (a <code>Lock</code> and <code>useKey { }</code>, L65), <code>@JvmStatic</code> (the <code>static { }</code> block, L43), <code>@JvmName</code> and <code>@PublishedApi</code> (not needed), <code>@Throws(X::class)</code> (<code>throws X</code>, L32), <code>@Suppress</code> (deleted: Astra has no warnings to silence). The apps' annotations: about 5,600 test annotations and 97 of jadelib-json's own <code>@JsonBeanField</code> port as annotations; 55 <code>@Deprecated</code> stay. Changes L47 ("no annotation is accepted at all"). (D153)</span></div>
+</section>
+
+<section class="decision" id="r18">
+<h2><span class="code">R18</span> An automatic fixer: <code>astra fix</code></h2>
+<p class="about"><span class="kind gap">gap</span>About L16, L107 and every "write X instead" error.</p>
+<p><strong>The point.</strong> Nearly every name the decisions remove is a compile error that says exactly what to write: <code>public</code> (about 2,500 in the apps), <code>length</code> (about 1,100), <code>File(</code> (610), <code>print</code> to <code>println</code>, <code>mkdirs</code>, statics into <code>static { }</code>, accessors into Kotlin's form, <code>Charsets.UTF_8</code>, <code>absolutePath</code>, and the rest. Done by hand, that is thousands of edits; each one is already known to the compiler.</p>
+<p><strong>Options.</strong></p>
+<div class="table"><table><thead><tr><th></th><th>Gain</th><th>Lose</th><th>Run speed</th></tr></thead><tbody>
+<tr><td><strong>a. Fixes carried by the errors</strong>: each "write X instead" error knows its replacement; <code>astra fix file-or-directory</code> applies every one, shows what changed, and leaves what needs a person (a checked exception to handle, a choice between two names) as errors</td><td>Porting becomes mostly automatic; Astra's own code moves with the same tool (L16); the errors and the fixes cannot disagree.</td><td>Work in the compiler, spread over M6.5 and M6.6 as the errors land.</td><td>None.</td></tr>
+<tr><td><strong>b. The porting library only</strong> (L107), aliasing old names while code is converted</td><td>Less work.</td><td>The code is never actually converted by it.</td><td>None.</td></tr>
+<tr><td><strong>c. Neither</strong></td><td>No work.</td><td>Thousands of edits by hand.</td><td>None.</td></tr>
+</tbody></table></div>
+<div class="advice"><span class="label">Recommendation</span><p>(a).</p></div>
+<div class="verdict decided"><span class="label">Decided</span><span class="note">2026-10-17: <strong>(c), neither.</strong> No <code>astra fix</code> and no porting library of aliases: ported code is converted by hand, guided by the compile errors, each of which says what to write. In keeping with the principle set at R8, porting is done once and is not a reason to build tools into Astra. Astra's own code moves with each change before 1.0 as L16 says, in one step, by hand or by a script written for the occasion. L107's optional porting library is not planned.</span></div>
+</section>
+
+<section class="decision" id="r19">
+<h2><span class="code">R19</span> Stale wording on the decisions page</h2>
+<p class="about"><span class="kind gap">gap</span>Text only; no design question.</p>
+<p><strong>The point.</strong> Some decisions describe the language as it was before later ones changed it:</p>
+<ul>
+<li>L10 and L18 still say <code>s.length</code> and <code>s[-s.length]</code> (now <code>size</code>, L117).</li>
+<li>L28 writes <code>Shape.class.kinds</code> (now <code>Shape#.kinds</code>, L26).</li>
+<li>L70 speaks of a <code>folder</code> argument (now <code>directory</code>, L106).</li>
+<li>L92's example uses <code>inputStream()</code> (now <code>reader()</code>, L98).</li>
+<li>L101 still leaves <code>getRGB</code> and <code>setRGB</code> open (R4 here).</li>
+</ul>
+<p><strong>Options.</strong></p>
+<div class="table"><table><thead><tr><th></th><th>Gain</th><th>Lose</th><th>Run speed</th></tr></thead><tbody>
+<tr><td><strong>a. Fix them now</strong>, each with a note of what changed it</td><td>The page reads as the language is.</td><td>Nothing.</td><td>None.</td></tr>
+<tr><td><strong>b. Leave them</strong>, the later decision being the one that counts</td><td>No edits.</td><td>A reader may follow the old form.</td><td>None.</td></tr>
+</tbody></table></div>
+<div class="advice"><span class="label">Recommendation</span><p>(a).</p></div>
+<div class="verdict decided"><span class="label">Decided</span><span class="note">2026-10-17: <strong>(a), fixed, each where it stands, so the decision reads as the language now is.</strong> The decisions page was gone through for wording later decisions had made wrong, and each place changed to say what holds now, with the later decision named: L10 (<code>size</code>), L18 (counting from the end with <code>^</code>, slices), L28 (<code>Shape#.kinds</code>), L70 (a <code>Path</code> as a stream's target, <code>directory</code>, the process's <code>Reader</code>s and <code>Writer</code>), L92 (<code>reader()</code>), L101 (<code>pixels</code> a <code>Bitmap</code>), L13, L80 and L102 (the named <code>Font</code> form, <code>font.copy</code>), L2, L48, L82 and L83 (value types in slots, R13), L12 (a bare catch is <code>Exception</code>, R15), L76 (slices in place of <code>subList</code>), L87 (an example), L106 and L112 (the disk's calls as functions, R14), L111 (<code>get</code> and <code>set</code> for <code>getRGB</code>), and L7, L12, L13 and L42 ("task" for "flow", <code>suspendTask</code>).</span></div>
+</section>
+<section class="decision" id="r20">
+<h2><span class="code">R20</span> Bundles of named arguments: <code>params(...)</code></h2>
+<p class="about"><span class="kind gap">gap</span>Asked by the user during the review; builds on L95 (named arguments on every function).</p>
+<p><strong>The point.</strong> The same named arguments are often passed to several calls: <code>bold = a, size = b, color = c</code> written out at each one. A bundle written once and passed to each would say it once.</p>
+<p><strong>Others.</strong> Python: <code>f("hello", **params)</code>. JavaScript: an object spread into a call. Ruby: <code>**opts</code>. Kotlin, Swift and C# have none; their way is an options class with <code>copy</code>.</p>
+<pre><code>val style = params(bold = true, size = 14, color = Color.red)
+
+label("hello", ...style)
+label("goodbye", ...style, size = 18)   // a name written at the call wins over the bundle</code></pre>
+<div class="verdict decided"><span class="label">Decided</span><span class="note">2026-10-17, the user: <strong>added, as designed here.</strong> <code>params(name = value, ...)</code> makes a bundle; its type is its names and their types, known when compiling (<code>params(bold = true, size = 14)</code> is "bold : bool, size : int"). <code>...style</code> in a call passes its arguments: at each call every name is checked against that function's parameters, and a name it lacks or a value of the wrong type is a compile error, so a typo or a renamed parameter is caught at the call. A name written at the call wins over the bundle's (<code>...style, size = 18</code>). <code>style.copy(size = 18)</code> gives a changed copy (named <code>copy</code>, as data classes and value types have it, and not <code>with</code>, which is the scope function of L36) and <code>style + params(italic = true)</code> adds names. A bundle is a value type, so a <code>val</code> holding one makes no object, and <code>...style</code> is expanded into separate arguments at each call, so it costs nothing when running. The <code>...</code> marks for a reader that several arguments come from it. For functions designed together, an options class (<code>data TextStyle(...)</code> with <code>copy</code>) stays the better tool; a bundle is for functions that merely share parameter names. Built in M6.6, with value types. (D143)</span></div>
+</section>
+<section class="decision" id="r21">
+<h2><span class="code">R21</span> The case of type names</h2>
+<p class="about"><span class="kind goal">goal</span>Raised by the user while naming <code>Bitmap</code>'s generic form: the case rule had too many exceptions.</p>
+<p><strong>The point.</strong> The rule was "Title case for classes and libraries, lowercase for built-in types", and "built-in" drew no clear line: <code>list&lt;T&gt;</code> lowercase but <code>Channel&lt;T&gt;</code> Title case, <code>int</code> lowercase but <code>Color</code> Title case, <code>frozenList</code> in camelCase. A reader could not guess a type's case, and the lowercase containers took the commonest variable names (<code>list</code>, <code>map</code>, <code>set</code>, <code>bytes</code>).</p>
+<p><strong>Options considered.</strong> (a) Every type Title case (<code>Int</code>, <code>String</code>, <code>List&lt;T&gt;</code>), as Kotlin and Swift; (b) a fixed set of language scalars lowercase and every other type Title case, as Rust, Java and C# roughly do; (c) today's rule, with its list of what counts as built-in written down.</p>
+<div class="verdict decided"><span class="label">Decided</span><span class="note">2026-10-17, the user: <strong>(b), with the lowercase set fixed.</strong> Lowercase, and only these: the scalars <code>bool</code>, <code>char</code>, <code>byte</code>, <code>int</code>, <code>float</code>; the storage widths <code>int16</code>, <code>int32</code>, <code>uint16</code>, <code>uint32</code>, <code>float32</code> (R12); <code>string</code>, a basic type nearly every program uses; and <code>any</code>, <code>nothing</code> and <code>unit</code> (the result of a function that gives nothing useful, <code>() -&gt; unit</code>; added by the user the same day), special words rather than types in the usual sense. Every other type is Title case, the standard library's included: <code>List&lt;T&gt;</code>, <code>Map&lt;K, V&gt;</code>, <code>Set&lt;T&gt;</code>, <code>Bytes</code>, <code>Sequence&lt;T&gt;</code>, <code>FrozenList&lt;T&gt;</code>, <code>FrozenMap&lt;K, V&gt;</code>, <code>FrozenSet&lt;T&gt;</code>, <code>Number</code>, and as before <code>Color</code>, <code>Duration</code>, <code>Path</code>, <code>Channel&lt;T&gt;</code>. So <code>list</code>, <code>map</code>, <code>set</code> and <code>bytes</code> are free as names of variables (<code>bitmap.bytes</code> is a member, as before). Members and values stay camelCase. The code written on these pages before this decision uses the old lowercase container names; read them Title case. Astra's own code, the README and the tests move in one step (L16). Built in M6.6. (D154)</span></div>
+</section>
+<section class="decision" id="r22">
+<h2><span class="code">R22</span> A generic grid: <code>Grid&lt;T&gt;</code></h2>
+<p class="about"><span class="kind gap">gap</span>Asked by the user: should <code>Bitmap</code> be generic, so a grid of <code>bool</code> or <code>byte</code> can be used?</p>
+<p><strong>The point.</strong> A packed two-dimensional grid of values is useful well beyond pixels: masks and collision maps of <code>bool</code>, grayscale and tile maps of <code>byte</code>, heightmaps of <code>int16</code>, depth of <code>float32</code>, cells of small value types; JadeGate's tiles and voxels are such data.</p>
+<div class="verdict decided"><span class="label">Decided</span><span class="note">2026-10-17, the user: <strong><code>Bitmap</code> becomes <code>Grid&lt;T&gt;</code></strong>, a built-in container, Title case by R21. Packed by item type as a <code>List</code> is (L1): a <code>Color</code> 4 bytes a cell, <code>byte</code> 1, <code>bool</code> 1 (a byte, as in a <code>List&lt;bool&gt;</code>: packing 8 to a byte would slow every access and make writing rows in parallel unsafe), <code>int16</code> 2, <code>float32</code> 4; a grid of objects is allowed, unpacked. Made with <code>Grid&lt;bool&gt;(width = 64, height = 64)</code>, and a fill value. Everything decided for <code>Bitmap</code> holds for every <code>T</code>: <code>g[x, y]</code> and <code>g[x, y] = v</code>, <code>get</code> and <code>set</code>, <code>width</code>, <code>height</code> and <code>size</code> (a <code>Size</code>, R16), slices <code>g[3..5, 10..50]</code> and writing into a region (R11), out of range an error with <code>getOrNull</code> (R4, L111), work spread by rows, <code>.bytes</code> for a value type's raw storage, and <code>map { }</code> to a grid of another type (<code>pixels.map { it.alpha }</code> gives a <code>Grid&lt;byte&gt;</code>). An image's pixels are a <code>Grid&lt;Color&gt;</code>: <code>image.pixels</code> read-only and <code>editPixels { grid -&gt; }</code> writable (L110); a grid of another type is data, not something a canvas draws. Where earlier decisions say <code>Bitmap</code>, read <code>Grid&lt;Color&gt;</code>. <strong>Adding rows and columns</strong> (the user, the same day), each giving a new grid, the old one unchanged, since a grid's size is fixed for its life: <code>g.insertRows(at, count = 1, fill = ...)</code> and <code>g.insertColumns(at, count = 1, fill = ...)</code> put new rows or columns before position <code>at</code>, from 0 (before the first) to <code>g.height</code> or <code>g.width</code> (after the last); <code>prependRows</code>, <code>appendRows</code>, <code>prependColumns</code> and <code>appendColumns</code> say the two ends by name; and <code>g.insertRows(at, rows)</code> and <code>g.insertColumns(at, columns)</code> put in another grid of the same width or height. <code>fill</code> defaults to the item type's zero (0, <code>false</code>, a clear <code>Color</code>) and must be given for a grid of objects. Because these give a copy, a call whose result is not used is a compile error saying so (<code>'insertRows' gives a new grid and leaves 'g' as it was: write g = g.insertRows(...)</code>), so it is never mistaken for a change in place. <code>g.removeRows(at, count = 1)</code> and <code>g.removeColumns(at, count = 1)</code> give a grid without them, likewise a copy with its result required; <code>at</code> may count from the end (<code>g.removeRows(^1)</code> drops the last row, R11), and rows or columns that are not there are an error. Each is one allocation and a copy row by row, whole rows at once where they are unchanged. Built in M6.6. (D155)</span></div>
+</section>
+<section class="decision" id="r23">
+<h2><span class="code">R23</span> <code>.=</code>: assigning a member's result back</h2>
+<p class="about"><span class="kind gap">gap</span>Asked by the user: writing a long path twice to replace a value with a changed copy of itself.</p>
+<p><strong>The point.</strong> <code>someobj.field1.anotherfield.itsfield = someobj.field1.anotherfield.itsfield.copy(p1 = 4)</code> says the path twice, and copies (<code>copy</code>, R6 and R20; the grid's <code>insertRows</code>, R22; <code>sorted</code>, <code>trim</code>) are common in Astra, value types being changed by making a new value.</p>
+<pre><code>someobj.field1.anotherfield.itsfield .= copy(p1 = 4)
+grid .= insertRows(at = 3, count = 2)
+items .= sorted()
+name .= trim()
+cells[i] .= copy(alive = false)
+dir .= parent</code></pre>
+<div class="verdict decided"><span class="label">Decided</span><span class="note">2026-10-17, the user: <strong>added.</strong> <code>target .= member</code> means <code>target = target.member</code>, as <code>x += 1</code> means <code>x = x + 1</code>. The path to the target is worked out once: in <code>a.b.c .= copy(...)</code>, <code>a.b</code> is read once, <code>copy</code> called on its <code>c</code>, and the result stored in that <code>c</code>, so it is also a little faster than writing it out. And the path is written once, which is the main reason for it (the user): a path written twice can be changed later in one place and not the other, by hand or by a tool, and then the value is read from one place and stored in another without any error. The target is anything that can be assigned (a <code>var</code>, a <code>var</code> field, a list element, a grid cell); a <code>val</code> is the usual compile error. The right side is any member of the target, a method call or a property, and its result must fit the target's type. It suits Grid's copies (R22), whose results must be used: <code>grid .= appendRows(2)</code>. Raku has the same <code>.=</code>; in PHP and Perl <code>.=</code> joins strings, which Astra does with <code>+</code>. Built in M6.6. (D156)</span></div>
+</section>
+
+<section class="part" id="summary">
+<h2>Summary</h2>
+<div class="table"><table><thead><tr><th></th><th>Point</th><th>Kind</th><th>Recommended</th></tr></thead><tbody>
+<tr><td>R1</td><td><code>suspend</code> and <code>reified</code></td><td>goal</td><td><strong>Decided:</strong> <code>suspend</code> means "may wait", checked, with errors that explain; <code>reified</code> an error</td></tr>
+<tr><td>R2</td><td><code>const val</code></td><td>gap</td><td><strong>Decided:</strong> <code>const x = ...</code>, a check, folded into each use; <code>const val</code> an error</td></tr>
+<tr><td>R3</td><td><code>has</code>, <code>contains</code>, <code>containsKey</code></td><td>goal</td><td><strong>Decided:</strong> <code>contains</code> and <code>in</code>; maps through <code>keys</code> or <code>values</code>, or a whole entry</td></tr>
+<tr><td>R4</td><td><code>getRGB</code>, <code>setRGB</code></td><td>gap</td><td><strong>Decided:</strong> errors; <code>get</code> and <code>set</code> with a <code>Color</code></td></tr>
+<tr><td>R5</td><td><code>n.char</code>, <code>char(n)</code></td><td>goal</td><td><strong>Decided:</strong> <code>n.char</code> only; <code>char(n)</code> an error</td></tr>
+<tr><td>R6</td><td>Font's two constructors</td><td>risk</td><td><strong>Decided:</strong> named options only; Java's form an error</td></tr>
+<tr><td>R7</td><td><code>enum class</code></td><td>goal</td><td><strong>Decided:</strong> kept as L21: <code>enum</code> and <code>enum class</code></td></tr>
+<tr><td>R8</td><td>Checked exceptions in callbacks</td><td>goal</td><td><strong>Decided:</strong> kept; Astra before porting ease</td></tr>
+<tr><td>R9</td><td>"A small language"</td><td>goal</td><td><strong>Decided:</strong> "small" means self-contained; nothing cut</td></tr>
+<tr><td>R10</td><td>Whole-program checks</td><td>goal</td><td><strong>Decided:</strong> a budget, and only what changed is built</td></tr>
+<tr><td>R11</td><td>Negative indexes</td><td>risk</td><td><strong>Decided:</strong> <code>^k</code> from the end; no negative indexes</td></tr>
+<tr><td>R12</td><td>32-bit arithmetic</td><td>risk</td><td><strong>Decided:</strong> <code>int16</code>, <code>int32</code>, <code>uint16</code>, <code>uint32</code>, <code>float32</code> as storage; 32-bit helpers</td></tr>
+<tr><td>R13</td><td>Large value types in variables</td><td>risk</td><td><strong>Decided:</strong> several slots, no boxing up to 32 bytes</td></tr>
+<tr><td>R14</td><td><code>Path</code> properties and functions</td><td>risk</td><td><strong>Decided:</strong> properties for the path, functions for the disk</td></tr>
+<tr><td>R15</td><td>Bare <code>catch (e)</code></td><td>risk</td><td><strong>Decided:</strong> a bare catch is <code>Exception</code>; an <code>Error</code> only when named</td></tr>
+<tr><td>R16</td><td><code>size</code> in two dimensions</td><td>gap</td><td><strong>Decided:</strong> a <code>Size</code> on things with width and height; elsewhere a count</td></tr>
+<tr><td>R17</td><td>Annotations in ported code</td><td>gap</td><td><strong>Decided:</strong> annotations as checked data; <code>astra test</code>; JVM ones errors</td></tr>
+<tr><td>R18</td><td><code>astra fix</code></td><td>gap</td><td><strong>Decided:</strong> neither; ported code converted by hand, guided by the errors</td></tr>
+<tr><td>R19</td><td>Stale wording</td><td>gap</td><td><strong>Decided:</strong> fixed in place, each naming the later decision</td></tr><tr><td>R20</td><td>Bundles of named arguments</td><td>gap</td><td><strong>Decided:</strong> <code>params(...)</code> and <code>...bundle</code>, checked at each call</td></tr><tr><td>R21</td><td>The case of type names</td><td>goal</td><td><strong>Decided:</strong> a fixed lowercase set; every other type Title case</td></tr><tr><td>R22</td><td>A generic grid</td><td>gap</td><td><strong>Decided:</strong> <code>Bitmap</code> becomes <code>Grid&lt;T&gt;</code></td></tr><tr><td>R23</td><td><code>.=</code></td><td>gap</td><td><strong>Decided:</strong> <code>target .= member</code>, the path worked out once</td></tr>
+</tbody></table></div>
+<p>Decided: 23 of 23.</p>
+</section>
+</main>
+</body>
+</html>

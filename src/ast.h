@@ -474,7 +474,7 @@ struct ClassStmt : Stmt {
     bool isInterface = false;
 
     // `abstract class`: may leave members for its subclasses to write, and is never created
-    // itself. (`sealed class` is read the same way.)
+    // itself.
     bool isAbstract = false;
 
     // `init { ... }` blocks, each with the number of fields declared above it: they run when an

@@ -487,8 +487,12 @@ void registerStringMethods(VM& vm) {
         const std::string with = given(argc, args, 1) ? vm.toStr(args[1], "padding character") : std::string(" ");
         if (countCharacters(with) != 1) throw vm.runtimeError("padding is done with a single character, not " + vm.stringify(args[1]));
         if (length <= static_cast<int64_t>(text->length)) return self;
-        if (length > (int64_t{1} << 28)) throw vm.runtimeError("padded string would be too large");
+        // As large as memory allows: the room is asked for at once, so a size too large fails at once.
+        const uint64_t missing = static_cast<uint64_t>(length) - text->length;
+        if (missing > SIZE_MAX / with.size()) throw vm.outOfMemory();
+        vm.checkRoomFor(missing * with.size());
         std::string padding;
+        padding.reserve(static_cast<size_t>(missing) * with.size());
         for (int64_t i = static_cast<int64_t>(text->length); i < length; i++) padding += with;
         return vm.str(atStart ? padding + text->chars : text->chars + padding);
     };

@@ -24,6 +24,10 @@ data MapEntry(val key, val value) {
 // An item with its position: what withIndex() gives.
 data IndexedValue(val index, val value)
 
+// Thrown when the system cannot give the program the memory it asks for: a list, a string or
+// a buffer too large. Like any error, it can be caught.
+class OutOfMemoryError(message = "out of memory") : Error(message)
+
 // ---- Checks ----
 
 // Each throws an Error unless the condition holds. The message is a function, so that it is

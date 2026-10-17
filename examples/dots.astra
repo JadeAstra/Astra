@@ -1,0 +1,242 @@
+// A small game written as flows: dots appear one at a time, each with a ring that shrinks as
+// its time runs out; click a dot before its ring is gone and it bursts, let it go and it
+// fades. Three misses and the game is over; a click starts the next one.
+//
+// The point is how the game reads. The rules are one plain loop, game() below: show a dot,
+// wait for a click on it or for its time to run out, react, go round again. Each wait is an
+// ordinary call (animate, clickOn, waitForClick, delay) that sets the flow aside and lets
+// the window go on drawing and taking input, and comes back with an answer when there is
+// one. Without flows the same game is a state machine: a variable saying which step it is
+// at, a frame callback and a click callback that both look at it, and timers that have to be
+// told apart from stale ones. Here the state is simply where the flow is in its loop.
+//
+// Two flows run at once. The game is one; each burst of sparks is another, started and left
+// to play out on its own while the game goes straight on to the next dot. Both are on the
+// main thread, taking turns at their waits, so nothing needs a lock.
+//
+// `suspend` is written where it would be required if Astra required it, as Kotlin does: in
+// front of every function that may set its flow aside. Astra accepts the word today and it
+// changes nothing. Each call where the flow may be set aside also has a `// suspends` comment,
+// and each block given to startCoroutine, which is a flow's own code, is marked as what Kotlin
+// types a suspend lambda (Kotlin writes nothing there either; the type says it). If the
+// compiler worked out for itself which functions may wait (L7 in docs/language-choices.html),
+// it could check that none of them is called where waiting is impossible: in a sort's
+// comparison, a getter or toString().
+import Jade.*
+
+// ---- What is on the screen ----
+
+class Dot(var x : number, var y : number, var radius : number, val color) {
+  var alpha = 1.0                // 0 when it has faded away
+  var deadline = 0.0             // when its time runs out, by clock()
+  var timeLimit = 1.0            // how long it was given, in seconds
+
+  fun contains(px : number, py : number) => (px - x) * (px - x) + (py - y) * (py - y) <= radius * radius
+}
+
+class Spark(var x : number, var y : number, val dx : number, val dy : number, val color) {
+  var life = 1.0                 // 1 when it flies out, 0 when it is gone
+}
+
+val dots = []
+val sparks = []
+var message = ""
+var score = 0
+var misses = 0
+var width = 780.0
+var height = 580.0
+val palette = [Color(0xE5484D), Color(0x3E9BF4), Color(0x46A758), Color(0xF5A524), Color(0x8E4EC6), Color(0x12A594)]
+
+// ---- Waiting, as functions a flow simply calls ----
+// Each is made with suspendCoroutine, which sets the flow aside and hands over a
+// continuation; resuming the continuation gives the flow its answer and takes it up again.
+
+// Flows waiting for the next frame, resumed once it is drawn.
+val frameWaiters = []
+// Flows waiting for a click. Each is a function of where the click was that says whether it
+// is done; one that is done is taken off the list.
+val clickWatchers = []
+
+// Waits until the next frame has been drawn.
+suspend fun nextFrame() => suspendCoroutine { continuation -> frameWaiters.add(continuation) }
+
+// Waits for a click anywhere.
+suspend fun waitForClick() => suspendCoroutine { continuation ->
+  clickWatchers.add({ x, y ->
+    continuation.resume(null)
+    true
+  })
+}
+
+// Waits for a click on the dot, for at most `millis` milliseconds: true if the click came in
+// time, false if the time ran out first. Two things race, and whichever comes first answers.
+suspend fun clickOn(dot : Dot, millis : number) => suspendCoroutine { continuation ->
+  var done = false
+  dot.timeLimit = millis / 1000
+  dot.deadline = clock() + dot.timeLimit
+  val timer = EventLoop.after(millis) {
+    if (!done) {
+      done = true
+      continuation.resume(false)
+    }
+  }
+  clickWatchers.add({ x, y ->
+    if (!done and dot.contains(x, y)) {
+      done = true
+      timer.cancel()
+      continuation.resume(true)
+    }
+    done                         // finished with, one way or the other
+  })
+}
+
+// Runs `step` once a frame for `millis` milliseconds, giving it how far along it is, from 0
+// to 1. Waits until it has run to the end.
+suspend fun animate(millis : number, step) {
+  val start = clock()
+  while (true) {
+    val t = Math.min((clock() - start) * 1000 / millis, 1.0)
+    step(t)
+    if t >= 1 { return }
+    nextFrame()                                          // suspends
+  }
+}
+
+fun easeOut(t : number) => 1 - (1 - t) * (1 - t)
+
+// ---- The game ----
+
+// A new dot somewhere on the screen, grown from nothing.
+suspend fun appear() {
+  val dot = Dot(70 + Math.random() * (width - 140), 90 + Math.random() * (height - 160), 0, palette[Math.randomInt(0, palette.size - 1)])
+  dots.add(dot)
+  animate(250) { t -> dot.radius = 28 * easeOut(t) }   // suspends
+  return dot
+}
+
+// A caught dot bursts into sparks. The sparks are a flow of their own, started here and
+// left to fly, so this returns at once and the game goes on while they do.
+fun burst(dot : Dot) {
+  dots.remove(dot)
+  startCoroutine {                                     // a suspend lambda: the sparks' own flow
+    val mine = []
+    repeat(18) { i ->
+      val angle = i * 2 * Math.pi / 18
+      val speed = 2 + Math.random() * 4
+      val spark = Spark(dot.x, dot.y, Math.cos(angle) * speed, Math.sin(angle) * speed, dot.color)
+      sparks.add(spark)
+      mine.add(spark)
+    }
+    animate(700) { t ->                                  // suspends
+      for spark in mine {
+        spark.x += spark.dx
+        spark.y += spark.dy
+        spark.life = 1 - t
+      }
+    }
+    for spark in mine { sparks.remove(spark) }
+  }
+}
+
+// A missed dot swells and fades.
+suspend fun fade(dot : Dot) {
+  val from = dot.radius
+  animate(400) { t ->                                    // suspends
+    dot.alpha = 1 - t
+    dot.radius = from * (1 + 0.6 * t)
+  }
+  dots.remove(dot)
+}
+
+// One game, start to end. The whole of the rules, in the order they happen.
+suspend fun game() {
+  score = 0
+  misses = 0
+  message = "Click each dot before its ring runs out"
+  delay(2000)                                            // suspends
+  message = ""
+  while (misses < 3) {
+    val dot = appear()                                   // suspends
+    val allowed = Math.max(600, 1700 - score * 50)       // less time as the score goes up
+    if (clickOn(dot, allowed)) {                         // suspends
+      score += 1
+      burst(dot)                                         // does not wait: the sparks fly on their own
+    } else {
+      misses += 1
+      fade(dot)                                          // suspends
+    }
+    delay(200)                                           // suspends
+  }
+  message = "Game over: $score caught. Click to play again"
+  waitForClick()                                         // suspends
+}
+
+// ---- The window ----
+
+val window = NativeWindow("Dots", 780, 580)
+val background = Color(0x15191E)
+val bigFont = Font("Segoe UI", Font.bold, 20)
+val smallFont = Font("Segoe UI", Font.plain, 13)
+val textColor = Color(0xD8DEE4)
+
+window.onInput = { event ->
+  if event is RawInput.PointerDown {
+    for watcher in clickWatchers.toList() {
+      if (watcher(event.x, event.y)) { clickWatchers.remove(watcher) }
+    }
+  }
+}
+
+// Draws what is on the screen, then wakes the flows waiting for a frame.
+fun frame() {
+  val canvas = window.canvas()
+  width = canvas.width
+  height = canvas.height
+  canvas.color = background
+  canvas.fillRect(0, 0, width, height)
+
+  val now = clock()
+  for dot in dots {
+    if dot.deadline > now {                             // the ring: how much time is left
+      val ring = dot.radius + 6 + 34 * (dot.deadline - now) / dot.timeLimit
+      canvas.color = dot.color.withAlpha(110)
+      canvas.drawOval(dot.x - ring, dot.y - ring, 2 * ring, 2 * ring)
+    }
+    canvas.color = dot.color.withAlpha(int(255 * dot.alpha))
+    canvas.fillOval(dot.x - dot.radius, dot.y - dot.radius, 2 * dot.radius, 2 * dot.radius)
+  }
+  for spark in sparks {
+    canvas.color = spark.color.withAlpha(int(255 * spark.life))
+    canvas.fillOval(spark.x - 3, spark.y - 3, 6, 6)
+  }
+
+  canvas.color = textColor
+  if message != "" {
+    canvas.font = bigFont
+    canvas.drawString(message, (width - canvas.measure(message, bigFont).width) / 2, 44)
+  }
+  canvas.font = smallFont
+  canvas.drawString("Caught $score    Missed $misses of 3", 14, height - 14)
+  window.present()
+
+  val waiting = frameWaiters.toList()
+  frameWaiters.clear()
+  for continuation in waiting { continuation.resume(null) }
+}
+
+window.onResize = { w, h -> frame() }
+window.show()
+
+// The game, round after round, as one flow.
+startCoroutine {                                       // a suspend lambda: the game's flow
+  while (true) { game() }                                // suspends, inside game
+}
+
+// Sixty frames a second. When the window is closed the frames stop: a flow waiting for a frame
+// or a click then simply waits for ever, which does not keep the program alive, and once the
+// last timer of a wait has run out the program ends.
+val timer = EventLoop.every(16, frame)
+window.onCloseRequest = {
+  timer.cancel()
+  window.close()
+}

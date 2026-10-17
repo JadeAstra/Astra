@@ -60,7 +60,7 @@ class Thread {
 
   // What the thread does. A class that extends Thread can replace this instead of being
   // given a function.
-  open fun run() {
+  fun run() {
     if (task != null) { task() }
   }
 

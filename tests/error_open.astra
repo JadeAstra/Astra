@@ -1,0 +1,4 @@
+// `open` is not a keyword: every class can be subclassed and every member overridden.
+print("never runs")
+open class Base {}
+// expect compile error: error_open.astra:3:1: error: 'open' is not a keyword; every class can be subclassed and every member overridden

@@ -4,7 +4,7 @@ abstract class Shape(val name : string) {
   abstract fun area()
   abstract val sides : int
   fun describe() => "$name with $sides sides, area ${area()}"
-  open fun scale() => 1
+  fun scale() => 1
 }
 class Square(val side : int) : Shape("square") {
   override fun area() => side * side
@@ -45,8 +45,8 @@ try {
   }
 } catch (e) { print(e.message) }            // expect: class Half must have 'perimeter', which abstract class Polygon requires
 
-// sealed is read as abstract: a class that only its subclasses stand for.
-sealed class Event {
+// An abstract class that only its subclasses stand for.
+abstract class Event {
   class Click(val x) : Event()
   class Key(val code) : Event()
 }
@@ -62,7 +62,7 @@ try {
   }
 } catch (e) { print(e.message) }            // expect: 'aera' in class Wrong is marked override, but there is nothing of that name for it to replace
 class Plain {
-  open fun greet() => "hello"
+  fun greet() => "hello"
   var size = 1
 }
 class Loud : Plain() {

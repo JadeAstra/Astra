@@ -1,0 +1,27 @@
+// Asking for more memory than the system can give is an error like any other: an
+// OutOfMemoryError, which the program can catch and go on from.
+
+fun tryToMake(what, make) {
+  try {
+    make()
+    print(what + ": made")
+  } catch (e : OutOfMemoryError) {
+    print(what + ": " + e.message)
+  }
+}
+
+tryToMake("a petabyte of bytes") { bytes(1 << 50) }              // expect: a petabyte of bytes: out of memory
+tryToMake("a petabyte of text") { "x".repeat(1 << 50) }          // expect: a petabyte of text: out of memory
+
+// It is an Error, so a catch of every error catches it too.
+try { bytes(1 << 50) } catch (e : Error) { print(type(e), e is OutOfMemoryError) }   // expect: OutOfMemoryError true
+
+// And the program goes on as before.
+val after = bytes(16)
+val words = {:}
+for i in 0..<100 { words["w$i"] = i }
+print(after.size, words.size, words["w42"])   // expect: 16 100 42
+
+// The sizes are as large as memory allows, with no smaller limit of their own.
+tryToMake("a padded petabyte") { "x".padStart(1 << 50) }        // expect: a padded petabyte: out of memory
+tryToMake("a list from a huge range") { (0..<(1 << 60)).toList() }   // expect: a list from a huge range: out of memory

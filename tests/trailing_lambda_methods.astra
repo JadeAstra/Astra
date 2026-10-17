@@ -83,8 +83,8 @@ print(folded([1, 2], 10) { a, b -> a + b })               // expect: sum 13
 print(folded([1, 2], 10, label = "total") { a, b -> a + b })   // expect: total 13
 
 // The same through super.
-open class Base {
-  open fun render(indent = ">", body) => indent + body()
+class Base {
+  fun render(indent = ">", body) => indent + body()
 }
 class Derived : Base {
   override fun render(indent = ">>", body) => super.render { "[" + body() + "]" } + super.render("-") { "x" }
