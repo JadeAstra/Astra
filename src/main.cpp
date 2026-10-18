@@ -1,6 +1,8 @@
 // The `astra` command: runs, compiles and disassembles Astra programs, and hosts the shell.
 
 #include <cstdio>
+#include <chrono>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -172,14 +174,7 @@ const char kBundleMarker[8] = {'A', 'S', 'T', 'R', 'A', 'E', 'X', 'E'};
 const size_t kBundleTrailer = 8 + sizeof kBundleMarker;  // program size, then the marker
 
 // Reads a whole file as bytes; false if it cannot be opened.
-bool readBytes(const std::filesystem::path& path, std::string& out) {
-    std::ifstream file(path, std::ios::binary);
-    if (!file) return false;
-    std::ostringstream buffer;
-    buffer << file.rdbuf();
-    out = buffer.str();
-    return !file.bad();
-}
+bool readBytes(const std::filesystem::path& path, std::string& out) { return readWholeFile(path, out); }
 
 // The size of the program attached to `image`, or -1 if there is none.
 int64_t bundledProgramSize(const std::string& image) {
@@ -307,6 +302,27 @@ bool storeIcon(const std::filesystem::path& exe, const IconResources& icon) {
 
 // Loads `path` into `program`, compiling it unless it is already bytecode.
 // Returns 0 on success, otherwise the exit code after reporting the problem.
+// Runs `work`, adding the time it takes to `total`.
+template <typename Work>
+static bool timed(double& total, Work work) {
+    const auto start = std::chrono::steady_clock::now();
+    const bool result = work();
+    total += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+    return result;
+}
+
+// A kept program, read as a bytecode file is; one that cannot be read counts as not kept.
+static bool loadKept(VM& vm, const std::string& bytecode, std::unique_ptr<Program>& owner) {
+    auto kept = std::make_unique<Program>();
+    try {
+        readProgram(*kept, vm, bytecode);
+    } catch (const std::exception&) {
+        return false;
+    }
+    owner = std::move(kept);
+    return true;
+}
+
 int loadProgram(const std::string& path, VM& vm, CompilerSession*& session, Program*& program,
                 std::unique_ptr<CompilerSession>& sessionOwner, std::unique_ptr<Program>& programOwner) {
     std::string data;
@@ -321,12 +337,20 @@ int loadProgram(const std::string& path, VM& vm, CompilerSession*& session, Prog
             readProgram(*programOwner, vm, data);
             program = programOwner.get();
             session = nullptr;
+        } else if (std::string kept; timed(compileTimes.cacheCheck, [&] { return cachedProgram(path, kept); }) &&
+                                      timed(compileTimes.cacheRead, [&] { return loadKept(vm, kept, programOwner); })) {
+            // Nothing it was made from has changed since it was kept: it starts at once (D145).
+            program = programOwner.get();
+            session = nullptr;
         } else {
             sessionOwner = std::make_unique<CompilerSession>(vm);
             sessionOwner->libraryPaths = libraryPaths();
             sessionOwner->compileFile(path);
             session = sessionOwner.get();
             program = &sessionOwner->program;
+            std::ostringstream image;
+            writeProgram(*program, image);
+            keepProgram(path, session->sourcesRead(), session->foldersRead(), image.str());
         }
     } catch (const CompileError& e) {
         std::cerr << e.format() << "\n";
@@ -364,6 +388,20 @@ int checkFile(const std::string& path, bool standardLibrary) {
     return checker.diagnostics.empty() ? 0 : kExitCompileError;
 }
 
+static const auto mainStarted = std::chrono::steady_clock::now();
+
+// With ASTRA_TIMES set: how long the program took to be ready to run, and its parts (D145).
+static void showTimes(const char* what) {
+    if (std::getenv("ASTRA_TIMES") == nullptr) return;
+    const double ready = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - mainStarted).count();
+    if (compileTimes.cacheRead > 0)
+        std::fprintf(stderr, "astra: %s %.1f ms after astra.exe started its work, from the program kept: its files looked at %.1f, "
+                     "it read in %.1f\n", what, ready, compileTimes.cacheCheck, compileTimes.cacheRead);
+    else
+        std::fprintf(stderr, "astra: %s %.1f ms after astra.exe started its work: parsing %.1f, checking %.1f, compiling %.1f\n",
+                     what, ready, compileTimes.parse, compileTimes.check, compileTimes.compile);
+}
+
 int runFile(const std::string& path, std::vector<std::string> scriptArgs) {
     VM vm;
     vm.scriptArgs = std::move(scriptArgs);
@@ -375,8 +413,16 @@ int runFile(const std::string& path, std::vector<std::string> scriptArgs) {
     if (int failed = loadProgram(path, vm, session, program, sessionOwner, programOwner)) return failed;
 
     vm.load(*program);
+    showTimes("ready to run");
+    // ASTRA_TIMES=compile stops here: the budgets are timed on programs that are not run.
+    if (const char* times = std::getenv("ASTRA_TIMES"); times != nullptr && std::strcmp(times, "compile") == 0) {
+        finishKeeping();
+        return 0;
+    }
     setSelfCommand({executablePath().string(), std::filesystem::absolute(path).string()});
-    return runProgram(vm, *program, program->entry);
+    const int code = runProgram(vm, *program, program->entry);
+    finishKeeping();
+    return code;
 }
 
 int buildFile(const std::string& path, std::string outPath, bool asExecutable, bool windowed,
@@ -429,6 +475,7 @@ int buildFile(const std::string& path, std::string outPath, bool asExecutable, b
         std::cerr << e.format() << "\n";
         return kExitCompileError;
     }
+    showTimes("compiled");
 
     if (!asExecutable) {
         std::ofstream out(outPath, std::ios::binary | std::ios::trunc);

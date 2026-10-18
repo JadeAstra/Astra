@@ -4511,9 +4511,9 @@ struct Checker::Impl {
                 }
         }
         if (f->owner != nullptr && !f->isStatic) {
-            const std::vector<FuncInfo*>& below = overridersOf(f);
-            if (f->decl->isAbstract) yes = !below.empty();
-            for (FuncInfo* g : below) yes = yes && inPlace(g, param);
+            const std::vector<FuncInfo*>& takingPlace = overridersOf(f);
+            if (f->decl->isAbstract) yes = !takingPlace.empty();
+            for (FuncInfo* g : takingPlace) yes = yes && inPlace(g, param);
         }
         inPlaceKnown[key] = yes ? 2 : 3;
         return yes;

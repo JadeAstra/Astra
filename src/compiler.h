@@ -2,6 +2,7 @@
 
 #include <map>
 #include <memory>
+#include <set>
 #include <string>
 #include <tuple>
 #include <unordered_map>
@@ -10,6 +11,7 @@
 
 #include "ast.h"
 #include "bytecode.h"
+#include "cache.h"
 
 namespace astra {
 
@@ -55,6 +57,14 @@ struct Namespace {
     std::unordered_map<std::string, GlobalName> names;  // public and internal
 };
 
+// How long compiling took, by part, in milliseconds: shown when ASTRA_TIMES is set, for the
+// budgets of D145. A part inside another of the same kind is counted once.
+struct CompileTimes {
+    double parse = 0, check = 0, compile = 0;
+    double cacheCheck = 0, cacheRead = 0;  // a kept program: its files looked at, and it read in
+};
+extern CompileTimes compileTimes;
+
 // Reads a whole file; returns false if it cannot be opened. Strips a UTF-8 byte order mark.
 bool readFile(const std::string& path, std::string& out);
 
@@ -78,6 +88,11 @@ public:
 
     // Directories searched for an import that is not found next to the importing file.
     std::vector<std::string> libraryPaths;
+
+    // The files the program was compiled from, and the folders whose files it took, for the
+    // cache of compiled programs (D145).
+    const std::vector<SourceRead>& sourcesRead() const { return sourcesRead_; }
+    std::vector<std::string> foldersRead() const { return {foldersRead_.begin(), foldersRead_.end()}; }
 
     // Compiles a file and everything it imports. Returns the entry module index.
     int compileFile(const std::string& path);
@@ -109,6 +124,8 @@ private:
     // file: the checker reads them, then the compiler. They live as long as the session.
     std::unordered_map<std::string, std::unique_ptr<std::vector<StmtPtr>>> parsed_;
     std::vector<std::unique_ptr<std::vector<StmtPtr>>> sources_;
+    std::vector<SourceRead> sourcesRead_;
+    std::set<std::string> foldersRead_;
     std::unordered_set<std::string> gathered_;  // files handed to the checker
     bool gatheringShell_ = false;               // the unit being gathered is an input of the shell
 

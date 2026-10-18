@@ -2,6 +2,7 @@
 
 #include "checker.h"
 
+#include <chrono>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -209,12 +210,7 @@ struct ClassState {
 }  // namespace
 
 bool readFile(const std::string& path, std::string& out) {
-    std::ifstream file(path, std::ios::binary);
-    if (!file) return false;
-    std::ostringstream buffer;
-    buffer << file.rdbuf();
-    if (file.bad()) return false;
-    out = buffer.str();
+    if (!readWholeFile(fs::path(path), out)) return false;
     if (out.compare(0, 3, "\xEF\xBB\xBF") == 0) out.erase(0, 3);
     return true;
 }
@@ -4001,7 +3997,30 @@ static std::vector<fs::path> folderFiles(const std::string& folder) {
     return paths;
 }
 
+CompileTimes compileTimes;
+
+namespace {
+// Adds the time from here to the end of the scope to one part of CompileTimes.
+class PartTimer {
+public:
+    explicit PartTimer(double& total) : total_(total), start_(std::chrono::steady_clock::now()) { depth()[&total]++; }
+    ~PartTimer() {
+        if (--depth()[&total_] == 0)
+            total_ += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start_).count();
+    }
+
+private:
+    static std::unordered_map<double*, int>& depth() {
+        static thread_local std::unordered_map<double*, int> counts;
+        return counts;
+    }
+    double& total_;
+    std::chrono::steady_clock::time_point start_;
+};
+}  // namespace
+
 static std::vector<StmtPtr> parseSource(const std::string& source, const std::string& name) {
+    PartTimer timed(compileTimes.parse);
     Lexer lexer(source, name);
     std::vector<Token> tokens = lexer.scan();
     Parser parser(tokens, name);
@@ -4179,6 +4198,8 @@ std::vector<StmtPtr>* CompilerSession::parseFile(const std::string& key, const s
     if (found != parsed_.end()) return found->second.get();
     std::string source;
     if (!readFile(path, source)) return nullptr;
+    SourceRead read{path, textHash(source)};
+    if (fileStamp(path, read.size, read.time)) sourcesRead_.push_back(std::move(read));
     auto statements = std::make_unique<std::vector<StmtPtr>>(parseSource(source, name));
     std::vector<StmtPtr>* raw = statements.get();
     parsed_[key] = std::move(statements);
@@ -4243,6 +4264,7 @@ void CompilerSession::gather(const std::string& key, const std::string& name, co
         Namespace* imported = nullptr;
         if (folder) {
             imported = namespaceOf(found);
+            foldersRead_.insert(found);
             for (const fs::path& path : folderFiles(found)) {
                 const std::string fileKey = fileKeyOf(path);
                 const std::string fileName = path.filename().string();
@@ -4265,7 +4287,10 @@ void CompilerSession::gather(const std::string& key, const std::string& name, co
 // compile error: the first, with the rest listed after it (M6.5 part 3, step 5).
 void CompilerSession::check() {
     const size_t before = checker->diagnostics.size();
-    checker->run();
+    {
+        PartTimer timed(compileTimes.check);
+        checker->run();
+    }
     if (!stopAtTypeErrors) return;
     // What `astra check --std` finds in the standard library is listed, never a program's error.
     std::vector<const CheckDiagnostic*> found;
@@ -4303,6 +4328,7 @@ FunctionProto* CompilerSession::compileUnit(const std::string& source, const std
 FunctionProto* CompilerSession::compileStatements(const std::vector<StmtPtr>& statements, const std::string& name,
                                                   const std::string& directory, const std::string& fileKey, bool shell,
                                                   Namespace* ns) {
+    PartTimer timed(compileTimes.compile);
     predeclare(*ns, fileKey, name, statements, shell);
     ModuleCompiler compiler(*this, name, directory == "<builtin>" ? "" : directory, ns, fileKey);
     if (!shell) return compiler.compile(statements, shell);
@@ -4394,6 +4420,7 @@ void CompilerSession::loadFolder(const std::string& folder, const std::string& d
         const std::vector<StmtPtr>* statements = nullptr;
         int index = 0;
     };
+    foldersRead_.insert(folder);
     std::vector<fs::path> paths = folderFiles(folder);
     if (paths.empty())
         throw CompileError(file, at.line, at.col, "the folder '" + displayPath + "' has no .astra files to import");

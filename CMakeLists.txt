@@ -33,6 +33,7 @@ add_executable(astra
   src/parser.cpp
   src/value.cpp
   src/bytecode.cpp
+  src/cache.cpp
   src/compiler.cpp
   src/vm.cpp
   src/builtins.cpp

@@ -18,6 +18,9 @@ $Astra = (Resolve-Path $Astra).Path
 
 $tmp = Join-Path ([IO.Path]::GetTempPath()) "astra-tests-$PID"
 New-Item -ItemType Directory -Force $tmp | Out-Null
+# The compiled programs astra keeps for a script's next run (D145) go in a cache of the tests'
+# own, which goes with the rest at the end.
+$env:ASTRA_CACHE = Join-Path $tmp 'cache'
 
 # Runs astra, or with -Program a program built by `astra build --exe`.
 function Invoke-Astra([string[]]$AstraArgs, [string]$Program = $Astra) {
@@ -96,6 +99,8 @@ foreach ($test in Get-ChildItem (Join-Path $PSScriptRoot '*.astra') | Sort-Objec
         if (-not $errorText) { $errorText = Get-Marker $test.FullName '// expect error output: (.*)$' }
         $exitCode = if ($runtimeError) { 70 } else { 0 }
         $results['script'] = Compare-Run (Invoke-Astra @($test.FullName)) $expected $errorText $exitCode
+        # Run again, it starts from the program the first run kept.
+        $results['cached'] = Compare-Run (Invoke-Astra @($test.FullName)) $expected $errorText $exitCode
 
         $build = Invoke-Astra @('build', $test.FullName, '-o', $bytecode)
         if ($build.Code -ne 0) {

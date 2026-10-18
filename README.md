@@ -59,6 +59,15 @@ The shell checks each input as a file is checked, with what earlier inputs decla
 imported in reach: a mistake is a compile error, and the input is taken back. A function
 declared again takes the place of the one before.
 
+Running a script keeps the program it compiled for the next run, in a cache of this machine's
+own (`%LOCALAPPDATA%\Astra\cache` on Windows, `~/.cache/astra` elsewhere, or the folder
+`ASTRA_CACHE` names; never beside the script). A run with nothing changed starts from it,
+without reading, checking or compiling: "nothing changed" is each file's size and time, then
+its text where those differ, for the script and everything it imports, the files of each
+folder it imports, and `astra.exe` itself. A damaged entry counts as missing; past 500 MB the
+entries used longest ago go first; deleting the cache costs one slower start. With
+`ASTRA_TIMES` set, astra says how long the program took to be ready, and on what.
+
 ### Standalone programs
 
 `astra build --exe` turns a script into an executable of its own:
