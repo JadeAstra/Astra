@@ -1,0 +1,22 @@
+// The name of a function is never given another value (D159); a field, a parameter or a
+// local of the same name is another thing, and is assigned with its own type checked.
+
+fun area() : int => 1
+area = { 2 }                  // check: 'area' is a function, and the name of a function is never given another value; to change what is called, keep it in a var of a function type
+area += 1                     // check: 'area' is a function, and the name of a function is never given another value; to change what is called, keep it in a var of a function type
+
+class Pipe {
+  private var input = "pipe"
+  private var print = 0
+  fun redirect(to : string) {
+    input = to
+    input = 3                 // check: 'input' is a string; it cannot be given an int
+    print += 1
+  }
+}
+
+fun twice(input : int) : int {
+  var area = input
+  area += 1
+  return area * 2
+}

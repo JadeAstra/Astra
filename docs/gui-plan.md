@@ -1589,7 +1589,14 @@ checker's own errors, the suite under the sanitizer and the stress settings, tim
 Beside the checker, building only what changed (D145): files compiled once and cached, each
 declaration's summary deciding what else must be compiled again, the standard library and Jade
 compiled into `astra.exe`, a script's compiled program kept per machine for its next run, and a
-starting budget measured on a ported app.
+starting budget measured on a ported app. (Built, version 0.6.5: the suite's 576 checks, every
+test, the 18 examples and the standard library passing the checker, 13 files of the checker's own
+errors, under the sanitizer and the GC and thread stress settings. On 19,400 lines a first run in
+105 ms, a second in 16 ms, after a one-line change 66 ms (budgets 500, 20 on top of start, 100).
+Part 4 against the baseline: numeric 3.2, fields 2.5, calls 2.0, simulation 1.5 times as fast;
+an anonymous object 164 ns from 600. Part 5: `print("hi")` built 1.67 MB from 2.98 and 8.2 ms
+from 11.1; a Jade app 2.20 MB from 3.23. Moved on: typed instructions to M6.6, with generic
+types kept when running; how the VM goes from one instruction to the next to M6.7, D160.)
 
 **M6.6. Value types, lists of values, and the language choices.** In two halves. The first, as
 designed in [value-lists.html](value-lists.html):

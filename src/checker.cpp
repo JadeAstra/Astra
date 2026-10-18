@@ -2713,6 +2713,21 @@ struct Checker::Impl {
 
     // A bare name: a local, a member of an object a lambda or extension runs on, a member of
     // the class around the code, or a top-level name.
+    // Whether a bare name, written where `n` is, means a global: it is not a variable, nor a
+    // class declared in the function, nor a member of an object the code runs on or of the
+    // class around it, which all come first (see name).
+    bool meansGlobal(const NameExpr& n) {
+        if (findLocal(n.name) != nullptr || localClass(n.name) != nullptr) return false;
+        bool escape = false;
+        if (onReceivers(n.name, escape) != nullptr || escape) return false;
+        if (ctx != nullptr && ctx->cls != nullptr) {
+            if (!ctx->isStatic && lookupMember(selfType(ctx->cls), n.name).found()) return false;
+            for (ClassInfo* c = ctx->cls; c != nullptr; c = c->outer)
+                if (c->statics.count(n.name) != 0 || c->nested.count(n.name) != 0) return false;
+        }
+        return true;
+    }
+
     Type name(const NameExpr& n) {
         if (Local* l = findLocal(n.name)) {
             if (&n != passedUse) noteUse(*l, ParamUse::Other);
@@ -2983,9 +2998,10 @@ struct Checker::Impl {
             // The name of a class, an object or a function is never given a value; the compiler
             // says so, which tells more than what the value's type is.
             if (local == nullptr) {
-                const GlobalSym* g = localClass(n.name) == nullptr ? findGlobal(*unit, n.name) : nullptr;
+                const bool global = meansGlobal(n);
+                const GlobalSym* g = global ? findGlobal(*unit, n.name) : nullptr;
                 if (localClass(n.name) != nullptr || (g != nullptr && g->var == nullptr)) target = unknownType();
-                if (localClass(n.name) == nullptr && g != nullptr && g->var == nullptr && !g->funcs.empty())
+                if (g != nullptr && g->var == nullptr && !g->funcs.empty())
                     report(*a.target, "'" + n.name + "' is a function, and the name of a function is never given another value; " +
                                           "to change what is called, keep it in a var of a function type");
             }

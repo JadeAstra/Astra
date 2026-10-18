@@ -164,6 +164,25 @@ foreach ($test in Get-ChildItem (Join-Path $PSScriptRoot 'check\*.astra') | Sort
     }
 }
 
+# The standard library, Jade and the examples pass the checker as they are (M6.5): `astra check
+# --std` checks the standard library's bodies too, which are otherwise put back unchecked.
+$checked = @((Join-Path $PSScriptRoot 'basics.astra') + '|--std')
+$examples = Join-Path $PSScriptRoot '..\examples'  # not there when the tests are copied elsewhere
+if (Test-Path $examples) {
+    foreach ($example in Get-ChildItem (Join-Path $examples '*.astra') | Sort-Object Name) { $checked += $example.FullName }
+}
+foreach ($entry in $checked) {
+    $parts = $entry -split '\|'
+    $arguments = if ($parts.Count -gt 1) { @('check', $parts[1], $parts[0]) } else { @('check', $parts[0]) }
+    $run = Invoke-Astra $arguments
+    $name = (Split-Path $parts[0] -Leaf) + $(if ($parts.Count -gt 1) { ' with the standard library' } else { '' })
+    if ($run.Code -eq 0) {
+        $passed++
+    } else {
+        $failures += "$name [checked whole]`n    exit code $($run.Code): $((($run.Lines + $run.Error) -join ' ').Trim())"
+    }
+}
+
 # The shell: each tests\shell\*.shell file is typed into it, line by line. Its `// expect:`
 # lines are what the shell prints, and its `// expect error:` lines the errors, each in order.
 foreach ($test in Get-ChildItem (Join-Path $PSScriptRoot 'shell\*.shell') | Sort-Object Name) {

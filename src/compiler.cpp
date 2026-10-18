@@ -5773,7 +5773,9 @@ Namespace* CompilerSession::importModule(const std::string& path, const std::str
 void CompilerSession::checkConstAssignments() {
     for (const auto& [global, name, file, line, col] : globalAssignments_)
         if (global->isVal) throw CompileError(file, line, col, "cannot assign to val '" + name + "'");
-        else if (global->isFunction) throw CompileError(file, line, col, "cannot assign to '" + name + "': it is a function");
+        else if (global->isFunction && stopAtTypeErrors)  // astra check: the checker lists it with the rest
+            throw CompileError(file, line, col, "'" + name + "' is a function, and the name of a function is never given another value; " +
+                                                    "to change what is called, keep it in a var of a function type");
 }
 
 }  // namespace astra
