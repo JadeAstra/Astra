@@ -103,7 +103,7 @@ struct ObjFiber final : Obj {
     }
 };
 
-inline ObjFiber* asFiber(Value v) { return static_cast<ObjFiber*>(v.as.obj); }
+inline ObjFiber* asFiber(const Value& v) { return static_cast<ObjFiber*>(v.as.obj); }
 
 // Thrown by a built-in function to set the running flow aside. It passes through the
 // interpreter loop untouched, leaving the flow's calls as they are, to where the flow was
@@ -223,6 +223,18 @@ public:
         obj->next = objects_;
         objects_ = obj;
         bytesAllocated_ += sizeof(T);
+        return obj;
+    }
+
+    // An object of `cls`, with room for the fields the class declares, none of them given a
+    // value yet (M6.5 part 4).
+    ObjInstance* newInstance(ObjClass* cls) {
+        const uint32_t count = static_cast<uint32_t>(cls->declared.size());
+        ObjInstance* obj = new (count) ObjInstance(cls, count);
+        obj->core = coreId_;
+        obj->next = objects_;
+        objects_ = obj;
+        bytesAllocated_ += sizeof(ObjInstance) + count * sizeof(Value);
         return obj;
     }
 
@@ -628,6 +640,7 @@ private:
     std::unordered_map<std::string, std::unique_ptr<FunctionProto>> extensionSets_;  // the protos of their sets, by name
     const Value* findExtension(Value receiver, const ObjString* name) const;
     bool hasMember(Value candidate, const ObjString* name) const;
+    void declareEntryFields(ObjClass* cls);
     void nameEntry(ObjInstance* entry, ObjString* name, int ordinal);
     void checkFieldAssignment(ObjInstance* instance, ObjString* name, Value value);
     void checkStaticType(ObjClass* owner, FieldDecl& field, Value value);
@@ -642,7 +655,7 @@ private:
     bool shift(Op op);
     bool bitwise(Op op);
 
-    bool matchesType(Value v, uint8_t type, const ObjClass* cls) const;
+    bool matchesType(const Value& v, uint8_t type, const ObjClass* cls) const;
     ObjClass* popTypeClass(uint8_t type);
     std::string declaredTypeText(uint8_t type, const ObjClass* cls) const;
     AstraThrow typeMismatch(const std::string& variable, uint8_t type, const ObjClass* cls, Value v);

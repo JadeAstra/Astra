@@ -9,6 +9,14 @@
 
 namespace astra {
 
+uint32_t newShape() {
+    static std::atomic<uint32_t> next{1};
+    uint32_t shape;
+    do shape = next.fetch_add(1, std::memory_order_relaxed);
+    while (shape == 0);  // 0 is what a place that has found nothing yet remembers
+    return shape;
+}
+
 uint32_t hashString(std::string_view s) {
     uint32_t hash = 2166136261u;  // FNV-1a
     for (unsigned char c : s) {
@@ -115,8 +123,8 @@ bool keysEqual(const Value& a, const Value& b, int depth) {
             const ObjInstance* y = asInstance(b);
             if (x->cls != y->cls) return false;
             for (const ObjString* part : x->cls->components) {
-                const Value* left = x->fields.find(part);
-                const Value* right = y->fields.find(part);
+                const Value* left = x->field(part);
+                const Value* right = y->field(part);
                 if (!keysEqual(left != nullptr ? *left : Value::null(), right != nullptr ? *right : Value::null(), depth + 1))
                     return false;
             }
@@ -149,7 +157,7 @@ size_t keyHash(const Value& v, int depth) {
             const ObjInstance* instance = asInstance(v);
             size_t h = std::hash<const void*>()(instance->cls);
             for (const ObjString* part : instance->cls->components) {
-                const Value* field = instance->fields.find(part);
+                const Value* field = instance->field(part);
                 h = mix(h, field != nullptr ? keyHash(*field, depth + 1) : 0);
             }
             return h;
@@ -330,7 +338,9 @@ void ValueMap::clear() {
 
 // ---- ObjRange ----
 
-int64_t ObjRange::count() const {
+int64_t ObjRange::count() const { return rangeCount(start, end, step, inclusive); }
+
+int64_t rangeCount(int64_t start, int64_t end, int64_t step, bool inclusive) {
     // Unsigned arithmetic: the span of a range can exceed INT64_MAX.
     uint64_t span;
     if (step > 0) {

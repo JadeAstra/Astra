@@ -1,0 +1,21 @@
+// Calls: a recursive function, small methods, and a lambda, each called many times.
+fun fib(n : int) : int => n < 2 ? n : fib(n - 1) + fib(n - 2)
+
+class Counter(var total : int) {
+  fun add(n : int) { total += n }
+  fun twice(n : int) : int => n * 2
+}
+
+fun applyAll(times : int, step : (int) -> int) : int {
+  var sum = 0
+  for i in 0..<times { sum += step(i) }
+  return sum
+}
+
+val started = clock()
+val f = fib(27)
+val counter = Counter(0)
+for i in 0..<2000000 { counter.add(counter.twice(i)) }
+val lambdas = applyAll(2000000) { it + 1 }
+val seconds = clock() - started
+print("calls", f, counter.total, lambdas, seconds)

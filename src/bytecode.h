@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <cstdint>
 #include <functional>
 #include <iosfwd>
@@ -30,8 +31,8 @@ enum class Op : uint8_t {
     GetUpvalue,    // u16 index
     SetUpvalue,    // u16 index
 
-    GetProp,       // u16 name                      obj -> value
-    SetProp,       // u16 name                      obj value -> value
+    GetProp,       // u16 name, u16 cache           obj -> value
+    SetProp,       // u16 name, u16 cache           obj value -> value
     GetIndex,      //                               obj index -> value
     SetIndex,      //                               obj index value -> value
     GetSuper,      // u16 name                      this superclass -> bound method
@@ -193,8 +194,8 @@ enum class Op : uint8_t {
     // GetProp, SetProp, Invoke and InvokeTrailing for a member the class declares itself,
     // reached through `this` by the class's own code (or a static member of the class, by
     // its name): that code may always use it, so who may is not looked at.
-    GetOwn,             // u16 name                        obj -> value
-    SetOwn,             // u16 name                        obj value -> value
+    GetOwn,             // u16 name, u16 cache             obj -> value
+    SetOwn,             // u16 name, u16 cache             obj value -> value
     InvokeOwn,          // u16 name, u8 argc               receiver args... -> result
     InvokeOwnTrailing,  // u16 name, u8 argc               receiver args... lambda -> result
 
@@ -209,6 +210,26 @@ enum class Op : uint8_t {
 
     // `map[key, default = start]`: the entry, or `start` where the key is not there (L118).
     GetIndexOr,         //                                 map key start -> value
+
+    // Two instructions in one (M6.5 part 4), the second's operand being a local or a constant:
+    // `GetLocal x; Mul` is MulLocal x, `Const k; Add` is AddConst k. Two floats or two ints
+    // are worked out at once; anything else goes the way the plain instruction does.
+    AddLocal, SubLocal, MulLocal, DivLocal, ModLocal, LtLocal, LeLocal, GtLocal, GeLocal, EqLocal,  // u16 slot      a -> a op local
+    AddConst, SubConst, MulConst, DivConst, ModConst, LtConst, LeConst, GtConst, GeConst, EqConst,  // u16 constant  a -> a op constant
+    StoreLocal,         // u16 slot                        value ->  (SetLocal; Pop)
+    CheckLocal,         // u16 slot, u16 name, u8 type     ->  (a parameter's declared type, not a class)
+
+    // A `for` over a range written in place, `for i in 0..<n`, counted without a range or an
+    // iterator being made (M6.5 part 4). RangeLoop takes the bounds (and the step, by Range's
+    // flags) and leaves three locals: the next value, how many are left and the step.
+    // RangeNext pushes the next value, as IterNext does, or jumps when none are left.
+    RangeLoop,          // u8 flags                        start end [step] -> next left step
+    RangeNext,          // u16 slot, i32 target            pushes the next value, or jumps when there are no more
+
+    // Three instructions in one: `GetLocal a; GetLocal b; Mul` is MulLocals a b, and so on;
+    // and `GetLocal a; SetLocal b; Pop` is CopyLocal a b.
+    AddLocals, SubLocals, MulLocals, DivLocals, LtLocals, LeLocals, GtLocals, GeLocals, EqLocals,  // u16 slot, u16 slot  -> a op b
+    CopyLocal,          // u16 from, u16 to                ->
 
     Count_,
 };
@@ -303,7 +324,16 @@ struct FunctionProto {
     // The set of a name's forms, made by MakeForms: it has no code of its own; calling it
     // calls the form the arguments fit (VM::chooseForm).
     bool chooser = false;
+
+    // Where each GetProp, SetProp, GetOwn and SetOwn remembers the field it last found (M6.5
+    // part 4), by its second operand. Each holds the layout of the object's class
+    // (ObjClass::shape) in its high 32 bits and the field's place in bits 16 to 31, and for a
+    // SetProp or SetOwn the field's type in bits 8 to 15; 0 when nothing is there yet.
+    // Made empty by verifyFunction; not part of the program as it is written out.
+    std::unique_ptr<std::atomic<uint64_t>[]> caches;
+    uint32_t cacheCount = 0;
 };
+
 
 // A whole compiled program, ready to run or to write to a bytecode file.
 class Program {
@@ -330,6 +360,9 @@ void verifyFunction(FunctionProto& f, const Program& program);
 int stackDepthAtEnd(FunctionProto& f, const Program& program);
 
 void disassemble(const Program& program, std::ostream& out);
+
+// An instruction's name, as the disassembly shows it.
+const char* opName(Op op);
 
 // Bytecode files. readProgram verifies everything it loads and throws std::runtime_error
 // on a malformed file.

@@ -1,0 +1,109 @@
+// The quick ways of M6.5 part 4 give what the slow ones give: fields found by position and
+// remembered where they were, loops over a range counted, instructions joined, and every case
+// they leave to the slow way.
+
+// Fields: one place in the code meets objects of several classes, and of subclasses that
+// declare more fields or declare one again.
+class Shape(var name : string) {
+  var area = 0.0
+  fun describe() : string => name + " " + area
+}
+class Square(var side : float) : Shape("square") {
+  var corners = 4
+}
+class Circle(var radius : float) : Shape("circle") {
+  override var area = 1.0
+}
+fun grow(s : Shape) { s.area = s.area + 1.5 }
+val shapes : List<Shape> = [Shape("blob"), Square(2.0), Circle(1.0), Square(3.0), Shape("dot")]
+for round in 0..<3 { for s in shapes { grow(s) } }
+for s in shapes { print(s.describe()) }
+// expect: blob 4.5
+// expect: square 4.5
+// expect: circle 5.5
+// expect: square 4.5
+// expect: dot 4.5
+var corners = 0
+for s in shapes { if (s is Square) { corners += s.corners } }
+print(corners)   // expect: 8
+
+// A field of a type gets only values of that type, quickly or not.
+class Point(var x : float, var y : float)
+val p = Point(0.0, 0.0)
+for i in 0..<4 { p.x = p.x + 0.5 }
+print(p.x, p.y)   // expect: 2.0 0.0
+
+// Enum entries keep their name and place as fields of their own.
+enum Size(val inches : int) {
+  SMALL(10), LARGE(20)
+  fun label() : string => name + "/" + ordinal + "/" + inches
+}
+for size in Size.entries { print(size.label()) }
+// expect: SMALL/0/10
+// expect: LARGE/1/20
+
+// Ranges written in place: up, up to and including, down, with a step, empty, and from
+// variables worked out once.
+var seen = ""
+for i in 0..<4 { seen += i }
+for i in 2..4 { seen += i }
+for i in 5 downTo 3 { seen += i }
+for i in 0..<10 step 4 { seen += i }
+for i in 3..<3 { seen += "never" }
+print(seen)   // expect: 0123234543048
+var top = 3
+var count = 0
+for i in 0..<top { top = 10; count += 1 }
+print(count, top)   // expect: 3 10
+
+// Leaving early, going on, and a function made in the loop keeping its own value.
+val kept : List<() -> int> = []
+for i in 0..<10 {
+  if (i % 2 == 1) { continue }
+  if (i > 6) { break }
+  kept.add { i * 10 }
+}
+print(kept.map { it() })   // expect: [0, 20, 40, 60]
+outer@ for i in 1..3 {
+  for j in 1..3 {
+    if (j == 2) { continue@outer }
+    print(i, j)
+  }
+}
+// expect: 1 1
+// expect: 2 1
+// expect: 3 1
+
+// The bounds of a range must be ints, and a step positive.
+fun bounds(n : any) : string {
+  var s = ""
+  for i in 0..<(n as int) { s += i }
+  return s
+}
+print(bounds(3))   // expect: 012
+try { bounds(2.5) } catch (e : Error) { print(e.message) }   // expect: cannot cast a value of type float to int
+fun stepped(by : int) : int {
+  var n = 0
+  for i in 0..10 step by { n += 1 }
+  return n
+}
+print(stepped(5))   // expect: 3
+try { stepped(0) } catch (e : Error) { print(e.message) }   // expect: the step of a range must be a positive int
+
+// Two locals in one instruction, of every kind, and when they are not numbers.
+fun mix(a : Number, b : Number) : string => "${a + b} ${a - b} ${a * b} ${a < b} ${a <= b} ${a > b} ${a >= b} ${a == b}"
+print(mix(6, 3))       // expect: 9 3 18 false false true true false
+print(mix(1.5, 2.0))   // expect: 3.5 -0.5 3.0 true true false false false
+print(mix(2, 2.5))     // expect: 4.5 -0.5 5.0 true true false false false
+fun words(a : string, b : string) : string {
+  val both = a + b
+  var copy = both
+  copy = a
+  return both + " " + copy + " " + (a < b) + " " + (a == b)
+}
+print(words("ab", "cd"))   // expect: abcd ab true false
+fun halves(a : float, b : float) : float => a / b
+print(halves(7.0, 2.0))   // expect: 3.5
+fun intHalves(a : int, b : int) : int => a / b
+print(intHalves(7, 2))    // expect: 3
+try { intHalves(1, 0) } catch (e : Error) { print(e.message) }   // expect: division by zero

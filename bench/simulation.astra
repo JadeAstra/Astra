@@ -1,0 +1,48 @@
+// A JadeGate-style simulation slice: entities move each tick, are sorted into a grid by
+// where they are, and those that share a cell bump into each other.
+class Entity(val id : int, var x : float, var y : float, var dx : float, var dy : float) {
+  var hits = 0
+  fun step(width : float, height : float) {
+    x += dx
+    y += dy
+    if (x < 0.0 or x >= width) { dx = -dx; x += dx * 2.0 }
+    if (y < 0.0 or y >= height) { dy = -dy; y += dy * 2.0 }
+  }
+}
+
+val width = 500.0
+val height = 500.0
+val cell = 25.0
+val entities : List<Entity> = []
+for i in 0..<400 {
+  entities.add(Entity(i, (i * 37 % 500) * 1.0, (i * 91 % 500) * 1.0, (i % 7 - 3) * 0.75, (i % 5 - 2) * 0.9))
+}
+
+val started = clock()
+var bumps = 0
+for tick in 0..<1000 {
+  val grid : Map<int, List<Entity>> = {:}
+  for e in entities {
+    e.step(width, height)
+    val key = int(e.x / cell) * 1000 + int(e.y / cell)
+    grid[key, default = []] += [e]
+  }
+  for here in grid.values {
+    if (here.size < 2) { continue }
+    for i in 0..<here.size {
+      for j in (i + 1)..<here.size {
+        val a = here[i]
+        val b = here[j]
+        val ddx = a.x - b.x
+        val ddy = a.y - b.y
+        if (ddx * ddx + ddy * ddy < 16.0) {
+          a.hits += 1
+          b.hits += 1
+          bumps += 1
+        }
+      }
+    }
+  }
+}
+val seconds = clock() - started
+print("simulation", bumps, entities.sumOf { it.hits }, seconds)

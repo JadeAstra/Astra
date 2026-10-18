@@ -35,8 +35,8 @@ const OpInfo kOps[] = {
     {"DEFINE_GLOBAL", Operand::U16},
     {"GET_UPVALUE", Operand::U16},
     {"SET_UPVALUE", Operand::U16},
-    {"GET_PROP", Operand::U16},
-    {"SET_PROP", Operand::U16},
+    {"GET_PROP", Operand::U16U16},
+    {"SET_PROP", Operand::U16U16},
     {"GET_INDEX", Operand::None},
     {"SET_INDEX", Operand::None},
     {"GET_SUPER", Operand::U16},
@@ -137,14 +137,34 @@ const OpInfo kOps[] = {
     {"CLASS_NUMBER", Operand::U16U16},
     {"MEMBER_ACCESS", Operand::U16U16U8},
     {"STATIC_ACCESS", Operand::U16U16U8},
-    {"GET_OWN", Operand::U16},
-    {"SET_OWN", Operand::U16},
+    {"GET_OWN", Operand::U16U16},
+    {"SET_OWN", Operand::U16U16},
     {"INVOKE_OWN", Operand::U16U8},
     {"INVOKE_OWN_TRAILING", Operand::U16U8},
     {"MAKE_FORMS", Operand::U16U8},
     {"METHOD_FORMS", Operand::U16U8},
     {"STATIC_FORMS", Operand::U16U8},
     {"GET_INDEX_OR", Operand::None},
+    {"ADD_LOCAL", Operand::U16}, {"SUB_LOCAL", Operand::U16}, {"MUL_LOCAL", Operand::U16}, {"DIV_LOCAL", Operand::U16},
+    {"MOD_LOCAL", Operand::U16}, {"LT_LOCAL", Operand::U16}, {"LE_LOCAL", Operand::U16}, {"GT_LOCAL", Operand::U16},
+    {"GE_LOCAL", Operand::U16}, {"EQ_LOCAL", Operand::U16},
+    {"ADD_CONST", Operand::U16}, {"SUB_CONST", Operand::U16}, {"MUL_CONST", Operand::U16}, {"DIV_CONST", Operand::U16},
+    {"MOD_CONST", Operand::U16}, {"LT_CONST", Operand::U16}, {"LE_CONST", Operand::U16}, {"GT_CONST", Operand::U16},
+    {"GE_CONST", Operand::U16}, {"EQ_CONST", Operand::U16},
+    {"STORE_LOCAL", Operand::U16},
+    {"CHECK_LOCAL", Operand::U16U16U8},
+    {"RANGE_LOOP", Operand::U8},
+    {"RANGE_NEXT", Operand::U16I32},
+    {"ADD_LOCALS", Operand::U16U16},
+    {"SUB_LOCALS", Operand::U16U16},
+    {"MUL_LOCALS", Operand::U16U16},
+    {"DIV_LOCALS", Operand::U16U16},
+    {"LT_LOCALS", Operand::U16U16},
+    {"LE_LOCALS", Operand::U16U16},
+    {"GT_LOCALS", Operand::U16U16},
+    {"GE_LOCALS", Operand::U16U16},
+    {"EQ_LOCALS", Operand::U16U16},
+    {"COPY_LOCAL", Operand::U16U16},
 };
 
 const char* const kTypeNames[] = {"", "int", "float", "Number", "string", "bool", "List", "Map", "Range", "Function", "Bytes"};
@@ -275,6 +295,8 @@ static int analyzeStack(FunctionProto& f, const Program& program, bool partial) 
         }
     };
 
+    int caches = 0;  // one more than the highest cache a GetProp or the like names
+
     auto requireName = [&](int index) {
         if (static_cast<size_t>(index) >= f.constants.size() || !f.constants[index].isString())
             fail("name operand is not a string constant");
@@ -333,6 +355,58 @@ static int analyzeStack(FunctionProto& f, const Program& program, bool partial) 
                     if (a >= depth) fail("local slot out of range");
                     pushes = 1;
                     break;
+                case Op::AddLocal:
+                case Op::SubLocal:
+                case Op::MulLocal:
+                case Op::DivLocal:
+                case Op::ModLocal:
+                case Op::LtLocal:
+                case Op::LeLocal:
+                case Op::GtLocal:
+                case Op::GeLocal:
+                case Op::EqLocal:
+                    if (a >= depth) fail("local slot out of range");
+                    pops = pushes = 1;
+                    maxDepth = std::max(maxDepth, depth + 1);  // the local is pushed where they are not worked out at once
+                    break;
+                case Op::AddLocals:
+                case Op::SubLocals:
+                case Op::MulLocals:
+                case Op::DivLocals:
+                case Op::LtLocals:
+                case Op::LeLocals:
+                case Op::GtLocals:
+                case Op::GeLocals:
+                case Op::EqLocals:
+                    if (a >= depth || b >= depth) fail("local slot out of range");
+                    pushes = 1;
+                    maxDepth = std::max(maxDepth, depth + 2);  // both are pushed where they are not worked out at once
+                    break;
+                case Op::CopyLocal:
+                    if (a >= depth || b >= depth) fail("local slot out of range");
+                    break;
+                case Op::AddConst:
+                case Op::SubConst:
+                case Op::MulConst:
+                case Op::DivConst:
+                case Op::ModConst:
+                case Op::LtConst:
+                case Op::LeConst:
+                case Op::GtConst:
+                case Op::GeConst:
+                case Op::EqConst:
+                    if (static_cast<size_t>(a) >= f.constants.size()) fail("constant out of range");
+                    pops = pushes = 1;
+                    maxDepth = std::max(maxDepth, depth + 1);
+                    break;
+                case Op::StoreLocal:
+                    if (a >= depth - 1) fail("local slot out of range");
+                    pops = 1;
+                    break;
+                case Op::CheckLocal:
+                    if (a >= depth) fail("local slot out of range");
+                    requireName(b);
+                    break;
                 case Op::SetLocal:
                     if (a >= depth) fail("local slot out of range");
                     pops = pushes = 1;
@@ -366,10 +440,16 @@ static int analyzeStack(FunctionProto& f, const Program& program, bool partial) 
                 case Op::GetProp:
                 case Op::GetOwn:
                     requireName(a);
+                    caches = std::max(caches, b + 1);
                     pops = pushes = 1;
                     break;
                 case Op::SetProp:
                 case Op::SetOwn:
+                    requireName(a);
+                    caches = std::max(caches, b + 1);
+                    pops = 2;
+                    pushes = 1;
+                    break;
                 case Op::GetSuper:
                 case Op::Method:
                 case Op::StaticMethod:
@@ -477,6 +557,16 @@ static int analyzeStack(FunctionProto& f, const Program& program, bool partial) 
                 case Op::Range:
                     if ((a & ~7) != 0) fail("bad range");
                     pops = (a & 4) != 0 ? 3 : 2;
+                    pushes = 1;
+                    break;
+                case Op::RangeLoop:
+                    if ((a & ~7) != 0) fail("bad range");
+                    pops = (a & 4) != 0 ? 3 : 2;
+                    pushes = 3;
+                    break;
+                case Op::RangeNext:
+                    if (a + 2 >= depth) fail("local slot out of range");
+                    flow(b, depth);
                     pushes = 1;
                     break;
                 case Op::MissingArg:
@@ -703,7 +793,13 @@ static int analyzeStack(FunctionProto& f, const Program& program, bool partial) 
         }
     }
 
-    if (!partial) f.maxStack = maxDepth;
+    if (!partial) {
+        f.maxStack = maxDepth;
+        if (static_cast<uint32_t>(caches) > f.cacheCount) {
+            f.caches.reset(new std::atomic<uint64_t>[static_cast<size_t>(caches)]());
+            f.cacheCount = static_cast<uint32_t>(caches);
+        }
+    }
     return endDepth;
 }
 
@@ -757,6 +853,16 @@ void disassembleFunction(const FunctionProto& f, const Program& program, std::os
 
         switch (static_cast<Op>(raw)) {
             case Op::Const:
+            case Op::AddConst:
+            case Op::SubConst:
+            case Op::MulConst:
+            case Op::DivConst:
+            case Op::ModConst:
+            case Op::LtConst:
+            case Op::LeConst:
+            case Op::GtConst:
+            case Op::GeConst:
+            case Op::EqConst:
                 out << " " << a << "  ; " << constantText(f.constants[a]);
                 break;
             case Op::GetGlobal:
@@ -809,6 +915,7 @@ void disassembleFunction(const FunctionProto& f, const Program& program, std::os
                 break;
             case Op::DefaultArg:
             case Op::IterNext:
+            case Op::RangeNext:
                 out << " slot=" << a << " -> " << b;
                 break;
             case Op::Jump:
@@ -857,6 +964,11 @@ void disassembleFunction(const FunctionProto& f, const Program& program, std::os
 
 }  // namespace
 
+const char* opName(Op op) {
+    const size_t i = static_cast<size_t>(op);
+    return i < static_cast<size_t>(Op::Count_) ? kOps[i].name : "?";
+}
+
 void disassemble(const Program& program, std::ostream& out) {
     // Module 0 is the standard library, the same in every program, and is left out.
     for (size_t i = 1; i < program.modules.size(); i++)
@@ -868,7 +980,7 @@ void disassemble(const Program& program, std::ostream& out) {
 namespace {
 
 const char kMagic[4] = {'A', 'S', 'T', 'R'};
-const uint8_t kFormatVersion = 7;
+const uint8_t kFormatVersion = 9;
 const int kMaxProtoNesting = 200;
 
 enum ConstantTag : uint8_t { TagInt = 0, TagFloat = 1, TagString = 2 };

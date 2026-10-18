@@ -150,7 +150,7 @@ Value decode(VM& vm, Reader& in) {
 // Calls the function in field `name` of `object`, if there is one, with one argument.
 void callField(VM& vm, Value object, const char* name, Value argument) {
     if (!object.isObjType(ObjType::Instance)) return;
-    const Value* handler = asInstance(object)->fields.find(vm.intern(name));
+    const Value* handler = asInstance(object)->field(vm.intern(name));
     if (handler == nullptr || handler->isNull()) return;
     TempRoot keep(vm, argument);
     vm.call(*handler, 1, &argument);
@@ -221,7 +221,7 @@ void workerMain(std::shared_ptr<WorkerLink> link, std::shared_ptr<const std::str
             vm.workerObjects.erase(link->id);
             vm.workerLinks.erase(link->id);
             if (failure.empty()) return;
-            const Value* handler = worker.isObjType(ObjType::Instance) ? asInstance(worker)->fields.find(vm.intern("onError")) : nullptr;
+            const Value* handler = worker.isObjType(ObjType::Instance) ? asInstance(worker)->field(vm.intern("onError")) : nullptr;
             if (handler != nullptr && !handler->isNull()) {
                 Value text = vm.str(failure);
                 TempRoot keepText(vm, text);

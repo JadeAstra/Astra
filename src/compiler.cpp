@@ -143,6 +143,14 @@ struct FunctionState {
     FunctionKind kind = FunctionKind::Script;
     FunctionProto* proto = nullptr;
 
+    // For joining two instructions in one as they are emitted (M6.5 part 4): where the last one
+    // emitted begins, and the last place code may jump to.
+    int lastOp = -1;
+    int beforeLast = -1;  // where the one before it begins
+    int barrier = -1;
+
+    int caches = 0;  // how many places to remember a field the function's code has so far
+
     std::vector<Local> locals;
     int slotTop = 0;  // the slot the next local will get
     std::map<std::pair<int, uint64_t>, int> constantIndex;
@@ -510,7 +518,11 @@ private:
     // ---- Emission ----
 
     std::vector<uint8_t>& code() { return fs_->proto->code; }
-    int here() { return static_cast<int>(code().size()); }
+    // A place code may jump to: what is emitted there is never joined to what comes before.
+    int here() {
+        fs_->barrier = static_cast<int>(code().size());
+        return fs_->barrier;
+    }
 
     void emitByte(int b) {
         fs_->proto->code.push_back(static_cast<uint8_t>(b));
@@ -529,12 +541,85 @@ private:
         emitByte((value >> 24) & 0xFF);
     }
 
-    void emit(Op op) { emitByte(static_cast<int>(op)); }
+    void emit(Op op) {
+        if (joined(op)) return;
+        fs_->beforeLast = fs_->lastOp;
+        fs_->lastOp = static_cast<int>(code().size());
+        emitByte(static_cast<int>(op));
+    }
+
+    // Two instructions in one (M6.5 part 4): `op` with the instruction just emitted, where that
+    // pushed the local or the constant `op` takes as its second operand, or `op` pops what that
+    // stored. Never across a place code jumps to.
+    bool joined(Op op) {
+        const int end = static_cast<int>(code().size());
+        if (fs_->lastOp < 0 || fs_->barrier == end || end - fs_->lastOp != 3) return false;
+        const Op last = static_cast<Op>(code()[static_cast<size_t>(fs_->lastOp)]);
+        Op both = Op::Count_;
+        if (op == Op::Pop && last == Op::SetLocal) both = Op::StoreLocal;
+        if (last == Op::GetLocal || last == Op::Const) {
+            const bool local = last == Op::GetLocal;
+            switch (op) {
+                case Op::Add: both = local ? Op::AddLocal : Op::AddConst; break;
+                case Op::Sub: both = local ? Op::SubLocal : Op::SubConst; break;
+                case Op::Mul: both = local ? Op::MulLocal : Op::MulConst; break;
+                case Op::Div: both = local ? Op::DivLocal : Op::DivConst; break;
+                case Op::Mod: both = local ? Op::ModLocal : Op::ModConst; break;
+                case Op::Lt: both = local ? Op::LtLocal : Op::LtConst; break;
+                case Op::Le: both = local ? Op::LeLocal : Op::LeConst; break;
+                case Op::Gt: both = local ? Op::GtLocal : Op::GtConst; break;
+                case Op::Ge: both = local ? Op::GeLocal : Op::GeConst; break;
+                case Op::Eq: both = local ? Op::EqLocal : Op::EqConst; break;
+                default: break;
+            }
+        }
+        if (both == Op::Count_) return false;
+        code()[static_cast<size_t>(fs_->lastOp)] = static_cast<uint8_t>(both);
+        joinedAgain(both);
+        return true;
+    }
+
+    // And three: the instruction just joined with a GetLocal before it, `GetLocal a; MulLocal b`
+    // being MulLocals a b and `GetLocal a; StoreLocal b` CopyLocal a b.
+    void joinedAgain(Op both) {
+        const int at = fs_->beforeLast;
+        if (at < 0 || fs_->barrier > at || fs_->lastOp - at != 3 || static_cast<Op>(code()[static_cast<size_t>(at)]) != Op::GetLocal)
+            return;
+        Op three = Op::Count_;
+        switch (both) {
+            case Op::AddLocal: three = Op::AddLocals; break;
+            case Op::SubLocal: three = Op::SubLocals; break;
+            case Op::MulLocal: three = Op::MulLocals; break;
+            case Op::DivLocal: three = Op::DivLocals; break;
+            case Op::LtLocal: three = Op::LtLocals; break;
+            case Op::LeLocal: three = Op::LeLocals; break;
+            case Op::GtLocal: three = Op::GtLocals; break;
+            case Op::GeLocal: three = Op::GeLocals; break;
+            case Op::EqLocal: three = Op::EqLocals; break;
+            case Op::StoreLocal: three = Op::CopyLocal; break;
+            default: return;
+        }
+        // The second's slot moves up behind the first's, and its opcode goes.
+        std::vector<uint8_t>& bytes = code();
+        const size_t first = static_cast<size_t>(at);
+        bytes[first] = static_cast<uint8_t>(three);
+        bytes[first + 3] = bytes[first + 4];
+        bytes[first + 4] = bytes[first + 5];
+        bytes.resize(first + 5);
+        fs_->proto->lines.resize(first + 5);
+        fs_->lastOp = at;
+        fs_->beforeLast = -1;
+    }
 
     void emit(Op op, int u16) {
         if (u16 < 0 || u16 > 0xFFFF) throw CompileError(file_, line_, 1, "function is too large (operand overflow)");
         emit(op);
         emitU16(u16);
+        if (op == Op::GetProp || op == Op::SetProp || op == Op::GetOwn || op == Op::SetOwn) {
+            // Each has a place of its own to remember where it found the field (M6.5 part 4).
+            if (fs_->caches > 0xFFFF) throw CompileError(file_, line_, 1, "function is too large (too many members used)");
+            emitU16(fs_->caches++);
+        }
     }
 
     // Emits a jump with a placeholder target and returns where to patch it.
@@ -1474,7 +1559,7 @@ private:
     // still has to be checked when the program runs.
     bool checkInitializer(const VarStmt& s, const TypeSpec& type) {
         uint8_t actual = s.init ? staticTypeOf(*s.init) : kStaticNull;
-        if (actual == 0) return true;
+        if (actual == 0) return !provenFits(provenType(*s.init), type);
 
         if (actual == kStaticNull) {
             if (type.nullable()) return false;
@@ -1492,11 +1577,92 @@ private:
         return false;
     }
 
+    // What the value of `expr` is certain to be when the program runs, as far as can be told from
+    // what is checked while it runs (M6.5 part 4): a literal; a local or parameter with a type
+    // written, each value it is given being checked; arithmetic, comparisons and `!` of such;
+    // and a choice between two of one type. 0 where nothing is certain. Used only to leave out
+    // a check, never to report an error (staticTypeOf and the checker do that). A call is never
+    // certain: the name of a function may be given another function.
+    uint8_t provenType(const Expr& expr) const {
+        switch (expr.kind) {
+            case ExprKind::Literal: {
+                const uint8_t literal = staticTypeOf(expr);
+                return literal == kStaticNull ? 0 : literal;
+            }
+            case ExprKind::Interp: return kTypeString;
+            case ExprKind::Name: {
+                const std::string& name = static_cast<const NameExpr&>(expr).name;
+                for (size_t i = fs_->locals.size(); i-- > 0;) {
+                    const Local& local = fs_->locals[i];
+                    if (local.name != name) continue;
+                    const TypeSpec& type = local.info.type;
+                    if (local.depth < 0 || !type.typed() || type.nullable()) return 0;
+                    const uint8_t id = type.id();
+                    return id == kTypeInt || id == kTypeFloat || id == kTypeBool || id == kTypeString ? id : 0;
+                }
+                return 0;  // a variable of a function around this one, or a global: not looked into
+            }
+            case ExprKind::Unary: {
+                const auto& unary = static_cast<const UnaryExpr&>(expr);
+                const uint8_t operand = provenType(*unary.operand);
+                if (unary.op == TokenType::Bang) return operand == kTypeBool ? kTypeBool : 0;
+                if (unary.op == TokenType::Tilde) return operand == kTypeInt ? kTypeInt : 0;
+                if (unary.op == TokenType::Minus) return operand == kTypeInt || operand == kTypeFloat ? operand : 0;
+                return 0;
+            }
+            case ExprKind::Binary: {
+                const auto& binary = static_cast<const BinaryExpr&>(expr);
+                const uint8_t left = provenType(*binary.left);
+                const uint8_t right = provenType(*binary.right);
+                if (left == 0 || left != right) return 0;
+                const bool number = left == kTypeInt || left == kTypeFloat;
+                switch (binary.op) {
+                    case TokenType::Plus:
+                        return number || left == kTypeString ? left : 0;
+                    case TokenType::Minus:
+                    case TokenType::Star:
+                    case TokenType::Slash:
+                    case TokenType::Percent:
+                        return number ? left : 0;
+                    case TokenType::Lt:
+                    case TokenType::LtEq:
+                    case TokenType::Gt:
+                    case TokenType::GtEq:
+                        return number ? kTypeBool : 0;
+                    case TokenType::EqEq:
+                    case TokenType::BangEq:
+                        return kTypeBool;  // two ints, floats, bools or strings
+                    default:
+                        return 0;
+                }
+            }
+            case ExprKind::Logical: {
+                const auto& logical = static_cast<const LogicalExpr&>(expr);
+                return provenType(*logical.left) == kTypeBool && provenType(*logical.right) == kTypeBool ? kTypeBool : 0;
+            }
+            case ExprKind::Ternary: {
+                const auto& ternary = static_cast<const TernaryExpr&>(expr);
+                const uint8_t then = provenType(*ternary.then);
+                return then != 0 && then == provenType(*ternary.otherwise) ? then : 0;
+            }
+            default:
+                return 0;
+        }
+    }
+
+    // Whether a value proved to be `actual` (provenType) fits `type`.
+    static bool provenFits(uint8_t actual, const TypeSpec& type) {
+        if (actual == 0 || !type.typed()) return false;
+        return type.id() == actual || (type.id() == kTypeNumber && (actual == kTypeInt || actual == kTypeFloat));
+    }
+
     // Emits a check that the value a typed function is about to return fits its return type.
-    // `actual` is what is statically known about that value (see staticTypeOf).
-    void emitReturnCheck(uint8_t actual, const Node& at) {
+    // `actual` is what is statically known about that value (see staticTypeOf), and `value` the
+    // expression, where there is one.
+    void emitReturnCheck(uint8_t actual, const Node& at, const Expr* value = nullptr) {
         const TypeSpec& type = fs_->returnType;
         if (!type.typed()) return;
+        if (actual == 0 && value != nullptr && provenFits(provenType(*value), type)) return;  // certain already
 
         if (actual == kStaticNull) {
             if (type.nullable()) return;
@@ -1585,6 +1751,7 @@ private:
                 } else {
                     int slot = addLocal(s.name, s.isVal, s, false, type);
                     size_t codeMark = code().size();
+                    fs_->barrier = static_cast<int>(codeMark);  // compiled again from here, it may be
                     size_t protoMark = fs_->proto->protos.size();
                     size_t breakMark = fs_->loop != nullptr ? fs_->loop->breakJumps.size() : 0;
                     if (s.init) compileExprFor(*s.init, type);
@@ -1688,7 +1855,7 @@ private:
                 } else if (s.value) {
                     compileExprFor(*s.value, fs_->returnType);
                     line_ = s.line;
-                    emitReturnCheck(staticTypeOf(*s.value), *s.value);
+                    emitReturnCheck(staticTypeOf(*s.value), *s.value, s.value.get());
                 } else {
                     emitReturnCheck(kStaticNull, s);
                     emit(Op::Null);
@@ -2091,15 +2258,32 @@ private:
 
     void compileForIn(const ForInStmt& s) {
         beginScope();
-        compileExpr(*s.iterable);
-        line_ = s.line;
-        emit(Op::IterInit);
-        int iteratorSlot = addLocal("(iterator)", false, s, true);
+        int iteratorSlot;
+        const bool counted = s.iterable->kind == ExprKind::Range;
+        if (counted) {
+            // A range written in place is counted through, with nothing made for it.
+            const auto& range = static_cast<const RangeExpr&>(*s.iterable);
+            compileExpr(*range.start);
+            compileExpr(*range.end);
+            if (range.step) compileExpr(*range.step);
+            line_ = range.line;
+            emit(Op::RangeLoop);
+            emitByte((range.inclusive ? 1 : 0) | (range.descending ? 2 : 0) | (range.step ? 4 : 0));
+            iteratorSlot = addLocal("(next)", false, s, true);
+            addLocal("(left)", false, s, true);
+            addLocal("(step)", false, s, true);
+        } else {
+            compileExpr(*s.iterable);
+            line_ = s.line;
+            emit(Op::IterInit);
+            iteratorSlot = addLocal("(iterator)", false, s, true);
+        }
 
         LoopState loop{fs_->loop, here(), fs_->scopeDepth, fs_->tryDepth, fs_->locals.size(), fs_->slotTop, {}};
         loop.label = s.label;
         fs_->loop = &loop;
-        emit(Op::IterNext, slotOf(iteratorSlot));
+        line_ = s.line;
+        emit(counted ? Op::RangeNext : Op::IterNext, slotOf(iteratorSlot));
         int toExit = here();
         emitI32(0);
 
@@ -3097,6 +3281,13 @@ private:
         for (size_t i = 0; i < decl.params.size(); i++) {
             TypeSpec type = state.locals[i + 1].info.type;
             if (!type.typed()) continue;
+            if (type.id() != kTypeInstance) {
+                // Checked where it is, without being pushed and popped (M6.5 part 4).
+                emit(Op::CheckLocal, static_cast<int>(i + 1));
+                emitU16(stringConstant(decl.params[i]));
+                emitByte(type.flags);
+                continue;
+            }
             emit(Op::GetLocal, static_cast<int>(i + 1));
             if (type.id() == kTypeInstance) emitTypeName(type.className, decl.paramTypes[i]);
             emit(Op::CheckParam, stringConstant(decl.params[i]));

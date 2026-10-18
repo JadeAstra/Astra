@@ -1,0 +1,27 @@
+// A numeric loop: typed float and int arithmetic, the shape of a physics step or a pixel
+// filter. Prints a check value and the seconds the loop took.
+fun mandelbrot(size : int, limit : int) : int {
+  var inside = 0
+  for py in 0..<size {
+    val ci = 2.0 * py / size - 1.0
+    for px in 0..<size {
+      val cr = 2.0 * px / size - 1.5
+      var zr = 0.0
+      var zi = 0.0
+      var n = 0
+      while (n < limit and zr * zr + zi * zi <= 4.0) {
+        val t = zr * zr - zi * zi + cr
+        zi = 2.0 * zr * zi + ci
+        zr = t
+        n += 1
+      }
+      if (n == limit) { inside += 1 }
+    }
+  }
+  return inside
+}
+
+val started = clock()
+val inside = mandelbrot(400, 100)
+val seconds = clock() - started
+print("numeric", inside, seconds)

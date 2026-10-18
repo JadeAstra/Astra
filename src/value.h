@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <new>
 #include <atomic>
 #include <cstdint>
 #include <string>
@@ -78,6 +79,21 @@ struct Value {
         v.as.b = b;
         return v;
     }
+    // A value made in place, where it is to be kept: no copy through a temporary (M6.5 part 4).
+    void setInt(int64_t i) {
+        kind = ValueKind::Int;
+        as.i = i;
+    }
+    void setFloat(double d) {
+        kind = ValueKind::Float;
+        as.d = d;
+    }
+    void setBool(bool b) {
+        kind = ValueKind::Bool;
+        as.i = 0;
+        as.b = b;
+    }
+
     static Value integer(int64_t i) {
         Value v;
         v.kind = ValueKind::Int;
@@ -282,6 +298,10 @@ struct ObjResource final : Obj {
     }
 };
 
+// How many values a range from `start` to `end` by `step` has (a negative step counts down), at
+// most INT64_MAX.
+int64_t rangeCount(int64_t start, int64_t end, int64_t step, bool inclusive);
+
 struct ObjRange final : Obj {
     const int64_t start, end, step;
     const bool inclusive;
@@ -366,8 +386,17 @@ struct FieldDecl {
     ObjClass* typeClass = nullptr;
 };
 
+// Gives each layout of a class's fields a number of its own, never given again (M6.5 part 4).
+uint32_t newShape();
+
 struct ObjClass final : Obj {
     ObjString* const name;
+
+    // The layout of the class's fields, as a number: an object made now has its fields where
+    // `declared` says, and is marked with this. A place in the code that has found a field
+    // remembers the number and where the field was, and finds it there again at once in an
+    // object with the same number. It changes whenever `declared` grows.
+    uint32_t shape = newShape();
     ObjClass* super = nullptr;
     ObjClosure* init = nullptr;
     Table methods;  // instance methods, including inherited ones (copied down at class creation)
@@ -449,12 +478,47 @@ struct ObjClass final : Obj {
     }
 };
 
+// An object of a class. Its fields are kept in the order of the class's `declared` (M6.5 part 4),
+// right after it in the same block of memory; one that has not been given a value yet holds
+// Undefined. Made with VM::newInstance, which sets aside the room for them.
 struct ObjInstance final : Obj {
     ObjClass* const cls;
-    Table fields;
+    const uint32_t shape;       // the class's layout when the object was made
+    const uint32_t fieldCount;  // and the number of fields it has, which never changes
     bool constructing = false;  // from being made until its initializer has returned
-    explicit ObjInstance(ObjClass* c) : Obj(ObjType::Instance), cls(c) {}
+
+    ObjInstance(ObjClass* c, uint32_t count) : Obj(ObjType::Instance), cls(c), shape(c->shape), fieldCount(count) {
+        Value* at = fields();
+        for (uint32_t i = 0; i < count; i++) new (at + i) Value(Value::undefined());
+    }
+
+    static void* operator new(size_t size, uint32_t count) { return ::operator new(size + count * sizeof(Value)); }
+    static void operator delete(void* p, uint32_t) { ::operator delete(p); }
+    static void operator delete(void* p) { ::operator delete(p); }
+
+    Value* fields() { return reinterpret_cast<Value*>(this + 1); }
+    const Value* fields() const { return reinterpret_cast<const Value*>(this + 1); }
+
+    // Where the field called `name` is, or -1 if the object has none of that name.
+    int64_t fieldIndex(const ObjString* name) const {
+        const Value* at = cls->declaredIndex.find(name);
+        return at != nullptr && at->as.i < fieldCount ? at->as.i : -1;
+    }
+    // The field's value, or null if the object has no such field or it has no value yet.
+    const Value* field(const ObjString* name) const {
+        const int64_t i = fieldIndex(name);
+        if (i < 0 || fields()[i].kind == ValueKind::Undefined) return nullptr;
+        return fields() + i;
+    }
+    // Gives the field a value; false if the object has no field of that name.
+    bool setField(const ObjString* name, Value value) {
+        const int64_t i = fieldIndex(name);
+        if (i < 0) return false;
+        fields()[i] = value;
+        return true;
+    }
 };
+static_assert(sizeof(ObjInstance) % alignof(Value) == 0, "an object's fields follow it");
 
 struct ObjBoundMethod final : Obj {
     const Value receiver;
@@ -477,17 +541,17 @@ struct ObjIterator final : Obj {
     explicit ObjIterator(Value s) : Obj(ObjType::Iterator), source(s) {}
 };
 
-inline ObjString* asString(Value v) { return static_cast<ObjString*>(v.as.obj); }
-inline ObjList* asList(Value v) { return static_cast<ObjList*>(v.as.obj); }
-inline ObjMap* asMap(Value v) { return static_cast<ObjMap*>(v.as.obj); }
-inline ObjRange* asRange(Value v) { return static_cast<ObjRange*>(v.as.obj); }
-inline ObjBytes* asBytes(Value v) { return static_cast<ObjBytes*>(v.as.obj); }
-inline ObjClosure* asClosure(Value v) { return static_cast<ObjClosure*>(v.as.obj); }
-inline ObjNative* asNative(Value v) { return static_cast<ObjNative*>(v.as.obj); }
-inline ObjClass* asClass(Value v) { return static_cast<ObjClass*>(v.as.obj); }
-inline ObjInstance* asInstance(Value v) { return static_cast<ObjInstance*>(v.as.obj); }
-inline ObjBoundMethod* asBoundMethod(Value v) { return static_cast<ObjBoundMethod*>(v.as.obj); }
-inline ObjBoundNative* asBoundNative(Value v) { return static_cast<ObjBoundNative*>(v.as.obj); }
-inline ObjIterator* asIterator(Value v) { return static_cast<ObjIterator*>(v.as.obj); }
+inline ObjString* asString(const Value& v) { return static_cast<ObjString*>(v.as.obj); }
+inline ObjList* asList(const Value& v) { return static_cast<ObjList*>(v.as.obj); }
+inline ObjMap* asMap(const Value& v) { return static_cast<ObjMap*>(v.as.obj); }
+inline ObjRange* asRange(const Value& v) { return static_cast<ObjRange*>(v.as.obj); }
+inline ObjBytes* asBytes(const Value& v) { return static_cast<ObjBytes*>(v.as.obj); }
+inline ObjClosure* asClosure(const Value& v) { return static_cast<ObjClosure*>(v.as.obj); }
+inline ObjNative* asNative(const Value& v) { return static_cast<ObjNative*>(v.as.obj); }
+inline ObjClass* asClass(const Value& v) { return static_cast<ObjClass*>(v.as.obj); }
+inline ObjInstance* asInstance(const Value& v) { return static_cast<ObjInstance*>(v.as.obj); }
+inline ObjBoundMethod* asBoundMethod(const Value& v) { return static_cast<ObjBoundMethod*>(v.as.obj); }
+inline ObjBoundNative* asBoundNative(const Value& v) { return static_cast<ObjBoundNative*>(v.as.obj); }
+inline ObjIterator* asIterator(const Value& v) { return static_cast<ObjIterator*>(v.as.obj); }
 
 }  // namespace astra
