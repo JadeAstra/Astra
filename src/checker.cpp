@@ -29,6 +29,8 @@
 #include "compiler.h"
 #include "value.h"
 
+#include "section_compiler.h"  // last: this file's own code goes in its section (D161)
+
 namespace astra {
 
 namespace {
@@ -262,8 +264,12 @@ const char* article(const std::string& word) {
 }
 
 // The arguments of a call, as the checker reads them.
-// A call with no named arguments.
-const std::vector<std::string> kNoNames;
+// A call with no named arguments. Made on first use (M6.5 part 5: nothing of the compiler runs
+// as a built program starts).
+const std::vector<std::string>& noNames() {
+    static const std::vector<std::string> none;
+    return none;
+}
 
 struct Args {
     const std::vector<ExprPtr>& exprs;
@@ -2257,7 +2263,7 @@ struct Checker::Impl {
             withCtx(fc, [&] {
                 // The header's parameters are in reach of the superclass's arguments.
                 for (const HeaderParam& h : c.header) declareLocal(h.name, resolve(h.type, *k->unit), true);
-                Args args{c.superArgs, kNoNames, false, false};
+                Args args{c.superArgs, noNames(), false, false};
                 Type made = constructorCall(k->superclass, args, {}, c);
                 (void)made;
             });
@@ -2269,7 +2275,7 @@ struct Checker::Impl {
             fc.isStatic = true;
             fc.noWait = StaticValue;
             withCtx(fc, [&] {
-                Args args{e.args, kNoNames, false, false};
+                Args args{e.args, noNames(), false, false};
                 constructorCall(k, args, {}, e);
             });
         }

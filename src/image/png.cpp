@@ -7,6 +7,8 @@
 #include <cstdlib>
 #include <cstring>
 
+#include "../section_window.h"  // last: this file's own code goes in its section (D161)
+
 namespace astra::image {
 
 uint32_t crc32(const uint8_t* data, size_t size, uint32_t crc) {

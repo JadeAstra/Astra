@@ -19,6 +19,8 @@
 #include "parser.h"
 #include "vm.h"
 
+#include "section_compiler.h"  // last: this file's own code goes in its section (D161)
+
 namespace astra {
 
 namespace fs = std::filesystem;
@@ -338,15 +340,54 @@ public:
     void hoistFunctions(const std::vector<StmtPtr>& statements) {
         for (const StmtPtr& stmt : statements) {
             if (stmt->kind != StmtKind::Function || !static_cast<const FunctionStmt&>(*stmt).receiver.empty()) continue;
+            const int start = static_cast<int>(code().size());
             compileStmt(*stmt);
+            noteDeclaration(start, definedIn(start));
             hoisted_.insert(stmt.get());
         }
+    }
+
+    // The code from `start` to here makes the top-level declaration kept in global `slot`
+    // (M6.5 part 5): a built program that never reaches the global leaves it out.
+    void noteDeclaration(int start, int key, DeclarationSpan::Kind kind = DeclarationSpan::Global) {
+        const int end = static_cast<int>(code().size());
+        if (key < 0 || key > 0xFFFF || end == start || fs_->enclosing != nullptr || fs_->kind != FunctionKind::Script) return;
+        fs_->proto->spans.push_back(
+            DeclarationSpan{static_cast<uint32_t>(start), static_cast<uint32_t>(end), static_cast<uint16_t>(key), kind});
+    }
+
+    // The name of the extension function the code from `start` to here adds (the constant its
+    // Extension instruction names), or -1 if it adds none, or more than one.
+    int extensionIn(int start) {
+        const std::vector<uint8_t>& bytes = code();
+        int name = -1, count = 0;
+        for (size_t at = static_cast<size_t>(start); at < bytes.size();) {
+            if (static_cast<Op>(bytes[at]) == Op::Extension) {
+                name = bytes[at + 1] | (bytes[at + 2] << 8);
+                count++;
+            }
+            at += instructionSize(bytes, at);
+        }
+        return count == 1 ? name : -1;
+    }
+
+    // The global the code from `start` to here defines (its last DefineGlobal), or -1.
+    int definedIn(int start) {
+        const std::vector<uint8_t>& bytes = code();
+        int slot = -1;
+        for (size_t at = static_cast<size_t>(start); at < bytes.size();) {
+            const Op op = static_cast<Op>(bytes[at]);
+            if (op == Op::DefineGlobal || op == Op::DefineTypedGlobal) slot = bytes[at + 1] | (bytes[at + 2] << 8);
+            at += instructionSize(bytes, at);
+        }
+        return slot;
     }
 
     // The sets of the names with several forms whose forms were just defined: each name's slot
     // gets one, which calls the form a call's arguments fit.
     void defineForms() {
         for (const auto& [entry, name] : session_.pendingForms_) {
+            const int start = static_cast<int>(code().size());
             for (const auto& [signature, slot] : entry->forms) emit(Op::GetGlobal, slot);
             FunctionProto* set = newProto();
             set->name = name;
@@ -357,6 +398,7 @@ public:
             emit(Op::MakeForms, index);
             emitByte(static_cast<int>(entry->forms.size()));
             emit(Op::DefineGlobal, entry->slot);
+            noteDeclaration(start, entry->slot);
         }
         session_.pendingForms_.clear();
     }
@@ -365,7 +407,9 @@ public:
     void hoistExtensions(const std::vector<StmtPtr>& statements) {
         for (const StmtPtr& stmt : statements) {
             if (stmt->kind != StmtKind::Function || static_cast<const FunctionStmt&>(*stmt).receiver.empty()) continue;
+            const int start = static_cast<int>(code().size());
             compileStmt(*stmt);
+            noteDeclaration(start, extensionIn(start), DeclarationSpan::Extension);
             hoisted_.insert(stmt.get());
         }
     }
@@ -373,6 +417,64 @@ public:
     void hoistClass(const ClassStmt& cls) {
         line_ = cls.line;
         hoisted_.insert(&cls);
+        const int start = static_cast<int>(code().size());
+        hoistClassStructure(cls);
+        noteDeclaration(start, classGlobal(cls));
+    }
+
+    // The global a top-level class is reached by, for noteDeclaration: the class, or for an
+    // object the object; -1 for an object whose making may do something, which is made when the
+    // program starts whether it is used or not.
+    int classGlobal(const ClassStmt& cls) const {
+        if (cls.isExternal || (cls.isObject && !quietToMake(cls))) return -1;
+        const GlobalName* global = findGlobal(cls.name, cls, true);
+        return global != nullptr ? global->slot : -1;
+    }
+
+    // Whether what is done where a class is written does nothing a program could see (M6.5 part
+    // 5): its static values worked out, each quiet (quietValue), no classes inside; and for an
+    // object or an enum, whose instances are made there too, no init, no superclass and quiet
+    // initial values and entries. Such a class is left out of a built program that never reaches
+    // it, though that would be done where it is written; any other is kept.
+    bool quietToMake(const ClassStmt& cls) const {
+        if (!cls.nested.empty()) return false;
+        if (cls.isObject || cls.isEnum) {
+            if (!cls.supertypes.empty() || !cls.initBlocks.empty() || cls.hasHeader) return false;
+            for (const auto& method : cls.methods)
+                if (method->name == "init" && !method->isStatic) return false;
+            for (const auto& field : cls.fields)
+                if (field->init && !quietValue(*field->init)) return false;
+        }
+        for (const auto& field : cls.staticFields)
+            if (field->init && !quietValue(*field->init)) return false;
+        for (const EnumEntry& entry : cls.entries)
+            for (const ExprPtr& arg : entry.args)
+                if (!quietValue(*arg)) return false;
+        return true;
+    }
+
+    // A value whose working out does nothing a program could see: a literal, a constant, a
+    // lambda, and lists, maps, text and arithmetic made of those.
+    bool quietValue(const Expr& e) const {
+        ConstValue constant;
+        if (session_.checker->folded(e, constant) || session_.checker->constantAt(e, constant)) return true;
+        switch (e.kind) {
+            case ExprKind::Literal:
+            case ExprKind::Function: return true;
+            case ExprKind::List:
+                for (const ExprPtr& item : static_cast<const ListExpr&>(e).items)
+                    if (!quietValue(*item)) return false;
+                return true;
+            case ExprKind::Map:
+                for (const auto& [key, value] : static_cast<const MapExpr&>(e).entries)
+                    if (!quietValue(*key) || !quietValue(*value)) return false;
+                return true;
+            case ExprKind::Unary: return quietValue(*static_cast<const UnaryExpr&>(e).operand);
+            default: return false;
+        }
+    }
+
+    void hoistClassStructure(const ClassStmt& cls) {
         if (!shared_) {
             compileClass(cls, "", nullptr, ClassPart::Structure);
             return;
@@ -411,7 +513,13 @@ public:
             if (hoisted_.count(&stmt) != 0) {
                 if (stmt.kind == StmtKind::Class) {
                     line_ = stmt.line;
-                    compileClass(static_cast<const ClassStmt&>(stmt), "", nullptr, ClassPart::Values);
+                    // Its static values are worked out here, and an object made: part of the class
+                    // where that does nothing a program could see, and otherwise what keeps it
+                    // (M6.5 part 5).
+                    const auto& cls = static_cast<const ClassStmt&>(stmt);
+                    const int start = static_cast<int>(code().size());
+                    compileClass(cls, "", nullptr, ClassPart::Values);
+                    if (quietToMake(cls)) noteDeclaration(start, classGlobal(cls));
                 }
                 continue;
             }
@@ -3378,7 +3486,6 @@ private:
                 // A parameter without a default after one with: `grid(id = null, build)`. It
                 // is there to be given as a lambda after the call or by name, so a call may
                 // pass fewer arguments than reach it. If it then has no value, that is an error.
-                // (Spike: the message is thrown as text; M1 gives it a proper error.)
                 line_ = decl.paramPositions[i].line;
                 emit(Op::DefaultArg, static_cast<int>(i + 1));
                 int toPassed = here();
@@ -4383,29 +4490,33 @@ struct PathFacts {
     std::unordered_map<fs::path::string_type, int> kind;  // 0 nothing there, 1 a file, 2 a folder
     std::unordered_map<std::string, std::vector<fs::path>> folders;
 };
-thread_local PathFacts pathFacts;
+// Made the first time a thread needs it, not as each thread starts (M6.5 part 5).
+PathFacts& pathFacts() {
+    thread_local PathFacts facts;
+    return facts;
+}
 }  // namespace
 
-static void forgetPaths() { pathFacts = PathFacts{}; }
+static void forgetPaths() { pathFacts() = PathFacts{}; }
 
 static fs::path canonicalPath(const fs::path& path, std::error_code& ec) {
-    auto found = pathFacts.canonical.find(path.native());
-    if (found == pathFacts.canonical.end()) {
+    auto found = pathFacts().canonical.find(path.native());
+    if (found == pathFacts().canonical.end()) {
         std::error_code asked;
         fs::path answer = fs::weakly_canonical(path, asked);
-        found = pathFacts.canonical.emplace(path.native(), std::make_pair(std::move(answer), asked)).first;
+        found = pathFacts().canonical.emplace(path.native(), std::make_pair(std::move(answer), asked)).first;
     }
     ec = found->second.second;
     return found->second.first;
 }
 
 static int pathKind(const fs::path& path) {
-    auto found = pathFacts.kind.find(path.native());
-    if (found != pathFacts.kind.end()) return found->second;
+    auto found = pathFacts().kind.find(path.native());
+    if (found != pathFacts().kind.end()) return found->second;
     std::error_code ec;
     const fs::file_status status = fs::status(path, ec);
     const int kind = ec ? 0 : fs::is_regular_file(status) ? 1 : fs::is_directory(status) ? 2 : 0;
-    pathFacts.kind.emplace(path.native(), kind);
+    pathFacts().kind.emplace(path.native(), kind);
     return kind;
 }
 
@@ -4418,14 +4529,14 @@ static std::string fileKeyOf(const fs::path& path) {
 
 // The .astra files directly in a folder, in name order.
 static std::vector<fs::path> folderFiles(const std::string& folder) {
-    auto known = pathFacts.folders.find(folder);
-    if (known != pathFacts.folders.end()) return known->second;
+    auto known = pathFacts().folders.find(folder);
+    if (known != pathFacts().folders.end()) return known->second;
     std::error_code ec;
     std::vector<fs::path> paths;
     for (const fs::directory_entry& entry : fs::directory_iterator(fs::path(folder), ec))
         if (entry.is_regular_file(ec) && entry.path().extension() == ".astra") paths.push_back(entry.path());
     std::sort(paths.begin(), paths.end());
-    pathFacts.folders.emplace(folder, paths);
+    pathFacts().folders.emplace(folder, paths);
     return paths;
 }
 

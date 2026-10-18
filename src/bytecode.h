@@ -288,6 +288,18 @@ struct UpvalueDesc {
 // function, a member of its class, runs on, not one of its upvalues.
 constexpr uint16_t kCapturedReceiver = 0x8000;
 
+// In a module's code, the instructions that make one of its top-level declarations (M6.5 part
+// 5): run only to make that, and left out of a built program that never reaches it. A function
+// or a class is reached by its global, `key` its slot; an extension function, which is found by
+// its name, by any use of that name, `key` the constant that is its name.
+struct DeclarationSpan {
+    enum Kind : uint8_t { Global, Extension };
+    uint32_t start;
+    uint32_t end;
+    uint16_t key;
+    Kind kind = Global;
+};
+
 // A compiled function: the unit the compiler emits and the bytecode file stores.
 struct FunctionProto {
     std::string name;
@@ -316,6 +328,7 @@ struct FunctionProto {
 
     std::vector<uint8_t> code;
     std::vector<int> lines;                // source line of each byte in `code`
+    std::vector<DeclarationSpan> spans;    // a module's: the code of each top-level declaration
     std::vector<Value> constants;          // ints, floats and interned strings
     std::vector<FunctionProto*> protos;    // nested functions
     std::vector<UpvalueDesc> upvalues;
@@ -382,6 +395,9 @@ int stackDepthAtEnd(FunctionProto& f, const Program& program);
 
 void disassemble(const Program& program, std::ostream& out);
 
+// The length of the instruction at `at`, its operands included.
+size_t instructionSize(const std::vector<uint8_t>& code, size_t at);
+
 // An instruction's name, as the disassembly shows it.
 const char* opName(Op op);
 
@@ -410,5 +426,19 @@ void writeModules(const std::vector<const FunctionProto*>& modules, std::ostream
 std::vector<FunctionProto*> readModules(Program& program, VM& vm, const std::string& data);
 // Verifies a module read back and renumbered, as readProgram does every module.
 void verifyModule(FunctionProto& module, const Program& program);
+
+// Takes out of a program the top-level declarations it can never reach, with their code
+// (M6.5 part 5): for a built program, after it is compiled whole. `globalsByName` are the
+// globals the VM looks up by their names, `membersByName` the members. Says what it took out.
+struct LeftOut {
+    size_t declarations = 0;
+    size_t codeBefore = 0;  // the modules' own code, in bytes
+    size_t codeAfter = 0;
+};
+LeftOut leaveOutUnreachable(Program& program, const std::vector<std::string>& globalsByName,
+                            const std::vector<std::string>& membersByName);
+
+// Whether any code of the program names one of these globals.
+bool namesGlobal(const Program& program, const std::vector<std::string>& names);
 
 }  // namespace astra

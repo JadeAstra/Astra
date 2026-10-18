@@ -5,6 +5,8 @@
 #include <algorithm>
 #include <cmath>
 
+#include "../section_window.h"  // last: this file's own code goes in its section (D161)
+
 namespace astra::text {
 
 std::unique_ptr<Variations> Variations::read(const Face& face, std::vector<Axis>& axes) {

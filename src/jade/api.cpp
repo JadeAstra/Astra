@@ -21,6 +21,8 @@
 #include "platform.h"
 #include "render.h"
 
+#include "../section_window.h"  // last: this file's own code goes in its section (D161)
+
 namespace astra {
 
 std::shared_ptr<text::Font> textFontOf(VM& vm, Value v);  // text/api.cpp
@@ -69,21 +71,28 @@ struct State {
     // For tests: a clipboard of the program's own, so that the system's is left alone.
     bool ownClipboard = false;
     std::string clipboard;
-} g;
+};
+
+// Made the first time it is needed, not as the program starts: this file's code is left out
+// of a built program that does not use it, start-up code included (M6.5 part 5).
+State& state() {
+    static State made;
+    return made;
+}
 
 Renderer& need(VM& vm) {
     if (!vm.onLoopThread()) throw vm.runtimeError("windows and drawing belong to the main thread; hand the work to it with EventLoop.post");
-    if (g.renderer == nullptr) {
+    if (state().renderer == nullptr) {
         std::string error;
-        g.renderer = Renderer::get(error);
-        if (g.renderer == nullptr) throw vm.runtimeError("no windows or drawing here: " + error);
+        state().renderer = Renderer::get(error);
+        if (state().renderer == nullptr) throw vm.runtimeError("no windows or drawing here: " + error);
     }
-    return *g.renderer;
+    return *state().renderer;
 }
 
 Window& windowOf(VM& vm, Value v) {
-    auto found = g.windows.find(static_cast<int>(vm.toInt(v, "window")));
-    if (found == g.windows.end()) throw vm.runtimeError("the window has been closed");
+    auto found = state().windows.find(static_cast<int>(vm.toInt(v, "window")));
+    if (found == state().windows.end()) throw vm.runtimeError("the window has been closed");
     return found->second;
 }
 
@@ -112,24 +121,24 @@ uint32_t colorOf(VM& vm, Value v) {
 }
 
 // From layout units to device pixels: a place, and a thickness.
-int dx(double x) { return g.originX + static_cast<int>(std::lround(x * g.scale)); }
-int dy(double y) { return g.originY + static_cast<int>(std::lround(y * g.scale)); }
-int thickness() { return std::max(1, static_cast<int>(std::lround(g.scale))); }
+int dx(double x) { return state().originX + static_cast<int>(std::lround(x * state().scale)); }
+int dy(double y) { return state().originY + static_cast<int>(std::lround(y * state().scale)); }
+int thickness() { return std::max(1, static_cast<int>(std::lround(state().scale))); }
 double num(VM& vm, Value v) { return vm.toNumber(v, "number"); }
 
 // ---- Events ----
 
 Value done(Value result = Value::null()) {
-    if (g.pumping) return result;  // raised once the window system's code has been left
-    if (g.hasThrow) {
-        g.hasThrow = false;
-        AstraThrow thrown = g.pendingThrow;
-        g.pendingThrow = AstraThrow();
+    if (state().pumping) return result;  // raised once the window system's code has been left
+    if (state().hasThrow) {
+        state().hasThrow = false;
+        AstraThrow thrown = state().pendingThrow;
+        state().pendingThrow = AstraThrow();
         throw thrown;
     }
-    if (g.hasExit) {
-        g.hasExit = false;
-        throw AstraExit{g.exitCode};
+    if (state().hasExit) {
+        state().hasExit = false;
+        throw AstraExit{state().exitCode};
     }
     return result;
 }
@@ -137,32 +146,32 @@ Value done(Value result = Value::null()) {
 // Tells the program of an event: dispatcher(window, kind, x, y, n1, n2, f1, f2, extra).
 void dispatch(int window, const char* kind, int64_t x = 0, int64_t y = 0, int64_t n1 = 0, int64_t n2 = 0, double f1 = 0, double f2 = 0,
               Value extra = Value::null()) {
-    if (!g.hasDispatcher || g.hasThrow || g.hasExit) return;
-    VM& vm = *g.vm;
+    if (!state().hasDispatcher || state().hasThrow || state().hasExit) return;
+    VM& vm = *state().vm;
     std::vector<Value> args = {Value::integer(window), Value::null(), Value::integer(x),  Value::integer(y), Value::integer(n1),
                                Value::integer(n2),     Value::number(f1), Value::number(f2), extra};
     TempVector keep(vm, args);
     args[1] = Value::object(vm.intern(kind));
     try {
-        vm.call(g.dispatcher, static_cast<int>(args.size()), args.data());
+        vm.call(state().dispatcher, static_cast<int>(args.size()), args.data());
     } catch (AstraThrow& thrown) {
-        g.pendingThrow = thrown;
-        g.hasThrow = true;
+        state().pendingThrow = thrown;
+        state().hasThrow = true;
     } catch (AstraExit& exit) {
-        g.exitCode = exit.code;
-        g.hasExit = true;
+        state().exitCode = exit.code;
+        state().hasExit = true;
     }
 }
 
 // One event of the window system, as it goes to the program: positions in layout units.
 void deliver(int id, const RawEvent& e) {
-    auto found = g.windows.find(id);
-    if (found == g.windows.end()) return;
+    auto found = state().windows.find(id);
+    if (found == state().windows.end()) return;
     Window& window = found->second;
-    VM& vm = *g.vm;
-    g.delivering++;
+    VM& vm = *state().vm;
+    state().delivering++;
     struct Leave {
-        ~Leave() { g.delivering--; }
+        ~Leave() { state().delivering--; }
     } leave;
     const double scale = window.native->scale();
     auto unit = [&](int device) { return static_cast<int64_t>(std::floor(device / scale)); };
@@ -200,7 +209,7 @@ void deliver(int id, const RawEvent& e) {
             // The window's picture follows its size, keeping what was on it: the program
             // draws it again when it hears of the new size, from inside this very call if
             // an edge is being dragged.
-            if (g.renderer != nullptr && e.width > 0 && e.height > 0) g.renderer->resizeSurface(window.surface, e.width, e.height);
+            if (state().renderer != nullptr && e.width > 0 && e.height > 0) state().renderer->resizeSurface(window.surface, e.width, e.height);
             dispatch(id, "resize", unit(e.width), unit(e.height), e.width, e.height, scale);
             break;
         case RawEvent::Scale:
@@ -220,30 +229,30 @@ void deliver(int id, const RawEvent& e) {
 }
 
 void raisePending() {
-    if (g.hasThrow) {
-        g.hasThrow = false;
-        AstraThrow thrown = g.pendingThrow;
-        g.pendingThrow = AstraThrow();
+    if (state().hasThrow) {
+        state().hasThrow = false;
+        AstraThrow thrown = state().pendingThrow;
+        state().pendingThrow = AstraThrow();
         throw thrown;
     }
-    if (g.hasExit) {
-        g.hasExit = false;
-        throw AstraExit{g.exitCode};
+    if (state().hasExit) {
+        state().hasExit = false;
+        throw AstraExit{state().exitCode};
     }
 }
 
 // The window system's events, handled from the runtime's event loop.
 void pump(VM&) {
-    if (g.renderer == nullptr || g.pumping) return;
-    g.pumping = true;
-    g.renderer->platform().pumpEvents();
-    g.pumping = false;
-    g.closed.clear();
+    if (state().renderer == nullptr || state().pumping) return;
+    state().pumping = true;
+    state().renderer->platform().pumpEvents();
+    state().pumping = false;
+    state().closed.clear();
     raisePending();
 }
 
 void waitForEvents(int64_t millis) {
-    if (g.renderer != nullptr) g.renderer->platform().waitEvents(millis);
+    if (state().renderer != nullptr) state().renderer->platform().waitEvents(millis);
 }
 
 void wakeLoop() {
@@ -258,20 +267,20 @@ void wakeLoop() {
 // longer than its timer's period always has a frame due, so this cannot wait for "nothing
 // left to do".
 void idle() {
-    VM& vm = *g.vm;
-    if (g.hasThrow || g.hasExit || g.idling) return;
-    g.idling = true;
+    VM& vm = *state().vm;
+    if (state().hasThrow || state().hasExit || state().idling) return;
+    state().idling = true;
     struct Reset {
-        ~Reset() { g.idling = false; }
+        ~Reset() { state().idling = false; }
     } reset;
     try {
         vm.runEventLoop(false, 2);
     } catch (AstraThrow& thrown) {
-        g.pendingThrow = thrown;
-        g.hasThrow = true;
+        state().pendingThrow = thrown;
+        state().hasThrow = true;
     } catch (AstraExit& exit) {
-        g.exitCode = exit.code;
-        g.hasExit = true;
+        state().exitCode = exit.code;
+        state().hasExit = true;
     }
 }
 
@@ -280,7 +289,7 @@ void hookLoop(VM& vm) {
     vm.loopPump = pump;
     vm.loopWait = waitForEvents;
     vm.onLoopWake = wakeLoop;
-    g.renderer->platform().onIdle = idle;
+    state().renderer->platform().onIdle = idle;
 }
 
 RawEvent syntheticEvent(VM& vm, Window& window, const std::string& kind, Value* args) {
@@ -335,7 +344,7 @@ Value pairOf(VM& vm, std::initializer_list<Value> values) {
 }  // namespace
 
 void registerJade(VM& vm) {
-    g.vm = &vm;
+    state().vm = &vm;
     ObjClass* lib = vm.alloc<ObjClass>(vm.intern("jade"));
     auto def = [&](const char* name, int minArgs, int maxArgs, NativeFn fn) {
         lib->statics.set(vm.intern(name), Value::object(vm.alloc<ObjNative>(std::string("jade.") + name, minArgs, maxArgs, fn)));
@@ -347,8 +356,8 @@ void registerJade(VM& vm) {
     def("problem", 0, 0, [](VM& vm, int, Value*) -> Value {
         if (!vm.onLoopThread()) return vm.str("windows and drawing belong to the main thread");
         std::string error;
-        if (g.renderer == nullptr) g.renderer = Renderer::get(error);
-        return g.renderer != nullptr ? Value::null() : vm.str(error);
+        if (state().renderer == nullptr) state().renderer = Renderer::get(error);
+        return state().renderer != nullptr ? Value::null() : vm.str(error);
     });
     def("describe", 0, 0, [](VM& vm, int, Value*) -> Value { return vm.str(need(vm).description()); });
     // [shapes, batches] sent to the graphics card since the program began, and how many
@@ -359,14 +368,14 @@ void registerJade(VM& vm) {
         return pairOf(vm, {Value::integer(r.shapesDrawn()), Value::integer(r.batchesDrawn()), Value::integer(static_cast<int64_t>(r.surfaceCount()))});
     });
     def("setDispatcher", 1, 1, [](VM& vm, int, Value* args) -> Value {
-        if (g.hasDispatcher) {
-            vm.pinned[g.dispatcherPin] = args[0];
+        if (state().hasDispatcher) {
+            vm.pinned[state().dispatcherPin] = args[0];
         } else {
-            g.dispatcherPin = vm.pinned.size();
+            state().dispatcherPin = vm.pinned.size();
             vm.pinned.push_back(args[0]);
         }
-        g.dispatcher = args[0];
-        g.hasDispatcher = true;
+        state().dispatcher = args[0];
+        state().hasDispatcher = true;
         return Value::null();
     });
     // A clock that only goes forwards, in nanoseconds.
@@ -377,16 +386,16 @@ void registerJade(VM& vm) {
     def("screenScale", 0, 0, [](VM& vm, int, Value*) -> Value { return Value::number(need(vm).platform().screenScale()); });
 
     def("clipboardOwn", 1, 1, [](VM&, int, Value* args) -> Value {
-        g.ownClipboard = args[0].truthy();
+        state().ownClipboard = args[0].truthy();
         return Value::null();
     });
     def("clipboardGet", 0, 0, [](VM& vm, int, Value*) -> Value {
-        if (g.ownClipboard) return vm.str(g.clipboard);
+        if (state().ownClipboard) return vm.str(state().clipboard);
         return vm.str(need(vm).platform().clipboardText());
     });
     def("clipboardSet", 1, 1, [](VM& vm, int, Value* args) -> Value {
         const std::string& text = vm.toStr(args[0], "text");
-        if (g.ownClipboard) g.clipboard = text;
+        if (state().ownClipboard) state().clipboard = text;
         else need(vm).platform().setClipboardText(text);
         return Value::null();
     });
@@ -409,7 +418,7 @@ void registerJade(VM& vm) {
         if (ownerId != 0) owner = windowOf(vm, args[5]).native.get();
 
         std::string error;
-        const int id = g.nextWindow++;
+        const int id = state().nextWindow++;
         Window window;
         window.native = r.platform().createWindow(settings, owner, error);
         if (window.native == nullptr) throw vm.runtimeError("the window cannot be made: " + error);
@@ -417,11 +426,11 @@ void registerJade(VM& vm) {
         if (window.surface == 0) throw vm.runtimeError("the window is too large to draw");
         window.native->onEvent = [id](const RawEvent& event) { deliver(id, event); };
         window.native->onExpose = [id] {
-            auto found = g.windows.find(id);
-            if (found != g.windows.end() && g.renderer != nullptr && g.renderer->present(found->second.surface, *found->second.native))
+            auto found = state().windows.find(id);
+            if (found != state().windows.end() && state().renderer != nullptr && state().renderer->present(found->second.surface, *found->second.native))
                 found->second.native->swapBuffers();
         };
-        g.windows[id] = std::move(window);
+        state().windows[id] = std::move(window);
         hookLoop(vm);
         return Value::integer(id);
     });
@@ -443,26 +452,26 @@ void registerJade(VM& vm) {
     });
     // Closes a window for good. Closing one that is closed already does nothing.
     def("windowClose", 1, 1, [](VM& vm, int, Value* args) -> Value {
-        auto found = g.windows.find(static_cast<int>(vm.toInt(args[0], "window")));
-        if (found == g.windows.end()) return Value::null();
+        auto found = state().windows.find(static_cast<int>(vm.toInt(args[0], "window")));
+        if (found == state().windows.end()) return Value::null();
         Renderer& r = need(vm);
         release(vm, found->second);
         r.destroySurface(found->second.surface);
         // Taken out of the table first: destroying it sends it messages still.
         Window gone = std::move(found->second);
-        g.windows.erase(found);
-        if (g.delivering > 0 || g.pumping) {
+        state().windows.erase(found);
+        if (state().delivering > 0 || state().pumping) {
             // Closed from inside an event: out of sight now, and gone when the event has
             // finished its way through the window's own code.
             gone.native->hide();
-            g.closed.push_back(std::move(gone.native));
+            state().closed.push_back(std::move(gone.native));
         } else {
             gone.native.reset();
         }
         return done();
     });
     def("windowIsOpen", 1, 1, [](VM& vm, int, Value* args) -> Value {
-        return Value::boolean(g.windows.count(static_cast<int>(vm.toInt(args[0], "window"))) != 0);
+        return Value::boolean(state().windows.count(static_cast<int>(vm.toInt(args[0], "window"))) != 0);
     });
     def("windowTitle", 2, 2, [](VM& vm, int, Value* args) -> Value {
         windowOf(vm, args[0]).native->setTitle(vm.toStr(args[1], "title"));
@@ -555,7 +564,7 @@ void registerJade(VM& vm) {
         const int id = static_cast<int>(vm.toInt(args[0], "window"));
         const RawEvent event = syntheticEvent(vm, window, vm.toStr(args[1], "kind of event"), args + 2);
         deliver(id, event);
-        if (g.delivering == 0 && !g.pumping) g.closed.clear();
+        if (state().delivering == 0 && !state().pumping) state().closed.clear();
         return done();
     });
 
@@ -618,19 +627,19 @@ void registerJade(VM& vm) {
     def("target", 8, 8, [](VM& vm, int, Value* args) -> Value {
         Renderer& r = need(vm);
         surfaceNeeded(vm, r, args[0]);
-        g.originX = static_cast<int>(vm.toInt(args[1], "x"));
-        g.originY = static_cast<int>(vm.toInt(args[2], "y"));
-        g.scale = vm.toNumber(args[3], "scale");
+        state().originX = static_cast<int>(vm.toInt(args[1], "x"));
+        state().originY = static_cast<int>(vm.toInt(args[2], "y"));
+        state().scale = vm.toNumber(args[3], "scale");
         auto edge = [&](Value v) { return static_cast<int>(std::clamp<int64_t>(vm.toInt(v, "clip"), -(int64_t{1} << 24), int64_t{1} << 24)); };
         r.setTarget(surfaceOf(vm, args[0]), edge(args[4]), edge(args[5]), edge(args[6]), edge(args[7]));
         return Value::null();
     });
     def("color", 1, 1, [](VM& vm, int, Value* args) -> Value {
-        g.color = colorOf(vm, args[0]);
+        state().color = colorOf(vm, args[0]);
         return Value::null();
     });
     def("font", 1, 1, [](VM& vm, int, Value* args) -> Value {
-        g.font = textFontOf(vm, args[0]);
+        state().font = textFontOf(vm, args[0]);
         return Value::null();
     });
     def("flush", 0, 0, [](VM& vm, int, Value*) -> Value {
@@ -647,7 +656,7 @@ void registerJade(VM& vm) {
     def("fillRect", 4, 4, [](VM& vm, int, Value* args) -> Value {
         const double x = num(vm, args[0]), y = num(vm, args[1]);
         need(vm).fillRect(static_cast<float>(dx(x)), static_cast<float>(dy(y)), static_cast<float>(dx(x + num(vm, args[2]))),
-                          static_cast<float>(dy(y + num(vm, args[3]))), g.color);
+                          static_cast<float>(dy(y + num(vm, args[3]))), state().color);
         return Value::null();
     });
     // The outline of a rectangle, one unit thick: it covers the pixels from (x, y) to
@@ -658,21 +667,21 @@ void registerJade(VM& vm) {
         if (w < 0 || h < 0) return Value::null();
         const float t = static_cast<float>(thickness());
         const float left = static_cast<float>(dx(x)), top = static_cast<float>(dy(y)), right = static_cast<float>(dx(x + w)), bottom = static_cast<float>(dy(y + h));
-        r.fillRect(left, top, right + t, top + t, g.color);
-        r.fillRect(left, bottom, right + t, bottom + t, g.color);
-        r.fillRect(left, top + t, left + t, bottom, g.color);
-        r.fillRect(right, top + t, right + t, bottom, g.color);
+        r.fillRect(left, top, right + t, top + t, state().color);
+        r.fillRect(left, bottom, right + t, bottom + t, state().color);
+        r.fillRect(left, top + t, left + t, bottom, state().color);
+        r.fillRect(right, top + t, right + t, bottom, state().color);
         return Value::null();
     });
     // roundRect(x, y, w, h, arcWidth, arcHeight, fill)
     def("roundRect", 7, 7, [](VM& vm, int, Value* args) -> Value {
         Renderer& r = need(vm);
         const double x = num(vm, args[0]), y = num(vm, args[1]), w = num(vm, args[2]), h = num(vm, args[3]);
-        const float radius = static_cast<float>(std::min(num(vm, args[4]), num(vm, args[5])) / 2 * g.scale);
+        const float radius = static_cast<float>(std::min(num(vm, args[4]), num(vm, args[5])) / 2 * state().scale);
         const float left = static_cast<float>(dx(x)), top = static_cast<float>(dy(y)), right = static_cast<float>(dx(x + w)), bottom = static_cast<float>(dy(y + h));
         const float t = static_cast<float>(thickness());
-        if (args[6].truthy()) r.roundRect(left, top, right, bottom, radius, 0, g.color);
-        else r.roundRect(left, top, right + t, bottom + t, radius + t / 2, t, g.color);
+        if (args[6].truthy()) r.roundRect(left, top, right, bottom, radius, 0, state().color);
+        else r.roundRect(left, top, right + t, bottom + t, radius + t / 2, t, state().color);
         return Value::null();
     });
     // oval(x, y, w, h, fill)
@@ -681,8 +690,8 @@ void registerJade(VM& vm) {
         const double x = num(vm, args[0]), y = num(vm, args[1]), w = num(vm, args[2]), h = num(vm, args[3]);
         const float left = static_cast<float>(dx(x)), top = static_cast<float>(dy(y)), right = static_cast<float>(dx(x + w)), bottom = static_cast<float>(dy(y + h));
         const float t = static_cast<float>(thickness());
-        if (args[4].truthy()) r.oval(left, top, right, bottom, 0, g.color);
-        else r.oval(left, top, right + t, bottom + t, t, g.color);
+        if (args[4].truthy()) r.oval(left, top, right, bottom, 0, state().color);
+        else r.oval(left, top, right + t, bottom + t, t, state().color);
         return Value::null();
     });
     // A line one unit thick from one point to another, both covered.
@@ -694,11 +703,11 @@ void registerJade(VM& vm) {
         if (ax == bx || ay == by) {
             // Straight across or straight down: whole pixels, with nothing to smooth.
             r.fillRect(static_cast<float>(std::min(ax, bx)), static_cast<float>(std::min(ay, by)), static_cast<float>(std::max(ax, bx) + t),
-                       static_cast<float>(std::max(ay, by) + t), g.color);
+                       static_cast<float>(std::max(ay, by) + t), state().color);
         } else {
             const float middle = static_cast<float>(t - 1) / 2;
             r.line(static_cast<float>(ax) + middle, static_cast<float>(ay) + middle, static_cast<float>(bx) + middle, static_cast<float>(by) + middle,
-                   static_cast<float>(t), g.color);
+                   static_cast<float>(t), state().color);
         }
         return Value::null();
     });
@@ -714,10 +723,10 @@ void registerJade(VM& vm) {
             std::vector<float> points;
             points.reserve(count * 2);
             for (size_t i = 0; i < count; i++) {
-                points.push_back(static_cast<float>(g.originX + num(vm, xs[i]) * g.scale));
-                points.push_back(static_cast<float>(g.originY + num(vm, ys[i]) * g.scale));
+                points.push_back(static_cast<float>(state().originX + num(vm, xs[i]) * state().scale));
+                points.push_back(static_cast<float>(state().originY + num(vm, ys[i]) * state().scale));
             }
-            r.polygon(points, g.color);
+            r.polygon(points, state().color);
             return Value::null();
         }
         const int t = thickness();
@@ -728,18 +737,18 @@ void registerJade(VM& vm) {
             const int ax = dx(num(vm, xs[i])), ay = dy(num(vm, ys[i])), bx = dx(num(vm, xs[next])), by = dy(num(vm, ys[next]));
             if (ax == bx || ay == by)
                 r.fillRect(static_cast<float>(std::min(ax, bx)), static_cast<float>(std::min(ay, by)), static_cast<float>(std::max(ax, bx) + t),
-                           static_cast<float>(std::max(ay, by) + t), g.color);
+                           static_cast<float>(std::max(ay, by) + t), state().color);
             else
                 r.line(static_cast<float>(ax) + middle, static_cast<float>(ay) + middle, static_cast<float>(bx) + middle, static_cast<float>(by) + middle,
-                       static_cast<float>(t), g.color);
+                       static_cast<float>(t), state().color);
         }
         return Value::null();
     });
     // text(string, x, y): at x with its baseline at y, in the font and colour set. Its width in device pixels.
     def("text", 3, 3, [](VM& vm, int, Value* args) -> Value {
         Renderer& r = need(vm);
-        if (g.font == nullptr) throw vm.runtimeError("no font has been set");
-        return Value::integer(r.text(*g.font, vm.toStr(args[0], "text"), dx(num(vm, args[1])), dy(num(vm, args[2])), g.color));
+        if (state().font == nullptr) throw vm.runtimeError("no font has been set");
+        return Value::integer(r.text(*state().font, vm.toStr(args[0], "text"), dx(num(vm, args[1])), dy(num(vm, args[2])), state().color));
     });
     // blit(surface, x, y, alpha): another surface as it is, pixel for pixel, its corner at (x, y).
     def("blit", 4, 4, [](VM& vm, int, Value* args) -> Value {

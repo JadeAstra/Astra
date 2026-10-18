@@ -277,6 +277,12 @@ public:
     AstraThrow runtimeError(const std::string& message);
     // An error of a class the standard library declares (IOException, say), by its name.
     AstraThrow errorOf(const char* className, const std::string& message);
+    // The globals the VM itself finds by name: kept in a built program whether or not its code
+    // names them (M6.5 part 5). errorOf takes no other name.
+    static const std::vector<std::string>& globalsFoundByName();
+    // The member names the VM and the built-in functions look up themselves (the names table,
+    // and a few more): an extension function of one of them is kept in a built program.
+    std::vector<std::string> membersFoundByName() const;
     AstraThrow outOfMemory();
     void checkRoomFor(uint64_t bytes);
     std::string stringify(Value v);  // as print() shows it
@@ -742,6 +748,5 @@ void setSelfCommand(std::vector<std::string> command);
 
 // The native layer of the Jade library (lib/Jade): windows, events and drawing. jade/api.cpp.
 void registerJade(VM& vm);
-void registerSpike(VM& vm);  // M0 spike: the `Spike` class (src/spike/glwin.cpp)
 
 }  // namespace astra

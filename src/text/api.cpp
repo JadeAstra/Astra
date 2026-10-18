@@ -17,6 +17,8 @@
 #include "engine.h"
 #include "fonts.h"
 
+#include "../section_window.h"  // last: this file's own code goes in its section (D161)
+
 namespace astra {
 
 namespace {

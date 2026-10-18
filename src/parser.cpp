@@ -2,6 +2,8 @@
 
 #include <algorithm>
 
+#include "section_compiler.h"  // last: this file's own code goes in its section (D161)
+
 namespace astra {
 
 namespace {

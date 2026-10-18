@@ -642,7 +642,24 @@ AstraThrow VM::runtimeError(const std::string& message) {
     return t;
 }
 
+const std::vector<std::string>& VM::globalsFoundByName() {
+    static const std::vector<std::string> names{"Error", "MapEntry", "IOException", "OutOfMemoryError"};
+    return names;
+}
+
+std::vector<std::string> VM::membersFoundByName() const {
+    std::vector<std::string> found{"onError"};  // a worker's handler (worker.cpp)
+    // Every member of the names table is an ObjString*.
+    const ObjString* const* first = reinterpret_cast<const ObjString* const*>(&names);
+    for (size_t i = 0; i < sizeof names / sizeof(ObjString*); i++)
+        if (first[i] != nullptr) found.push_back(first[i]->chars);
+    return found;
+}
+
 AstraThrow VM::errorOf(const char* className, const std::string& message) {
+    const std::vector<std::string>& known = globalsFoundByName();
+    if (std::find(known.begin(), known.end(), className) == known.end())
+        return runtimeError(std::string("internal error: ") + className + " is not among VM::globalsFoundByName()");
     // The first global of that name is the standard library's, which is loaded first.
     for (size_t i = 0; program_ != nullptr && i < globals_.size(); i++) {
         if (!globals_[i].isObjType(ObjType::Class) || program_->globalNames[i] != className) continue;

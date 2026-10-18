@@ -17,6 +17,8 @@
 #include <unistd.h>
 #endif
 
+#include "section_compiler.h"  // last: this file's own code goes in its section (D161)
+
 namespace astra {
 
 namespace fs = std::filesystem;
@@ -27,9 +29,16 @@ constexpr const char* kMagic = "ASTRA-PROGRAM-CACHE 3";
 constexpr const char* kUnitMagic = "ASTRA-UNIT-CACHE 3";
 constexpr uintmax_t kMostBytes = 500ull * 1024 * 1024;
 
-// The entries to be written, and the thread that writes them, one after another.
-std::thread writer;
-std::vector<std::function<void()>> jobs;
+// The entries to be written, and the thread that writes them, one after another; made the
+// first time it is needed (M6.5 part 5: nothing of the compiler runs as a built program starts).
+struct Writing {
+    std::thread writer;
+    std::vector<std::function<void()>> jobs;
+};
+Writing& writing() {
+    static Writing made;
+    return made;
+}
 
 fs::path cacheDirectory() {
     if (const char* chosen = std::getenv("ASTRA_CACHE"); chosen != nullptr && *chosen != '\0') return fs::path(chosen);
@@ -173,14 +182,14 @@ void write(fs::path entry, std::string text) {
 
 // Sets the writer going on what is waiting, if anything is.
 void startKeeping() {
-    if (jobs.empty()) return;
-    if (writer.joinable()) writer.join();
-    writer = std::thread([todo = std::move(jobs)] {
+    if (writing().jobs.empty()) return;
+    if (writing().writer.joinable()) writing().writer.join();
+    writing().writer = std::thread([todo = std::move(writing().jobs)] {
         for (const auto& job : todo) job();
         const fs::path dir = cacheDirectory();
         if (!dir.empty()) trim(dir);
     });
-    jobs.clear();
+    writing().jobs.clear();
 }
 
 }  // namespace
@@ -373,7 +382,7 @@ void keepProgram(const std::string& path, std::vector<SourceRead> files, std::ve
                  std::function<std::string()> bytecode) {
     const fs::path entry = entryFor(path);
     if (entry.empty()) return;
-    jobs.push_back([entry, files = std::move(files), folders = std::move(folders), bytecode = std::move(bytecode)] {
+    writing().jobs.push_back([entry, files = std::move(files), folders = std::move(folders), bytecode = std::move(bytecode)] {
         std::string text = std::string(kMagic) + "\nexe " + executableStamp() + "\n";
         for (const SourceRead& f : files)
             text += "file " + std::to_string(f.size) + " " + std::to_string(f.time) + " " + (racy(f.time) ? "1 " : "0 ") + hex(f.hash) +
@@ -390,7 +399,7 @@ void keepProgram(const std::string& path, std::vector<SourceRead> files, std::ve
 
 void finishKeeping() {
     startKeeping();
-    if (writer.joinable()) writer.join();
+    if (writing().writer.joinable()) writing().writer.join();
 }
 
 bool keptUnit(const std::string& unit, KeptUnit& out) {
@@ -436,7 +445,7 @@ bool keptUnit(const std::string& unit, KeptUnit& out) {
 void keepUnit(const std::string& unit, KeptUnit kept, std::function<std::string()> image) {
     const fs::path entry = unitEntryFor(unit);
     if (entry.empty()) return;
-    jobs.push_back([entry, unit, kept = std::move(kept), image = std::move(image)] {
+    writing().jobs.push_back([entry, unit, kept = std::move(kept), image = std::move(image)] {
         std::string text = std::string(kUnitMagic) + "\nexe " + executableStamp() + "\nunit " + unit + "\n";
         for (const KeptFile& f : kept.own) text += "own " + hex(f.text) + " " + hex(f.summary) + " " + f.path + "\n";
         for (const KeptFile& f : kept.uses) text += "uses " + hex(f.summary) + " " + f.path + "\n";

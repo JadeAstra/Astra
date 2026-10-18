@@ -27,14 +27,13 @@ add_custom_command(
   COMMENT "Packing the standard library"
   VERBATIM)
 
-add_executable(astra
-  "${CMAKE_BINARY_DIR}/std_source.cpp"
-  src/lexer.cpp
-  src/parser.cpp
+# The executable in three parts (M6.5 part 5, D161): what every program needs to run, Jade's
+# window with the text engine and the image codecs, and the compiler side with the astra command.
+# The last two are compiled into sections of their own (src/section_*.h), which `astra build`
+# leaves out of a built program that does not need them.
+add_library(astra_core OBJECT
   src/value.cpp
   src/bytecode.cpp
-  src/cache.cpp
-  src/compiler.cpp
   src/vm.cpp
   src/builtins.cpp
   src/stdlib.cpp
@@ -42,12 +41,13 @@ add_executable(astra
   src/io.cpp
   src/worker.cpp
   src/parallel.cpp
-  # Jade's native layer: windows, events and drawing with OpenGL (docs/gui-plan.md, section 4).
+  src/run.cpp
+)
+add_library(astra_window OBJECT
   src/jade/platform_win.cpp
   src/jade/gl.cpp
   src/jade/render.cpp
   src/jade/api.cpp
-  # The text engine (docs/gui-plan.md, section 4), and pictures.
   src/text/face.cpp
   src/text/cff.cpp
   src/text/variation.cpp
@@ -59,18 +59,35 @@ add_executable(astra
   src/text/engine.cpp
   src/text/api.cpp
   src/image/png.cpp
-  src/main.cpp
-  src/checker.cpp
-  # M0 spike: an OpenGL window and a text engine of our own, as the `Spike` class.
-  src/spike/font.cpp
-  src/spike/png.cpp
-  src/spike/glwin.cpp
 )
-if(WIN32)
-  target_link_libraries(astra PRIVATE opengl32 ws2_32 shell32)
-endif()
+add_library(astra_compiler OBJECT
+  "${CMAKE_BINARY_DIR}/std_source.cpp"
+  src/lexer.cpp
+  src/parser.cpp
+  src/checker.cpp
+  src/cache.cpp
+  src/compiler.cpp
+  src/command.cpp
+)
+add_executable(astra src/main.cpp $<TARGET_OBJECTS:astra_core> $<TARGET_OBJECTS:astra_window> $<TARGET_OBJECTS:astra_compiler>)
 
-target_compile_definitions(astra PRIVATE ASTRA_VERSION="${PROJECT_VERSION}")
+# The proof that what a built program keeps needs nothing left out of it: the core and the
+# window linked without the compiler side, and the core alone, the window's two entry points
+# (which the core calls only when the window's section is there) standing in. Either fails to
+# link if anything kept names what is left out. Neither is shipped.
+add_executable(astra_proof src/proof_main.cpp $<TARGET_OBJECTS:astra_core> $<TARGET_OBJECTS:astra_window>)
+add_executable(astra_proof_plain src/proof_main.cpp src/window_absent.cpp $<TARGET_OBJECTS:astra_core>)
+foreach(proof astra_proof astra_proof_plain)
+  set_target_properties(${proof} PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/proof")
+endforeach()
+foreach(part astra astra_core astra_window astra_compiler astra_proof astra_proof_plain)
+  target_compile_definitions(${part} PRIVATE ASTRA_VERSION="${PROJECT_VERSION}")
+endforeach()
+if(WIN32)
+  foreach(linked astra astra_proof astra_proof_plain)
+    target_link_libraries(${linked} PRIVATE opengl32 ws2_32 shell32)
+  endforeach()
+endif()
 
 # astra looks for libraries such as Jade only in the lib folder beside itself, so every
 # build puts a copy of lib/ next to the executable.
@@ -80,8 +97,10 @@ add_custom_target(astra_lib ALL
   VERBATIM)
 
 if(MSVC)
-  target_compile_options(astra PRIVATE /W4 /utf-8 /permissive-)
-  target_compile_definitions(astra PRIVATE _CRT_SECURE_NO_WARNINGS)
+  foreach(part astra astra_core astra_window astra_compiler astra_proof astra_proof_plain)
+    target_compile_options(${part} PRIVATE /W4 /utf-8 /permissive-)
+    target_compile_definitions(${part} PRIVATE _CRT_SECURE_NO_WARNINGS)
+  endforeach()
   # The parser and compiler recurse over nested source; give them room.
   target_link_options(astra PRIVATE /STACK:16777216)
   # OpenGL and the shell are loaded when first used, not when astra starts: loading
@@ -89,7 +108,23 @@ if(MSVC)
   target_link_libraries(astra PRIVATE delayimp)
   target_link_options(astra PRIVATE /DELAYLOAD:opengl32.dll /DELAYLOAD:shell32.dll)
 else()
-  target_compile_options(astra PRIVATE -Wall -Wextra)
+  foreach(part astra astra_core astra_window astra_compiler astra_proof astra_proof_plain)
+    target_compile_options(${part} PRIVATE -Wall -Wextra)
+  endforeach()
+endif()
+
+# The check of what a built program leaves out (D161): nothing of it runs as the program starts,
+# and every function the proofs need is in astra.exe in a section a built program keeps.
+if(MSVC)
+  foreach(linked astra astra_proof astra_proof_plain)
+    target_link_options(${linked} PRIVATE "/MAP:$<TARGET_FILE_DIR:${linked}>/${linked}.map")
+  endforeach()
+  add_custom_target(astra_check_sections ALL
+    COMMAND $<TARGET_FILE:astra> --check-sections "$<TARGET_FILE_DIR:astra>/astra.map"
+            "$<TARGET_FILE_DIR:astra_proof>/astra_proof.map" "$<TARGET_FILE_DIR:astra_proof_plain>/astra_proof_plain.map"
+    DEPENDS astra astra_proof astra_proof_plain
+    COMMENT "Checking what a built program leaves out"
+    VERBATIM)
 endif()
 
 # The standard library, compiled once as the build's last step and attached to astra.exe, so

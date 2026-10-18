@@ -5,6 +5,8 @@
 #include <iomanip>
 #include <ostream>
 #include <stdexcept>
+#include <unordered_map>
+#include <unordered_set>
 
 #include "vm.h"
 
@@ -1001,6 +1003,11 @@ void disassembleFunction(const FunctionProto& f, const Program& program, std::os
 
 }  // namespace
 
+size_t instructionSize(const std::vector<uint8_t>& code, size_t at) {
+    const uint8_t raw = code[at];
+    return raw < static_cast<uint8_t>(Op::Count_) ? 1 + operandSize(kOps[raw].operand) : 1;
+}
+
 const char* opName(Op op) {
     const size_t i = static_cast<size_t>(op);
     return i < static_cast<size_t>(Op::Count_) ? kOps[i].name : "?";
@@ -1017,7 +1024,7 @@ void disassemble(const Program& program, std::ostream& out) {
 namespace {
 
 const char kMagic[4] = {'A', 'S', 'T', 'R'};
-const uint8_t kFormatVersion = 9;
+const uint8_t kFormatVersion = 10;
 const int kMaxProtoNesting = 200;
 
 enum ConstantTag : uint8_t { TagInt = 0, TagFloat = 1, TagString = 2 };
@@ -1072,6 +1079,13 @@ struct Writer {
 
         u32(static_cast<uint32_t>(f.code.size()));
         out.write(reinterpret_cast<const char*>(f.code.data()), static_cast<std::streamsize>(f.code.size()));
+        u32(static_cast<uint32_t>(f.spans.size()));
+        for (const DeclarationSpan& span : f.spans) {
+            u32(span.start);
+            u32(span.end);
+            u16(span.key);
+            u8(span.kind);
+        }
 
         // Line table, run-length encoded.
         std::vector<std::pair<uint32_t, uint32_t>> runs;
@@ -1193,6 +1207,17 @@ struct Reader {
         f->code.assign(data.begin() + static_cast<std::ptrdiff_t>(pos),
                        data.begin() + static_cast<std::ptrdiff_t>(pos + codeSize));
         pos += codeSize;
+        uint32_t spanCount = count(11);
+        for (uint32_t i = 0; i < spanCount; i++) {
+            DeclarationSpan span;
+            span.start = u32();
+            span.end = u32();
+            span.key = u16();
+            const uint8_t kind = u8();
+            if (kind > DeclarationSpan::Extension || span.start > span.end || span.end > codeSize) corrupt();
+            span.kind = static_cast<DeclarationSpan::Kind>(kind);
+            f->spans.push_back(span);
+        }
 
         uint32_t runs = count(8);
         for (uint32_t i = 0; i < runs; i++) {
@@ -1243,6 +1268,8 @@ void writeU16(std::vector<uint8_t>& code, size_t at, int v) {
 
 void renumber(FunctionProto& f, const Renumbering& r, VM& vm) {
     std::vector<uint8_t>& code = f.code;
+    for (DeclarationSpan& span : f.spans)
+        if (span.kind == DeclarationSpan::Global) span.key = static_cast<uint16_t>(r.global(span.key));
     for (size_t ip = 0; ip < code.size();) {
         const uint8_t raw = code[ip];
         if (raw >= static_cast<uint8_t>(Op::Count_)) break;  // malformed: verifying will say so
@@ -1354,6 +1381,331 @@ void readProgram(Program& program, VM& vm, const std::string& data) {
             throw std::runtime_error("invalid bytecode: a module cannot take arguments or capture variables");
         verifyTree(*module, program);
     }
+}
+
+
+// ---- What a built program can never reach, left out (M6.5 part 5) ----
+//
+// The code of every module runs, but what lies inside a top-level declaration's span only
+// makes that declaration (a function, or a class with its methods). Starting from the modules,
+// everything their code can reach is followed: the globals it names, and for each global the
+// spans that make it; the functions the reached code makes. The spans of the globals never
+// reached are taken out of their modules' code, with the functions only they made.
+
+namespace {
+
+// Which operand of an instruction is a global's slot: 1 the first, 2 the second, 0 none.
+int globalOperand(Op op, int first) {
+    switch (op) {
+        case Op::GetGlobal:
+        case Op::SetGlobal:
+        case Op::DefineGlobal:
+        case Op::DefineTypedGlobal: return 1;
+        case Op::ObjectClass:
+        case Op::StoreClass: return first == 0xFFFF ? 0 : 1;
+        case Op::GetImplicit:
+        case Op::SetImplicit:
+        case Op::InvokeImplicit: return 2;
+        default: return 0;
+    }
+}
+
+// Which operand of an instruction is a place in the code to go to: 1 the first, 2 the second.
+int targetOperand(Op op) {
+    switch (op) {
+        case Op::Jump:
+        case Op::Loop:
+        case Op::JumpIfFalse:
+        case Op::And:
+        case Op::Or:
+        case Op::JumpIfNull:
+        case Op::JumpIfNotNull:
+        case Op::TryBegin: return 1;
+        case Op::ObjectClass:
+        case Op::RangeNext:
+        case Op::TryImplicit:
+        case Op::IterNext:
+        case Op::DefaultArg: return 2;
+        default: return 0;
+    }
+}
+
+// An instruction whose first operand is the name of a member it uses.
+bool usesMemberName(Op op) {
+    switch (op) {
+        case Op::GetProp:
+        case Op::SetProp:
+        case Op::GetOwn:
+        case Op::SetOwn:
+        case Op::Invoke:
+        case Op::InvokeOwn:
+        case Op::InvokeTrailing:
+        case Op::InvokeOwnTrailing:
+        case Op::SuperInvoke:
+        case Op::SuperInvokeTrailing:
+        case Op::GetSuper:
+        case Op::GetImplicit:
+        case Op::SetImplicit:
+        case Op::TryImplicit:
+        case Op::InvokeImplicit: return true;
+        default: return false;
+    }
+}
+
+// An instruction that makes a function of the code's own nested ones: its first operand.
+bool makesFunction(Op op) {
+    return op == Op::Closure || op == Op::MakeForms || op == Op::MethodForms || op == Op::StaticForms;
+}
+
+struct Reach {
+    Program& program;
+    std::vector<char> reachedGlobal;
+    std::unordered_set<std::string> reachedName;
+    std::unordered_set<const FunctionProto*> reachedProto;
+    // An extension's name, and where the spans that make extensions of that name are.
+    std::unordered_map<std::string, std::vector<std::pair<FunctionProto*, size_t>>> extensionsNamed;
+    // A global, and where the spans that make it are: the module, and the span's place in it.
+    std::unordered_map<int, std::vector<std::pair<FunctionProto*, size_t>>> spansOf;
+    std::vector<std::pair<FunctionProto*, size_t>> spanWork;  // spans to look through
+    std::vector<FunctionProto*> protoWork;                   // whole functions to look through
+
+    explicit Reach(Program& p) : program(p), reachedGlobal(p.globalNames.size(), 0) {}
+
+    void global(int slot) {
+        if (slot < 0 || static_cast<size_t>(slot) >= reachedGlobal.size() || reachedGlobal[static_cast<size_t>(slot)]) return;
+        reachedGlobal[static_cast<size_t>(slot)] = 1;
+        auto found = spansOf.find(slot);
+        if (found != spansOf.end())
+            for (const auto& span : found->second) spanWork.push_back(span);
+    }
+
+    // A member name, without the signature a form of a name with several has after it
+    // (`lastOrNull[List<T>]()`): extensions are matched by the name alone.
+    static std::string bare(const std::string& member) { return member.substr(0, member.find('[')); }
+
+    void name(const std::string& used) {
+        const std::string member = bare(used);
+        if (!reachedName.insert(member).second) return;
+        auto found = extensionsNamed.find(member);
+        if (found != extensionsNamed.end())
+            for (const auto& span : found->second) spanWork.push_back(span);
+    }
+
+    // Whether the span was reached: its global, or for an extension its name.
+    bool reached(const FunctionProto& module, const DeclarationSpan& span) const {
+        if (span.kind == DeclarationSpan::Global) return reachedGlobal[span.key] != 0;
+        return span.key < module.constants.size() && module.constants[span.key].isString() &&
+               reachedName.count(bare(asString(module.constants[span.key])->chars)) != 0;
+    }
+
+    void function(FunctionProto* f) {
+        if (reachedProto.insert(f).second) protoWork.push_back(f);
+    }
+
+    // What the instructions of `f` from `start` to `end` reach; those inside one of its spans
+    // only where `skipSpans` says so.
+    void look(FunctionProto& f, size_t start, size_t end, bool skipSpans) {
+        const std::vector<uint8_t>& code = f.code;
+        for (size_t at = start; at < end && at < code.size();) {
+            if (skipSpans) {
+                bool skipped = false;
+                for (const DeclarationSpan& span : f.spans)
+                    if (span.start == at && span.end > at) {
+                        at = span.end;
+                        skipped = true;
+                        break;
+                    }
+                if (skipped) continue;
+            }
+            const uint8_t raw = code[at];
+            if (raw >= static_cast<uint8_t>(Op::Count_)) return;
+            const Op op = static_cast<Op>(raw);
+            int a = 0, b = 0;
+            decodeOperands(code, at, kOps[raw].operand, a, b);
+            const int which = globalOperand(op, a);
+            if (which == 1) global(a);
+            if (which == 2) global(b);
+            if (makesFunction(op) && static_cast<size_t>(a) < f.protos.size()) function(f.protos[static_cast<size_t>(a)]);
+            if (usesMemberName(op) && static_cast<size_t>(a) < f.constants.size() && f.constants[static_cast<size_t>(a)].isString())
+                name(asString(f.constants[static_cast<size_t>(a)])->chars);
+            at += 1 + operandSize(kOps[raw].operand);
+        }
+    }
+
+    void run() {
+        while (!spanWork.empty() || !protoWork.empty()) {
+            if (!spanWork.empty()) {
+                auto [module, index] = spanWork.back();
+                spanWork.pop_back();
+                const DeclarationSpan span = module->spans[index];
+                look(*module, span.start, span.end, false);
+            } else {
+                FunctionProto* f = protoWork.back();
+                protoWork.pop_back();
+                look(*f, 0, f->code.size(), !f->spans.empty());
+            }
+        }
+    }
+};
+
+// Takes the spans not reached out of a module's code, and the functions only they made.
+// Leaves the module as it was if its spans do not fall on whole instructions.
+void leaveOut(FunctionProto& module, const Reach& reach, size_t& before, size_t& after) {
+    std::vector<uint8_t>& code = module.code;
+    before += code.size();
+    std::vector<char> starts(code.size() + 1, 0);
+    for (size_t at = 0; at < code.size(); at += instructionSize(code, at)) starts[at] = 1;
+    starts[code.size()] = 1;
+    std::vector<char> gone(code.size(), 0);
+    bool any = false;
+    for (const DeclarationSpan& span : module.spans) {
+        if (!starts[span.start] || !starts[span.end]) {
+            after += code.size();
+            return;
+        }
+        if (reach.reached(module, span)) continue;
+        for (uint32_t at = span.start; at < span.end; at++) gone[at] = 1;
+        any = true;
+    }
+    if (!any) {
+        after += code.size();
+        return;
+    }
+
+    // Where each instruction kept goes, and which of the module's own functions are still made.
+    std::vector<int64_t> moved(code.size() + 1, -1);
+    std::vector<char> made(module.protos.size(), 0);
+    size_t length = 0;
+    for (size_t at = 0; at < code.size(); at += instructionSize(code, at)) {
+        moved[at] = static_cast<int64_t>(length);  // for one left out: where what follows goes
+        if (gone[at]) continue;
+        length += instructionSize(code, at);
+        const Op op = static_cast<Op>(code[at]);
+        if (makesFunction(op)) {
+            const size_t index = static_cast<size_t>(code[at + 1] | (code[at + 2] << 8));
+            if (index < made.size()) made[index] = 1;
+        }
+    }
+    moved[code.size()] = static_cast<int64_t>(length);
+    std::vector<int> renumbered(module.protos.size(), -1);
+    std::vector<FunctionProto*> protos;
+    for (size_t i = 0; i < module.protos.size(); i++) {
+        if (!made[i]) continue;
+        renumbered[i] = static_cast<int>(protos.size());
+        protos.push_back(module.protos[i]);
+    }
+
+    std::vector<uint8_t> kept;
+    std::vector<int> lines;
+    kept.reserve(length);
+    lines.reserve(length);
+    for (size_t at = 0; at < code.size();) {
+        const size_t size = instructionSize(code, at);
+        if (gone[at]) {
+            at += size;
+            continue;
+        }
+        const size_t to = kept.size();
+        kept.insert(kept.end(), code.begin() + static_cast<std::ptrdiff_t>(at), code.begin() + static_cast<std::ptrdiff_t>(at + size));
+        lines.insert(lines.end(), module.lines.begin() + static_cast<std::ptrdiff_t>(at),
+                     module.lines.begin() + static_cast<std::ptrdiff_t>(at + size));
+        const Op op = static_cast<Op>(code[at]);
+        const int target = targetOperand(op);
+        if (target != 0) {
+            const size_t place = to + (target == 1 ? 1 : 3);
+            const int32_t old = static_cast<int32_t>(static_cast<uint32_t>(kept[place]) | (static_cast<uint32_t>(kept[place + 1]) << 8) |
+                                                     (static_cast<uint32_t>(kept[place + 2]) << 16) | (static_cast<uint32_t>(kept[place + 3]) << 24));
+            if (old < 0 || static_cast<size_t>(old) > code.size() || moved[static_cast<size_t>(old)] < 0 ||
+                (static_cast<size_t>(old) < code.size() && gone[static_cast<size_t>(old)])) {
+                after += code.size();  // goes into what would be left out: keep it all
+                return;
+            }
+            const uint32_t now = static_cast<uint32_t>(moved[static_cast<size_t>(old)]);
+            for (int i = 0; i < 4; i++) kept[place + static_cast<size_t>(i)] = static_cast<uint8_t>((now >> (8 * i)) & 0xFF);
+        }
+        if (makesFunction(op)) {
+            const size_t index = static_cast<size_t>(kept[to + 1] | (kept[to + 2] << 8));
+            const int now = renumbered[index];
+            kept[to + 1] = static_cast<uint8_t>(now & 0xFF);
+            kept[to + 2] = static_cast<uint8_t>((now >> 8) & 0xFF);
+        }
+        at += size;
+    }
+
+    std::vector<DeclarationSpan> spans;
+    for (const DeclarationSpan& span : module.spans)
+        if (reach.reached(module, span))
+            spans.push_back(DeclarationSpan{static_cast<uint32_t>(moved[span.start]), static_cast<uint32_t>(moved[span.end]), span.key, span.kind});
+    code = std::move(kept);
+    module.lines = std::move(lines);
+    module.protos = std::move(protos);
+    module.spans = std::move(spans);
+    module.caches.reset();
+    module.cacheCount = 0;
+    after += code.size();
+}
+
+}  // namespace
+
+bool namesGlobal(const Program& program, const std::vector<std::string>& names) {
+    std::vector<char> wanted(program.globalNames.size(), 0);
+    bool any = false;
+    for (size_t slot = 0; slot < program.globalNames.size(); slot++)
+        for (const std::string& name : names)
+            if (program.globalNames[slot] == name) wanted[slot] = any = 1;
+    if (!any) return false;
+    std::vector<const FunctionProto*> work(program.modules.begin(), program.modules.end());
+    while (!work.empty()) {
+        const FunctionProto* f = work.back();
+        work.pop_back();
+        if (f == nullptr) continue;
+        for (const FunctionProto* nested : f->protos) work.push_back(nested);
+        for (size_t at = 0; at < f->code.size();) {
+            const uint8_t raw = f->code[at];
+            if (raw >= static_cast<uint8_t>(Op::Count_)) break;
+            int a = 0, b = 0;
+            decodeOperands(f->code, at, kOps[raw].operand, a, b);
+            const int which = globalOperand(static_cast<Op>(raw), a);
+            const int slot = which == 1 ? a : which == 2 ? b : -1;
+            if (slot >= 0 && static_cast<size_t>(slot) < wanted.size() && wanted[static_cast<size_t>(slot)]) return true;
+            at += 1 + operandSize(kOps[raw].operand);
+        }
+    }
+    return false;
+}
+
+LeftOut leaveOutUnreachable(Program& program, const std::vector<std::string>& globalsByName,
+                            const std::vector<std::string>& membersByName) {
+    Reach reach(program);
+    for (FunctionProto* module : program.modules) {
+        if (module == nullptr) continue;
+        for (size_t i = 0; i < module->spans.size(); i++) {
+            const DeclarationSpan& span = module->spans[i];
+            if (span.kind == DeclarationSpan::Global) {
+                reach.spansOf[span.key].emplace_back(module, i);
+            } else if (span.key < module->constants.size() && module->constants[span.key].isString()) {
+                reach.extensionsNamed[Reach::bare(asString(module->constants[span.key])->chars)].emplace_back(module, i);
+            }
+        }
+    }
+    for (size_t slot = 0; slot < program.globalNames.size(); slot++)
+        for (const std::string& name : globalsByName)
+            if (program.globalNames[slot] == name) reach.global(static_cast<int>(slot));
+    for (const std::string& name : membersByName) reach.name(name);
+    for (FunctionProto* module : program.modules)
+        if (module != nullptr) reach.function(module);
+    reach.run();
+
+    LeftOut result;
+    for (FunctionProto* module : program.modules) {
+        if (module == nullptr) continue;
+        for (const DeclarationSpan& span : module->spans)
+            if (!reach.reached(*module, span)) result.declarations++;
+        leaveOut(*module, reach, result.codeBefore, result.codeAfter);
+    }
+    for (FunctionProto* module : program.modules)
+        if (module != nullptr) verifyModule(*module, program);
+    return result;
 }
 
 }  // namespace astra

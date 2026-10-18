@@ -3,11 +3,15 @@
 #include <charconv>
 #include <unordered_map>
 
+#include "section_compiler.h"  // last: this file's own code goes in its section (D161)
+
 namespace astra {
 
 namespace {
 
-const std::unordered_map<std::string, TokenType> kKeywords = {
+// Made the first time it is needed (M6.5 part 5: nothing of the compiler runs as a built program starts).
+const std::unordered_map<std::string, TokenType>& keywords() {
+    static const std::unordered_map<std::string, TokenType> table = {
     {"val", TokenType::Val},       {"var", TokenType::Var},           {"fun", TokenType::Fun},
     {"class", TokenType::Class},
     {"this", TokenType::This},     {"super", TokenType::Super},       {"return", TokenType::Return},
@@ -17,7 +21,9 @@ const std::unordered_map<std::string, TokenType> kKeywords = {
     {"null", TokenType::Null},     {"try", TokenType::Try},           {"catch", TokenType::Catch},
     {"throw", TokenType::Throw},   {"import", TokenType::Import},     {"is", TokenType::Is},
     {"and", TokenType::And},       {"or", TokenType::Or},             {"when", TokenType::When},
-};
+    };
+    return table;
+}
 
 bool isDigit(char c) { return c >= '0' && c <= '9'; }
 bool isIdentStart(char c) { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_'; }
@@ -157,8 +163,8 @@ void Lexer::scanToken() {
 
     if (isIdentStart(c)) {
         while (pos_ < end_ && isIdentPart(src_[pos_])) pos_++;
-        auto it = kKeywords.find(src_.substr(start, pos_ - start));
-        add(it == kKeywords.end() ? TokenType::Identifier : it->second, start, line, col);
+        auto it = keywords().find(src_.substr(start, pos_ - start));
+        add(it == keywords().end() ? TokenType::Identifier : it->second, start, line, col);
         return;
     }
 
@@ -466,8 +472,8 @@ void Lexer::string(char quote, size_t start, int line, int col) {
 
             // Keywords that are not values ("$if") stay as ordinary text.
             TokenType type = TokenType::Identifier;
-            auto keyword = kKeywords.find(name);
-            if (keyword != kKeywords.end()) type = keyword->second;
+            auto keyword = keywords().find(name);
+            if (keyword != keywords().end()) type = keyword->second;
             bool isValue = type == TokenType::Identifier || type == TokenType::This || type == TokenType::True ||
                            type == TokenType::False || type == TokenType::Null;
 

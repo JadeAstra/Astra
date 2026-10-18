@@ -1194,12 +1194,26 @@ in the repository has its types.
    build; the scripts in `spikes/m0` stay on the branch `m0-spikes`. (b) Code a program cannot
    reach left out of its compiled form, worked out from the types: functions, classes and
    methods never called (overrides of a called method in a reachable class kept, and what is
-   found by name when running). Reflection keeps what D50 says. (c) Built programs made from a base executable without the
-   compiler, parser and shell, once it is checked that nothing a running program does needs
-   them, workers included. (d) Two such bases, with and without Jade's window, drawing and
-   text code; the one without for programs that do not import Jade. Today `print("hi")` built
-   is 2.1 MB (1.95 MB executable, 167 KB of standard library) and starts in 78 ms, 70 of them
-   the process itself. Sizes and start times measured before and after.
+   found by name when running). Reflection keeps what D50 says. (c) Built programs made from
+   `astra.exe` itself with what a running program never needs left out (decided 2026-10-18,
+   D161): the code of the compiler, checker, parser, lexer, the cache and the shell is kept in
+   a section of the executable of its own, and the standard library's source text in another,
+   and `astra build` writes a copy of `astra.exe` without those sections' bytes (the space they
+   took kept, empty, so that every other address stays as it was), then the program. One file,
+   nothing in it twice, and the base never out of step with `astra.exe`. What both sides use
+   (the inline functions and templates of the headers) stays in the common code: the section
+   is chosen after a file's includes. Proved, not assumed: the build links what is kept once
+   more on its own, which fails if it names anything left out, workers included; checks on
+   the link maps that every function that link needs is in a section kept (a template the
+   C++ library's own code uses may otherwise be made from a copy left out); checks that
+   nothing left out runs as the program starts (a global of such a file is made on first use);
+   and the tests run as programs built this way. (d) Jade's window, drawing and the text engine in a third such section,
+   left out of a program that reaches neither Jade nor the text engine (fonts and images are
+   in the standard library since D124, so not importing Jade is not enough). A built program
+   reads only its own end to find its code, not the whole file. When part 5 began,
+   `print("hi")` built was 2.98 MB (the executable, with 215 KB of compiled program) and ran
+   in 11.0 ms, 4.5 of them the process itself; the widgets example 3.23 MB, with 472 KB of
+   program. Sizes and start times measured before and after.
 
 M6.5 ends with every test and example passing under the checker, a set of tests of the
 checker's own errors, the suite under the sanitizer and stress settings, the timings
@@ -1933,6 +1947,7 @@ font metrics will need new numbers: no other font engine measures text exactly a
 | D158 | `++`, `+=` and the rest on a place that may be null. | Null-safe forms, as `?.` is a null-safe `.`: `++?`, `--?`, `+=?`, `-=?`, `*=?`, `/=?`, `%=?` change the place when it holds a value and do nothing when it is null or a map's key is missing (`stock["apples"]--?`, `maybe.count++?`, `a?.visits++?`). The plain operators on a place that may be null are a compile error saying why and naming `++?`, the index's `default` and `?:`; a `?` form on a place that cannot be null is an error naming the plain one. A missing key that should start from a value has it in the index, as Swift's `dict[k, default: 0]`: `counts[word, default = 0]++`, `groups[kind, default = []] += [item]`; as a read it gives the value or the default without adding the key, typed as the map's values, never null; an update through it is one lookup. `map.update(key, start) { old -> new }` for a change that is not one operator; no `increment`. `update` is in the standard library; the operators and the index's `default` come in M6.5 part 3 (L118 in [language-choices.html](language-choices.html)). |
 | D159 | Assigning to the name of a function. | A compile error, as in Kotlin (2026-10-18): `fun area() : int` cannot be given another value, `area = { ... }` or `area += 1`; the error says to keep a function that changes in a `var` of a function type. A call of a function declared once with a return type then gives that type, so the compiler leaves out checks of values it has proved (M6.5 part 4). |
 | D160 | How the VM goes from one instruction to the next. | Decided 2026-10-18, from a measurement on M6.5 part 4's numeric loop with the instructions astra.exe emits (Clang 19, against one switch at 183 ms): a computed `goto` at the end of each instruction, through a table 108 ms, with the code threaded 103 ms; a tail call from each instruction's function 134 ms, threaded 128. Built with Clang (the one in Visual Studio), each instruction ends with its own computed `goto`, and a program's code is threaded when it is loaded: each opcode replaced by the address of its instruction's code, the operands as they are. Neither the executable nor bytecode files change (the addresses differ from run to run); the code held while running is about three times as large, some 1 MB for a program of 19,000 lines. Built with MSVC, which has no computed `goto`, the same instructions, each written once, are the cases of a switch. Built in M6.7, with the VM's loop rewritten. |
+| D161 | How a built program leaves out the compiler. | Decided 2026-10-18, at the user's question whether the bases could be kept in `astra.exe` with nothing in it twice: one `astra.exe`, its code in sections, those a running program never needs (the compiler, checker, parser, lexer, cache, shell; the standard library's source text; Jade's window, drawing and the text engine) each in a section of its own. `astra build` writes a copy without the sections the program does not need, the space they took kept empty so that no other address moves, and then the program. The build proves the rest needs nothing left out by linking it once more on its own; the tests run as programs built this way. In place of separate base executables beside `astra.exe` (2.7 MB more for every install, the common parts three times) or the compiler in a DLL (two files, and Jade could not be left out the same way). Built in M6.5 part 5. |
 | | How files are loaded under namespaces. | Importing a folder loads every `.astra` file directly in it, as one unit. Importing a file loads that file only, into its folder's namespace (5.1). |
 | | A lambda's parameter list over several lines. | Allowed, as in Kotlin (5.1). |
 

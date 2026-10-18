@@ -4,7 +4,7 @@
 cmake_minimum_required(VERSION 3.20)
 
 string(REPLACE "|" ";" files "${FILES}")
-set(out "// Generated from src/std/*.astra by cmake/embed.cmake. Do not edit.\n#include <cstddef>\nnamespace astra {\nextern const unsigned char kStdSource[];\nextern const size_t kStdSourceSize;\nextern const size_t kStdFileEnds[];\nextern const size_t kStdFileCount;\nconst unsigned char kStdSource[] = {\n")
+set(out "// Generated from src/std/*.astra by cmake/embed.cmake. Do not edit.\n#include <cstddef>\n// For the compiler alone: in a section of its own, which a built program leaves out (D161).\n#if defined(_MSC_VER)\n#pragma const_seg(\".astras\")\n#endif\nnamespace astra {\nextern const unsigned char kStdSource[];\nextern const size_t kStdSourceSize;\nextern const size_t kStdFileEnds[];\nextern const size_t kStdFileCount;\nconst unsigned char kStdSource[] = {\n")
 # Where each file's text ends, so that the files can be parsed apart, a few at a time.
 set(ends "")
 set(offset 0)

@@ -91,6 +91,12 @@ The result is one file holding the Astra runtime and the compiled script with ev
 imports, the `Jade` library included. It needs neither `astra.exe`, the sources nor `lib` to
 run, so it can be copied to another machine as it is.
 
+What the program can never reach is left out of it: the functions, classes and extension
+functions of the standard library, of Jade and of the script that nothing it runs names, and
+the parts of the runtime no program needs to run (the compiler, the checker and the shell),
+and Jade's window, drawing and text engine when nothing left in the program uses them. A
+`print("hi")` built is 1.7 MB and starts in about 8 ms; a Jade app is about 2.2 MB.
+
 A built program runs as its own process, named after its file: `Todo.exe` is listed as
 `Todo.exe` in Task Manager, never as `astra.exe`, so two Astra apps running side by side are
 told apart by name. Rename the file and the process name follows.
@@ -2390,7 +2396,7 @@ opportunity, which is slow but useful for finding memory bugs when changing the 
 - Integer arithmetic wraps on overflow.
 - Bytecode files are verified when loaded, but that is a consistency check rather than a
   security sandbox. Run only `.astc` files you trust.
-- Standalone programs are about 2 MB each and have only been tried on Windows. They carry
+- Standalone programs are 1.7 to 2.2 MB each and have only been tried on Windows. They carry
   no version information, and since they are unsigned Windows may ask for confirmation the
   first time one downloaded from the internet is run. The script inside is stored as
   bytecode, not encrypted.
