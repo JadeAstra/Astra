@@ -1,0 +1,31 @@
+// The shell checks each input as a file is checked, with what earlier inputs declared and
+// imported in reach (M6.5). A mistake is a compile error, and the input is taken back.
+val count = 3
+val text : string = count
+// expect error: <shell>:1:21: error: 'text' is a string; it cannot start as an int
+count + 1
+// expect: 4
+fun twice(n : int) : int => n * 2
+twice("x")
+// expect error: <shell>:1:7: error: twice(...) takes an int for 'n', not a string
+twice("x")
+// expect error: <shell>:1:7: error: twice(...) takes an int for 'n', not a string
+fun twice(s : string) : string => s + s
+twice("x")
+// expect: "xx"
+val count = "again"
+// expect error: <shell>:1:5: error: cannot redeclare val 'count'
+count * 2
+// expect: 6
+fun loose(x) => x
+// expect error: <shell>:1:11: error: 'x' has no type; write one, as in (x : Type)
+import Jade.*
+val box = Rectangle(1, 2, 3, 4)
+box.width = "wide"
+// expect error: <shell>:1:13: error: 'width' is an int; it cannot be given a string
+box.width + 1
+// expect: 4
+const rows = 40
+fun cells() : int => rows * 2
+cells()
+// expect: 80

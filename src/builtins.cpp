@@ -201,8 +201,14 @@ void registerGlobals(VM& vm) {
             if (p.isString()) params.push_back(asString(p)->chars);
         const std::string& type = asString(args[0])->chars;
         BuiltinType builtin;
-        if (type.empty()) vm.nameFunctionParams(asString(args[1])->chars, params);
-        else if (VM::builtinTypeNamed(type, builtin)) vm.nameParams(builtin, asString(args[1])->chars, params);
+        if (type.empty()) {
+            vm.nameFunctionParams(asString(args[1])->chars, params);
+        } else if (VM::builtinTypeNamed(type, builtin)) {
+            vm.nameParams(builtin, asString(args[1])->chars, params);
+        } else if (ObjNative* member = vm.builtinStatic(type, asString(args[1])->chars)) {
+            // A function of an object the C++ provides (`Math.pow`).
+            if (params.size() > member->params.size()) member->params = params;
+        }
         return Value::null();
     });
     vm.defineNative("print", 0, -1, [](VM& vm, int argc, Value* args) -> Value {

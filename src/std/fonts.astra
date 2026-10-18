@@ -211,9 +211,9 @@ class Picture {
   val height : int
   val pixels : Bytes
 
-  static val black = 0xFF000000
-  static val white = 0xFFFFFFFF
-  static val clear = 0
+  static const black = 0xFF000000
+  static const white = 0xFFFFFFFF
+  static const clear = 0
 
   static fun rgb(red : int, green : int, blue : int, alpha : int = 255) : int => (alpha << 24) | (red << 16) | (green << 8) | blue
 

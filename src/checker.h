@@ -10,6 +10,16 @@ namespace astra {
 
 struct Namespace;
 
+// The value of a constant (R2, D139), worked out when the program is checked.
+struct ConstValue {
+    enum Kind : uint8_t { None, Int, Float, Bool, String };
+    Kind kind = None;
+    int64_t i = 0;
+    double d = 0;
+    bool b = false;
+    std::string s;
+};
+
 // One mistake the type checker found.
 struct CheckDiagnostic {
     std::string file;
@@ -34,7 +44,11 @@ public:
     // A file of the program, once it has been parsed. The statements stay the caller's, and
     // must outlive the checker. `ns` is the namespace its top-level names go in.
     void addUnit(const std::vector<StmtPtr>& statements, const std::string& file, const std::string& fileKey,
-                 Namespace* ns, bool prelude);
+                 Namespace* ns, bool prelude, bool shell = false);
+
+    // The shell's last input, taken back because it did not compile: the names it declared
+    // are as they were before it.
+    void forgetShellUnit();
 
     // An `import` in a file: what it imports, and how the file reaches it.
     void addImport(const std::string& fileKey, const std::string& alias, bool all, Namespace* ns);
@@ -51,6 +65,16 @@ public:
     // A parameter of a named function, a method or a class header has a type written (M6.5
     // part 3, step 5).
     bool requireTypes = true;
+
+    // For a read of a constant (`maxRows`, `Limits.max`), or of a val whose value is constant
+    // and the same for every read (top level, object, static or local): its value, to be
+    // written in its place. False for anything else.
+    bool constantAt(const Expr& at, ConstValue& out);
+
+    // For an expression made only of literals and constants (`rows * 2`, `"v" + major`): its
+    // value, worked out as the VM would. False for anything else, and where working it out
+    // would fail (a division by zero), which is left to happen when the program runs.
+    bool folded(const Expr& e, ConstValue& out);
 
     // For a call of a name with several forms (overloads, D56): the declaration of the form it
     // means, where that could be told; null otherwise, and the form is chosen when it runs.

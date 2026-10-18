@@ -197,9 +197,9 @@ class Process {
 class ProcessBuilder {
   // Where a stream of the new program goes, for redirectInput, redirectOutput and redirectError.
   static {
-    val pipe = "pipe"           // this program reads or writes it (the default)
-    val inherit = "inherit"     // the same place as this program's own
-    val discard = "discard"     // nowhere
+    const pipe = "pipe"           // this program reads or writes it (the default)
+    const inherit = "inherit"     // the same place as this program's own
+    const discard = "discard"     // nowhere
   }
 
   private var parts : List<string>

@@ -199,3 +199,54 @@ external fun Number.compareTo(other : Number) : int
 external fun Number.isNaN() : bool
 external fun Number.isInfinite() : bool
 external fun Number.isFinite() : bool
+
+// -- Math --
+
+// Its functions are the C++'s (src/builtins.cpp); `pi` and `e` are constants, written in
+// place of each read.
+external object Math {
+  const pi = 3.141592653589793
+  const e = 2.718281828459045
+
+  fun sqrt(x : Number) : float
+  fun sin(x : Number) : float
+  fun cos(x : Number) : float
+  fun tan(x : Number) : float
+  fun asin(x : Number) : float
+  fun acos(x : Number) : float
+  fun atan(x : Number) : float
+  fun atan2(y : Number, x : Number) : float
+  fun hypot(x : Number, y : Number) : float
+  fun log(x : Number) : float
+  fun log10(x : Number) : float
+  fun log2(x : Number) : float
+  fun exp(x : Number) : float
+  fun trunc(x : Number) : float
+
+  // The nearest int: below, above, or either way (halves away from zero).
+  fun floor(x : Number) : int
+  fun ceil(x : Number) : int
+  fun round(x : Number) : int
+
+  // Of the kind given: an int for ints, a float for floats.
+  fun abs(x : int) : int
+  fun abs(x : float) : float
+  fun abs(x : Number) : Number
+  fun sign(x : int) : int
+  fun sign(x : float) : float
+  fun sign(x : Number) : Number
+  fun min(first : int, vararg rest : int) : int
+  fun min(first : float, vararg rest : float) : float
+  fun min(first : Number, vararg rest : Number) : Number
+  fun max(first : int, vararg rest : int) : int
+  fun max(first : float, vararg rest : float) : float
+  fun max(first : Number, vararg rest : Number) : Number
+
+  // An int to a power of 0 or more is an int; anything else is a float.
+  fun pow(base : Number, exponent : Number) : Number
+
+  // From 0.0 up to 1.0, not including 1.0; an int from `low` to `high`, both included.
+  fun random() : float
+  fun randomInt(low : int, high : int) : int
+  fun seed(value : int)
+}

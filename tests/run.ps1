@@ -156,6 +156,44 @@ foreach ($test in Get-ChildItem (Join-Path $PSScriptRoot 'check\*.astra') | Sort
     }
 }
 
+# The shell: each tests\shell\*.shell file is typed into it, line by line. Its `// expect:`
+# lines are what the shell prints, and its `// expect error:` lines the errors, each in order.
+foreach ($test in Get-ChildItem (Join-Path $PSScriptRoot 'shell\*.shell') | Sort-Object Name) {
+    $text = [IO.File]::ReadAllText($test.FullName)
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = $Astra
+    $psi.UseShellExecute = $false
+    $psi.RedirectStandardInput = $true
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    $psi.CreateNoWindow = $true
+    $psi.WorkingDirectory = $tmp
+    $psi.StandardOutputEncoding = [System.Text.Encoding]::UTF8
+    $psi.StandardErrorEncoding = [System.Text.Encoding]::UTF8
+    $process = [System.Diagnostics.Process]::Start($psi)
+    $stdout = $process.StandardOutput.ReadToEndAsync()
+    $stderr = $process.StandardError.ReadToEndAsync()
+    $process.StandardInput.Write($text)
+    $process.StandardInput.Close()
+    $process.WaitForExit()
+    $outputs = @($stdout.Result -split "\r?\n" | Where-Object { $_ -ne '' })
+    $errors = @($stderr.Result -split "\r?\n" | Where-Object { $_ -ne '' })
+    $wantOut = @([regex]::Matches($text, '(?m)^// expect: (.*?)\r?$') | ForEach-Object { $_.Groups[1].Value })
+    $wantErr = @([regex]::Matches($text, '(?m)^// expect error: (.*?)\r?$') | ForEach-Object { $_.Groups[1].Value })
+    $result = $null
+    for ($i = 0; $i -lt [Math]::Max($wantOut.Count, $outputs.Count) -and $null -eq $result; $i++) {
+        $want = if ($i -lt $wantOut.Count) { $wantOut[$i] } else { '<no more output>' }
+        $got = if ($i -lt $outputs.Count) { $outputs[$i].TrimEnd() } else { '<no more output>' }
+        if ($want -cne $got) { $result = "output $($i + 1):`n      expected: $want`n      actual:   $got" }
+    }
+    for ($i = 0; $i -lt [Math]::Max($wantErr.Count, $errors.Count) -and $null -eq $result; $i++) {
+        $want = if ($i -lt $wantErr.Count) { $wantErr[$i] } else { '<no more errors>' }
+        $got = if ($i -lt $errors.Count) { $errors[$i].TrimEnd() } else { '<no more errors>' }
+        if ($want -cne $got) { $result = "error $($i + 1):`n      expected: $want`n      actual:   $got" }
+    }
+    if ($null -eq $result) { $passed++ } else { $failures += "$($test.Name) [shell]`n    $result" }
+}
+
 # The --icon option of `astra build`: a program built with an icon runs as before, and
 # Windows finds the icon in the file. The icon is one 32 pixel picture in a single colour.
 $iconColor = 220, 30, 40

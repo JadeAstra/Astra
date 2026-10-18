@@ -110,6 +110,15 @@ private:
     std::unordered_map<std::string, std::unique_ptr<std::vector<StmtPtr>>> parsed_;
     std::vector<std::unique_ptr<std::vector<StmtPtr>>> sources_;
     std::unordered_set<std::string> gathered_;  // files handed to the checker
+    bool gatheringShell_ = false;               // the unit being gathered is an input of the shell
+
+    // What the shell's inputs have imported so far: each input sees what those before it did.
+    struct ShellImport {
+        Namespace* ns;
+        std::string alias, path;
+        bool all;
+    };
+    std::vector<ShellImport> shellImports_;
     void check();
     std::vector<StmtPtr>* parseFile(const std::string& key, const std::string& path, const std::string& name);
     bool findImport(const std::string& path, const std::string& fromDirectory, const std::string& file,

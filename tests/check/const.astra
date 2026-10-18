@@ -1,0 +1,31 @@
+// Constants (R2): a const's value is worked out when compiling, from literals and other
+// constants, or the compiler says what in it is not constant.
+
+const limit = 10
+val notConstant = 5
+fun count() : int => 3
+
+const fine = limit * 2 + 1
+const fromVal = notConstant + 1   // check: const 'fromVal' is worked out when compiling, from literals and other constants; 'notConstant' is not a constant
+const fromCall = count() * 2   // check: const 'fromCall' is worked out when compiling, from literals and other constants; a call is made when the program runs
+const fromList = [1, 2]   // check: const 'fromList' is worked out when compiling, from literals and other constants; a collection is made when the program runs
+const fromNull = null   // check: const 'fromNull' is worked out when compiling, from literals and other constants; null is not a constant's value
+const divided = limit / (limit - 10)   // check: const 'divided' is worked out when compiling, from literals and other constants; this divides by zero
+const shiftedBack = 1 << (limit - 11)   // check: const 'shiftedBack' is worked out when compiling, from literals and other constants; it shifts by a negative amount
+const loops = loopsBack + 1   // check: const 'loops' is worked out from itself
+const loopsBack = loops * 2
+const wrongType : string = limit   // check: 'wrongType' is a string; it cannot start as an int
+const fromMath = Math.pi * 2
+const fromRandom = Math.random() * 2   // check: const 'fromRandom' is worked out when compiling, from literals and other constants; a call is made when the program runs
+
+object Settings {
+  val plain = 3
+  const sure = limit + 1
+}
+const fromObjectVal = Settings.plain + 1   // check: const 'fromObjectVal' is worked out when compiling, from literals and other constants; 'Settings.plain' is not a constant
+const fromObjectConst = Settings.sure + 1
+
+fun inside() {
+  const local = 1   // check: const 'local' is declared at the top level, in an object or in a static { } block; here, write val local = ...
+  print(local)
+}

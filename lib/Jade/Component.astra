@@ -6,7 +6,7 @@
 
 // A kept picture larger than this many pixels is not worth its memory: such a widget is
 // painted every frame instead.
-private val maxCachePixels = 8000000
+private const maxCachePixels = 8000000
 
 class Component {
   val content : Content

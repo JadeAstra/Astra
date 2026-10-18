@@ -75,6 +75,8 @@ private:
     bool isTypeParam(const std::string& name) const;
     bool typeArgumentsBeforeCall(std::vector<TypeAnnotation>& into);  // `f<int>(`: reads them if so
     std::unique_ptr<VarStmt> varDeclaration(bool isField);
+    std::unique_ptr<VarStmt> constDeclaration(bool isField);
+    bool nextIsObject_ = false;  // the class about to be parsed is `object Name`
     std::vector<std::string> destructuringPattern();
     void fieldAccessors(VarStmt& field);
     std::string jumpLabel();
@@ -82,6 +84,7 @@ private:
     StmtPtr classDeclaration(bool isEnum = false, bool isInterface = false, const Token* anonymous = nullptr);
     bool anonymousObjectNext() const;
     bool inInterface_ = false;  // a method may be declared without a body
+    bool externalBody_ = false;  // in `external object`: the C++ provides the methods
     bool abstractMember_ = false;  // so may the member being read now, which is marked abstract
     void classMember(ClassStmt& s, bool inStatic);
     std::unique_ptr<FunctionDecl> method();

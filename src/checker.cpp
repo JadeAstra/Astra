@@ -26,6 +26,7 @@
 #include <unordered_set>
 
 #include "compiler.h"
+#include "value.h"
 
 namespace astra {
 
@@ -200,6 +201,7 @@ struct Unit {
     std::string file, fileKey;
     Namespace* ns = nullptr;
     bool prelude = false;
+    bool shell = false;  // one input of the shell, which may declare a name again
     const std::vector<StmtPtr>* statements = nullptr;  // the compiler's, which outlive the checker's use
     std::vector<ImportInfo> imports;
 };
@@ -213,6 +215,10 @@ struct Local {
     // it (a lambda passed for it then runs in its caller's place).
     FuncInfo* paramOf = nullptr;
     int paramIndex = -1;
+    // A constant of the file's top level, which the file's code sees as a local (R2).
+    FieldInfo* constant = nullptr;
+    // A val with a value, whose reads are folded where the value is constant.
+    const VarStmt* val = nullptr;
 };
 
 // Why nothing may wait in some code, whatever the function around it says (R1).
@@ -561,6 +567,46 @@ struct Checker::Impl {
         return byNamespace[u.ns];
     }
 
+    // A name declared at the top level: in the shell, an input that declares a name again
+    // replaces what it was (the forms of a function declared in one input stay together), and
+    // what it was is kept, to be put back if the input does not compile.
+    struct ShellUndo {
+        std::unordered_map<std::string, GlobalSym>* table;
+        std::string name;
+        bool existed;
+        GlobalSym old;
+    };
+    std::vector<ShellUndo> shellUndo;
+    std::vector<std::pair<std::vector<FuncInfo*>*, size_t>> shellExtensionsUndo;
+
+    GlobalSym& declared(Unit& u, uint8_t visibility, const std::string& name) {
+        auto& table = symbolsFor(u, visibility);
+        if (!u.shell) return table[name];
+        for (const ShellUndo& done : shellUndo)
+            if (done.table == &table && done.name == name) return table[name];
+        auto found = table.find(name);
+        shellUndo.push_back(ShellUndo{&table, name, found != table.end(), found != table.end() ? found->second : GlobalSym{}});
+        table[name] = GlobalSym{};
+        return table[name];
+    }
+
+    void addExtension(Unit& u, std::vector<FuncInfo*>& forms, FuncInfo* f) {
+        if (u.shell) shellExtensionsUndo.emplace_back(&forms, forms.size());
+        forms.push_back(f);
+    }
+
+    void forgetShellUnit() {
+        for (auto it = shellUndo.rbegin(); it != shellUndo.rend(); ++it) {
+            if (it->existed) (*it->table)[it->name] = it->old;
+            else it->table->erase(it->name);
+        }
+        for (auto it = shellExtensionsUndo.rbegin(); it != shellExtensionsUndo.rend(); ++it) it->first->resize(it->second);
+        shellUndo.clear();
+        shellExtensionsUndo.clear();
+        formsAboveKnown.clear();
+        familyKnown.clear();
+    }
+
     FuncInfo* newFunc(const FunctionDecl& decl, Unit* u, ClassInfo* owner) {
         funcStore.push_back(std::make_unique<FuncInfo>());
         FuncInfo* f = funcStore.back().get();
@@ -617,6 +663,7 @@ struct Checker::Impl {
         }
         for (const auto& m : c.methods) {
             FuncInfo* f = newFunc(*m, u, k);
+            f->isExternal = c.isExternal;
             if (m->accessor == FunctionDecl::Accessor::Get) k->getters[m->name] = f;
             else if (m->accessor == FunctionDecl::Accessor::Set) k->setters[m->name] = f;
             else if (m->name == "init" && !m->isStatic) k->inits.push_back(f);
@@ -638,6 +685,12 @@ struct Checker::Impl {
 
     void gather(Unit& u) {
         if (u.ns != nullptr && u.ns->directory == "<builtin>") builtinNs = u.ns;
+        if (u.shell) {
+            // What the input before it declared stays; each input's mistakes are its own.
+            shellUndo.clear();
+            shellExtensionsUndo.clear();
+            seen.clear();
+        }
         for (const StmtPtr& stmt : *u.statements) {
             switch (stmt->kind) {
                 case StmtKind::Var: {
@@ -654,14 +707,14 @@ struct Checker::Impl {
                             FieldInfo* f = newField(name, &u, nullptr);
                             f->isVal = v.isVal;
                             f->state = 2;  // the parts' types are worked out where they are declared
-                            symbolsFor(u, stmt->visibility)[name].var = f;
+                            declared(u, stmt->visibility, name).var = f;
                         }
                         break;
                     }
                     FieldInfo* f = newField(v.name, &u, nullptr);
                     f->decl = &v;
                     f->isVal = v.isVal;
-                    symbolsFor(u, stmt->visibility)[v.name].var = f;
+                    declared(u, stmt->visibility, v.name).var = f;
                     break;
                 }
                 case StmtKind::Function: {
@@ -675,15 +728,15 @@ struct Checker::Impl {
                     } else if (!fs.receiver.empty()) {
                         f->isExtension = true;
                         f->stmt = &fs;
-                        extensions[fs.receiverType.typeParam ? std::string("<T>") : fs.receiver][fs.fn->name].push_back(f);
+                        addExtension(u, extensions[fs.receiverType.typeParam ? std::string("<T>") : fs.receiver][fs.fn->name], f);
                     } else {
-                        symbolsFor(u, stmt->visibility)[fs.fn->name].funcs.push_back(f);
+                        declared(u, stmt->visibility, fs.fn->name).funcs.push_back(f);
                     }
                     break;
                 }
                 case StmtKind::Class: {
                     const auto& c = static_cast<const ClassStmt&>(*stmt);
-                    symbolsFor(u, stmt->visibility)[c.name].cls = gatherClass(c, &u, nullptr);
+                    declared(u, stmt->visibility, c.name).cls = gatherClass(c, &u, nullptr);
                     break;
                 }
                 default:
@@ -1867,6 +1920,13 @@ struct Checker::Impl {
         if (v.isExternal) return;
         // A top-level val or var of the file: already gathered; its type is worked out once.
         const bool global = ctx != nullptr && ctx->topLevel && scopes.size() <= 1 && v.pattern.empty();
+        if (v.isConst) {
+            if (!global)
+                report(v, "const '" + v.name + "' is declared at the top level, in an object or in a static { } block; here, write val " +
+                              v.name + " = ...");
+            else if (const GlobalSym* g = findGlobal(*unit, v.name); g != nullptr && g->var != nullptr)
+                constantOf(g->var);
+        }
         Type declared = v.type.present() ? resolve(v.type, *unit) : unknownType();
         if (!v.type.present() && v.init) keptLambda(*v.init);
         Type value = v.init ? exprExpected(*v.init, declared) : unknownType();
@@ -1883,7 +1943,7 @@ struct Checker::Impl {
             // says which.
             if (!v.init && requireTypes)
                 report(v, "'" + v.name + "' has no value to take its type from; write one, as in var " + v.name + " : Type");
-            if (v.init && value.kind == Type::Null)
+            if (v.init && value.kind == Type::Null && !v.isConst)
                 report(v, "'" + v.name + "' starts as null, so its type must be written (" + v.name + " : Type? = null)");
             type = (value.kind == Type::Null || value.kind == Type::Nothing) ? unknownType() : value;
         }
@@ -1896,6 +1956,9 @@ struct Checker::Impl {
             }
         }
         declareLocal(v.name, type, v.isVal);
+        if (global && v.isConst)
+            if (const GlobalSym* g = findGlobal(*unit, v.name); g != nullptr) scopes.back()[v.name].constant = g->var;
+        if (v.isVal && !v.isConst && v.init) scopes.back()[v.name].val = &v;
     }
 
     void returnStmt(const ReturnStmt& r) {
@@ -2109,6 +2172,7 @@ struct Checker::Impl {
         pushClassTypeParams(k);
         for (const auto& field : c.fields) {
             FieldInfo* f = k->fields[field->name];
+            if (field->isConst) constantOf(f);
             Type declared = fieldType(f);
             if (requireTypes && !field->type.present() && !field->init && field->getter == nullptr && f->header == nullptr)
                 report(*field, "'" + field->name + "' has no value to take its type from; write one, as in " +
@@ -2123,7 +2187,7 @@ struct Checker::Impl {
                     if (field->type.present() && !fits(value, declared))
                         report(*field->init, "'" + field->name + "' is " + describe(declared) + "; it cannot start as " +
                                                  describe(value));
-                    if (!field->type.present() && value.kind == Type::Null && (f->header == nullptr || !f->header->type.present()))
+                    if (!field->type.present() && !field->isConst && value.kind == Type::Null && (f->header == nullptr || !f->header->type.present()))
                         report(*field, "'" + field->name + "' starts as null, so its type must be written (" + field->name +
                                            " : Type? = null)");
                 });
@@ -2142,6 +2206,7 @@ struct Checker::Impl {
         }
         for (const auto& field : c.staticFields) {
             FieldInfo* f = k->statics[field->name];
+            if (field->isConst) constantOf(f);
             Type declared = fieldType(f);
             if (field->init) {
                 FnCtx fc;
@@ -2640,6 +2705,8 @@ struct Checker::Impl {
     Type name(const NameExpr& n) {
         if (Local* l = findLocal(n.name)) {
             if (&n != passedUse) noteUse(*l, ParamUse::Other);
+            noteConst(n, l->constant);
+            if (l->val != nullptr && silent == 0) valUses[&n] = l->val;
             return localType(n.name, *l);
         }
         if (pathsNarrowed()) {
@@ -2657,18 +2724,18 @@ struct Checker::Impl {
         if (ctx != nullptr && ctx->cls != nullptr) {
             if (!ctx->isStatic) {
                 Member m = lookupMember(selfType(ctx->cls), n.name);
-                if (m.field) return subst(fieldType(m.field), m.env);
+                if (m.field) return subst(fieldType(noteConst(n, m.field)), m.env);
                 if (m.getter) return subst(resultOf(m.getter), m.env);
             }
             for (ClassInfo* c = ctx->cls; c != nullptr; c = c->outer) {
                 auto s = c->statics.find(n.name);
-                if (s != c->statics.end()) return fieldType(s->second);
+                if (s != c->statics.end()) return fieldType(noteConst(n, s->second));
                 auto nested = c->nested.find(n.name);
                 if (nested != c->nested.end()) return nested->second->isObject ? classType(nested->second) : unknownType();
             }
         }
         if (const GlobalSym* g = findGlobal(*unit, n.name)) {
-            if (g->var != nullptr) return fieldType(g->var);
+            if (g->var != nullptr) return fieldType(noteConst(n, g->var));
             if (g->cls != nullptr) return g->cls->isObject ? classType(g->cls) : unknownType();
             if (g->funcs.size() == 1) return functionValue(g->funcs[0]);
         }
@@ -3076,7 +3143,7 @@ struct Checker::Impl {
             if (findLocal(base) == nullptr && !nameIsMember(base)) {
                 if (Namespace* ns = findAlias(*unit, base)) {
                     if (const GlobalSym* g = findIn(ns, m.name)) {
-                        if (g->var) return fieldType(g->var);
+                        if (g->var) return fieldType(noteConst(m, g->var));
                         if (g->cls) return g->cls->isObject ? classType(g->cls) : unknownType();
                         if (g->funcs.size() == 1) return functionValue(g->funcs[0]);
                     }
@@ -3115,7 +3182,7 @@ struct Checker::Impl {
 
     Type staticMember(ClassInfo* k, const MemberExpr& m) {
         auto s = k->statics.find(m.name);
-        if (s != k->statics.end()) return fieldType(s->second);
+        if (s != k->statics.end()) return fieldType(noteConst(m, s->second));
         auto n = k->nested.find(m.name);
         if (n != k->nested.end()) return n->second->isObject ? classType(n->second) : unknownType();
         auto sm = k->staticMethods.find(m.name);
@@ -3153,7 +3220,10 @@ struct Checker::Impl {
         if (obj.kind == Type::Class && obj.cls != nullptr) {
             ClassInfo* k = obj.cls;
             Member m = lookupMember(plain, name);
+            // An object's constant is folded where the object is named, so nothing is skipped.
+            const bool named = at.object->kind == ExprKind::Name || at.object->kind == ExprKind::This;
             if (m.field) {
+                if (named) noteConst(at, m.field);
                 result = subst(fieldType(m.field), m.env);
             } else if (m.getter) {
                 result = subst(resultOf(m.getter), m.env);
@@ -3164,7 +3234,7 @@ struct Checker::Impl {
                 result = subst(functionValue(m.methods[0]), m.env);
             } else if (m.methods.empty()) {
                 auto st = k->statics.find(name);
-                if (st != k->statics.end()) result = fieldType(st->second);
+                if (st != k->statics.end()) result = fieldType(named ? noteConst(at, st->second) : st->second);
                 else if (k->isEnum && name == "ordinal") result = Type::of(Type::Int);
                 else if (k->isEnum && name == "name") result = Type::of(Type::String);
                 else if (findExtensions(plain, name).empty() && reportMissing(k, name))
@@ -3965,6 +4035,303 @@ struct Checker::Impl {
         judgeWaits();
     }
 
+    // ---- Constants: `const` (R2, D139) ----
+    //
+    // A constant's value is worked out when the program is checked, from literals and other
+    // constants, with what the VM does to them (ints wrapping round, `/` on two ints dropping
+    // the fraction, numbers joined to text as print shows them), and the compiler writes it in
+    // place of each read.
+
+    std::unordered_map<const Expr*, FieldInfo*> constUses;  // a read of a constant: which
+    std::unordered_map<const VarStmt*, std::pair<int, ConstValue>> constValues;  // 1 being worked out, 2 known
+    int workingOutConst = 0;
+
+    FieldInfo* noteConst(const Expr& at, FieldInfo* f) {
+        if (f == nullptr || f->decl == nullptr || (silent > 0 && workingOutConst == 0)) return f;
+        // A read that the access words refuse is left to be refused when the program runs.
+        if (!readableHere(f)) return f;
+        if (f->decl->isConst) constUses[&at] = f;
+        else if (foldableVal(f) && silent == 0) valUses[&at] = f->decl;
+        return f;
+    }
+
+    // Whether code here may read a field, so that folding it skips no check: a member that is
+    // public, or read from inside its class; a top-level name that is public, or of this file.
+    bool readableHere(const FieldInfo* f) const {
+        if (f->owner == nullptr) return f->decl->visibility == 0 || f->unit == unit;
+        const uint8_t access = f->decl->access;
+        if (access == kAccessWordNone || access == kAccessWordPublic) return true;
+        for (ClassInfo* c = classAround(); c != nullptr; c = c->outer)
+            if (c == f->owner) return true;
+        return false;
+    }
+
+    // A val that is the same for every read, so that a constant value may be folded: one of
+    // the top level, an object or a class's static code. An instance field of a class may be
+    // overridden, and one with an accessor is worked out each time.
+    bool foldableVal(const FieldInfo* f) const {
+        const VarStmt& d = *f->decl;
+        if (!d.isVal || d.isConst || d.init == nullptr || d.getter != nullptr || d.isExternal || !d.pattern.empty()) return false;
+        if (f->owner == nullptr || f->owner->isObject) return true;
+        auto st = f->owner->statics.find(f->name);
+        return st != f->owner->statics.end() && st->second == f;
+    }
+
+    // Reads of vals that may be folded, and what each val came to (1 being worked out, 2 known).
+    std::unordered_map<const Expr*, const VarStmt*> valUses;
+    std::unordered_map<const VarStmt*, std::pair<int, ConstValue>> valValues;
+
+    ConstValue valueOfVal(const VarStmt* d) {
+        auto known = valValues.find(d);
+        if (known != valValues.end()) return known->second.first == 2 ? known->second.second : ConstValue{};
+        valValues[d].first = 1;
+        ConstValue v = foldQuietly(*d->init);
+        valValues[d] = {2, v};
+        return v;
+    }
+
+    ConstValue constantOf(FieldInfo* f) {
+        auto known = constValues.find(f->decl);
+        if (known != constValues.end()) {
+            if (known->second.first == 2) return known->second.second;
+            report(*f->decl, "const '" + f->name + "' is worked out from itself");
+            return ConstValue{};
+        }
+        constValues[f->decl].first = 1;
+        ConstValue v;
+        // Its value is read in its own place, so that the constants it names are known.
+        Unit* savedUnit = unit;
+        FnCtx* savedCtx = ctx;
+        auto savedScopes = std::move(scopes);
+        auto savedNarrowed = std::move(narrowed);
+        TParamsSaved savedParams(*this);
+        scopes.clear();
+        narrowed.clear();
+        unit = f->unit;
+        FnCtx temp;
+        temp.cls = f->owner;
+        temp.topLevel = f->owner == nullptr;
+        if (f->owner != nullptr) {
+            auto st = f->owner->statics.find(f->name);
+            temp.isStatic = st != f->owner->statics.end() && st->second == f;
+        }
+        ctx = &temp;
+        pushClassTypeParams(f->owner);
+        silent++;
+        workingOutConst++;
+        push();
+        expr(*f->decl->init);
+        pop();
+        workingOutConst--;
+        silent--;
+        v = constEval(*f->decl->init, f->name);
+        unit = savedUnit;
+        ctx = savedCtx;
+        scopes = std::move(savedScopes);
+        narrowed = std::move(savedNarrowed);
+        constValues[f->decl] = {2, v};
+        return v;
+    }
+
+    // Folding an expression outside a constant's value: nothing is reported, the constants it
+    // names are those already worked out, and what was found is kept.
+    int quietFold = 0;
+    std::unordered_map<const Expr*, ConstValue> foldedKnown;
+
+    ConstValue foldQuietly(const Expr& e) {
+        auto known = foldedKnown.find(&e);
+        if (known != foldedKnown.end()) return known->second;
+        quietFold++;
+        ConstValue v = constEval(e, std::string());
+        quietFold--;
+        foldedKnown[&e] = v;
+        return v;
+    }
+
+    ConstValue notConstant(const Expr& at, const std::string& of, const std::string& why) {
+        if (quietFold > 0) return ConstValue{};
+        report(at, "const '" + of + "' is worked out when compiling, from literals and other constants; " + why);
+        return ConstValue{};
+    }
+
+    static ConstValue constInt(int64_t i) {
+        ConstValue v;
+        v.kind = ConstValue::Int;
+        v.i = i;
+        return v;
+    }
+    static ConstValue constFloat(double d) {
+        ConstValue v;
+        v.kind = ConstValue::Float;
+        v.d = d;
+        return v;
+    }
+    static ConstValue constBool(bool b) {
+        ConstValue v;
+        v.kind = ConstValue::Bool;
+        v.b = b;
+        return v;
+    }
+    static ConstValue constString(std::string s) {
+        ConstValue v;
+        v.kind = ConstValue::String;
+        v.s = std::move(s);
+        return v;
+    }
+    // As print shows it, and as `+` joins it to text.
+    static std::string constText(const ConstValue& v) {
+        switch (v.kind) {
+            case ConstValue::Int: return std::to_string(v.i);
+            case ConstValue::Float: return formatFloat(v.d);
+            case ConstValue::Bool: return v.b ? "true" : "false";
+            case ConstValue::String: return v.s;
+            default: return "";
+        }
+    }
+    static bool isNumberConst(const ConstValue& v) { return v.kind == ConstValue::Int || v.kind == ConstValue::Float; }
+    static double asDouble(const ConstValue& v) { return v.kind == ConstValue::Int ? static_cast<double>(v.i) : v.d; }
+
+    // The value of a constant's expression; None where it is not constant (reported) or does
+    // not fit together (reported by the checking of types).
+    ConstValue constEval(const Expr& e, const std::string& of) {
+        switch (e.kind) {
+            case ExprKind::Literal: {
+                const auto& l = static_cast<const LiteralExpr&>(e);
+                switch (l.type) {
+                    case LiteralExpr::Type::Bool: return constBool(l.boolValue);
+                    case LiteralExpr::Type::Int: return constInt(l.intValue);
+                    case LiteralExpr::Type::Float: return constFloat(l.floatValue);
+                    case LiteralExpr::Type::String: return constString(l.stringValue);
+                    default: return notConstant(e, of, "null is not a constant's value");
+                }
+            }
+            case ExprKind::Interp: {
+                std::string joined;
+                for (const ExprPtr& part : static_cast<const InterpExpr&>(e).parts) {
+                    ConstValue p = constEval(*part, of);
+                    if (p.kind == ConstValue::None) return ConstValue{};
+                    joined += constText(p);
+                }
+                return constString(std::move(joined));
+            }
+            case ExprKind::Name:
+            case ExprKind::Member: {
+                auto use = constUses.find(&e);
+                if (use != constUses.end() && quietFold > 0) {
+                    auto known = constValues.find(use->second->decl);
+                    return known != constValues.end() && known->second.first == 2 ? known->second.second : ConstValue{};
+                }
+                // Folding outside a constant's value, a val whose value is constant counts too.
+                if (quietFold > 0) {
+                    auto val = valUses.find(&e);
+                    return val != valUses.end() ? valueOfVal(val->second) : ConstValue{};
+                }
+                if (use != constUses.end()) return constantOf(use->second);
+                const std::string written = placeText(e);
+                return notConstant(e, of, "'" + written + "' is not a constant");
+            }
+            case ExprKind::Unary: {
+                const auto& u = static_cast<const UnaryExpr&>(e);
+                ConstValue a = quietFold > 0 ? foldQuietly(*u.operand) : constEval(*u.operand, of);
+                if (a.kind == ConstValue::None) return a;
+                if (u.op == TokenType::Minus && a.kind == ConstValue::Int)
+                    return constInt(static_cast<int64_t>(0 - static_cast<uint64_t>(a.i)));
+                if (u.op == TokenType::Minus && a.kind == ConstValue::Float) return constFloat(-a.d);
+                if (u.op == TokenType::Bang && a.kind == ConstValue::Bool) return constBool(!a.b);
+                if (u.op == TokenType::Tilde && a.kind == ConstValue::Int) return constInt(~a.i);
+                return ConstValue{};
+            }
+            case ExprKind::Logical: {
+                const auto& l = static_cast<const LogicalExpr&>(e);
+                ConstValue a = quietFold > 0 ? foldQuietly(*l.left) : constEval(*l.left, of);
+                ConstValue b = quietFold > 0 ? foldQuietly(*l.right) : constEval(*l.right, of);
+                if (a.kind != ConstValue::Bool || b.kind != ConstValue::Bool) return ConstValue{};
+                return constBool(l.isAnd ? (a.b && b.b) : (a.b || b.b));
+            }
+            case ExprKind::Binary: return constBinary(static_cast<const BinaryExpr&>(e), of);
+            case ExprKind::Call: return notConstant(e, of, "a call is made when the program runs");
+            case ExprKind::List:
+            case ExprKind::Map:
+            case ExprKind::Range: return notConstant(e, of, "a collection is made when the program runs");
+            default: return notConstant(e, of, "this is worked out when the program runs");
+        }
+    }
+
+    ConstValue constBinary(const BinaryExpr& e, const std::string& of) {
+        ConstValue a = quietFold > 0 ? foldQuietly(*e.left) : constEval(*e.left, of);
+        ConstValue b = quietFold > 0 ? foldQuietly(*e.right) : constEval(*e.right, of);
+        if (a.kind == ConstValue::None || b.kind == ConstValue::None) return ConstValue{};
+        const bool ints = a.kind == ConstValue::Int && b.kind == ConstValue::Int;
+        const bool numbers = isNumberConst(a) && isNumberConst(b);
+        const uint64_t x = static_cast<uint64_t>(a.i), y = static_cast<uint64_t>(b.i);
+        switch (e.op) {
+            case TokenType::Plus:
+                if (a.kind == ConstValue::String || b.kind == ConstValue::String) return constString(constText(a) + constText(b));
+                if (ints) return constInt(static_cast<int64_t>(x + y));
+                if (numbers) return constFloat(asDouble(a) + asDouble(b));
+                return ConstValue{};
+            case TokenType::Minus:
+                if (ints) return constInt(static_cast<int64_t>(x - y));
+                if (numbers) return constFloat(asDouble(a) - asDouble(b));
+                return ConstValue{};
+            case TokenType::Star:
+                if (ints) return constInt(static_cast<int64_t>(x * y));
+                if (numbers) return constFloat(asDouble(a) * asDouble(b));
+                return ConstValue{};
+            case TokenType::Slash:
+                if (ints) {
+                    if (b.i == 0) return notConstant(e, of, "this divides by zero");
+                    return constInt(b.i == -1 ? static_cast<int64_t>(0 - x) : a.i / b.i);
+                }
+                if (numbers) return constFloat(asDouble(a) / asDouble(b));
+                return ConstValue{};
+            case TokenType::Percent:
+                if (ints) {
+                    if (b.i == 0) return notConstant(e, of, "this divides by zero");
+                    return constInt(b.i == -1 ? 0 : a.i % b.i);
+                }
+                if (numbers) return constFloat(std::fmod(asDouble(a), asDouble(b)));
+                return ConstValue{};
+            case TokenType::Lt:
+            case TokenType::LtEq:
+            case TokenType::Gt:
+            case TokenType::GtEq: {
+                int order;
+                if (ints) order = a.i < b.i ? -1 : a.i > b.i ? 1 : 0;
+                else if (numbers) order = asDouble(a) < asDouble(b) ? -1 : asDouble(a) > asDouble(b) ? 1 : 0;
+                else if (a.kind == ConstValue::String && b.kind == ConstValue::String) order = a.s.compare(b.s);
+                else return ConstValue{};
+                if (e.op == TokenType::Lt) return constBool(order < 0);
+                if (e.op == TokenType::LtEq) return constBool(order <= 0);
+                if (e.op == TokenType::Gt) return constBool(order > 0);
+                return constBool(order >= 0);
+            }
+            case TokenType::EqEq:
+            case TokenType::BangEq: {
+                bool same;
+                if (numbers && !ints) same = asDouble(a) == asDouble(b);
+                else if (a.kind != b.kind) same = false;
+                else if (ints) same = a.i == b.i;
+                else if (a.kind == ConstValue::Bool) same = a.b == b.b;
+                else same = a.s == b.s;
+                return constBool(e.op == TokenType::EqEq ? same : !same);
+            }
+            case TokenType::Amp: return ints ? constInt(a.i & b.i) : ConstValue{};
+            case TokenType::Pipe: return ints ? constInt(a.i | b.i) : ConstValue{};
+            case TokenType::Caret: return ints ? constInt(std::bit_xor<int64_t>()(a.i, b.i)) : ConstValue{};
+            case TokenType::Shl:
+            case TokenType::Shr: {
+                if (!ints) return ConstValue{};
+                if (b.i < 0) return notConstant(e, of, "it shifts by a negative amount");
+                if (e.op == TokenType::Shl) return constInt(b.i >= 64 ? 0 : static_cast<int64_t>(x << b.i));
+                if (b.i >= 64) return constInt(a.i < 0 ? -1 : 0);
+                return constInt(a.i < 0 ? ~(~a.i >> b.i) : a.i >> b.i);
+            }
+            default:
+                return notConstant(e, of, "this is worked out when the program runs");
+        }
+    }
+
     // ---- Waiting: `suspend` (R1, D30) ----
     //
     // A call of a suspend function may stand where its code may wait: in a suspend function, at
@@ -4222,15 +4589,37 @@ struct Checker::Impl {
 };
 
 Checker::Checker() : impl_(std::make_unique<Impl>()) {}
+
+bool Checker::folded(const Expr& e, ConstValue& out) {
+    if (e.kind != ExprKind::Binary && e.kind != ExprKind::Unary && e.kind != ExprKind::Logical && e.kind != ExprKind::Interp)
+        return false;
+    out = impl_->foldQuietly(e);
+    return out.kind != ConstValue::None;
+}
+
+bool Checker::constantAt(const Expr& at, ConstValue& out) {
+    auto val = impl_->valUses.find(&at);
+    if (val != impl_->valUses.end()) {
+        out = impl_->valueOfVal(val->second);
+        return out.kind != ConstValue::None;
+    }
+    auto use = impl_->constUses.find(&at);
+    if (use == impl_->constUses.end()) return false;
+    auto known = impl_->constValues.find(use->second->decl);
+    if (known == impl_->constValues.end() || known->second.first != 2 || known->second.second.kind == ConstValue::None) return false;
+    out = known->second.second;
+    return true;
+}
 Checker::~Checker() = default;
 
 void Checker::addUnit(const std::vector<StmtPtr>& statements, const std::string& file, const std::string& fileKey,
-                      Namespace* ns, bool prelude) {
+                      Namespace* ns, bool prelude, bool shell) {
     auto u = std::make_unique<Unit>();
     u->file = file;
     u->fileKey = fileKey;
     u->ns = ns;
     u->prelude = prelude;
+    u->shell = shell;
     u->statements = &statements;
     auto pending = impl_->unitsByKey.find(fileKey);
     if (pending != impl_->unitsByKey.end()) u->imports = std::move(pending->second->imports);
@@ -4238,6 +4627,8 @@ void Checker::addUnit(const std::vector<StmtPtr>& statements, const std::string&
     impl_->units.push_back(std::move(u));
     impl_->unitsByKey[fileKey] = raw;
 }
+
+void Checker::forgetShellUnit() { impl_->forgetShellUnit(); }
 
 void Checker::addImport(const std::string& fileKey, const std::string& alias, bool all, Namespace* ns) {
     auto found = impl_->unitsByKey.find(fileKey);
@@ -4271,7 +4662,9 @@ const TypeAnnotation* Checker::extensionReceiver(const FunctionDecl& fn) const {
 
 const FunctionDecl* Checker::chosenForm(const CallExpr& call) const {
     auto found = impl_->chosenForms.find(&call);
-    return found == impl_->chosenForms.end() ? nullptr : found->second->decl;
+    // A built-in's forms are told apart by the C++ itself, under its one name.
+    if (found == impl_->chosenForms.end() || found->second->isExternal) return nullptr;
+    return found->second->decl;
 }
 
 void Checker::run() {

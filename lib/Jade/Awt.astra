@@ -142,14 +142,14 @@ class Color {
 // of the names that mean the system's own: "Dialog", "SansSerif", "Serif", "Monospaced".
 // The size is the height of the font's em in layout units.
 class Font {
-  static val plain = 0
-  static val bold = 1
-  static val italic = 2
-  static val dialog = "Dialog"
-  static val dialogInput = "DialogInput"
-  static val sansSerif = "SansSerif"
-  static val serif = "Serif"
-  static val monospaced = "Monospaced"
+  static const plain = 0
+  static const bold = 1
+  static const italic = 2
+  static const dialog = "Dialog"
+  static const dialogInput = "DialogInput"
+  static const sansSerif = "SansSerif"
+  static const serif = "Serif"
+  static const monospaced = "Monospaced"
 
   val name : string
   val style : int
@@ -391,8 +391,8 @@ class Rectangle {
 // other only when it is asked for after the other has changed, so a picture that is only
 // ever drawn is sent to the card once.
 class BufferedImage {
-  static val typeIntRgb = 1       // no alpha: every pixel solid
-  static val typeIntArgb = 2
+  static const typeIntRgb = 1       // no alpha: every pixel solid
+  static const typeIntArgb = 2
 
   val width : int
   val height : int

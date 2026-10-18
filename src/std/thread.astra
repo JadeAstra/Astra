@@ -19,13 +19,13 @@ class ExecutionException(val cause : any?) : Error(cause is Error ? cause.messag
 // What a time limit is counted in. A limit is a number and one of these; with no unit it is
 // milliseconds: future.get(2, TimeUnit.seconds)
 object TimeUnit {
-  val nanoseconds = 0.000001
-  val microseconds = 0.001
-  val milliseconds = 1
-  val seconds = 1000
-  val minutes = 60000
-  val hours = 3600000
-  val days = 86400000
+  const nanoseconds = 0.000001
+  const microseconds = 0.001
+  const milliseconds = 1
+  const seconds = 1000
+  const minutes = 60000
+  const hours = 3600000
+  const days = 86400000
 
   // A limit in milliseconds, or null for none.
   fun toMillis(amount : Number?, unit : Number? = null) : Number? => amount == null ? null : (unit == null ? amount : amount * unit)

@@ -478,6 +478,19 @@ private:
         bool all;           // `import jade.*`: its names can be written bare
     };
     std::vector<Import> imports_;
+
+public:
+    // The shell's imports, which last from one input to the next.
+    void useImports(const std::vector<CompilerSession::ShellImport>& earlier) {
+        for (const auto& i : earlier) imports_.push_back(Import{i.ns, i.alias, i.path, i.all});
+    }
+    std::vector<CompilerSession::ShellImport> importsNow() const {
+        std::vector<CompilerSession::ShellImport> now;
+        for (const Import& i : imports_) now.push_back({i.ns, i.alias, i.path, i.all});
+        return now;
+    }
+
+private:
     bool jumpInExpression_ = false;  // the statement about to be compiled is a jump inside an expression
 
     CompileError error(const Node& at, const std::string& message) const {
@@ -1981,6 +1994,37 @@ private:
         }
     }
 
+    // `external object Math { ... }`: each function is one the C++ has, taking what its
+    // declaration says, and is given its parameters' names (D116).
+    void checkExternalObject(const ClassStmt& s) {
+        if (ns_ != session_.builtins_) throw error(s, "'external' declarations are the standard library's: they describe what the C++ provides");
+        for (const auto& method : s.methods) {
+            const FunctionDecl& fn = *method;
+            const std::string what = "function '" + fn.name + "' of " + s.name;
+            ObjNative* native = session_.vm_.builtinStatic(s.name, fn.name);
+            if (native == nullptr) throw error(fn, "there is no " + what + " in the C++ for this declaration");
+            int required = 0;
+            for (size_t i = 0; i < fn.params.size(); i++)
+                if (fn.paramDefaults[i] == nullptr && static_cast<int>(i) != fn.varargIndex) required++;
+            const int most = fn.varargIndex >= 0 ? -1 : static_cast<int>(fn.params.size());
+            if (required < native->minArgs || (native->maxArgs >= 0 && (most < 0 || most > native->maxArgs)))
+                throw error(fn, "the " + what + " takes " + std::to_string(native->minArgs) + " to " +
+                                    (native->maxArgs < 0 ? std::string("any number of") : std::to_string(native->maxArgs)) +
+                                    " arguments in the C++; this declaration says " + std::to_string(required) + " to " +
+                                    (most < 0 ? std::string("any number of") : std::to_string(most)));
+            if (fn.params.empty() || fn.varargIndex >= 0) continue;
+            line_ = fn.line;
+            emit(Op::GetGlobal, resolveGlobal("__nameParams", fn)->slot);
+            emit(Op::Const, stringConstant(s.name));
+            emit(Op::Const, stringConstant(fn.name));
+            for (const std::string& p : fn.params) emit(Op::Const, stringConstant(p));
+            emit(Op::BuildList, static_cast<int>(fn.params.size()));
+            emit(Op::Call);
+            emitByte(3);
+            emit(Op::Pop);
+        }
+    }
+
     void checkExternalProperty(const VarStmt& s) {
         if (ns_ != session_.builtins_) throw error(s, "'external' declarations are the standard library's: they describe what the C++ provides");
         BuiltinType type;
@@ -2176,6 +2220,10 @@ private:
     // inside the class `outer`.
     void compileClass(const ClassStmt& s, std::string bound = "", const ClassState* outer = nullptr,
                       ClassPart part = ClassPart::All) {
+        if (s.isExternal) {
+            if (part != ClassPart::Values) checkExternalObject(s);
+            return;
+        }
         if (bound.empty()) bound = s.name;
         // For an object the name belongs to the instance, and the class is kept out of sight.
         const std::string storage = s.isObject ? "(object " + bound + ")" : bound;
@@ -3135,6 +3183,7 @@ private:
 
     void compileExpr(const Expr& expr) {
         line_ = expr.line;
+        if (emitConstant(expr)) return;
         switch (expr.kind) {
             case ExprKind::Literal: {
                 const auto& e = static_cast<const LiteralExpr&>(expr);
@@ -3737,6 +3786,35 @@ private:
     }
 
     // x++ and x-- as statements: the same as x += 1 and x -= 1 with the result discarded.
+    // A read of a constant (R2): its value, worked out by the checker, in its place.
+    // An expression made only of literals and constants is worked out the same way (R2).
+    bool emitConstant(const Expr& expr) {
+        ConstValue v;
+        if (session_.checker == nullptr) return false;
+        if (expr.kind == ExprKind::Name || expr.kind == ExprKind::Member) {
+            if (!session_.checker->constantAt(expr, v)) return false;
+            // A bare name two imports both declare is still reported, as an ordinary read is.
+            if (expr.kind == ExprKind::Name) {
+                const auto& name = static_cast<const NameExpr&>(expr);
+                VarInfo info;
+                if (resolveLocal(fs_, name.name, name, info) == -1) findGlobal(name.name, name);
+            }
+        } else if (expr.kind == ExprKind::Binary || expr.kind == ExprKind::Unary || expr.kind == ExprKind::Logical ||
+                   expr.kind == ExprKind::Interp) {
+            if (!session_.checker->folded(expr, v)) return false;
+        } else {
+            return false;
+        }
+        switch (v.kind) {
+            case ConstValue::Int: emit(Op::Const, intConstant(v.i)); break;
+            case ConstValue::Float: emit(Op::Const, floatConstant(v.d)); break;
+            case ConstValue::Bool: emit(v.b ? Op::True : Op::False); break;
+            case ConstValue::String: emit(Op::Const, stringConstant(v.s)); break;
+            default: return false;
+        }
+        return true;
+    }
+
     // `++?`, `+=?` and the like (L118): with the target's value on the stack, over the parts
     // the store needs, a null skips the change; the parts go and the null is the result.
     int beginNullSafe(bool nullSafe) { return nullSafe ? emitJump(Op::JumpIfNull) : -1; }
@@ -4088,6 +4166,7 @@ void CompilerSession::predeclare(Namespace& ns, const std::string& fileKey, cons
             declare(static_cast<const FunctionStmt&>(*stmt).fn->name, false, *stmt, static_cast<const FunctionStmt&>(*stmt).fn.get());
         } else if (stmt->kind == StmtKind::Class) {
             const auto& cls = static_cast<const ClassStmt&>(*stmt);
+            if (cls.isExternal) continue;  // the C++'s own global, which needs no slot
             declare(cls.name, cls.isObject, cls);
         }
     }
@@ -4149,8 +4228,12 @@ bool CompilerSession::findImport(const std::string& path, const std::string& fro
 // import reports it.
 void CompilerSession::gather(const std::string& key, const std::string& name, const std::string& directory,
                              const std::vector<StmtPtr>& statements, Namespace* ns, bool prelude) {
-    if (!gathered_.insert(key).second) return;
-    checker->addUnit(statements, name, key, ns, prelude);
+    // Each input of the shell is a unit of its own, under the one key, which takes over the
+    // imports of the inputs before it.
+    const bool shell = gatheringShell_;
+    gatheringShell_ = false;
+    if (!gathered_.insert(key).second && !shell) return;
+    checker->addUnit(statements, name, key, ns, prelude, shell);
     for (const StmtPtr& stmt : statements) {
         if (stmt->kind != StmtKind::Import) continue;
         const auto& s = static_cast<const ImportStmt&>(*stmt);
@@ -4197,18 +4280,24 @@ void CompilerSession::check() {
 }
 
 // Source text that is not a file (the standard library, the shell, `astra -e`): parsed, and
-// unless it is the shell's, checked with what it imports; then compiled.
+// checked with what it imports; then compiled. An input of the shell that does not compile is
+// taken back from the checker, as it is from the program.
 FunctionProto* CompilerSession::compileUnit(const std::string& source, const std::string& name,
                                             const std::string& directory, const std::string& fileKey, bool shell,
                                             Namespace* into) {
     sources_.push_back(std::make_unique<std::vector<StmtPtr>>(parseSource(source, name)));
     std::vector<StmtPtr>& statements = *sources_.back();
     Namespace* ns = into != nullptr ? into : namespaceOf(directory);
-    if (!shell) {
+    gatheringShell_ = shell;
+    try {
         gather(fileKey, name, directory, statements, ns, directory == "<builtin>");
         check();
+        return compileStatements(statements, name, directory, fileKey, shell, ns);
+    } catch (...) {
+        gatheringShell_ = false;
+        if (shell) checker->forgetShellUnit();
+        throw;
     }
-    return compileStatements(statements, name, directory, fileKey, shell, ns);
 }
 
 FunctionProto* CompilerSession::compileStatements(const std::vector<StmtPtr>& statements, const std::string& name,
@@ -4216,7 +4305,11 @@ FunctionProto* CompilerSession::compileStatements(const std::vector<StmtPtr>& st
                                                   Namespace* ns) {
     predeclare(*ns, fileKey, name, statements, shell);
     ModuleCompiler compiler(*this, name, directory == "<builtin>" ? "" : directory, ns, fileKey);
-    return compiler.compile(statements, shell);
+    if (!shell) return compiler.compile(statements, shell);
+    compiler.useImports(shellImports_);
+    FunctionProto* proto = compiler.compile(statements, shell);
+    shellImports_ = compiler.importsNow();
+    return proto;
 }
 
 // The script named in `Worker("physics.astra")`, looked for next to the file that names it.

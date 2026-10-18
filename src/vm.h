@@ -273,6 +273,8 @@ public:
     // What the C++ provides, for `external` declarations to be checked against: whether a global
     // function, or a built-in type's method, exists, and how many arguments it takes (-1: any).
     bool builtinArity(const std::string& name, int& minArgs, int& maxArgs) const;
+    // A static of a class the C++ provides (`Math.sqrt`): its own static, or null.
+    ObjNative* builtinStatic(const std::string& cls, const std::string& name);
     bool methodArity(BuiltinType type, const std::string& name, int& minArgs, int& maxArgs);
     void defineNative(const std::string& name, int minArgs, int maxArgs, NativeFn fn);
     void defineMethod(BuiltinType type, const std::string& name, int minArgs, int maxArgs, NativeMethodFn fn);

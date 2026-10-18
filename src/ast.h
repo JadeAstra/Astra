@@ -324,6 +324,9 @@ struct VarStmt : Stmt {
     std::vector<std::string> pattern;
     ExprPtr init;  // may be null (var only)
     bool isVal = false;
+    // `const maxRows = 1000`: a val whose value is worked out when compiling, from literals
+    // and other constants, and written into each use (R2, D139).
+    bool isConst = false;
 
     TypeAnnotation type;
 
@@ -494,6 +497,10 @@ struct EnumEntry : Node {
 // class Name(val a : T, var b, c) : Super(args) { fields and methods }
 struct ClassStmt : Stmt {
     std::string name;
+
+    // `external object Math { ... }`: an object the C++ provides, declared so that its
+    // functions are checked and its constants known; nothing of it is compiled.
+    bool isExternal = false;
 
     // The number the compiler knows the class by where private members are concerned
     // (0 until it is given one); see Op::MemberAccess.

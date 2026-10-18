@@ -1,6 +1,6 @@
 import "strutil"
 
-val TAU = 6.28
+const TAU = 6.28
 
 fun double(x : int) => x * 2
 

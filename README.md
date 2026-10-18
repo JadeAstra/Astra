@@ -55,6 +55,10 @@ astra dis <file>                      list the bytecode of a source or bytecode 
 the sources. Exit codes: 0 success, 65 compile error, 66 file not found, 70 uncaught runtime
 error, or whatever the script passes to `exit()`.
 
+The shell checks each input as a file is checked, with what earlier inputs declared and
+imported in reach: a mistake is a compile error, and the input is taken back. A function
+declared again takes the place of the one before.
+
 ### Standalone programs
 
 `astra build --exe` turns a script into an executable of its own:
@@ -232,6 +236,35 @@ These are checked when compiling: `names.add(1)` is an error. When the program r
 outer type is checked: that `names` is a list, that `action` is a function.
 
 A `val` fixes the variable, not the object: a list held in a `val` can still be changed.
+
+#### Constants
+
+`const` declares a value known when the program is compiled, written into each place that
+reads it, so reading it costs nothing:
+
+```astra
+const cols = 40
+const rows = cols * 2              // other constants, and arithmetic on them
+const title = "Grid $rows x $cols" // text joined from them
+object Limits { const most = rows + 1 }
+class Board { static const cells = rows * cols }
+```
+
+Its value is worked out from literals (numbers, text, `true` and `false`) and other
+constants, with arithmetic, joining and comparisons on them, exactly as the program would
+work them out when running: ints wrap round, `/` on two ints drops the fraction. Anything
+else is a compile error saying what is not constant (`'limit' is not a constant`, `a call is
+made when the program runs`). A constant may name one declared further down, but not
+itself. It is declared at the top level, in an object, or in a class's static code (`static
+const`, or inside `static { }`); not inside a function, and not as a field of each object.
+Kotlin's `const val` is written `const` alone, and the error says so.
+
+An expression made only of literals and constants is worked out when compiling too, wherever
+it is (`rows * 2 + 1`); one that would fail, such as a division by zero, is left to fail when
+the program runs. So is a `val` whose value is constant and the same for every read: one at
+the top level, in an object, in static code or in a function (`val margin = 8`). A `val` of
+each object is not, since a subclass may give it another value; and a read that an access
+word refuses is still refused. `Math.pi` and `Math.e` are constants.
 
 ### Statements and expressions
 

@@ -1,0 +1,5 @@
+// A constant is one value for all: in a class it goes in the static code, not in each object.
+class Grid {
+  const size = 3
+}
+// expect compile error: error_const_field.astra:3:3: error: const 'size' is one value for the whole class, so it goes in its static { } block (or is written 'static const'), or in an object

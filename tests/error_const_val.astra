@@ -1,0 +1,3 @@
+// Kotlin's const val is written const alone in Astra (R2), and the error says so.
+const val maxRows = 1000
+// expect compile error: error_const_val.astra:2:1: error: a constant is written 'const maxRows = ...', without 'val'

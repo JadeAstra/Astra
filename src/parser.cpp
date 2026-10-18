@@ -172,9 +172,11 @@ StmtPtr Parser::declaration() {
             // `let x = 1` would otherwise fail with a puzzling message about a missing line break.
             const Token& word = peek();
             const Token& after = peekNext();
-            if ((word.text == "let" || word.text == "const") && after.type == TokenType::Identifier &&
-                !after.newlineBefore)
-                throw error(word, "'" + word.text + "' is not a keyword; declare variables with 'val' (immutable) or 'var'");
+            if (word.text == "let" && after.type == TokenType::Identifier && !after.newlineBefore)
+                throw error(word, "'let' is not a keyword; declare variables with 'val' (immutable) or 'var'");
+            if (word.text == "const" && !after.newlineBefore &&
+                (after.type == TokenType::Identifier || after.type == TokenType::Val || after.type == TokenType::Var))
+                return constDeclaration(false);
             if (word.text == "fn" && after.type == TokenType::Identifier && !after.newlineBefore)
                 throw error(word, "'fn' is not a keyword; declare functions with 'fun'");
             // Who may see a declaration: `private` its file, `internal` its library, and
@@ -187,7 +189,9 @@ StmtPtr Parser::declaration() {
             const bool declares = after.type == TokenType::Val || after.type == TokenType::Var || after.type == TokenType::Fun ||
                                   after.type == TokenType::Class || after.type == TokenType::Identifier;
             if (kotlinOnlyWord(word.text) && declares && !after.newlineBefore) throw error(word, notAstraWord(word.text));
-            if (word.text == "external" && (after.type == TokenType::Fun || after.type == TokenType::Val) && !after.newlineBefore)
+            if (word.text == "external" && !after.newlineBefore &&
+                (after.type == TokenType::Fun || after.type == TokenType::Val ||
+                 (after.type == TokenType::Identifier && after.text == "object")))
                 return externalDeclaration();
             if (modifier && declares && !after.newlineBefore) {
                 advance();
@@ -236,6 +240,7 @@ StmtPtr Parser::declaration() {
             }
             if (word.text == "object" && after.type == TokenType::Identifier && !after.newlineBefore) {
                 // `object Name { ... }`; `object` is an ordinary name anywhere else.
+                nextIsObject_ = true;
                 StmtPtr declared = classDeclaration();
                 auto& cls = static_cast<ClassStmt&>(*declared);
                 if (cls.hasHeader)
@@ -299,6 +304,19 @@ StmtPtr Parser::declaration() {
 // what the C++ provides, declared with its types. The word `external` is next.
 StmtPtr Parser::externalDeclaration() {
     const Token& word = advance();
+    if (check(TokenType::Identifier) && peek().text == "object") {
+        // `external object Math { const pi = ...; fun sqrt(x : Number) : float }`
+        nextIsObject_ = true;
+        const bool saved = externalBody_;
+        externalBody_ = true;
+        StmtPtr declared = classDeclaration();
+        externalBody_ = saved;
+        auto& cls = static_cast<ClassStmt&>(*declared);
+        cls.isExternal = true;
+        for (const auto& m : cls.methods)
+            if (!m->isAbstract) throw error(word, "a function of an external object has no body: the C++ provides it");
+        return declared;
+    }
     if (check(TokenType::Val)) {
         advance();
         auto v = node<VarStmt>(word);
@@ -571,6 +589,9 @@ std::unique_ptr<VarStmt> Parser::varDeclaration(bool isField) {
         endStatement();
         return s;
     }
+    if (kw.type != TokenType::Identifier && check(TokenType::Identifier) && peek().text == "const" &&
+        peekNext().type == TokenType::Identifier && !peekNext().newlineBefore)
+        throw error(peek(), "a constant is written 'const " + peekNext().text + " = ...', without '" + kw.text + "'");
     const Token& name = isField ? expectName("a field name") : expect(TokenType::Identifier, "a variable name");
     auto s = node<VarStmt>(name);
     s->name = name.text;
@@ -586,6 +607,22 @@ std::unique_ptr<VarStmt> Parser::varDeclaration(bool isField) {
     // An accessor may follow on the same line: val area : int get() => width * height
     if (isField && (word("get") || word("set")) && peekNext().type == TokenType::LParen) return s;
     endStatement();
+    return s;
+}
+
+// `const maxRows = 1000`, with the word `const` next. Kotlin's `const val` is refused, saying what
+// to write, and so is a constant without its value.
+std::unique_ptr<VarStmt> Parser::constDeclaration(bool isField) {
+    const Token& word = peek();
+    if (peekNext().type == TokenType::Val || peekNext().type == TokenType::Var) {
+        const Token& kind = toks_[p_ + 1];
+        const std::string name = p_ + 2 < toks_.size() && toks_[p_ + 2].type == TokenType::Identifier ? toks_[p_ + 2].text : "maxRows";
+        throw error(word, "a constant is written 'const " + name + " = ...', without '" + kind.text + "'");
+    }
+    auto s = varDeclaration(isField);
+    s->isVal = true;
+    s->isConst = true;
+    if (!s->init) throw error(word, "const '" + s->name + "' is given its value where it is declared: const " + s->name + " = ...");
     return s;
 }
 
@@ -627,6 +664,8 @@ StmtPtr Parser::classDeclaration(bool isEnum, bool isInterface, const Token* ano
     s->name = name.text;
     s->isEnum = isEnum;
     s->isInterface = isInterface;
+    s->isObject = nextIsObject_;  // known before the body, where a const may be declared
+    nextIsObject_ = false;
     struct InterfaceBody {
         bool& flag;
         bool saved;
@@ -999,9 +1038,29 @@ void Parser::classMember(ClassStmt& s, bool inStatic) {
 
     bool isStatic = inStatic;
     if (word("static") &&
-        (peekNext().type == TokenType::Val || peekNext().type == TokenType::Var || accessorAt(p_ + 1))) {
+        (peekNext().type == TokenType::Val || peekNext().type == TokenType::Var || accessorAt(p_ + 1) ||
+         (peekNext().type == TokenType::Identifier && peekNext().text == "const"))) {
         advance();
         isStatic = true;
+    }
+
+    // A constant belongs to an object or to the class's static code: one value for all.
+    if (word("const") && !peekNext().newlineBefore &&
+        (peekNext().type == TokenType::Identifier || peekNext().type == TokenType::Val || peekNext().type == TokenType::Var)) {
+        const Token& keyword = peek();
+        auto field = constDeclaration(true);
+        field->isOverride = overrides;
+        field->access = access;
+        if (abstracts) throw error(keyword, "const '" + field->name + "' has its value here, so it is not abstract");
+        if (isStatic) {
+            s.staticFields.push_back(std::move(field));
+        } else if (s.isObject) {
+            s.fields.push_back(std::move(field));
+        } else {
+            throw error(keyword, "const '" + field->name + "' is one value for the whole class, so it goes in its static { } "
+                                 "block (or is written 'static const'), or in an object");
+        }
+        return;
     }
 
     if (check(TokenType::Val) || check(TokenType::Var)) {
@@ -1181,7 +1240,7 @@ std::unique_ptr<FunctionDecl> Parser::functionRest(std::string name, const Token
         auto ret = node<ReturnStmt>(peek());
         ret->value = expression();
         decl->body.push_back(std::move(ret));
-    } else if ((inInterface_ || abstractMember_) && !check(TokenType::LBrace)) {
+    } else if ((inInterface_ || abstractMember_ || externalBody_) && !check(TokenType::LBrace)) {
         decl->isAbstract = true;  // for the implementing class to write
     } else {
         decl->body = std::move(block()->statements);

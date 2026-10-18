@@ -1,0 +1,47 @@
+// Constants (R2): `const name = value`, worked out when compiling from literals and other
+// constants, and written into each place that reads them. At the top level, in an object, and
+// in a class's static code.
+import modules.mathutil.*
+
+const cols = 40
+const rows = cols * 2                       // a constant may name one declared further down
+const area = rows * width
+const width = 3
+const title = "Grid $rows x $cols"
+const ratio = cols / 3.0
+const halves = 7 / 2                        // two ints: the fraction is dropped, as when running
+const left = -7 % 3
+const big = 1 << 62
+const wraps = big * 4                       // ints wrap round, as when running
+const flags = 0b1010 ^ 0b0110 | 1
+const shifted = -16 >> 2
+const wide = rows > cols and title != ""
+const typed : float = 2.5
+const joined = "ratio " + ratio + ", " + typed + ", " + wide
+print(rows, cols, area, title)              // expect: 80 40 240 Grid 80 x 40
+print(ratio, halves, left, wraps, flags, shifted, wide, typed)   // expect: 13.333333333333334 3 -1 0 13 -4 true 2.5
+print(joined)                               // expect: ratio 13.333333333333334, 2.5, true
+
+// In an object and in static code; read from inside, from outside and from a function.
+object Limits {
+  const most = rows + 1
+  fun describe() : string => "at most $most"
+}
+class Board {
+  static const cells = rows * cols
+  static {
+    const name = "board"
+  }
+  fun describe() : string => "$name of $cells cells"
+}
+fun report() : string => "${Limits.most} ${Board.cells} $title"
+print(Limits.most, Limits.describe(), Board.cells, Board().describe(), report())   // expect: 81 at most 81 3200 board of 3200 cells 81 3200 Grid 80 x 40
+
+// From another file, and in a lambda.
+const circle = TAU * 2
+print(circle, [1, 2].map { it * cols })     // expect: 12.56 [40, 80]
+
+// What a value made only of literals and constants comes to is worked out when compiling too;
+// one that would fail is left to fail when the program runs.
+print(rows * 2 + 1, "v" + cols, -cols, !wide)   // expect: 161 v40 -40 false
+try { print(cols / (cols - 40)) } catch (e) { print(e.message) }   // expect: division by zero

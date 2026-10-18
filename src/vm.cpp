@@ -157,6 +157,14 @@ bool VM::builtinArity(const std::string& name, int& minArgs, int& maxArgs) const
     return true;
 }
 
+ObjNative* VM::builtinStatic(const std::string& cls, const std::string& name) {
+    auto found = builtins_.find(cls);
+    if (found == builtins_.end() || !found->second.isObjType(ObjType::Class)) return nullptr;
+    const Value* member = asClass(found->second)->statics.find(intern(name));
+    if (member == nullptr || !member->isObjType(ObjType::Native)) return nullptr;
+    return asNative(*member);
+}
+
 bool VM::methodArity(BuiltinType type, const std::string& name, int& minArgs, int& maxArgs) {
     const auto& table = methods_[static_cast<int>(type)];
     auto found = table.find(intern(name));
