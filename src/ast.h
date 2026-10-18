@@ -50,6 +50,7 @@ struct TypeAnnotation : Node {
     std::vector<TypeAnnotation> params;
     std::vector<TypeAnnotation> result;    // one when it is a function type, otherwise empty
     std::vector<TypeAnnotation> receiver;  // one for `Grid.() -> unit`, otherwise empty
+    bool isSuspend = false;                // `suspend () -> unit`: of a function that may wait
 
     // The name is a type parameter of the class or function around it (`T` in `class Box<T>`):
     // any value fits it when the program runs.
@@ -94,6 +95,10 @@ struct FunctionDecl : Node {
 
     // Written `override`: it takes the place of a member the class would otherwise be given.
     bool isOverride = false;
+
+    // Written `suspend`: it may wait, setting its flow aside, and only code that may wait too
+    // calls it (R1, D30).
+    bool isSuspend = false;
 
     // The access word in front of a member (an AccessWord): who may use it.
     uint8_t access = 0;

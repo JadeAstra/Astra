@@ -1,6 +1,6 @@
 // `@Volatile` in front of a variable is accepted and changes nothing: one thread runs Astra
-// code at a time, so a variable is always seen whole by the others. `suspend` in front of a
-// function is accepted in the same way.
+// code at a time, so a variable is always seen whole by the others. (`suspend` marks a function
+// that may wait: tests/check/suspend.astra.)
 
 @Volatile var busy = false
 @Volatile private var progress : float = 0.0

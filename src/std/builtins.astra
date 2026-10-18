@@ -118,7 +118,7 @@ external fun <T> List<T>.toList() : List<T>
 external fun <T> List<T>.toMutableList() : List<T>
 external fun <T> List<T>.reversed() : List<T>
 external fun <T> List<T>.reverse()
-external fun <T> List<T>.sort(comparator : any? = null)
+external fun <T> List<T>.sort(comparator : ((T, T) -> Number)? = null)
 external fun <T> List<T>.join(separator : string = ", ") : string
 external fun <T> List<T>.fill(item : T)
 

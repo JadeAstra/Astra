@@ -180,8 +180,7 @@ StmtPtr Parser::declaration() {
             // Who may see a declaration: `private` its file, `internal` its library, and
             // otherwise everyone. `public` is accepted and changes nothing.
             const bool makesAbstract = word.text == "abstract";
-            // `suspend fun` marks a function that may set a flow aside. Any function may, so the
-            // word says so to the reader and changes nothing.
+            // `suspend fun` marks a function that may wait, setting its flow aside (R1).
             const bool modifier = word.text == "private" || word.text == "internal" || word.text == "public" ||
                                   makesAbstract ||
                                   (word.text == "suspend" && (after.type == TokenType::Fun || after.type == TokenType::Identifier));
@@ -200,6 +199,10 @@ StmtPtr Parser::declaration() {
                         static_cast<const ClassStmt&>(*declared).isObject)
                         throw error(word, "'" + word.text + "' goes in front of a class");
                     static_cast<ClassStmt&>(*declared).isAbstract = true;
+                }
+                if (word.text == "suspend") {
+                    if (declared->kind != StmtKind::Function) throw error(word, "'suspend' goes in front of a function");
+                    static_cast<FunctionStmt&>(*declared).fn->isSuspend = true;
                 }
                 if (word.text == "private") declared->visibility = 2;
                 else if (word.text == "internal" && declared->visibility == 0) declared->visibility = 1;
@@ -344,9 +347,13 @@ TypeAnnotation Parser::typeExpression() {
     type.line = peek().line;
     type.col = peek().col;
     // `suspend () -> unit`: a function type, said to be of a function that may set a flow aside.
+    bool suspends = false;
+    const Token* suspendWord = nullptr;
     if (check(TokenType::Identifier) && peek().text == "suspend" &&
-        (peekNext().type == TokenType::LParen || peekNext().type == TokenType::Identifier))
-        advance();
+        (peekNext().type == TokenType::LParen || peekNext().type == TokenType::Identifier)) {
+        suspendWord = &advance();
+        suspends = true;
+    }
 
     // What was between the parentheses, for telling `(int) -> bool` from `(int)`.
     bool named = false;
@@ -411,6 +418,10 @@ TypeAnnotation Parser::typeExpression() {
             type.name = "Function";
         }
     }
+    if (suspends) {
+        if (!type.isFunction()) throw error(*suspendWord, "'suspend' goes in front of a function type: suspend () -> unit");
+        type.isSuspend = true;
+    }
     while (check(TokenType::Question) && (!tightNullable_ || adjacentToPrevious())) {
         advance();
         type.nullable = true;
@@ -457,6 +468,10 @@ std::vector<TypeParam> Parser::typeParameters() {
     std::vector<TypeParam> params;
     typeParamScopes_.emplace_back();
     do {
+        // Kotlin's `reified` marks what Astra always does (R1).
+        if (check(TokenType::Identifier) && peek().text == "reified" && peekNext().type == TokenType::Identifier)
+            throw error(peek(), "'reified' is not needed: type arguments are kept when the program runs (L14), so "
+                                "x is T works in any generic function");
         const Token& name = expect(TokenType::Identifier, "a type parameter's name");
         for (const TypeParam& earlier : params)
             if (earlier.name == name.text) throw error(name, "type parameter '" + name.text + "' is named twice");
@@ -930,6 +945,7 @@ void Parser::classMember(ClassStmt& s, bool inStatic) {
     // Kotlin's modifiers on a member. `override`, `abstract` and the access words are noted;
     // `open`, `final` and `sealed` are refused.
     bool overrides = false;
+    bool suspends = false;
     bool abstracts = false;
     uint8_t access = 0;
     for (; check(TokenType::Identifier) && !peekNext().newlineBefore &&
@@ -941,6 +957,7 @@ void Parser::classMember(ClassStmt& s, bool inStatic) {
          advance()) {
         if (kotlinOnlyWord(peek().text)) throw error(peek(), notAstraWord(peek().text));
         overrides = overrides || peek().text == "override";
+        suspends = suspends || peek().text == "suspend";
         abstracts = abstracts || peek().text == "abstract";
         if (accessWord(peek().text) != 0) access = accessWord(peek().text);
     }
@@ -1006,6 +1023,7 @@ void Parser::classMember(ClassStmt& s, bool inStatic) {
         auto property = accessor();
         property->isStatic = isStatic;
         property->isOverride = overrides;
+        property->isSuspend = suspends;
         property->access = access;
         s.methods.push_back(std::move(property));
     } else {
@@ -1013,6 +1031,7 @@ void Parser::classMember(ClassStmt& s, bool inStatic) {
         auto member = method();
         if (inStatic) member->isStatic = true;
         member->isOverride = overrides;
+        member->isSuspend = suspends;
         member->access = access;
         s.methods.push_back(std::move(member));
     }

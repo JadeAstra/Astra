@@ -1,0 +1,123 @@
+// Waiting (R1): a suspend function may wait, setting its flow aside, so it is called only
+// where waiting is possible: in another suspend function, at the top level, in a lambda given
+// a suspend type (as startCoroutine and thread take), or in a lambda run there and then by a
+// function that only calls it. Nothing waits in a getter or setter, toString, ==, hashCode,
+// the making of an object, a sort's comparison or a parallel section.
+
+suspend fun fetch(key : string) : string => suspendCoroutine { c -> EventLoop.post { c.resume(key) } } as string
+
+// Where it may wait.
+suspend fun load(key : string) : string => fetch(key) + "!"
+val atTop = fetch("top")
+startCoroutine { print(fetch("flow")) }
+thread { print(fetch("thread")) }
+
+// Lambdas run there and then wait where their caller may.
+suspend fun inPlace(keys : List<string>) : string {
+  var all = ""
+  keys.forEach { all += fetch(it) }
+  repeat(2) { all += fetch("again") }
+  val first = keys.firstOrNull()?.let { fetch(it) }
+  all.also { fetch(it) }
+  keys.run { fetch("run") }
+  keys.apply { fetch("apply") }
+  with(keys) { fetch("with") }
+  val upper = keys.map { fetch(it).uppercase() }
+  return all + first + upper
+}
+
+// A function of the program's own that only calls its lambda runs it in place, and so does
+// one that passes it on to such a function; one that keeps it does not.
+fun twice(action : () -> unit) {
+  action()
+  action()
+}
+fun twiceOver(action : () -> unit) {
+  twice(action)
+  twice { action() }
+}
+val kept : List<() -> unit> = []
+fun keep(action : () -> unit) {
+  kept.add(action)
+}
+suspend fun usesThem() {
+  twice { fetch("a") }
+  twiceOver { fetch("b") }
+  keep { fetch("c") }   // check: 'fetch' may wait (it is a suspend function), and 'keep' does not run this lambda there and then: it keeps it or hands it on, and nothing waits for it. Start a task in it: task { fetch() }
+}
+
+// An interface's method runs a lambda in place when every class that has it does.
+interface Runner {
+  fun runIt(block : () -> unit)
+}
+class Direct : Runner {
+  override fun runIt(block : () -> unit) { block() }
+}
+interface Keeper {
+  fun keepIt(block : () -> unit)
+}
+class Later : Keeper {
+  var held : (() -> unit)? = null
+  override fun keepIt(block : () -> unit) { held = block }
+}
+suspend fun throughInterfaces(r : Runner, k : Keeper) {
+  r.runIt { fetch("r") }
+  k.keepIt { fetch("k") }   // check: 'fetch' may wait (it is a suspend function), and 'keepIt' does not run this lambda there and then: it keeps it or hands it on, and nothing waits for it. Start a task in it: task { fetch() }
+}
+
+// Where it may not.
+fun plain() : string => fetch("plain")   // check: 'plain' calls 'fetch', which may wait, so 'plain' may wait too: mark it 'suspend fun plain()', or run the call in a task of its own: task { fetch() }
+fun later() {
+  EventLoop.post { fetch("later") }   // check: 'fetch' may wait (it is a suspend function), and 'post' does not run this lambda there and then: it keeps it or hands it on, and nothing waits for it. Start a task in it: task { fetch() }
+}
+val stored = { fetch("stored") }   // check: 'fetch' may wait (it is a suspend function), and this lambda is kept to run later, where nothing waits for it. Give it a suspend type (suspend () -> unit), or start a task in it: task { fetch() }
+val typed : suspend () -> string = { fetch("typed") }
+fun callsTyped() {
+  typed()   // check: 'callsTyped' calls 'typed', which may wait, so 'callsTyped' may wait too: mark it 'suspend fun callsTyped()', or run the call in a task of its own: task { typed() }
+}
+
+class Page(val key : string) {
+  val loaded : string = fetch("field")   // check: 'fetch' may wait (it is a suspend function), and an object is made at once: whoever makes it would be held up. Call it from a suspend function, or start it in a task and use the result when it is ready: task { fetch() }.then { ... }
+  init {
+    fetch("init")   // check: 'fetch' may wait (it is a suspend function), and an object is made at once: whoever makes it would be held up. Call it from a suspend function, or start it in a task and use the result when it is ready: task { fetch() }.then { ... }
+  }
+  get title() : string => fetch(key)   // check: 'fetch' may wait (it is a suspend function), and a getter must give its value at once: whoever reads 'title' would be held up. Call it from a suspend function, or start it in a task and use the result when it is ready: task { fetch() }.then { title = it }
+  set title(value : string) {
+    fetch(value)   // check: 'fetch' may wait (it is a suspend function), and a setter must finish at once: whoever sets 'title' would be held up. Call it from a suspend function, or start it in a task and use the result when it is ready: task { fetch() }.then { ... }
+  }
+  override fun toString() : string => fetch(key)   // check: 'fetch' may wait (it is a suspend function), and toString must give its text at once: whoever prints the object would be held up. Call it from a suspend function, or start it in a task and use the result when it is ready: task { fetch() }.then { ... }
+  op ==(other : any?) : bool => fetch(key) == "x"   // check: 'fetch' may wait (it is a suspend function), and == must give its answer at once: every comparison would be held up. Call it from a suspend function, or start it in a task and use the result when it is ready: task { fetch() }.then { ... }
+  fun hashCode() : int => fetch(key).length   // check: 'fetch' may wait (it is a suspend function), and hashCode must give its answer at once: every map and set holding the object would be held up. Call it from a suspend function, or start it in a task and use the result when it is ready: task { fetch() }.then { ... }
+  static val first : string = fetch("static")   // check: 'fetch' may wait (it is a suspend function), and a static value must be there at once: the class is being set up. Call it from a suspend function, or start it in a task and use the result when it is ready: task { fetch() }.then { ... }
+}
+
+suspend fun noWaitingThere(words : List<string>) {
+  words.sortedBy { fetch(it) }   // check: 'fetch' may wait (it is a suspend function), and a sort's comparison must give its answer at once: the sort cannot wait in the middle. Call it from a suspend function, or start it in a task and use the result when it is ready: task { fetch() }.then { ... }
+  words.parallelStream().forEach { fetch(it) }   // check: 'fetch' may wait (it is a suspend function), and nothing waits in a parallel section: its work runs straight through on several cores. Call it from a suspend function, or start it in a task and use the result when it is ready: task { fetch() }.then { ... }
+  words.forEach { word -> words.sortedBy { fetch(word + it) } }   // check: 'fetch' may wait (it is a suspend function), and a sort's comparison must give its answer at once: the sort cannot wait in the middle. Call it from a suspend function, or start it in a task and use the result when it is ready: task { fetch() }.then { ... }
+}
+
+// A suspend function goes only where waiting is expected.
+fun runsLater(action : () -> unit) { action() }
+fun wants(action : suspend () -> unit) { startCoroutine(action) }
+fun passing() {
+  val waits : suspend () -> unit = { fetch("x") }
+  runsLater(waits)   // check: runsLater(...) takes a () -> unit for 'action', not a suspend () -> unit
+  wants(waits)
+  wants { fetch("y") }
+}
+
+// An override waits as what it overrides does.
+class Base {
+  suspend fun step() { }
+  fun quick() { }
+}
+class Derived : Base() {
+  override fun step() { }   // check: 'step' overrides a suspend function (Base.step()), so it is one too: write 'override suspend fun step'
+  override suspend fun quick() { }   // check: 'quick' is marked suspend, but what it overrides (Base.quick()) is not: code that calls it through Base would not know it may wait; take suspend off, or mark the one above suspend too
+}
+
+// What must give its answer at once cannot be marked suspend.
+class Marked {
+  suspend override fun toString() : string => "marked"   // check: 'toString' cannot be marked suspend, since toString must give its text at once: whoever prints the object would be held up
+}

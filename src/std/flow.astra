@@ -48,8 +48,9 @@ class Timer(private val id : int) {
 //     save(name, colour)
 //   }
 //
-// A suspending function is called like any other; `suspend` on its declaration only says so
-// to the reader. The names are those of kotlin.coroutines.
+// A suspending function is called like any other, where waiting is possible: `suspend` on
+// its declaration says that it may wait, and the checker holds callers to it (R1). The names
+// are those of kotlin.coroutines.
 
 // How something turned out: a value, or the error that was thrown instead.
 class Result<T> {
@@ -140,11 +141,11 @@ fun Function.startCoroutine(completion : Continuation? = null) {
 
 // The same, with the function as an argument: startCoroutine { ... }, or with what is to be
 // told how it turned out: startCoroutine({ ... }, completion).
-fun startCoroutine(block : () -> any?) {
+fun startCoroutine(block : suspend () -> any?) {
   block.startCoroutine()
 }
 
-fun startCoroutine(block : () -> any?, completion : Continuation) {
+fun startCoroutine(block : suspend () -> any?, completion : Continuation) {
   block.startCoroutine(completion)
 }
 

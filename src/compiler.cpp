@@ -4183,12 +4183,16 @@ void CompilerSession::gather(const std::string& key, const std::string& name, co
 void CompilerSession::check() {
     const size_t before = checker->diagnostics.size();
     checker->run();
-    const std::vector<CheckDiagnostic>& found = checker->diagnostics;
-    if (!stopAtTypeErrors || found.size() == before) return;
-    CompileError error(found[before].file, found[before].line, found[before].col, found[before].message);
-    for (size_t i = before + 1; i < found.size(); i++)
-        error.more.push_back(found[i].file + ":" + std::to_string(found[i].line) + ":" + std::to_string(found[i].col) +
-                             ": error: " + found[i].message);
+    if (!stopAtTypeErrors) return;
+    // What `astra check --std` finds in the standard library is listed, never a program's error.
+    std::vector<const CheckDiagnostic*> found;
+    for (size_t i = before; i < checker->diagnostics.size(); i++)
+        if (checker->diagnostics[i].file != "<std>") found.push_back(&checker->diagnostics[i]);
+    if (found.empty()) return;
+    CompileError error(found[0]->file, found[0]->line, found[0]->col, found[0]->message);
+    for (size_t i = 1; i < found.size(); i++)
+        error.more.push_back(found[i]->file + ":" + std::to_string(found[i]->line) + ":" + std::to_string(found[i]->col) +
+                             ": error: " + found[i]->message);
     throw error;
 }
 

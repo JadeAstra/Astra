@@ -117,7 +117,7 @@ class Thread {
 }
 
 // Makes a thread for the lambda and starts it, as Kotlin's thread { ... } does.
-fun thread(start : bool = true, isDaemon : bool = false, name : string? = null, block : () -> any?) : Thread {
+fun thread(start : bool = true, isDaemon : bool = false, name : string? = null, block : suspend () -> any?) : Thread {
   val made = Thread(block, name)
   made.isDaemon = isDaemon
   if (start) { made.start() }
@@ -489,7 +489,7 @@ class Future<T> {
 
   // In a flow: sets the flow aside until the future is done, and gives its value or throws
   // what the task threw. The flow goes on from the event loop.
-  fun await() : T {
+  suspend fun await() : T {
     if (state == 0) {
       // The event loop is told that something is on its way, so that it waits for it.
       __loop.hold()
@@ -507,15 +507,17 @@ class Future<T> {
   }
 
   // Runs `supplier` on a thread of its own and gives a future for what it returns.
-  static fun <T> supplyAsync(supplier : () -> T) : Future<T> {
+  static fun <T> supplyAsync(supplier : suspend () -> T) : Future<T> {
     val result = Future<T>()
-    val worker = Thread({
+    // The thread may wait for what the supplier waits for.
+    val body : suspend () -> unit = {
       try {
         result.complete(supplier())
       } catch (e) {
         result.completeExceptionally(e)
       }
-    }, "async")
+    }
+    val worker = Thread(body, "async")
     worker.isDaemon = true
     result.runner = worker
     worker.start()
@@ -552,7 +554,7 @@ class Executor {
   }
 
   // Runs the task on one of the executor's threads. The future gives what it returns.
-  fun <T> submit(task : () -> T) : Future<T> {
+  fun <T> submit(task : suspend () -> T) : Future<T> {
     val future = Future<T>()
     __thread.enter(lock)
     try {
@@ -567,7 +569,7 @@ class Executor {
     return future
   }
 
-  fun execute(task : () -> any?) {
+  fun execute(task : suspend () -> any?) {
     submit(task)
   }
 

@@ -1889,8 +1889,17 @@ startCoroutine {
   again, there and then; `resumeWithException(error)` raises an error in it instead. A
   continuation is resumed once. If it is resumed before the block has returned, the flow just
   goes on.
-- A function that may set a flow aside is called like any other: there is no `await` at the
-  call. `suspend` in front of `fun` says so to the reader and changes nothing.
+- A function that may set a flow aside is marked `suspend`, and is called like any other:
+  there is no `await` at the call. It is called only where waiting is possible: from another
+  suspend function, at the top level of the script, in the lambda given to `startCoroutine`,
+  `thread`, an executor's `submit` or `Future.supplyAsync` (their parameters have the type
+  `suspend () -> ...`), and in a lambda that a function runs there and then, such as `map`,
+  `forEach`, `let`, `apply` or a function of the program's own that only calls it, which may
+  wait where that call may. Anywhere else the call is a compile error saying why and what to
+  write: `'load' calls 'fetch', which may wait, so 'load' may wait too: mark it 'suspend fun
+  load()', or run the call in a task of its own: task { fetch() }`. The advice already uses
+  the names decided for M6.6 (D81, D89): `task { }` for what starts a flow, and `then { }` for
+  using its result.
 - A flow holds no thread while it waits, and is not tied to one: it goes on, on whichever
   thread resumes it. `delay(ms)` waits without holding the main thread, and
   `future.await()` waits for work done on a thread.
@@ -1904,13 +1913,19 @@ startCoroutine {
 `examples\dots.astra` is a small game written as flows, and `examples\bounce_flows.astra`
 animates balls with them.
 
-A flow can be set aside anywhere in the program's own code, however many calls deep,
-including inside a lambda given to `map`, `forEach`, `apply`, `with` and the rest of the
-library. It cannot be set aside inside a built-in function that is calling back into the
-program, of which few are left: the comparison function of `sort`, a property's getter, an
-object's `toString()`. Trying is an error that says so. On a thread that is not running a
-flow, a suspending function simply waits on that thread; on the main thread outside a flow
-it is an error, because the main thread waiting would stop the loop that brings the answer.
+Nothing waits where an answer is wanted at once: in a getter or a setter, `toString`, `==`,
+`hashCode`, the making of an object, a static value, a sort's comparison or a parallel
+section. A suspend call there is a compile error saying so, and so is one in a lambda kept
+to run later, where nothing would wait for it: one given to `EventLoop.post`, or kept in a
+variable without a suspend type (`val step : suspend () -> unit = { ... }` has one). An
+override is a suspend function when what it overrides is. Reading and writing files,
+sockets and other programs' streams is not marked: in a flow on the main thread it sets the
+flow aside while the work is done elsewhere, and anywhere else it waits on its thread.
+
+A flow can be set aside anywhere in the program's own code, however many calls deep. On a
+thread that is not running a flow, a suspending function simply waits on that thread; on the
+main thread outside a flow it is an error when it runs, because the main thread waiting would
+stop the loop that brings the answer.
 
 ### Workers
 

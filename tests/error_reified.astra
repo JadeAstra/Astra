@@ -1,0 +1,4 @@
+// Kotlin's reified marks what Astra always does: a type argument is kept when the program
+// runs (L14), so the word is an error saying so (R1).
+fun <reified T> firstOf(items : List<any?>) : T? => items.firstOrNull { it is T } as T?
+// expect compile error: error_reified.astra:3:6: error: 'reified' is not needed: type arguments are kept when the program runs (L14), so x is T works in any generic function

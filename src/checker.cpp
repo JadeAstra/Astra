@@ -56,6 +56,7 @@ struct Type {
     std::shared_ptr<Type> receiver;    // Function: the object it runs on (`Grid.() -> unit`)
     bool knownParams = false;          // Function: whether the parameters are known
     int required = -1;                 // Function: how many of them a call must give, those after having defaults; -1 all
+    bool suspend = false;              // Function: `suspend () -> unit`, a function that may wait (R1)
     std::string name;                  // TypeParam: its name
     std::shared_ptr<Type> bound;       // TypeParam: its bound, when one is written
 
@@ -208,7 +209,14 @@ struct Unit {
 struct Local {
     Type type;
     bool isVal = false;
+    // A parameter of a named function, which R1 follows to see whether the function only calls
+    // it (a lambda passed for it then runs in its caller's place).
+    FuncInfo* paramOf = nullptr;
+    int paramIndex = -1;
 };
+
+// Why nothing may wait in some code, whatever the function around it says (R1).
+enum NoWait : uint8_t { CanWait, Getter, Setter, ToString, Equals, HashCode, ObjectMade, StaticValue, SortComparison, ParallelSection };
 
 // One function, lambda or file top level being checked.
 struct FnCtx {
@@ -229,6 +237,11 @@ struct FnCtx {
     // A lambda passed where the checker cannot tell whether it runs on an object: a bare name
     // it does not declare may belong to that object, so it is unknown.
     bool receiverUnknown = false;
+    // Waiting (R1): the lambda or anonymous function this is, whose place decides whether it
+    // may wait; whether it was given a suspend type; and why nothing may wait here.
+    const FunctionDecl* placeDecl = nullptr;
+    bool suspendLambda = false;
+    NoWait noWait = CanWait;
 };
 
 const char* article(const std::string& word) {
@@ -336,6 +349,7 @@ struct Checker::Impl {
                     s = t.receiver ? argText(*t.receiver) + ".(" : "(";
                     for (size_t i = 0; i < t.args.size(); i++) s += (i ? ", " : "") + argText(t.args[i]);
                     s += ") -> " + (t.result ? argText(*t.result) : std::string("*"));
+                    if (t.suspend) s = "suspend " + s;
                     if (t.nullable) s = "(" + s + ")";
                 }
                 break;
@@ -447,6 +461,8 @@ struct Checker::Impl {
                 return fits(from.args[0], to.args[0]) && fits(from.args[1], to.args[1]);
             case Type::Function: {
                 if (from.kind != Type::Function) return false;
+                // A function that may wait goes only where waiting is expected (R1).
+                if (from.suspend && !to.suspend && to.knownParams) return false;
                 if (!to.knownParams || !from.knownParams) return true;
                 // A function whose last parameters have defaults can be called with fewer arguments.
                 const size_t least = from.required < 0 ? from.args.size() : static_cast<size_t>(from.required);
@@ -808,6 +824,7 @@ struct Checker::Impl {
             for (const TypeAnnotation& p : a.params) t.args.push_back(resolve(p, u));
             t.result = std::make_shared<Type>(resolve(a.result[0], u));
             if (!a.receiver.empty()) t.receiver = std::make_shared<Type>(resolve(a.receiver[0], u));
+            t.suspend = a.isSuspend;
         } else if (a.typeParam) {
             t = typeParamType(a.name);
         } else {
@@ -1851,6 +1868,7 @@ struct Checker::Impl {
         // A top-level val or var of the file: already gathered; its type is worked out once.
         const bool global = ctx != nullptr && ctx->topLevel && scopes.size() <= 1 && v.pattern.empty();
         Type declared = v.type.present() ? resolve(v.type, *unit) : unknownType();
+        if (!v.type.present() && v.init) keptLambda(*v.init);
         Type value = v.init ? exprExpected(*v.init, declared) : unknownType();
         if (!v.pattern.empty()) {
             std::vector<Type> parts = partsOf(value, v.pattern.size());
@@ -1933,6 +1951,10 @@ struct Checker::Impl {
             c.hasReceiver = true;
             c.receiver = f->receiver;
         }
+        c.noWait = noWaitOf(d, f->owner != nullptr);
+        if (d.isSuspend && c.noWait != CanWait)
+            report(d, "'" + (d.name == "==" ? std::string("==") : d.name) + "' cannot be marked suspend, since " +
+                          noWaitReason(c.noWait, d.name));
         ctx = &c;
         pushClassTypeParams(f->owner);
         pushTypeParams(d.typeParams, *f->unit);
@@ -1945,6 +1967,11 @@ struct Checker::Impl {
                                                     "; its default cannot be " + describe(dv));
             }
             declareLocal(d.params[i], f->params[i], true);
+            if (f->params[i].kind == Type::Function) {
+                Local& l = scopes.back()[d.params[i]];
+                l.paramOf = f;
+                l.paramIndex = static_cast<int>(i);
+            }
             // A lambda's or an anonymous function's parameters, and a setter's value, take
             // their types from where they are used.
             const bool named = !d.isLambda && !d.name.empty() && d.name[0] != '<' && d.accessor != FunctionDecl::Accessor::Set;
@@ -1962,6 +1989,14 @@ struct Checker::Impl {
         narrowed = std::move(savedNarrowed);
     }
 
+    // A lambda kept in a variable or field with no type written runs on no object: its bare names
+    // are looked for as anywhere else, where one passed where the checker cannot tell may run on
+    // an object.
+    std::unordered_set<const FunctionDecl*> keptLambdas;
+    void keptLambda(const Expr& e) {
+        if (e.kind == ExprKind::Function) keptLambdas.insert(static_cast<const FunctionExpr&>(e).fn.get());
+    }
+
     // A lambda or `fun (x) { ... }` used as a value, with the function type expected where it
     // stands, if one is: its parameters and the object it runs on are taken from it.
     Type lambda(const FunctionDecl& d, const Type* expected) {
@@ -1971,6 +2006,8 @@ struct Checker::Impl {
         c.cls = ctx ? ctx->cls : nullptr;
         c.isStatic = ctx ? ctx->isStatic : false;
         c.isLambda = d.isLambda;
+        c.placeDecl = &d;
+        c.suspendLambda = typed && expected->suspend;
         std::vector<Type> returns;
         c.returns = &returns;
         if (!d.isLambda && d.returnType.present()) {
@@ -1987,7 +2024,7 @@ struct Checker::Impl {
                 c.receiver = *expected->receiver;
                 if (c.receiver.unknown() || c.receiver.kind == Type::TypeParam) c.receiverUnknown = true;
             } else if (!typed) {
-                c.receiverUnknown = true;
+                c.receiverUnknown = keptLambdas.count(&d) == 0;
             }
         }
         FnCtx* saved = ctx;
@@ -2015,6 +2052,7 @@ struct Checker::Impl {
             for (size_t j = 0; j < pattern.size(); j++) declareLocal(pattern[j], parts[j], true);
         }
         if (c.hasReceiver) ft.receiver = std::make_shared<Type>(c.receiver);
+        ft.suspend = c.suspendLambda;
         for (const StmtPtr& s : d.body) stmt(*s);
         pop();
         ctx = saved;
@@ -2041,9 +2079,21 @@ struct Checker::Impl {
             FuncInfo* f = known->second;
             const std::vector<FuncInfo*> above = formsAbove(k, m->name);
             if (above.empty()) continue;
-            bool same = false;
-            for (FuncInfo* g : above) same = same || sameForm(f, g);
-            if (same) continue;
+            FuncInfo* same = nullptr;
+            for (FuncInfo* g : above)
+                if (same == nullptr && sameForm(f, g)) same = g;
+            if (same != nullptr) {
+                const bool waits = same->decl != nullptr && same->decl->isSuspend;
+                const std::string form = formText(same->owner->name + "." + m->name, same, {});
+                if (m->isSuspend && !waits)
+                    report(*m, "'" + m->name + "' is marked suspend, but what it overrides (" + form +
+                                   ") is not: code that calls it through " + same->owner->name +
+                                   " would not know it may wait; take suspend off, or mark the one above suspend too");
+                else if (!m->isSuspend && waits)
+                    report(*m, "'" + m->name + "' overrides a suspend function (" + form + "), so it is one too: write 'override suspend fun " +
+                                   m->name + "'");
+                continue;
+            }
             std::string forms;
             for (size_t i = 0; i < above.size(); i++)
                 forms += (i == 0 ? "" : i + 1 == above.size() ? " and " : ", ") + formText(above[i]->owner->name + "." + m->name, above[i], {});
@@ -2066,7 +2116,9 @@ struct Checker::Impl {
             if (field->init) {
                 FnCtx fc;
                 fc.cls = k;
+                fc.noWait = ObjectMade;
                 withCtx(fc, [&] {
+                    if (!field->type.present()) keptLambda(*field->init);
                     Type value = exprExpected(*field->init, declared);
                     if (field->type.present() && !fits(value, declared))
                         report(*field->init, "'" + field->name + "' is " + describe(declared) + "; it cannot start as " +
@@ -2095,6 +2147,7 @@ struct Checker::Impl {
                 FnCtx fc;
                 fc.cls = k;
                 fc.isStatic = true;
+                fc.noWait = StaticValue;
                 withCtx(fc, [&] {
                     Type value = exprExpected(*field->init, declared);
                     if (field->type.present() && !fits(value, declared))
@@ -2107,6 +2160,7 @@ struct Checker::Impl {
             if (p.defaultValue == nullptr) continue;
             FnCtx fc;
             fc.cls = k;
+            fc.noWait = ObjectMade;
             withCtx(fc, [&] {
                 Type declared = resolve(p.type, *k->unit);
                 Type value = exprExpected(*p.defaultValue, declared);
@@ -2123,11 +2177,13 @@ struct Checker::Impl {
         for (const auto& [count, body] : c.initBlocks) {
             FnCtx fc;
             fc.cls = k;
+            fc.noWait = ObjectMade;
             withCtx(fc, [&] { blockMaybeCut(body->statements); });
         }
         if (c.hasSuperArgs && k->superclass != nullptr) {
             FnCtx fc;
             fc.cls = k;
+            fc.noWait = ObjectMade;
             withCtx(fc, [&] {
                 // The header's parameters are in reach of the superclass's arguments.
                 for (const HeaderParam& h : c.header) declareLocal(h.name, resolve(h.type, *k->unit), true);
@@ -2141,6 +2197,7 @@ struct Checker::Impl {
             FnCtx fc;
             fc.cls = k;
             fc.isStatic = true;
+            fc.noWait = StaticValue;
             withCtx(fc, [&] {
                 Args args{e.args, kNoNames, false, false};
                 constructorCall(k, args, {}, e);
@@ -2158,6 +2215,8 @@ struct Checker::Impl {
         c.cls = fn->owner;
         c.returnKnown = fn->resultWritten;
         c.expected = fn->result;
+        c.noWait = d.accessor == FunctionDecl::Accessor::Set ? Setter : Getter;
+        if (d.isSuspend) report(d, "'" + d.name + "' cannot be marked suspend, since " + noWaitReason(c.noWait, d.name));
         FnCtx* saved = ctx;
         Unit* savedU = unit;
         auto savedScopes = std::move(scopes);
@@ -2579,7 +2638,10 @@ struct Checker::Impl {
     // A bare name: a local, a member of an object a lambda or extension runs on, a member of
     // the class around the code, or a top-level name.
     Type name(const NameExpr& n) {
-        if (Local* l = findLocal(n.name)) return localType(n.name, *l);
+        if (Local* l = findLocal(n.name)) {
+            if (&n != passedUse) noteUse(*l, ParamUse::Other);
+            return localType(n.name, *l);
+        }
         if (pathsNarrowed()) {
             const std::string key = stablePath(n);
             if (!key.empty())
@@ -2665,6 +2727,7 @@ struct Checker::Impl {
         for (size_t i = 0; i < f->params.size(); i++)
             if (i >= f->hasDefault.size() || !f->hasDefault[i]) t.required = static_cast<int>(i) + 1;
         t.result = std::make_shared<Type>(f->typeParams.empty() ? resultOf(f) : unknownType());
+        t.suspend = f->decl != nullptr && f->decl->isSuspend;
         return t;
     }
 
@@ -3261,6 +3324,7 @@ struct Checker::Impl {
             return finish(resultOf(f), env, vars);
         }
         Binding b = bind(f, args, at, what);
+        if (f->decl != nullptr && f->decl->isSuspend) noteWait(at, f->name);
         std::vector<Type> types(args.exprs.size());
         auto wanted = [&](size_t i) -> Type {
             const int p = b.paramOf[i];
@@ -3275,7 +3339,15 @@ struct Checker::Impl {
                 if ((pass == 0) == isLambda) continue;
                 Type want = wanted(i);
                 Type expected = subst(want, env);
+                if (isLambda) noteLambdaSite(*args.exprs[i], f, b.paramOf[i]);
+                if (args.exprs[i]->kind == ExprKind::Name) {
+                    if (Local* l = findLocal(static_cast<const NameExpr&>(*args.exprs[i]).name)) {
+                        noteUse(*l, ParamUse::PassedOn, f, b.paramOf[i]);
+                        passedUse = args.exprs[i].get();
+                    }
+                }
                 types[i] = exprExpected(*args.exprs[i], expected);
+                passedUse = nullptr;
                 unify(want, types[i], env, vars);
             }
         }
@@ -3646,7 +3718,10 @@ struct Checker::Impl {
     Type call(const CallExpr& c) {
         if (c.callee->kind == ExprKind::Name) {
             const std::string& n = static_cast<const NameExpr&>(*c.callee).name;
-            if (Local* l = findLocal(n)) return callValue(localType(n, *l), c, n);
+            if (Local* l = findLocal(n)) {
+                noteUse(*l, ParamUse::Called);
+                return callValue(localType(n, *l), c, n);
+            }
             if (ClassInfo* k = localClass(n); k != nullptr && !k->isObject) {
                 Args args{c.args, c.names, c.trailingLambda, c.hasSpread};
                 return constructorCall(k, args, c.typeArgs, c);
@@ -3716,6 +3791,7 @@ struct Checker::Impl {
         }
         if (c.callee->kind == ExprKind::Member) {
             const auto& m = static_cast<const MemberExpr&>(*c.callee);
+            noteScopeLambda(c, m.name);
             if (m.object->kind == ExprKind::Name) {
                 const std::string& base = static_cast<const NameExpr&>(*m.object).name;
                 if (findLocal(base) == nullptr && !nameIsMember(base)) {
@@ -3825,6 +3901,7 @@ struct Checker::Impl {
             return unknownType();
         }
         const std::string who = name.empty() ? std::string("this value") : "'" + name + "'";
+        if (t.kind == Type::Function && t.suspend) noteWait(c, name.empty() ? std::string("this function") : name);
         if (t.nullable) report(c, who + " may be null, so it cannot be called; check it first");
         else if (t.kind != Type::Function) report(c, who + " is " + describe(t) + ", which cannot be called");
         if (t.kind == Type::Function && t.knownParams && !c.hasSpread && c.namedCount == 0) {
@@ -3885,6 +3962,262 @@ struct Checker::Impl {
             }
         }
         ctx = nullptr;
+        judgeWaits();
+    }
+
+    // ---- Waiting: `suspend` (R1, D30) ----
+    //
+    // A call of a suspend function may stand where its code may wait: in a suspend function, at
+    // the top level, in a lambda given a suspend type (what `startCoroutine { }` and `thread { }`
+    // take), or in a lambda run in place by a function that only calls it, which may wait where
+    // that call may (D59's rule, applied to checking). Nothing waits in a getter or setter,
+    // toString, ==, hashCode, the making of an object, a sort's comparison or a parallel section.
+    // Whether a function only calls a lambda is known once its body has been checked, so the
+    // calls are judged after the whole program.
+
+    // What a lambda is passed to: a function's parameter, or a scope function the compiler and
+    // the VM run in place.
+    struct LambdaSite {
+        FuncInfo* fn = nullptr;
+        int param = -1;
+        bool inPlace = false;
+        NoWait noWait = CanWait;
+    };
+    std::unordered_map<const FunctionDecl*, LambdaSite> lambdaSites;
+
+    // One use of a parameter of a function type, in its function's body.
+    struct ParamUse {
+        enum Kind : uint8_t { Called, PassedOn, Other };
+        Kind kind = Other;
+        FuncInfo* to = nullptr;  // PassedOn: where it is passed
+        int toParam = -1;
+        std::vector<const FunctionDecl*> lambdas;  // the lambdas the use is inside, within the function
+    };
+    std::map<std::pair<FuncInfo*, int>, std::vector<ParamUse>> paramUses;
+    const Expr* passedUse = nullptr;  // the argument being checked, already noted as passed on
+
+    struct WaitFrame {
+        const FunctionDecl* lambda = nullptr;
+        bool suspendLambda = false;
+        FuncInfo* fn = nullptr;
+        bool topLevel = false;
+        NoWait noWait = CanWait;
+    };
+    struct WaitingCall {
+        Unit* unit = nullptr;
+        const Node* at = nullptr;
+        std::string callee;
+        std::vector<WaitFrame> frames;  // the code around the call, innermost first
+    };
+    std::vector<WaitingCall> waitingCalls;
+    std::map<std::pair<FuncInfo*, int>, int> inPlaceKnown;  // 1 being worked out, 2 yes, 3 no
+    std::unordered_map<FuncInfo*, std::vector<FuncInfo*>> overriders;
+    bool overridersKnown = false;
+
+    static NoWait noWaitOf(const FunctionDecl& d, bool method) {
+        if (d.accessor == FunctionDecl::Accessor::Get) return Getter;
+        if (d.accessor == FunctionDecl::Accessor::Set) return Setter;
+        if (!method) return CanWait;
+        if (d.name == "toString" && d.params.empty()) return ToString;
+        if (d.name == "==") return Equals;
+        if (d.name == "hashCode" && d.params.empty()) return HashCode;
+        if (d.name == "init") return ObjectMade;
+        return CanWait;
+    }
+
+    static std::string noWaitReason(NoWait why, const std::string& name) {
+        switch (why) {
+            case Getter: return "a getter must give its value at once: whoever reads '" + name + "' would be held up";
+            case Setter: return "a setter must finish at once: whoever sets '" + name + "' would be held up";
+            case ToString: return "toString must give its text at once: whoever prints the object would be held up";
+            case Equals: return "== must give its answer at once: every comparison would be held up";
+            case HashCode: return "hashCode must give its answer at once: every map and set holding the object would be held up";
+            case ObjectMade: return "an object is made at once: whoever makes it would be held up";
+            case StaticValue: return "a static value must be there at once: the class is being set up";
+            case SortComparison: return "a sort's comparison must give its answer at once: the sort cannot wait in the middle";
+            case ParallelSection: return "nothing waits in a parallel section: its work runs straight through on several cores";
+            default: return "";
+        }
+    }
+
+    // A lambda written as an argument: what it is passed to.
+    void noteLambdaSite(const Expr& e, FuncInfo* f, int param) {
+        if (silent > 0) return;
+        LambdaSite site;
+        site.fn = f;
+        site.param = param;
+        if (f->unit != nullptr && f->unit->prelude) {
+            static const std::unordered_set<std::string> sorts = {
+                "sort", "sortWith", "sortBy", "sortByDescending", "sortedWith", "sortedBy", "sortedByDescending",
+                "compareBy", "compareByDescending", "thenBy", "thenByDescending"};
+            if (sorts.count(f->name)) site.noWait = SortComparison;
+            else if ((f->owner != nullptr && f->owner->name == "ParallelStream") || f->name == "parallelChunks")
+                site.noWait = ParallelSection;
+        }
+        lambdaSites[static_cast<const FunctionExpr&>(e).fn.get()] = site;
+    }
+
+    // let, also, takeIf, apply and run with a lambda: run where they are called, whatever the
+    // object (compileScopeCall in compiler.cpp, VM::scopeFunction).
+    void noteScopeLambda(const CallExpr& c, const std::string& name) {
+        if (silent > 0 || c.args.size() != 1 || c.args[0]->kind != ExprKind::Function) return;
+        if (name != "let" && name != "also" && name != "takeIf" && name != "apply" && name != "run") return;
+        LambdaSite site;
+        site.inPlace = true;
+        lambdaSites[static_cast<const FunctionExpr&>(*c.args[0]).fn.get()] = site;
+    }
+
+    void noteUse(const Local& l, ParamUse::Kind kind, FuncInfo* to = nullptr, int toParam = -1) {
+        if (silent > 0 || l.paramOf == nullptr) return;
+        ParamUse use;
+        use.kind = kind;
+        use.to = to;
+        use.toParam = toParam;
+        bool found = false;
+        for (FnCtx* x = ctx; x != nullptr; x = x->parent) {
+            if (x->placeDecl == nullptr) {
+                found = x->fn == l.paramOf;
+                break;
+            }
+            use.lambdas.push_back(x->placeDecl);
+        }
+        if (!found) use.kind = ParamUse::Other;  // reached from a function of its own, which may keep it
+        paramUses[{l.paramOf, l.paramIndex}].push_back(std::move(use));
+    }
+
+    void noteWait(const Node& at, const std::string& callee) {
+        if (silent > 0 || unit == nullptr) return;
+        WaitingCall w;
+        w.unit = unit;
+        w.at = &at;
+        w.callee = callee;
+        for (FnCtx* x = ctx; x != nullptr; x = x->parent) {
+            WaitFrame f;
+            f.lambda = x->placeDecl;
+            f.suspendLambda = x->suspendLambda;
+            f.fn = x->fn;
+            f.topLevel = x->topLevel;
+            f.noWait = x->noWait;
+            w.frames.push_back(f);
+            if (x->placeDecl == nullptr) break;
+        }
+        waitingCalls.push_back(std::move(w));
+    }
+
+    // The methods that take the place of one, in the classes below its own.
+    const std::vector<FuncInfo*>& overridersOf(FuncInfo* f) {
+        if (!overridersKnown) {
+            overridersKnown = true;
+            for (const auto& [decl, g] : funcOf) {
+                if (g->owner == nullptr || g->isStatic || g->decl == nullptr || !g->decl->isOverride) continue;
+                for (FuncInfo* above : formsAbove(g->owner, g->name))
+                    if (above != g && takesPlaceOf(g, above)) overriders[above].push_back(g);
+            }
+        }
+        static const std::vector<FuncInfo*> none;
+        auto found = overriders.find(f);
+        return found == overriders.end() ? none : found->second;
+    }
+
+    // Whether a function only calls what is passed for one of its parameters, there and then:
+    // calls it, or passes it on to a function that does, and nothing else; and so does every
+    // method that takes its place.
+    bool inPlace(FuncInfo* f, int param) {
+        if (f == nullptr || param < 0) return false;
+        if (f->isExternal) return f->name == "with" && f->unit != nullptr && f->unit->prelude;
+        if (f->decl == nullptr || param == f->vararg) return false;
+        resolveFunc(f);
+        // Only a parameter of a function type is followed; anything else may keep what it is given.
+        if (static_cast<size_t>(param) >= f->params.size() || f->params[static_cast<size_t>(param)].kind != Type::Function) return false;
+        const auto key = std::make_pair(f, param);
+        auto known = inPlaceKnown.find(key);
+        if (known != inPlaceKnown.end()) return known->second != 3;  // being worked out: so far, yes
+        inPlaceKnown[key] = 1;
+        bool yes = !f->decl->isAbstract;
+        if (yes) {
+            auto uses = paramUses.find(key);
+            if (uses != paramUses.end())
+                for (const ParamUse& u : uses->second) {
+                    if (u.kind == ParamUse::Other || (u.kind == ParamUse::PassedOn && !inPlace(u.to, u.toParam))) yes = false;
+                    for (const FunctionDecl* l : u.lambdas) yes = yes && lambdaInPlace(l);
+                    if (!yes) break;
+                }
+        }
+        if (f->owner != nullptr && !f->isStatic) {
+            const std::vector<FuncInfo*>& below = overridersOf(f);
+            if (f->decl->isAbstract) yes = !below.empty();
+            for (FuncInfo* g : below) yes = yes && inPlace(g, param);
+        }
+        inPlaceKnown[key] = yes ? 2 : 3;
+        return yes;
+    }
+
+    bool lambdaInPlace(const FunctionDecl* d) {
+        auto site = lambdaSites.find(d);
+        if (site == lambdaSites.end()) return false;
+        return site->second.inPlace || inPlace(site->second.fn, site->second.param);
+    }
+
+    // A function as a message names it: a constructor by its class.
+    static std::string calledName(const FuncInfo* f) {
+        return f->name == "init" && f->owner != nullptr ? f->owner->name : f->name;
+    }
+
+    void judgeWaits() {
+        inPlaceKnown.clear();
+        overriders.clear();
+        overridersKnown = false;
+        Unit* saved = unit;
+        for (const WaitingCall& w : waitingCalls) {
+            unit = w.unit;
+            judgeWait(w);
+        }
+        waitingCalls.clear();
+        unit = saved;
+    }
+
+    void judgeWait(const WaitingCall& w) {
+        const std::string callee = "'" + w.callee + "'";
+        // The advice names what D81 and D89 call a task and its result (`task { }`, `then { }`),
+        // as decided, ahead of the library's own renaming in M6.6.
+        const std::string start = "task { " + w.callee + "() }";
+        const std::string mayWait = callee + " may wait (it is a suspend function), and ";
+        auto orTask = [&](const std::string& use) {
+            return ". Call it from a suspend function, or start it in a task and use the result when it is ready: " + start +
+                   ".then { " + use + " }";
+        };
+        for (const WaitFrame& f : w.frames) {
+            if (f.noWait != CanWait) {
+                const std::string name = f.fn != nullptr ? f.fn->name : std::string();
+                report(*w.at, mayWait + noWaitReason(f.noWait, name) + orTask(f.noWait == Getter ? name + " = it" : "..."));
+                return;
+            }
+            if (f.lambda != nullptr) {
+                if (f.suspendLambda) return;
+                auto site = lambdaSites.find(f.lambda);
+                if (site != lambdaSites.end() && site->second.noWait != CanWait) {
+                    report(*w.at, mayWait + noWaitReason(site->second.noWait, std::string()) + orTask("..."));
+                    return;
+                }
+                if (lambdaInPlace(f.lambda)) continue;
+                if (site != lambdaSites.end() && site->second.fn != nullptr)
+                    report(*w.at, mayWait + "'" + calledName(site->second.fn) +
+                                      "' does not run this lambda there and then: it keeps it or hands it on, and nothing waits "
+                                      "for it. Start a task in it: " + start);
+                else
+                    report(*w.at, mayWait + "this lambda is kept to run later, where nothing waits for it. Give it a suspend "
+                                            "type (suspend () -> unit), or start a task in it: " + start);
+                return;
+            }
+            if (f.topLevel) return;
+            if (f.fn != nullptr) {
+                if (f.fn->decl != nullptr && f.fn->decl->isSuspend) return;
+                const std::string& name = f.fn->name;
+                report(*w.at, "'" + name + "' calls " + callee + ", which may wait, so '" + name +
+                                  "' may wait too: mark it 'suspend fun " + name + "()', or run the call in a task of its own: " + start);
+                return;
+            }
+        }
     }
 };
 
