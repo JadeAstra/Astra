@@ -83,8 +83,8 @@ print(loud.describe(), loud is Panel)       // expect: LOUD at 10, gap 2 true
 
 // In an interface a property with a getter comes with the interface.
 interface Sized {
-  val width
-  val height
+  val width : int
+  val height : int
   val area get() => width * height
   val wide : bool
     get() => width > height

@@ -37,9 +37,9 @@ fun gridRecordsChildrenInAbsoluteCoordinates() {
   val b = label("B").preferredSize(Dimension(20, 10)).minimumSize(Dimension(20, 10))
   val root = grid { row { cell(a); cell(b) } }
   val texts = root.record(200, 40).filter { it is DrawOp.Text }
-  same("both", texts.map { it.text }.toSet(), setOf("A", "B"))
-  val ax = texts.first { it.text == "A" }.x
-  val bx = texts.first { it.text == "B" }.x
+  same("both", texts.map { (it as DrawOp.Text).text }.toSet(), setOf("A", "B"))
+  val ax = (texts.first { (it as DrawOp.Text).text == "A" } as DrawOp.Text).x
+  val bx = (texts.first { (it as DrawOp.Text).text == "B" } as DrawOp.Text).x
   yes("B ($bx) should be right of A ($ax)", bx > ax)
 }
 gridRecordsChildrenInAbsoluteCoordinates()
@@ -50,7 +50,7 @@ fun hiddenChildRecordsNothing() {
   val b = label("B")
   b.visible = false
   val root = grid { row { cell(a); cell(b) } }
-  same("only A", root.record(200, 40).filter { it is DrawOp.Text }.map { it.text }.toSet(), setOf("A"))
+  same("only A", root.record(200, 40).filter { it is DrawOp.Text }.map { (it as DrawOp.Text).text }.toSet(), setOf("A"))
 }
 hiddenChildRecordsNothing()
 print("RecordingCanvasTest:", checks, "checks,", failed)   // expect: RecordingCanvasTest: 7 checks, []
@@ -272,7 +272,7 @@ pressable.dispatch(Event.Hover(-1, -1))
 print(over == Palette.accent, edge(pressable) == Palette.border, pressable.renderToImage(80, 30).toPicture() == up)   // expect: true true true
 val off = button("Off")
 off.enabled = false
-print(off.record(60, 30).first { it is DrawOp.Text }.color == Palette.disabled, button("On").record(60, 30).first { it is DrawOp.Text }.color == Palette.ink)   // expect: true true
+print((off.record(60, 30).first { it is DrawOp.Text } as DrawOp.Text).color == Palette.disabled, (button("On").record(60, 30).first { it is DrawOp.Text } as DrawOp.Text).color == Palette.ink)   // expect: true true
 
 // elide: a text cut to fit a width.
 val font = Font(Font.sansSerif, Font.plain, 12)

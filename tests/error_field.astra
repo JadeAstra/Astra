@@ -3,4 +3,4 @@ print("never runs")
 class Player {
   var score : int = "zero"
 }
-// expect compile error: error_field.astra:4:21: error: cannot initialize field 'score' of type int with a value of type string
+// expect compile error: error_field.astra:4:21: error: 'score' is an int; it cannot start as a string

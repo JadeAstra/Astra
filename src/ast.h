@@ -176,6 +176,7 @@ struct AssignExpr : Expr {
     ExprPtr target;
     TokenType op = TokenType::Eq;
     ExprPtr value;
+    bool nullSafe = false;  // `+=?` and the like: nothing is done when the target is null (L118)
     AssignExpr() : Expr(ExprKind::Assign) {}
 };
 
@@ -184,6 +185,7 @@ struct AssignExpr : Expr {
 struct IncDecExpr : Expr {
     ExprPtr target;
     bool increment = false;
+    bool nullSafe = false;  // `++?` and `--?`: nothing is done when the target is null (L118)
     IncDecExpr() : Expr(ExprKind::IncDec) {}
 };
 
@@ -218,6 +220,9 @@ struct MemberExpr : Expr {
 
 struct IndexExpr : Expr {
     ExprPtr object, index;
+    // `counts[word, default = 0]`: what a map's entry starts from when its key is not there;
+    // null when none is written (L118).
+    ExprPtr defaultValue;
     IndexExpr() : Expr(ExprKind::Index) {}
 };
 

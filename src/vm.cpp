@@ -3028,6 +3028,16 @@ void VM::run(int baseFrame) {
                         sp_ -= count;
                         break;
                     }
+                    case Op::GetIndexOr: {
+                        const Value start = sp_[-1], key = sp_[-2], map = sp_[-3];
+                        if (!map.isObjType(ObjType::Map))
+                            throw runtimeError("only a map's index takes a default, not that of a value of type " + typeName(map));
+                        guardRead(map);
+                        const Value* found = asMap(map)->map.find(key);
+                        sp_ -= 2;
+                        sp_[-1] = found != nullptr ? *found : start;
+                        break;
+                    }
                     case Op::CloseUpvalue:
                         closeUpvalues(sp_ - 1);
                         sp_--;

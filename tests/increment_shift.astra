@@ -47,9 +47,27 @@ val items = [10, 20, 30]
 items[0]++
 items[-1]--
 print(items)                                     // expect: [11, 20, 29]
+// A map's entry may be missing, so changing it says what to do then (L118): skip it with the
+// `?` forms, or start it from a value written in the index.
 val stock = {apples: 3}
-stock["apples"]--
+stock["apples"]--?
+stock["pears"] +=? 2
 print(stock)                                     // expect: {"apples": 2}
+val counts : Map<string, int> = {:}
+for word in ["a", "b", "a"] { counts[word, default = 0]++ }
+print(counts, counts["z", default = 0], counts["a", default = 0])   // expect: {"a": 2, "b": 1} 0 2
+val groups : Map<string, List<int>> = {:}
+for n in 1..5 { groups[n % 2 == 0 ? "even" : "odd", default = []] += [n] }
+print(groups)                                    // expect: {"odd": [1, 3, 5], "even": [2, 4]}
+class Visits(var count : int?)
+val visits = Visits(null)
+visits.count++?
+visits.count *=? 3
+print(visits.count)                              // expect: null
+visits.count = 2
+visits.count++?
+visits.count *=? 3
+print(visits.count)                              // expect: 9
 
 // the target is worked out once
 var calls = 0

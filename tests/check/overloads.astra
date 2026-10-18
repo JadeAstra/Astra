@@ -65,3 +65,15 @@ fun extending(ints : List<int>, floats : List<float>, words : List<string>) {
   print("x".pad(true))        // check: no form of pad(...) takes a bool; there are string.pad(n : int) and string.pad(s : string)
   print(a, b, c)
 }
+
+// An override has the parameters of what it overrides; a parameter more is another form.
+class Base {
+  fun paint(g : int) : string => "base"
+}
+class Changed : Base() {
+  override fun paint(g : int, alpha : float = 1.0) : string => "changed"   // check: 'paint' is written override, but no form above has its parameters (Base.paint(g : int)); give it those, or make it a form of its own without override
+}
+class Added : Base() {
+  override fun paint(g : int) : string => paint(g, 1.0)
+  fun paint(g : int, alpha : float) : string => "added"
+}

@@ -3,7 +3,7 @@ class Counter {
   var count : int = 0
   var label : string = "counter"
   var history : List = []
-  var note                              // untyped, starts as null
+  var note : any?                       // anything, starts as null
   var owner : string?                   // nullable, starts as null
 
   fun bump() : Counter {

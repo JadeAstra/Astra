@@ -340,7 +340,7 @@ int loadProgram(const std::string& path, VM& vm, CompilerSession*& session, Prog
 
 // `astra check`: compiles the file and what it imports, then checks their types (M6.5).
 // Each problem is printed as a compile error is; nothing runs.
-int checkFile(const std::string& path, bool standardLibrary, bool typed) {
+int checkFile(const std::string& path, bool standardLibrary) {
     std::string data;
     if (!readFile(path, data)) {
         std::cerr << "astra: cannot read '" << path << "'\n";
@@ -349,8 +349,8 @@ int checkFile(const std::string& path, bool standardLibrary, bool typed) {
     VM vm;
     Checker checker;
     checker.reportStandardLibrary = standardLibrary;
-    checker.requireTypes = typed;
     CompilerSession session(vm, &checker);
+    session.stopAtTypeErrors = false;  // every one is listed below
     session.libraryPaths = libraryPaths();
     try {
         session.compileFile(path);
@@ -633,20 +633,18 @@ int dispatch(const std::vector<std::string>& args) {
     }
 
     if (command == "check") {
-        // `--std` reports what is found in the standard library as well, and `--typed` every
-        // parameter without a type, for working on them before the rule is switched on.
-        bool standardLibrary = false, typed = false;
+        // `--std` reports what is found in the standard library as well, for working on it.
+        bool standardLibrary = false;
         size_t at = 1;
         for (; at + 1 < args.size(); at++) {
             if (args[at] == "--std") standardLibrary = true;
-            else if (args[at] == "--typed") typed = true;
             else break;
         }
         if (at + 1 != args.size()) {
             std::cerr << "astra: usage: astra check <file>\n";
             return kExitUsage;
         }
-        return checkFile(args.back(), standardLibrary, typed);
+        return checkFile(args.back(), standardLibrary);
     }
 
     if (command == "dis") {

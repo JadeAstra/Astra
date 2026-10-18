@@ -46,7 +46,7 @@ print(label.foreground, label.colours, label.text, label.foreground("green").for
 
 // In a subclass, and through an interface.
 interface Styled {
-  var style
+  var style : string
   fun style(value : string) {
     style = value
     return this

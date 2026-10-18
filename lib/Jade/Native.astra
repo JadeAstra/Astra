@@ -256,7 +256,7 @@ class NativeCanvas : Canvas {
   }
 
   // A BufferedImage or a Surface at (x, y): at its own size, or scaled into w by h units.
-  // `alpha` from 0.0 to 1.0 makes it see-through.
+  // `alpha` from 0.0 (not drawn) to 1.0 (solid) makes it see-through.
   override fun drawImage(image : any, x : Number, y : Number, w : Number? = null, h : Number? = null, alpha : Number = 1.0) {
     val source = image is Surface ? image : (image as BufferedImage).onCard()
     use()

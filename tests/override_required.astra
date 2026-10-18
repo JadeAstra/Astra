@@ -8,7 +8,7 @@ class Base(val id : int) {
   fun toString() => "Base#$id"
 }
 interface Shape {
-  val name
+  val name : string
   fun area()
   fun describe() => "$name of area ${area()}"
 }

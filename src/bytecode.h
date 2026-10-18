@@ -206,6 +206,9 @@ enum class Op : uint8_t {
     MethodForms,        // u16 nested function, u8 count   class names... -> class
     StaticForms,        // u16 nested function, u8 count   class names... -> class  (the same for static methods)
 
+    // `map[key, default = start]`: the entry, or `start` where the key is not there (L118).
+    GetIndexOr,         //                                 map key start -> value
+
     Count_,
 };
 

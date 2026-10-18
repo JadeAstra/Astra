@@ -144,6 +144,7 @@ const OpInfo kOps[] = {
     {"MAKE_FORMS", Operand::U16U8},
     {"METHOD_FORMS", Operand::U16U8},
     {"STATIC_FORMS", Operand::U16U8},
+    {"GET_INDEX_OR", Operand::None},
 };
 
 const char* const kTypeNames[] = {"", "int", "float", "Number", "string", "bool", "List", "Map", "Range", "Function", "Bytes"};
@@ -585,6 +586,10 @@ static int analyzeStack(FunctionProto& f, const Program& program, bool partial) 
                     if (static_cast<size_t>(a) >= f.protos.size() || !f.protos[a]->chooser) fail("bad set of forms");
                     if (b < 2) fail("a set of forms has fewer than two");
                     pops = b;
+                    pushes = 1;
+                    break;
+                case Op::GetIndexOr:
+                    pops = 3;
                     pushes = 1;
                     break;
                 case Op::MethodForms:

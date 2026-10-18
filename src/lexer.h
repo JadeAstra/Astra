@@ -72,6 +72,9 @@ struct CompileError : std::runtime_error {
     // The error was hit at end of input, so more input might fix it (used by the shell).
     bool atEof;
 
+    // Other errors found with it (the type checker reports all it finds), each formatted.
+    std::vector<std::string> more;
+
     CompileError(std::string file, int line, int col, const std::string& message, bool atEof = false);
     std::string format() const;
 };

@@ -64,8 +64,8 @@ var z = x
 z |= y
 print(z)                                         // expect: Flags(14)
 class Plain
-print(attempt(fun() => Plain() & 1))             // expect: Plain does not define operator '&'
-print(attempt(fun() => ~Plain()))                // expect: Plain does not define operator '~'
+print(attempt(fun() => unknown(Plain()) & 1))             // expect: Plain does not define operator '&'
+print(attempt(fun() => ~unknown(Plain())))                // expect: Plain does not define operator '~'
 
 // logical and / or are words. They stop as soon as the answer is known and give back one
 // of their operands.

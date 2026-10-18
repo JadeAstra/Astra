@@ -47,6 +47,7 @@ astra <file> [args...]                run a source (.astra) or bytecode (.astc) 
 astra build <file> [-o <out.astc>]    compile a source file to a bytecode file
 astra build <file> --exe [-o <app.exe>] [--windowed] [--icon <file.ico>]
                                       compile it into a program of its own
+astra check <file>                    check a source file's types, running nothing
 astra dis <file>                      list the bytecode of a source or bytecode file
 ```
 
@@ -92,7 +93,7 @@ told apart by name. Rename the file and the process name follows.
 ```astra
 val limit = 10           // immutable: assigning to it again is a compile error
 var count = 3            // mutable
-var nothing              // null
+var picked : string?     // null until given a value
 
 // Types: null, bool, int (64-bit), float, string, list, map, range, function, class, instance
 print(7 / 2, 7 / 2.0, 7 % 3)        // 3 3.5 1   (int / int truncates)
@@ -189,31 +190,35 @@ something only in the one place it belongs, and is an ordinary name everywhere e
 
 ### Variables and types
 
-Variables are declared with `val` (immutable) or `var` (mutable). A type may follow the name:
+Variables are declared with `val` (immutable) or `var` (mutable). A variable takes its type
+from its first value, or from a type written after its name:
 
 ```astra
-val name : string = "Astra"
-var total : int = 0
+val name = "Astra"           // a string
+var total = 0                // an int
 var ratio : Number = 1       // int or float
 var owner : Person? = null   // "?" also allows null
 var pet : Animal = Dog()     // a class type accepts its subclasses
+var best : Score?            // no value yet: null until given one
 
-total = "many"               // error: cannot assign a value of type string to 'total',
-                             //        which is declared as int
+total = "many"               // error: 'total' is an int; it cannot be given a string
+total += 0.5                 // error: 'total' is an int; this makes it a float
 ```
 
-The type is optional; a variable without one (or declared `any`) holds any value. A typed
-variable keeps its type for life: every assignment is checked, including `+=` and
-assignments made from other functions or closures. A literal of the wrong type is rejected
-when the program is compiled; everything else is checked as the program runs and raises a
+A variable keeps its type for life. One that starts as `null`, or has no value yet, has its
+type written, since there is nothing to take it from. `any` holds any value, and what it
+holds is used through a cast (`x as Box`) or a test (`if (x is Box) { x.open() }`).
+
+Types are checked when the program is compiled, and a program the checker finds a mistake
+in does not run: each mistake is listed, as a compile error is. `astra check` lists them
+without running anything. A cast is checked as the program runs, and a wrong one raises a
 catchable `Error`.
 
 Type names: `int`, `float`, `Number`, `string`, `bool`, `List`, `Map`, `Range`, `Function`,
 `Bytes`, `any`, or the name of a class, interface or enum (`Event.Click` for one declared inside
 another class). Without `?`, a typed variable must be initialized and can never be null.
 
-A type can say more, for the reader's sake: what a list or map holds, and what a function
-takes and gives back.
+A type can say more: what a list or map holds, and what a function takes and gives back.
 
 ```astra
 val names : List<string> = []
@@ -223,7 +228,8 @@ var onChange : ((Settings) -> unit)? = null        // a function, or null
 fun build(block : Grid.() -> unit) { ... }         // a function run on a Grid
 ```
 
-Only the outer type is checked: that `names` is a list, that `action` is a function.
+These are checked when compiling: `names.add(1)` is an error. When the program runs, only the
+outer type is checked: that `names` is a list, that `action` is a function.
 
 A `val` fixes the variable, not the object: a list held in a `val` can still be changed.
 
@@ -473,13 +479,13 @@ chart(a, b, title = "Sales")      // what comes after a vararg parameter is pass
 A function has at most one `vararg` parameter. Passed by name it takes the list itself:
 `total(numbers = more)`.
 
-Each type is optional and independent, so `fun log(level : int, message)` is fine.
-
- Arguments
-are checked when the function is entered and the result when it returns; a function declared
-to return a non-nullable type that reaches its end without returning a value raises an
-error. Returning a literal of the wrong type is a compile error. Methods, static methods,
-initializers and operators take types the same way (an initializer has no return type).
+Every parameter has its type written: `fun log(level : int, message)` is an error, `'message'
+has no type`. A lambda's parameters need none, taking theirs from where it is passed
+(`names.map { it.length }`). A return type left out is worked out from the body. Arguments
+and results are checked when compiling; a function declared to return a non-nullable type
+that reaches its end without returning a value raises an error when it runs. Methods, static
+methods, initializers and operators take types the same way (an initializer has no return
+type).
 
 #### A name with several forms
 
@@ -510,8 +516,9 @@ and `pair(a : Number, b : int)`), is an error that lists the forms; two forms wi
 parameters' types are a compile error.
 
 Methods, static methods, operators and extension functions have forms in the same way. A
-subclass may override one form and add others: an override takes the place of the form with
-its parameters' types, or, written `override`, of the only form of its name above it.
+subclass may override one form and add others: an override has the parameters of the form it
+takes the place of, and a method with other parameters is another form, written without
+`override`.
 Extension functions for one type are told apart by the receiver's type too, type arguments
 included, so `List<int>` and `List<float>` can each have a `total()`. A list does not carry
 its element type when the program runs, so such forms are chosen only when compiling, where
@@ -677,12 +684,11 @@ class Account {
   var balance : Number = 0
   val history : List = []       // a fresh list for every instance
   var manager : Person? = null  // class types may name a class declared later
-  var note                      // untyped, starts as null
+  var note : any?               // anything, starts as null
 }
 
-account.balance = "lots"   // error: cannot assign a value of type string to field 'balance'
-                           //        of Account, which is declared as number
-account.owner = "eve"      // error: cannot assign to val field 'owner' of Account
+account.balance = "lots"   // compile error: 'balance' is a Number; it cannot be given a string
+account.owner = "eve"      // error when it runs: cannot assign to val field 'owner' of Account
 ```
 
 - Initial values are computed for each new instance before `init` runs, superclass fields
@@ -986,8 +992,8 @@ the interface:
 
 ```astra
 interface Shape {
-  fun area()                                   // the class writes this
-  val name                                     // and has a field or getter called name
+  fun area() : Number                          // the class writes this
+  val name : string                            // and has a field or getter called name
   fun describe() => "$name of area ${area()}"  // every Shape gets this
 }
 

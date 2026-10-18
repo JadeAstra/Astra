@@ -202,7 +202,7 @@ fun everyLineIsDrawn() {
   val wrapped = WrappedLabel(sentence, font)
   val component = Component(wrapped)
   component.layout(90, 120)
-  val drawn = component.record(90, 120).filter { it is DrawOp.Text }.map { it.text }
+  val drawn = component.record(90, 120).filter { it is DrawOp.Text }.map { (it as DrawOp.Text).text }
   same("the lines painted are the lines wrapped", drawn, wrapped.wrap(90))
   yes("and there are several", drawn.size > 1)
 }
@@ -254,8 +254,8 @@ val counting = { asked += 1 }
 Jade.onLayoutNeeded(counting)
 val named = label("Name")
 val before = named.prefSize().width
-named.content.text = "A much longer name"
+(named.content as Label).text = "A much longer name"
 val after = named.prefSize().width
-named.content.font = Font(Font.sansSerif, Font.bold, 20)
+(named.content as Label).font = Font(Font.sansSerif, Font.bold, 20)
 Jade.removeLayoutHook(counting)
 print(after > before, named.prefSize().width > after, asked, wrappedLabel("made by the function").content is WrappedLabel)   // expect: true true 2 true

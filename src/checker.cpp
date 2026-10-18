@@ -277,7 +277,7 @@ struct Checker::Impl {
     std::unordered_map<std::string, std::unordered_map<std::string, BuiltinProp>> builtinProps;
     std::unordered_map<const FunctionDecl*, FuncInfo*> funcOf;
     bool reportPrelude = false;
-    bool requireTypes = false;
+    bool requireTypes = true;
     std::vector<std::unique_ptr<Unit>> pendingHolders;  // imports seen before their file is added
 
     std::vector<CheckDiagnostic>* out = nullptr;
@@ -1134,15 +1134,9 @@ struct Checker::Impl {
         return nullptr;
     }
 
-    // Whether a method takes the place of one above it: as the same form, or written override
-    // where the name has only that one form above, as untyped code has done with an override
-    // that adds a parameter with a default.
-    bool takesPlaceOf(FuncInfo* f, FuncInfo* g) {
-        if (f == g || sameForm(f, g)) return true;
-        if (f->decl == nullptr || !f->decl->isOverride || f->owner == nullptr) return false;
-        const std::vector<FuncInfo*> forms = formsAbove(f->owner, f->name);
-        return forms.size() == 1 && forms[0] == g;
-    }
+    // Whether a method takes the place of one above it: it is the same form. An override has
+    // the parameters of what it overrides; anything else is another form (D56).
+    bool takesPlaceOf(FuncInfo* f, FuncInfo* g) { return f == g || sameForm(f, g); }
 
     // What formsAbove and familyForms found, by class and name; worked out again when more of
     // the program is checked.
@@ -1867,6 +1861,10 @@ struct Checker::Impl {
             report(*v.init, "'" + v.name + "' is " + describe(declared) + "; it cannot start as " + describe(value));
         Type type = declared;
         if (!v.type.present()) {
+            // A variable takes its type from its first value (D18), so one without either
+            // says which.
+            if (!v.init && requireTypes)
+                report(v, "'" + v.name + "' has no value to take its type from; write one, as in var " + v.name + " : Type");
             if (v.init && value.kind == Type::Null)
                 report(v, "'" + v.name + "' starts as null, so its type must be written (" + v.name + " : Type? = null)");
             type = (value.kind == Type::Null || value.kind == Type::Nothing) ? unknownType() : value;
@@ -2035,6 +2033,23 @@ struct Checker::Impl {
 
     void checkClass(ClassInfo* k) {
         const ClassStmt& c = *k->decl;
+        // A method written override takes the place of a form above with its parameters.
+        for (const auto& m : c.methods) {
+            if (!m->isOverride || m->isStatic || m->accessor != FunctionDecl::Accessor::None || m->name == "init") continue;
+            auto known = funcOf.find(m.get());
+            if (known == funcOf.end()) continue;
+            FuncInfo* f = known->second;
+            const std::vector<FuncInfo*> above = formsAbove(k, m->name);
+            if (above.empty()) continue;
+            bool same = false;
+            for (FuncInfo* g : above) same = same || sameForm(f, g);
+            if (same) continue;
+            std::string forms;
+            for (size_t i = 0; i < above.size(); i++)
+                forms += (i == 0 ? "" : i + 1 == above.size() ? " and " : ", ") + formText(above[i]->owner->name + "." + m->name, above[i], {});
+            report(*m, "'" + m->name + "' is written override, but no form above has its parameters (" + forms +
+                           "); give it those, or make it a form of its own without override");
+        }
         if (requireTypes)
             for (const HeaderParam& p : c.header)
                 if (!p.type.present())
@@ -2045,6 +2060,9 @@ struct Checker::Impl {
         for (const auto& field : c.fields) {
             FieldInfo* f = k->fields[field->name];
             Type declared = fieldType(f);
+            if (requireTypes && !field->type.present() && !field->init && field->getter == nullptr && f->header == nullptr)
+                report(*field, "'" + field->name + "' has no value to take its type from; write one, as in " +
+                                   (field->isVal ? "val " : "var ") + field->name + " : Type");
             if (field->init) {
                 FnCtx fc;
                 fc.cls = k;
@@ -2283,6 +2301,9 @@ struct Checker::Impl {
                 // a?.count++ does nothing when a is null, so the null that ?. adds is not the
                 // field's own
                 if (t.nullable && safeChain(*i.target)) t = withNull(t, false);
+                const std::string op = i.increment ? "++" : "--";
+                if (nullablePlace(*i.target, t, op, i.nullSafe, e)) return Type::of(Type::Unit);
+                t = withNull(t, false);
                 if (t.kind == Type::Class && !t.nullable)
                     operatorResult(t, i.increment ? "+" : "-", e, {Type::of(Type::Int)});
                 else if (t.known() && t.kind != Type::TypeParam && !isNumeric(t))
@@ -2818,6 +2839,12 @@ struct Checker::Impl {
             targetName = n.name;
             local = findLocal(n.name);
             target = local != nullptr ? local->type : name(n);
+            // The name of a class, an object or a function is never given a value; the compiler
+            // says so, which tells more than what the value's type is.
+            if (local == nullptr) {
+                const GlobalSym* g = localClass(n.name) == nullptr ? findGlobal(*unit, n.name) : nullptr;
+                if (localClass(n.name) != nullptr || (g != nullptr && g->var == nullptr)) target = unknownType();
+            }
         } else if (a.target->kind == ExprKind::Member) {
             const auto& m = static_cast<const MemberExpr&>(*a.target);
             targetName = m.name;
@@ -2848,6 +2875,10 @@ struct Checker::Impl {
                 default: return Type::of(Type::Unit);
             }
             if (target.unknown() || value.unknown()) return Type::of(Type::Unit);
+            // a?.count += 1 does nothing when a is null, as with ++
+            if (target.nullable && safeChain(*a.target)) target = withNull(target, false);
+            if (!nullablePlace(*a.target, target, opText(op) + "=", a.nullSafe, a)) target = withNull(target, false);
+            else return Type::of(Type::Unit);
             if (op == TokenType::Plus && (target.kind == Type::String || value.kind == Type::String)) result = Type::of(Type::String);
             else if (isNumeric(target) && isNumeric(value)) result = arithmetic(target, value);
             else return Type::of(Type::Unit);
@@ -2865,6 +2896,53 @@ struct Checker::Impl {
     // ---- Members and indexes ----
 
     // `obj.name`, not called.
+    // `++`, `+=` and the rest on a place whose value may be null (L118): the plain form is an
+    // error, saying what to write instead, and the `?` form is for such places only. Gives
+    // whether the place's type is still to be taken as it is (true) or without its null.
+    bool nullablePlace(const Expr& place, const Type& t, const std::string& op, bool nullSafe, const Node& at) {
+        if (!t.known() || t.kind == Type::TypeParam) return false;
+        const std::string written = place.kind == ExprKind::Name ? "'" + placeText(place) + "'" : placeText(place);
+        if (nullSafe) {
+            if (!t.nullable)
+                report(at, written + " is " + describe(t) + ", never null; use " + op);
+            return false;
+        }
+        if (!t.nullable) return false;
+        const bool entry = place.kind == ExprKind::Index && !static_cast<const IndexExpr&>(place).defaultValue;
+        if (entry) {
+            const auto& ix = static_cast<const IndexExpr&>(place);
+            report(at, written + " may be missing, so " + op + " cannot change it; use " + op + "? to skip it when missing, " +
+                           placeText(*ix.object) + "[" + placeText(*ix.index) + ", default = 0] to start it from a value, or ?:");
+        } else {
+            report(at, written + " may be null, so " + op + " cannot change it; use " + op + "? to skip it when null, or ?:");
+        }
+        return true;
+    }
+
+    // How a place reads in a message: `stock["apples"]`, `box.count`, `count`.
+    std::string placeText(const Expr& e) {
+        switch (e.kind) {
+            case ExprKind::Name: return static_cast<const NameExpr&>(e).name;
+            case ExprKind::This: return "this";
+            case ExprKind::Member: {
+                const auto& m = static_cast<const MemberExpr&>(e);
+                return placeText(*m.object) + (m.safe ? "?." : ".") + m.name;
+            }
+            case ExprKind::Index: {
+                const auto& ix = static_cast<const IndexExpr&>(e);
+                return placeText(*ix.object) + "[" + placeText(*ix.index) + "]";
+            }
+            case ExprKind::Literal: {
+                const auto& l = static_cast<const LiteralExpr&>(e);
+                if (l.type == LiteralExpr::Type::String) return "\"" + l.stringValue + "\"";
+                if (l.type == LiteralExpr::Type::Int) return std::to_string(l.intValue);
+                return "...";
+            }
+            default:
+                return "...";
+        }
+    }
+
     // The member an assignment is to. Every field is declared (R24), so assigning one a class does
     // not have is said in those words.
     Type assignedMember(const MemberExpr& m) {
@@ -3040,6 +3118,19 @@ struct Checker::Impl {
     Type index(const IndexExpr& i) {
         Type obj = expr(*i.object);
         Type idx = expr(*i.index);
+        if (i.defaultValue) {
+            // `counts[word, default = 0]`: the entry, or the start value; never null (L118).
+            const bool map = obj.kind == Type::Map && !obj.nullable;
+            const Type value = map && obj.args.size() == 2 ? obj.args[1] : unknownType();
+            Type start = exprExpected(*i.defaultValue, value);
+            if (obj.known() && !map && obj.kind != Type::TypeParam)
+                report(i, "only a map's index takes a default; this is " + describe(obj));
+            else if (map && obj.args.size() == 2 && !fits(idx, obj.args[0]))
+                report(*i.index, "the keys of this map are " + text(obj.args[0]) + "s; this is " + describe(idx));
+            else if (value.known() && !fits(start, value))
+                report(*i.defaultValue, "the values of this map are " + describe(value) + "; the default cannot be " + describe(start));
+            return value.known() ? withNull(value, false) : unknownType();
+        }
         if (obj.unknown() || obj.kind == Type::TypeParam) return unknownType();
         if (obj.nullable) {
             report(i, describe(obj) + " may be null, so it cannot be indexed; check it first");

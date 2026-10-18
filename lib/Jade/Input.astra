@@ -7,11 +7,11 @@ enum PointerButton { left, right, middle, back, forward, other }
 // The keys held with a key or a press. `shortcut` is the key that commands go with: Ctrl
 // here, the command key on a Mac.
 class Modifiers {
-  val shift
-  val ctrl
-  val alt
-  val meta
-  val shortcut
+  val shift : bool
+  val ctrl : bool
+  val alt : bool
+  val meta : bool
+  val shortcut : bool
 
   fun init(shift : bool = false, ctrl : bool = false, alt : bool = false, meta : bool = false, shortcut : bool? = null) {
     this.shift = shift

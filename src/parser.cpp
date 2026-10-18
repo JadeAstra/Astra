@@ -1457,6 +1457,7 @@ ExprPtr Parser::assignment() {
                 throw error(op, "invalid assignment target");
             auto e = node<AssignExpr>(op);
             e->op = op.type;
+            e->nullSafe = !op.text.empty() && op.text.back() == '?';
             e->target = std::move(left);
             e->value = expression();
             return e;
@@ -1801,6 +1802,13 @@ ExprPtr Parser::postfix() {
             auto index = node<IndexExpr>(t);
             HeaderGuard inside(*this, false);
             index->index = expression();
+            // `counts[word, default = 0]`: a start value for a key that is not there (L118).
+            if (check(TokenType::Comma) && peekNext().type == TokenType::Identifier && peekNext().text == "default") {
+                advance();
+                advance();
+                expect(TokenType::Eq, "'=' after 'default' in an index");
+                index->defaultValue = expression();
+            }
             expect(TokenType::RBracket, "']' after index");
             index->object = std::move(e);
             e = std::move(index);
@@ -1810,6 +1818,7 @@ ExprPtr Parser::postfix() {
                 throw error(t, "'" + t.text + "' needs a variable, a field or an element to change");
             auto change = node<IncDecExpr>(t);
             change->increment = t.type == TokenType::PlusPlus;
+            change->nullSafe = t.text.size() == 3;
             change->target = std::move(e);
             e = std::move(change);
         } else if (t.type == TokenType::Dot || t.type == TokenType::QuestionDot) {

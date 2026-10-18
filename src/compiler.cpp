@@ -3351,8 +3351,9 @@ private:
                 const auto& e = static_cast<const IndexExpr&>(expr);
                 compileExpr(*e.object);
                 compileExpr(*e.index);
+                if (e.defaultValue) compileExpr(*e.defaultValue);
                 line_ = e.line;
-                emit(Op::GetIndex);
+                emit(e.defaultValue ? Op::GetIndexOr : Op::GetIndex);
                 break;
             }
 
@@ -3736,6 +3737,28 @@ private:
     }
 
     // x++ and x-- as statements: the same as x += 1 and x -= 1 with the result discarded.
+    // `++?`, `+=?` and the like (L118): with the target's value on the stack, over the parts
+    // the store needs, a null skips the change; the parts go and the null is the result.
+    int beginNullSafe(bool nullSafe) { return nullSafe ? emitJump(Op::JumpIfNull) : -1; }
+    void endNullSafe(int skip, int parts) {
+        if (skip < 0) return;
+        const int done = emitJump(Op::Jump);
+        patchJump(skip);
+        if (parts > 0) emit(Op::PopUnder, parts);
+        patchJump(done);
+    }
+
+    // The value at an index that is being changed: the entry, or its start value.
+    void emitIndexForUpdate(const IndexExpr& target) {
+        emit(Op::Dup2);
+        if (target.defaultValue) {
+            compileExpr(*target.defaultValue);
+            emit(Op::GetIndexOr);
+        } else {
+            emit(Op::GetIndex);
+        }
+    }
+
     void compileIncDec(const IncDecExpr& e) {
         Op change = e.increment ? Op::Add : Op::Sub;
 
@@ -3743,10 +3766,12 @@ private:
             case ExprKind::Name: {
                 const auto& target = static_cast<const NameExpr&>(*e.target);
                 emitGet(target.name, target);
+                const int skip = beginNullSafe(e.nullSafe);
                 emit(Op::Const, intConstant(1));
                 line_ = e.line;
                 emit(change);
                 emitSet(target.name, target);
+                endNullSafe(skip, 0);
                 break;
             }
 
@@ -3758,9 +3783,11 @@ private:
                 emit(Op::Dup);
                 line_ = e.line;
                 emit(ownMember(*target.object, target.name) ? Op::GetOwn : Op::GetProp, stringConstant(target.name));
+                const int skip = beginNullSafe(e.nullSafe);
                 emit(Op::Const, intConstant(1));
                 emit(change);
                 emit(ownMember(*target.object, target.name) ? Op::SetOwn : Op::SetProp, stringConstant(target.name));
+                endNullSafe(skip, 1);
                 if (toEnd >= 0) patchJump(toEnd);
                 break;
             }
@@ -3769,12 +3796,13 @@ private:
                 const auto& target = static_cast<const IndexExpr&>(*e.target);
                 compileExpr(*target.object);
                 compileExpr(*target.index);
-                emit(Op::Dup2);
                 line_ = e.line;
-                emit(Op::GetIndex);
+                emitIndexForUpdate(target);
+                const int skip = beginNullSafe(e.nullSafe);
                 emit(Op::Const, intConstant(1));
                 emit(change);
                 emit(Op::SetIndex);
+                endNullSafe(skip, 2);
                 break;
             }
 
@@ -3791,11 +3819,13 @@ private:
             case ExprKind::Name: {
                 const auto& target = static_cast<const NameExpr&>(*e.target);
                 if (compound) emitGet(target.name, target);
+                const int skip = beginNullSafe(compound && e.nullSafe);
                 if (compound) compileExpr(*e.value);
                 else compileExprFor(*e.value, declaredTypeOf(target.name));
                 line_ = e.line;
                 if (compound) emit(binaryOp(e.op));
                 emitSet(target.name, target);
+                endNullSafe(skip, 0);
                 break;
             }
 
@@ -3810,11 +3840,13 @@ private:
                     emit(Op::Dup);
                     emit(own ? Op::GetOwn : Op::GetProp, stringConstant(target.name));
                 }
+                const int skip = beginNullSafe(compound && e.nullSafe);
                 if (compound) compileExpr(*e.value);
                 else compileExprFor(*e.value, declaredTypeOf(*e.target));
                 line_ = e.line;
                 if (compound) emit(binaryOp(e.op));
                 emit(own ? Op::SetOwn : Op::SetProp, stringConstant(target.name));
+                endNullSafe(skip, 1);
                 if (toEnd >= 0) patchJump(toEnd);
                 break;
             }
@@ -3823,14 +3855,13 @@ private:
                 const auto& target = static_cast<const IndexExpr&>(*e.target);
                 compileExpr(*target.object);
                 compileExpr(*target.index);
-                if (compound) {
-                    emit(Op::Dup2);
-                    emit(Op::GetIndex);
-                }
+                if (compound) emitIndexForUpdate(target);
+                const int skip = beginNullSafe(compound && e.nullSafe);
                 compileExpr(*e.value);
                 line_ = e.line;
                 if (compound) emit(binaryOp(e.op));
                 emit(Op::SetIndex);
+                endNullSafe(skip, 2);
                 break;
             }
 
@@ -3935,7 +3966,7 @@ int CompilerSession::compileFile(const std::string& path) {
         const std::string directory = canonical.parent_path().string();
         if (std::vector<StmtPtr>* statements = parseFile(key, key, name)) {
             gather(key, name, directory, *statements, namespaceOf(directory), false);
-            checker->run();
+            check();
         }
         program.entry = loadModule(path, path, path, nullptr);
         checkConstAssignments();
@@ -4147,6 +4178,20 @@ void CompilerSession::gather(const std::string& key, const std::string& name, co
     }
 }
 
+// Runs the type checker on what has been added, and makes what it finds in the program a
+// compile error: the first, with the rest listed after it (M6.5 part 3, step 5).
+void CompilerSession::check() {
+    const size_t before = checker->diagnostics.size();
+    checker->run();
+    const std::vector<CheckDiagnostic>& found = checker->diagnostics;
+    if (!stopAtTypeErrors || found.size() == before) return;
+    CompileError error(found[before].file, found[before].line, found[before].col, found[before].message);
+    for (size_t i = before + 1; i < found.size(); i++)
+        error.more.push_back(found[i].file + ":" + std::to_string(found[i].line) + ":" + std::to_string(found[i].col) +
+                             ": error: " + found[i].message);
+    throw error;
+}
+
 // Source text that is not a file (the standard library, the shell, `astra -e`): parsed, and
 // unless it is the shell's, checked with what it imports; then compiled.
 FunctionProto* CompilerSession::compileUnit(const std::string& source, const std::string& name,
@@ -4157,7 +4202,7 @@ FunctionProto* CompilerSession::compileUnit(const std::string& source, const std
     Namespace* ns = into != nullptr ? into : namespaceOf(directory);
     if (!shell) {
         gather(fileKey, name, directory, statements, ns, directory == "<builtin>");
-        checker->run();
+        check();
     }
     return compileStatements(statements, name, directory, fileKey, shell, ns);
 }
@@ -4203,7 +4248,7 @@ int CompilerSession::loadWorker(const std::string& path, const std::string& from
     }
     try {
         gather(key, name, directory, *statements, ns.get(), false);
-        checker->run();
+        check();
         program.modules[static_cast<size_t>(index)] = compileStatements(*statements, name, directory, key, false, ns.get());
     } catch (...) {
         modules_.erase(key);

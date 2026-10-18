@@ -9,7 +9,7 @@ interface Shape {
   fun describe() => "${name()} of area ${area()}"   // comes with the interface
 }
 interface Drawable {
-  val colour                                 // a property the class must have
+  val colour : string                        // a property the class must have
   fun draw() => "drawing in $colour"
 }
 interface Marker                             // nothing in it: only a kind to test for
@@ -72,7 +72,7 @@ interface Clickable {
   fun press() => "press " + click()
 }
 interface Focusable {
-  var focused
+  var focused : bool
   fun focus() { focused = true }
 }
 interface Control : Clickable, Focusable {
@@ -90,8 +90,8 @@ print(button.activate(), button is Control, button is Clickable, button is Focus
 
 // Properties with a body come along; ones without are required.
 interface Sized {
-  val width
-  val height
+  val width : int
+  val height : int
   get area() => width * height
   get wide() => width > height
 }

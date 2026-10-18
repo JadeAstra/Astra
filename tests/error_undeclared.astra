@@ -8,4 +8,4 @@ class Point {
     this.y = 0
   }
 }
-// expect compile error: error_undeclared.astra:8:10: error: class 'Point' has no field 'y'; fields must be declared in the class with val or var
+// expect compile error: error_undeclared.astra:8:10: error: Point has no field 'y'; fields must be declared in the class with val or var

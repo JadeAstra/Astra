@@ -145,7 +145,7 @@ val form = grid {
   row { cell(fixed(30, 10)); cell(fixed(50, 20)) }
   row { cell(fixed(40, 15)); cell(fixed(10, 10)) }
 }
-print(form.prefSize(), form.minSize(), form.content.cells.size, form.content.children.size)   // expect: Dimension(112 x 52) Dimension(112 x 52) 4 4
+print(form.prefSize(), form.minSize(), (form.content as Grid).cells.size, (form.content as Grid).children.size)   // expect: Dimension(112 x 52) Dimension(112 x 52) 4 4
 print(grid { }.prefSize(), grid { insets = Insets(1, 2, 3, 4) }.prefSize(), grid { }.maxSize().width > 1000000)   // expect: Dimension(0 x 0) Dimension(6 x 4) true
 
 // Anchors: where a cell's widget sits in room larger than itself.
@@ -213,7 +213,7 @@ val nested = grid("outer") {
 }
 nested.layout(300, 200)
 print(inner.parent!!.id, inner.parent!!.parent!!.id, nested.parent, inner.windowPosition(), nested.find("inner") === inner, nested.find("nothing"))   // expect: middle outer null Point(24, 13) true null
-print(nested.descendants().map { it.id ?: it.content.className }, nested.content.viewId, Jade.registeredGrids().size >= 2)   // expect: ["outer", "middle", "inner"] outer true
+print(nested.descendants().map { it.id ?: type(it.content) }, (nested.content as Grid).viewId, Jade.registeredGrids().size >= 2)   // expect: ["outer", "middle", "inner"] outer true
 print(checks, failed)   // expect: 17 []
 
 // What JadeUI keeps to the library is kept from the program: an internal member, and the

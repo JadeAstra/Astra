@@ -47,7 +47,9 @@ CompileError::CompileError(std::string f, int l, int c, const std::string& messa
     : std::runtime_error(message), file(std::move(f)), line(l), col(c), atEof(eof) {}
 
 std::string CompileError::format() const {
-    return file + ":" + std::to_string(line) + ":" + std::to_string(col) + ": error: " + what();
+    std::string text = file + ":" + std::to_string(line) + ":" + std::to_string(col) + ": error: " + what();
+    for (const std::string& other : more) text += "\n" + other;
+    return text;
 }
 
 Lexer::Lexer(const std::string& source, std::string file)
@@ -298,6 +300,13 @@ void Lexer::scanToken() {
             throw error(std::string("unexpected character '") + c + "'");
     }
 
+    // `++?`, `+=?` and the like: the null-safe forms (L118), the `?` part of the operator. They
+    // are statements, so a `?` after `++` cannot be the start of `? :`, and no expression
+    // begins with `?`.
+    const bool update = type == TokenType::PlusPlus || type == TokenType::MinusMinus || type == TokenType::PlusEq ||
+                        type == TokenType::MinusEq || type == TokenType::StarEq || type == TokenType::SlashEq ||
+                        type == TokenType::PercentEq;
+    if (update && pos_ + length < end_ && src_[pos_ + length] == '?') length++;
     pos_ += length;
     add(type, start, line, col);
 }

@@ -46,7 +46,7 @@ val root = grid {
 val window = Window(root, "Host", 400, 100)
 print(window, window.title, window.isShowing, window.handle, window.exitOnClose, window.initialWidth, window.resizable, window.root === root)   // expect: Window(Host) Host false null true 400 true true
 window.show()
-val host = window.handle!!
+val host = window.handle as WindowHost
 print(window.isShowing, host is WindowHandle, host.native.isVisible, host.native.width, host.native.height, host.native.title)   // expect: true true false 400 100 Host
 print(a.bounds, b.bounds, ok.bounds.x, ok.bounds.width == ok.prefSize().width)   // expect: Rectangle(10, 10, 120 x 40) Rectangle(140, 10, 120 x 40) 270 true
 window.title = "Renamed"
@@ -228,7 +228,7 @@ class Painted : Content {
   }
 }
 val painted = Component(Painted())
-root.content.add(painted, 1, 0)
+(root.content as Grid).add(painted, 1, 0)
 host.frame()
 val afterAdding = paints
 host.frame()
@@ -254,9 +254,9 @@ val second2 = Window(label("filtered"), "Filter", 200, 60, keyFilter = { key, fo
   key.key == Key.escape
 }, exitOnClose = false)
 second2.show()
-second2.handle!!.send(RawInput.KeyDown(KeyCode.escape, none))
-second2.handle!!.send(RawInput.KeyDown(KeyCode.enter, none))
-second2.handle!!.send(RawInput.KeyDown(KeyCode.a, none))
+(second2.handle as WindowHost).send(RawInput.KeyDown(KeyCode.escape, none))
+(second2.handle as WindowHost).send(RawInput.KeyDown(KeyCode.enter, none))
+(second2.handle as WindowHost).send(RawInput.KeyDown(KeyCode.a, none))
 print(filtered, Jade.windowOpener.opened.size)   // expect: [escape, enter] 2
 
 // -- A window that belongs to another, sized to what it holds --
@@ -265,14 +265,14 @@ val dialog = Window(button("Close me"), "Dialog", owner = window, dialog = true,
 print(dialog.exitOnClose, dialog.owner === window)   // expect: false true
 dialog.show()
 val pref = dialog.root.prefSize()
-print(dialog.handle!!.native.height == pref.height, dialog.handle!!.native.width >= pref.width, dialog.root.bounds.height == pref.height)   // expect: true true true
+print((dialog.handle as WindowHost).native.height == pref.height, (dialog.handle as WindowHost).native.width >= pref.width, dialog.root.bounds.height == pref.height)   // expect: true true true
 dialog.close()
 dialog.close()
 print(closed, dialog.isShowing, dialog.handle)   // expect: 1 false null
 // Shown again, it is a new window.
 dialog.show()
 print(dialog.isShowing, closed)   // expect: true 1
-dialog.handle!!.native.sendCloseRequest()        // the X of its title bar
+(dialog.handle as WindowHost).native.sendCloseRequest()        // the X of its title bar
 print(dialog.isShowing, closed)   // expect: false 2
 
 // -- An opener of a test's own: nothing is made, and what was asked is written down --
@@ -343,23 +343,23 @@ dense.show()
 val plainFont = Font(Font.sansSerif, Font.plain, 12)
 val onDense = FontMetrics(plainFont, 2)
 print(longLabel.bounds.width * 2 >= onDense.deviceWidth(longText) + 16, longLabel.bounds.width == onDense.stringWidth(longText) + 8, onDense.stringWidth(longText) > FontMetrics(plainFont).stringWidth(longText))   // expect: true true true
-val labelShot = dense.handle!!.snapshot().crop(longLabel.bounds.x * 2, longLabel.bounds.y * 2, longLabel.bounds.width * 2, longLabel.bounds.height * 2)
-val inked = labelShot.inkBox(Palette.headerBg.rgb)
+val labelShot = (dense.handle as WindowHost).snapshot().crop(longLabel.bounds.x * 2, longLabel.bounds.y * 2, longLabel.bounds.width * 2, longLabel.bounds.height * 2)
+val inked = labelShot.inkBox(Palette.headerBg.rgb)!!
 print(inked[0] >= 8, inked[0] + inked[2] <= labelShot.width - 4)   // expect: true true
-val denseShot = dense.handle!!.snapshot()
-print(denseShot, dense.handle!!.native.scale, denseButton.bounds.x, denseButton.bounds.y)   // expect: Picture(1200 x 160) 2.0 10 10
+val denseShot = (dense.handle as WindowHost).snapshot()
+print(denseShot, (dense.handle as WindowHost).native.scale, denseButton.bounds.x, denseButton.bounds.y)   // expect: Picture(1200 x 160) 2.0 10 10
 // The button's edge is where it should be in the screen's pixels, and a press in units finds it.
 print(denseShot.get(19, 40) == Palette.headerBg.rgb, denseShot.get(24, 40) != Palette.headerBg.rgb)   // expect: true true
-dense.handle!!.send(RawInput.PointerDown(15, 15, PointerButton.left, none))
-dense.handle!!.send(RawInput.PointerUp(15, 15, PointerButton.left, none))
+(dense.handle as WindowHost).send(RawInput.PointerDown(15, 15, PointerButton.left, none))
+(dense.handle as WindowHost).send(RawInput.PointerUp(15, 15, PointerButton.left, none))
 print(denseClicks)   // expect: 1
 
 // -- The dark theme reaches a window that is open --
-val light = dense.handle!!.snapshot()
+val light = (dense.handle as WindowHost).snapshot()
 Palette.dark = true
-val dark = dense.handle!!.snapshot()
+val dark = (dense.handle as WindowHost).snapshot()
 Palette.dark = false
-print(light == dark, (dark.get(2, 2) & 255) < 80, (light.get(2, 2) & 255) > 200, dense.handle!!.snapshot() == light)   // expect: false true true true
+print(light == dark, (dark.get(2, 2) & 255) < 80, (light.get(2, 2) & 255) > 200, (dense.handle as WindowHost).snapshot() == light)   // expect: false true true true
 dense.close()
 Jade.windowOpener = real
 

@@ -40,9 +40,11 @@ val both = true and 1         // check: 'and' takes bool values; this is an int
 val either = false or true
 val pick = count ? 1 : 2      // check: the condition of '? :' must be a bool, not an int
 
-// What is not known is never wrong
-fun untyped(x) => x
-var free = untyped(1)
+// A parameter has its type written; `any?` takes anything
+fun untyped(x) => x           // check: 'x' has no type; write one, as in (x : Type)
+var unset                     // check: 'unset' has no value to take its type from; write one, as in var unset : Type
+fun loose(x : any?) : any? => x
+var free = loose(1)
 free = "anything"
 val r = 1..10
 val bad = 1.."x"              // check: a range is made of ints; this is a string

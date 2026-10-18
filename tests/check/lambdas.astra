@@ -27,7 +27,7 @@ grid {
 }
 
 // Where the type a lambda is passed as cannot be told, its bare names are not checked
-fun untyped(block) { }
+fun untyped(block : any) { }
 untyped { anything = 1 }
 
 // A function value with a written type

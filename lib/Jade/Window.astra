@@ -27,24 +27,24 @@ interface WindowOpener {
 }
 
 class Window {
-  val initialWidth
-  val initialHeight
-  val exitOnClose
-  val menuBar
-  val onClose
-  val onFilesDropped
-  val onFilesDroppedAt
-  val icons
-  val onFront
-  val owner
-  val focus
-  val dialog
-  val sizeToContent
-  val centerOnOwner
-  val resizable
-  val keyFilter
-  private var currentRoot
-  private var currentTitle
+  val initialWidth : int
+  val initialHeight : int
+  val exitOnClose : bool
+  val menuBar : any?
+  val onClose : () -> unit
+  val onFilesDropped : (List<File>) -> unit
+  val onFilesDroppedAt : ((List<File>, int, int) -> bool)?
+  val icons : List<BufferedImage>
+  val onFront : () -> unit
+  val owner : Window?
+  val focus : Component?
+  val dialog : bool
+  val sizeToContent : bool
+  val centerOnOwner : bool
+  val resizable : bool
+  val keyFilter : ((Event.KeyPress, Component?) -> bool)?
+  private var currentRoot : Component
+  private var currentTitle : string
   // What the opener gave back once the window was shown; null before, and after it is closed.
   var handle : WindowHandle? = null
 
@@ -148,7 +148,7 @@ class NativeWindowOpener : WindowOpener {
 // the tree is laid out and painted, and events sent to it go the way real ones do.
 // `window.handle` is then the WindowHost, which a test drives and looks at.
 class HiddenWindowOpener : WindowOpener {
-  private val scale
+  private val scale : Number
   val opened = []
 
   fun init(scale : Number = 1) {
@@ -165,8 +165,8 @@ class HiddenWindowOpener : WindowOpener {
 
 // Counts presses that follow one another closely in time and place: 2 is a double click.
 internal class ClickCounter {
-  private val intervalNanos
-  private val slop
+  private val intervalNanos : int
+  private val slop : int
   private var lastButton = -1
   private var lastAt : int? = null
   private var lastX = 0
@@ -200,10 +200,10 @@ internal class ClickCounter {
 // One open window: the native window, the tree it shows, and what the pointer and the
 // keyboard are doing in it. It turns raw input into the events widgets are told of.
 class WindowHost : WindowHandle {
-  val window
-  val native
-  private val hidden
-  private var tree
+  val window : Window
+  val native : NativeWindow
+  private val hidden : bool
+  private var tree : Component
   private val loop = RenderLoop()
   private var framePending = false
   private var lastW = -1
@@ -229,13 +229,13 @@ class WindowHost : WindowHandle {
   private var lastPointer : Point? = null
   private var lastX = 0
   private var lastY = 0
-  private val clicks
+  private val clicks : ClickCounter
   private var currentCursor : CursorKind = CursorKind.default
 
-  private val repaintHook
-  private val layoutHook
-  private val frameHook
-  private val themeHook
+  private val repaintHook : () -> unit
+  private val layoutHook : () -> unit
+  private val frameHook : () -> unit
+  private val themeHook : () -> unit
 
   fun init(window : Window, hidden : bool, scale : Number?) {
     this.window = window
@@ -253,7 +253,8 @@ class WindowHost : WindowHandle {
       height = pref.height
     }
     val ownerHandle = window.owner?.handle
-    this.native = NativeWindow(window.title, width, height, window.resizable, window.dialog, ownerHandle?.native, hidden ? (scale ?: 1) : scale)
+    val ownerNative = ownerHandle is WindowHost ? ownerHandle.native : null
+    this.native = NativeWindow(window.title, width, height, window.resizable, window.dialog, ownerNative, hidden ? (scale ?: 1) : scale)
 
     repaintHook = { requestRepaint() }
     layoutHook = { loop.requestLayout() }
@@ -294,8 +295,9 @@ class WindowHost : WindowHandle {
       if (at == null or !at(files, x, y)) { (window.onFilesDropped)(files) }
     }
     if (!window.icons.isEmpty()) { native.setIcon(window.icons.last()) }
-    if (window.centerOnOwner and window.owner?.handle != null) {
-      val over = window.owner.handle.native
+    val ownerHost = window.owner?.handle
+    if (window.centerOnOwner and ownerHost is WindowHost) {
+      val over = ownerHost.native
       val at = over.position
       val s = over.scale
       native.setPosition(at.x + int((over.width - native.width) * s / 2), at.y + int((over.height - native.height) * s / 2))

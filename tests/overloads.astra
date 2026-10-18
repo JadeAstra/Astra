@@ -102,13 +102,14 @@ val speaker : Speaker = Parrot()
 fun looseSay(o : any?, v : any?) => unknown(o).say(v)
 print(speaker.say(1), speaker.say("hello"), looseSay(speaker, 2))   // expect: number 1 word hello number 2
 
-// Written override, an untyped method with one form above takes its place, even with a
-// parameter more that has a default.
+// An override has the parameters of what it overrides; a parameter more makes another form,
+// written without override.
 class Plain {
   fun paint(g : any?) => "plain"
 }
 class Extra : Plain() {
-  override fun paint(g : any?, alpha : float = 1.0) => "extra " + alpha
+  override fun paint(g : any?) => paint(g, 1.0)
+  fun paint(g : any?, alpha : float) => "extra " + alpha
 }
 val plain : Plain = Extra()
 print(plain.paint(0), Extra().paint(0, 0.5))     // expect: extra 1.0 extra 0.5

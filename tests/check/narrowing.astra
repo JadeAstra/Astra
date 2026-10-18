@@ -41,3 +41,23 @@ fun ninth(maybe : Box?) : int => when {
   maybe == null -> 0
   else -> 1
 }
+
+// Changing a place that may be null (L118): the `?` forms skip it when null or missing, and a
+// map's index can say what a missing entry starts from.
+fun counting(stock : Map<string, int>, holder : Holder?) {
+  stock["apples"]--             // check: stock["apples"] may be missing, so -- cannot change it; use --? to skip it when missing, stock["apples", default = 0] to start it from a value, or ?:
+  stock["apples"] += 2          // check: stock["apples"] may be missing, so += cannot change it; use +=? to skip it when missing, stock["apples", default = 0] to start it from a value, or ?:
+  stock["apples"]--?
+  stock["apples", default = 0]++
+  val n : int = stock["pears", default = 0]
+  var count = 5
+  count++?                      // check: 'count' is an int, never null; use ++
+  stock["x", default = "none"]++   // check: the values of this map are an int; the default cannot be a string
+  print(n, count)
+}
+class Holder(var count : int?)
+fun held(h : Holder) {
+  h.count++                     // check: h.count may be null, so ++ cannot change it; use ++? to skip it when null, or ?:
+  h.count++?
+  h.count -=? 1
+}

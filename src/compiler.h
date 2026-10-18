@@ -72,6 +72,10 @@ public:
 
     Program program;
 
+    // Whether what the type checker finds in the program is a compile error (true but for
+    // `astra check`, which lists everything it finds).
+    bool stopAtTypeErrors = true;
+
     // Directories searched for an import that is not found next to the importing file.
     std::vector<std::string> libraryPaths;
 
@@ -106,6 +110,7 @@ private:
     std::unordered_map<std::string, std::unique_ptr<std::vector<StmtPtr>>> parsed_;
     std::vector<std::unique_ptr<std::vector<StmtPtr>>> sources_;
     std::unordered_set<std::string> gathered_;  // files handed to the checker
+    void check();
     std::vector<StmtPtr>* parseFile(const std::string& key, const std::string& path, const std::string& name);
     bool findImport(const std::string& path, const std::string& fromDirectory, const std::string& file,
                     std::string& found, bool& folder) const;

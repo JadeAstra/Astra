@@ -254,7 +254,7 @@ class IconButton(image : BufferedImage, onClick : () -> unit = {}, size : int = 
   private fun faded(source : BufferedImage) : BufferedImage {
     if (fadedSource === source) { return fadedOf!! }
     val out = BufferedImage(source.width, source.height, BufferedImage.typeIntArgb)
-    out.canvas().drawImage(source, 0, 0, null, null, 0.35)
+    out.canvas().drawImage(source, 0, 0, alpha = 0.35)
     fadedSource = source
     fadedOf = out
     return out

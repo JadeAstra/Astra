@@ -1,4 +1,4 @@
 // A literal that can never fit the declared type is rejected before the program runs.
 print("never runs")
 val port : int = "8080"
-// expect compile error: error_type.astra:3:18: error: cannot initialize 'port' of type int with a value of type string
+// expect compile error: error_type.astra:3:18: error: 'port' is an int; it cannot start as a string

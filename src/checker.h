@@ -23,9 +23,9 @@ struct CheckDiagnostic {
 // what cannot be right (a wrong argument, a member that does not exist, an int put where a
 // string goes, a value that may be null used as if it could not be).
 //
-// For now it runs beside the old rules, with `astra check`, and stops nothing: where a type
-// is not written and cannot be worked out, it is unknown, and an unknown type is never an
-// error. As more of the program carries its types, more is checked.
+// What it finds is a compile error: the program does not run (M6.5 part 3, step 5). `astra
+// check` lists all of it. A parameter has its type written; a local's type is worked out from
+// its first value, and a value whose type cannot be known is `any`, used through a cast.
 class Checker {
 public:
     Checker();
@@ -48,9 +48,9 @@ public:
     // Whether what is found in the standard library is reported too (`astra check --std`).
     bool reportStandardLibrary = false;
 
-    // The rule of M6.5 part 3, step 5, before it is switched on (`astra check --typed`): a
-    // parameter of a named function, a method or a class header has a type written.
-    bool requireTypes = false;
+    // A parameter of a named function, a method or a class header has a type written (M6.5
+    // part 3, step 5).
+    bool requireTypes = true;
 
     // For a call of a name with several forms (overloads, D56): the declaration of the form it
     // means, where that could be told; null otherwise, and the form is chosen when it runs.

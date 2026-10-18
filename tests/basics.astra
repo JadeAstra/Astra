@@ -40,7 +40,7 @@ print(true ? "yes" : "no", false ? 1 : 2)    // expect: yes 2
 
 // Variables
 var a = 1
-var b
+var b : int?
 print(a, b)                              // expect: 1 null
 a += 4; a *= 2; a -= 1; a /= 3; a %= 2
 print(a)                                 // expect: 1

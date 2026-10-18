@@ -11,10 +11,10 @@
 //   Color(0xFF8000)               Color(0x80FF8000, true)      one number, with its alpha
 //   Color(1.0, 0.5, 0.0)          parts from 0.0 to 1.0
 class Color {
-  val red
-  val green
-  val blue
-  val alpha
+  val red : int
+  val green : int
+  val blue : int
+  val alpha : int
 
   fun init(r : Number, g : any? = null, b : Number? = null, a : Number? = null) {
     if (g == null or g is bool) {
@@ -151,9 +151,9 @@ class Font {
   static val serif = "Serif"
   static val monospaced = "Monospaced"
 
-  val name
-  val style
-  val size
+  val name : string
+  val style : int
+  val size : Number
 
   fun init(name : string?, style : int = 0, size : Number = 12) {
     this.name = name ?: "Dialog"
@@ -202,9 +202,9 @@ class Font {
 // measured in the screen's own pixels and the numbers divided, rounded up: text always fits
 // the room measured for it, and at a scale of 1 the numbers are exact.
 class FontMetrics {
-  val font
-  val scale
-  private val engine
+  val font : Font
+  val scale : Number
+  private val engine : TextFont
 
   fun init(font : Font, scale : Number = 1) {
     this.font = font
@@ -236,8 +236,8 @@ class FontMetrics {
 // ---- Geometry ----
 
 class Dimension {
-  var width
-  var height
+  var width : int
+  var height : int
   fun init(width : int = 0, height : int = 0) {
     this.width = width
     this.height = height
@@ -254,8 +254,8 @@ class Dimension {
 }
 
 class Point {
-  var x
-  var y
+  var x : int
+  var y : int
   fun init(x : int = 0, y : int = 0) {
     this.x = x
     this.y = y
@@ -275,10 +275,10 @@ class Point {
 
 // Top, left, bottom, right: the order Java gives them in.
 class Insets {
-  var top
-  var left
-  var bottom
-  var right
+  var top : int
+  var left : int
+  var bottom : int
+  var right : int
   fun init(top : int = 0, left : int = 0, bottom : int = 0, right : int = 0) {
     this.top = top
     this.left = left
@@ -293,18 +293,18 @@ class Insets {
 // A rectangle: its top left corner and its size. Rectangle(), Rectangle(width, height),
 // Rectangle(x, y, width, height), Rectangle(other).
 class Rectangle {
-  var x
-  var y
-  var width
-  var height
+  var x : int
+  var y : int
+  var width : int
+  var height : int
 
   fun init(x : any = 0, y : int = 0, width : int? = null, height : int? = null) {
     if (x is Rectangle) {
       this.x = x.x; this.y = x.y; this.width = x.width; this.height = x.height
     } else if (width == null) {
-      this.x = 0; this.y = 0; this.width = x; this.height = y
+      this.x = 0; this.y = 0; this.width = x as int; this.height = y
     } else {
-      this.x = x; this.y = y; this.width = width; this.height = height
+      this.x = x as int; this.y = y; this.width = width; this.height = height!!
     }
   }
 
@@ -360,12 +360,11 @@ class Rectangle {
     width += 2 * horizontal
     height += 2 * vertical
   }
-  fun setBounds(x : any, y : int? = null, width : int? = null, height : int? = null) {
-    if (x is Rectangle) {
-      this.x = x.x; this.y = x.y; this.width = x.width; this.height = x.height
-    } else {
-      this.x = x; this.y = y; this.width = width; this.height = height
-    }
+  fun setBounds(r : Rectangle) {
+    setBounds(r.x, r.y, r.width, r.height)
+  }
+  fun setBounds(x : int, y : int, width : int, height : int) {
+    this.x = x; this.y = y; this.width = width; this.height = height
   }
   fun setLocation(x : int, y : int) {
     this.x = x
@@ -395,10 +394,10 @@ class BufferedImage {
   static val typeIntRgb = 1       // no alpha: every pixel solid
   static val typeIntArgb = 2
 
-  val width
-  val height
-  val type
-  private var held             // the pixels in memory, as a Picture
+  val width : int
+  val height : int
+  val type : int
+  private var held : Picture   // the pixels in memory
   private var card : Surface? = null      // the same on the graphics card, as a Surface, once wanted
   private var memoryNewer = true
   private var cardNewer = false

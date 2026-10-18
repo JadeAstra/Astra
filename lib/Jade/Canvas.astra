@@ -24,8 +24,9 @@ interface Canvas {
   fun drawOval(x : Number, y : Number, w : Number, h : Number)
   fun drawLine(x1 : Number, y1 : Number, x2 : Number, y2 : Number)
   fun drawString(text : string, x : Number, y : Number)
-  // A picture at (x, y), at its own size or scaled into w by h.
-  fun drawImage(image : any, x : Number, y : Number, w : Number? = null, h : Number? = null)
+  // A picture at (x, y), at its own size or scaled into w by h; `alpha` below 1.0 makes it
+  // see-through.
+  fun drawImage(image : any, x : Number, y : Number, w : Number? = null, h : Number? = null, alpha : Number = 1.0)
 
   // The part of the canvas that can be drawn on: the rest is clipped away.
   get visibleBounds() : Rectangle => Rectangle(0, 0, width, height)
@@ -141,7 +142,8 @@ class RecordingCanvas : Canvas {
   override fun drawString(text : string, x : Number, y : Number) {
     ops.add(DrawOp.Text(text, x + ox, y + oy, color, font))
   }
-  override fun drawImage(image : any, x : Number, y : Number, w : Number? = null, h : Number? = null) {
+  // The alpha is not recorded yet (D123, M6.6).
+  override fun drawImage(image : any, x : Number, y : Number, w : Number? = null, h : Number? = null, alpha : Number = 1.0) {
     val source = image is Surface ? image : image as BufferedImage
     ops.add(DrawOp.Image(x + ox, y + oy, w ?: source.width, h ?: source.height))
   }
