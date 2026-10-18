@@ -231,6 +231,20 @@ enum class Op : uint8_t {
     AddLocals, SubLocals, MulLocals, DivLocals, LtLocals, LeLocals, GtLocals, GeLocals, EqLocals,  // u16 slot, u16 slot  -> a op b
     CopyLocal,          // u16 from, u16 to                ->
 
+    // An anonymous object (`object : Shape { ... }`), its class made once (M6.5 part 4).
+    // ObjectClass pushes the class kept in the global and jumps over the code that makes it,
+    // which StoreClass ends by keeping it there (0xFFFF: never kept, made every time). Then
+    // the variables of the code around that its members use are pushed, each by Capture
+    // (kind 0 a local, 1 an upvalue, 2 a capture of the object this code runs on, 3 the
+    // superclass of the class `index` slots down), and NewObject makes the object with them.
+    // Its members reach them with GetCaptured and SetCaptured, on the object they run on.
+    ObjectClass,        // u16 global, i32 target          -> [class, at target]
+    StoreClass,         // u16 global                      class -> class
+    Capture,            // u16 index, u8 kind              -> captured variable
+    NewObject,          // u8 count                        class captured... -> object (runs its init)
+    GetCaptured,        // u16 capture, u16 name           -> value  (throws if it has no value yet)
+    SetCaptured,        // u16 capture                     value -> value
+
     Count_,
 };
 
@@ -265,7 +279,14 @@ std::string typeText(uint8_t type, const std::string& className);
 struct UpvalueDesc {
     bool isLocal;    // captured from the enclosing function's locals (else from its upvalues)
     uint16_t index;
+    // Taken from capture `index` of the anonymous object the enclosing function runs on, a
+    // member of its class (M6.5 part 4; see Op::NewObject).
+    bool fromCapture = false;
 };
+
+// In FunctionProto::outerReceivers: the entry is a capture of the anonymous object the
+// function, a member of its class, runs on, not one of its upvalues.
+constexpr uint16_t kCapturedReceiver = 0x8000;
 
 // A compiled function: the unit the compiler emits and the bytecode file stores.
 struct FunctionProto {

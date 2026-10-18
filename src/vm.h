@@ -228,15 +228,22 @@ public:
 
     // An object of `cls`, with room for the fields the class declares, none of them given a
     // value yet (M6.5 part 4).
-    ObjInstance* newInstance(ObjClass* cls) {
+    ObjInstance* newInstance(ObjClass* cls, uint16_t captures = 0) {
         const uint32_t count = static_cast<uint32_t>(cls->declared.size());
-        ObjInstance* obj = new (count) ObjInstance(cls, count);
+        ObjInstance* obj = new (count + captures) ObjInstance(cls, count, captures);
         obj->core = coreId_;
         obj->next = objects_;
         objects_ = obj;
-        bytesAllocated_ += sizeof(ObjInstance) + count * sizeof(Value);
+        bytesAllocated_ += sizeof(ObjInstance) + (count + captures) * sizeof(Value);
         return obj;
     }
+    // Makes an object of `cls` in the slot under its `argc` arguments and starts its
+    // initializer; with `captures`, an anonymous object that keeps them (Op::NewObject).
+    // Returns whether a frame was pushed.
+    bool construct(ObjClass* cls, int argc, bool packed, const Value* captures = nullptr, uint16_t captureCount = 0);
+    // Capture `k` of the object a member of an anonymous class runs on, checked.
+    ObjUpvalue* capturedOf(Value receiver, int k);
+    ObjUpvalue* receiverUpvalue(const CallFrame* frame, const Value* base, uint16_t entry) const;
 
     // Tells the collector about memory owned by an object beyond its own size.
     void account(size_t bytes) { bytesAllocated_ += bytes; }

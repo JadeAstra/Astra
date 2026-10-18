@@ -1,0 +1,5 @@
+// The name of a function is never given another value, as in Kotlin: what is called by a name
+// is what was declared under it, which also lets the compiler trust what a call returns.
+fun area() : int => 1
+area = { "wide" }
+// expect compile error: error_assign_fun.astra:4:1: error: 'area' is a function, and the name of a function is never given another value; to change what is called, keep it in a var of a function type

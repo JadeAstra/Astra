@@ -165,6 +165,12 @@ const OpInfo kOps[] = {
     {"GE_LOCALS", Operand::U16U16},
     {"EQ_LOCALS", Operand::U16U16},
     {"COPY_LOCAL", Operand::U16U16},
+    {"OBJECT_CLASS", Operand::U16I32},
+    {"STORE_CLASS", Operand::U16},
+    {"CAPTURE", Operand::U16U8},
+    {"NEW_OBJECT", Operand::U8},
+    {"GET_CAPTURED", Operand::U16U16},
+    {"SET_CAPTURED", Operand::U16},
 };
 
 const char* const kTypeNames[] = {"", "int", "float", "Number", "string", "bool", "List", "Map", "Range", "Function", "Bytes"};
@@ -268,7 +274,7 @@ static int analyzeStack(FunctionProto& f, const Program& program, bool partial) 
     if (f.varargIndex < -1 || f.varargIndex >= f.arity) fail("bad vararg parameter");
     if (!f.paramNames.empty() && f.paramNames.size() != static_cast<size_t>(f.arity)) fail("bad parameter names");
     for (uint16_t upvalue : f.outerReceivers)
-        if (upvalue >= f.upvalues.size()) fail("receiver upvalue out of range");
+        if ((upvalue & kCapturedReceiver) == 0 && upvalue >= f.upvalues.size()) fail("receiver upvalue out of range");
 
     // Stack depth on entry to each instruction, counted from the frame base (slot 0 is the
     // callee or receiver, then the parameters). -1 means not reached yet.
@@ -554,6 +560,30 @@ static int analyzeStack(FunctionProto& f, const Program& program, bool partial) 
                 case Op::Component:
                     pops = pushes = 1;
                     break;
+                case Op::ObjectClass:
+                    if (a >= static_cast<int>(program.globalNames.size()) && a != 0xFFFF) fail("global out of range");
+                    flow(b, depth + 1);
+                    maxDepth = std::max(maxDepth, depth + 1);
+                    break;
+                case Op::StoreClass:
+                    if (a >= static_cast<int>(program.globalNames.size()) && a != 0xFFFF) fail("global out of range");
+                    pops = pushes = 1;
+                    break;
+                case Op::Capture:
+                    if (b > 3 || (b == 0 && a >= depth) || (b == 3 && a >= depth)) fail("bad capture");
+                    pushes = 1;
+                    break;
+                case Op::NewObject:
+                    pops = a + 1;
+                    pushes = 1;
+                    break;
+                case Op::GetCaptured:
+                    requireName(b);
+                    pushes = 1;
+                    break;
+                case Op::SetCaptured:
+                    pops = pushes = 1;
+                    break;
                 case Op::Range:
                     if ((a & ~7) != 0) fail("bad range");
                     pops = (a & 4) != 0 ? 3 : 2;
@@ -693,6 +723,7 @@ static int analyzeStack(FunctionProto& f, const Program& program, bool partial) 
                     if (static_cast<size_t>(a) >= f.protos.size()) fail("nested function out of range");
                     // A local function may capture its own slot, which is the one being pushed.
                     for (const UpvalueDesc& uv : f.protos[a]->upvalues) {
+                        if (uv.fromCapture) continue;  // checked when the closure is made
                         if (uv.isLocal ? uv.index > depth : uv.index >= f.upvalues.size())
                             fail("captured variable out of range");
                     }
@@ -918,6 +949,12 @@ void disassembleFunction(const FunctionProto& f, const Program& program, std::os
             case Op::RangeNext:
                 out << " slot=" << a << " -> " << b;
                 break;
+            case Op::ObjectClass:
+                out << " " << a << " -> " << b;
+                break;
+            case Op::Capture:
+                out << " " << a << " kind=" << b;
+                break;
             case Op::Jump:
             case Op::Loop:
             case Op::JumpIfFalse:
@@ -1016,7 +1053,7 @@ struct Writer {
 
         u32(static_cast<uint32_t>(f.upvalues.size()));
         for (const UpvalueDesc& uv : f.upvalues) {
-            u8(uv.isLocal ? 1 : 0);
+            u8(uv.fromCapture ? 2 : uv.isLocal ? 1 : 0);
             u16(uv.index);
         }
         u32(static_cast<uint32_t>(f.outerReceivers.size()));
@@ -1128,13 +1165,14 @@ struct Reader {
 
         uint32_t upvalueCount = count(3);
         for (uint32_t i = 0; i < upvalueCount; i++) {
-            bool isLocal = u8() != 0;
-            f->upvalues.push_back(UpvalueDesc{isLocal, u16()});
+            const uint8_t kind = u8();
+            if (kind > 2) corrupt();
+            f->upvalues.push_back(UpvalueDesc{kind == 1, u16(), kind == 2});
         }
         uint32_t receiverCount = count(2);
         for (uint32_t i = 0; i < receiverCount; i++) {
             uint16_t upvalue = u16();
-            if (upvalue >= f->upvalues.size()) corrupt();
+            if ((upvalue & kCapturedReceiver) == 0 && upvalue >= f->upvalues.size()) corrupt();
             f->outerReceivers.push_back(upvalue);
         }
         uint32_t classCount = count(2);
@@ -1217,6 +1255,10 @@ void renumber(FunctionProto& f, const Renumbering& r, VM& vm) {
             case Op::SetGlobal:
             case Op::DefineGlobal:
             case Op::DefineTypedGlobal: first(r.global); break;
+            case Op::ObjectClass:
+            case Op::StoreClass:
+                if (readU16(code, ip + 1) != 0xFFFF) first(r.global);  // 0xFFFF: kept nowhere
+                break;
             case Op::GetImplicit:
             case Op::SetImplicit:
             case Op::InvokeImplicit: second(r.global); break;

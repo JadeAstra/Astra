@@ -1112,6 +1112,10 @@ ported carry every type already.
 - No `final`. The compiler sees the whole program and every override, which is all `final`
   would tell it; `override` already keeps a method from being replaced by accident. `open`
   and `final` are not keywords: either one in front of a declaration is an error.
+- The name of a function is never given another value (2026-10-18, D159), as in Kotlin:
+  `area = { ... }` for a `fun area` is a compile error saying to keep a function that changes
+  in a `var` of a function type. A call of a function then gives what the function declares,
+  which lets the compiler leave out checks it has proved.
 - Generic types are kept when the program runs, as in C# and unlike Kotlin and Java (which
   drop them for compatibility with code compiled before generics, a reason Astra does not
   have). A collection knows what it was made to hold (`items.itemType`, `map.keyType`,
@@ -1180,8 +1184,10 @@ in the repository has its types.
    the JVM (today each `object : Shape { ... }` rebuilds its class and method closures: about
    560 ns against 165 for a `data` object). Inline caches where a member
    cannot be found by position (calls through an interface, on a union or an `any`): each call
-   site remembers where the member was last time. Instructions chosen by type, so that adding
-   two `float`s is one instruction with no test of what kinds they are. The aim, measured before
+   site remembers where the member was last time. (Instructions chosen by type moved to M6.6 on
+   2026-10-18, to come with generic types kept when running: until then a value of another type
+   can still arrive through an erased generic or a built-in function, and the test is what
+   catches it; leaving the tests out of the numeric loop measured only 1.3% faster.) The aim, measured before
    and after on a fixed set of benchmarks (a numeric loop, calls, field access, a JadeGate-style
    simulation slice): two to five times faster on typed numeric code.
 5. **Smaller built programs.** (a) The M0 spike (`src/spike`, the `Spike` class) out of the
@@ -1577,7 +1583,11 @@ value types (`value`), kept one after another in lists whose items are values, i
 small, inside their objects when fields, in boxes otherwise; reads in place where the
 compiler can show nothing changes the list meanwhile; results built where they go; `var`
 fields changed through their place, and `mutating` methods; large items sorted through their
-positions; generic list functions copied per layout. And where the compiler knows a
+positions; generic list functions copied per layout. Generic types kept when the program
+runs, as 5.7 settles (`items.itemType`, `x as List<int>` checked in full), and what the C++
+functions return checked against their declarations, so that a type the compiler knows holds
+while running; with that, instructions chosen by type, adding two `float`s with no test of
+their kinds (moved from M6.5 part 4 on 2026-10-18). And where the compiler knows a
 slot's type (an `int`, a `float`, a small value type, in a local or a field), the slot keeps only
 its 8-byte payload, not the kind beside it, which only `any`, unions and generic parameters
 need; that halves memory for typed code. (Fitting values in 8 bytes by NaN-boxing was set
@@ -1918,6 +1928,7 @@ font metrics will need new numbers: no other font engine measures text exactly a
 | D156 | `.=`: assigning a member's result back. | `target .= member` means `target = target.member`, the path to the target written and worked out once, as `+=` does (a path written twice can later be changed in one place and not the other): `a.b.c .= copy(p1 = 4)`, `grid .= insertRows(at = 3)`, `items .= sorted()`, `name .= trim()`, `cells[i] .= copy(alive = false)`, `dir .= parent`. The target is anything assignable (a `var`, a `var` field, a list element, a grid cell); the right side any member, a method call or a property, its result fitting the target's type. Raku's `.=`. Built in M6.6 (R23 in [decision-review.html](decision-review.html)). |
 | D157 | No open classes; `extend` may add stored fields. | Every field is declared, in the header or the body; assigning a field not declared is a compile error everywhere, so a class that declares no fields no longer "stays open" (README, "Fields"). An `extend` may add stored fields to a class the program did not write (`extend Button { var tag : string? = null }`): the compiler sees every `extend` before laying a class out, each is a real slot of every instance of the class and its subclasses, in an extension area after the declared fields, laid out per program in its last step (an ancestor's extension fields first), so compiled code for the class, in `astra.exe` or the cache, is right for every program; reading one is the class's area start plus a fixed offset, one load more than a declared field; the name is in reach only where the `extend` is (L20); it needs an initial value or `lateinit`; two that add the same name are an error unless identical; not on value types or data classes. Costs one slot per instance for each such field in the program; for R10 it changes only the files using it and the program's last step, never the class's compiled code. Open classes go in M6.5 part 3, when everything is typed; extension fields with `extend`. Changes L20 (D33) (R24 in [decision-review.html](decision-review.html)). |
 | D158 | `++`, `+=` and the rest on a place that may be null. | Null-safe forms, as `?.` is a null-safe `.`: `++?`, `--?`, `+=?`, `-=?`, `*=?`, `/=?`, `%=?` change the place when it holds a value and do nothing when it is null or a map's key is missing (`stock["apples"]--?`, `maybe.count++?`, `a?.visits++?`). The plain operators on a place that may be null are a compile error saying why and naming `++?`, the index's `default` and `?:`; a `?` form on a place that cannot be null is an error naming the plain one. A missing key that should start from a value has it in the index, as Swift's `dict[k, default: 0]`: `counts[word, default = 0]++`, `groups[kind, default = []] += [item]`; as a read it gives the value or the default without adding the key, typed as the map's values, never null; an update through it is one lookup. `map.update(key, start) { old -> new }` for a change that is not one operator; no `increment`. `update` is in the standard library; the operators and the index's `default` come in M6.5 part 3 (L118 in [language-choices.html](language-choices.html)). |
+| D159 | Assigning to the name of a function. | A compile error, as in Kotlin (2026-10-18): `fun area() : int` cannot be given another value, `area = { ... }` or `area += 1`; the error says to keep a function that changes in a `var` of a function type. A call of a function declared once with a return type then gives that type, so the compiler leaves out checks of values it has proved (M6.5 part 4). |
 | | How files are loaded under namespaces. | Importing a folder loads every `.astra` file directly in it, as one unit. Importing a file loads that file only, into its folder's namespace (5.1). |
 | | A lambda's parameter list over several lines. | Allowed, as in Kotlin (5.1). |
 

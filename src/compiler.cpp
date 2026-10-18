@@ -138,8 +138,43 @@ struct FinallyState {
     LoopState* loop;   // the loop it was entered in, if any
 };
 
+struct FunctionState;
+
+// An anonymous object being compiled (M6.5 part 4). Its class is made once, so what its members
+// use of the code around it cannot be in their closures: it is captured when each object is
+// made, kept in the object, and reached through it (Op::NewObject and the rest).
+struct ObjectBuild {
+    FunctionState* boundary = nullptr;  // the function the object is made in
+    ObjectBuild* outer = nullptr;       // an object being compiled around this one
+    const void* classState = nullptr;   // its class as it is compiled (a ClassState)
+    size_t localsAtStart = 0;           // the boundary's locals before the object
+    int superLocal = -1;                // the boundary's local holding the class's `super`
+    // Making the class itself uses a variable of the code around (a class declared there as
+    // its supertype, say): it is made every time instead of once.
+    bool usesOuter = false;
+
+    struct Capture {
+        uint8_t kind;  // as Op::Capture: 0 a local, 1 an upvalue, 2 a capture, 3 the superclass
+        int index;
+    };
+    std::vector<Capture> captures;
+
+    int add(uint8_t kind, int index) {
+        for (size_t i = 0; i < captures.size(); i++)
+            if (captures[i].kind == kind && (kind == 3 || captures[i].index == index)) return static_cast<int>(i);
+        captures.push_back(Capture{kind, index});
+        return static_cast<int>(captures.size()) - 1;
+    }
+};
+
+// What resolveUpvalue and captureReceiver give for capture `k` of the object a member runs on,
+// as against an upvalue's index.
+constexpr int kCaptureMark = 0x10000;
+inline bool isCaptureMark(int resolved) { return resolved >= kCaptureMark; }
+
 struct FunctionState {
     FunctionState* enclosing = nullptr;
+    ObjectBuild* object = nullptr;  // a member of an anonymous object's class, which reaches the code around through it
     FunctionKind kind = FunctionKind::Script;
     FunctionProto* proto = nullptr;
 
@@ -239,6 +274,7 @@ public:
     // defined and the structure of its classes set up, so that the order they are written in
     // does not matter; the rest then runs from top to bottom.
     FunctionProto* compile(const std::vector<StmtPtr>& statements, bool shell) {
+        shellInput_ = shell;
         FunctionState state;
         beginScript(state, file_);
         noteEnums(statements);
@@ -473,6 +509,8 @@ private:
     bool nextIsExtension_ = false;                 // for the function about to be compiled
     std::string nextReceiverType_;
     int anonymousClasses_ = 0;
+    ObjectBuild* objectBuild_ = nullptr;  // the anonymous object being compiled, innermost
+    bool shellInput_ = false;             // compiling an input of the shell
     const TryStmt* valueTry_ = nullptr;  // the try being compiled for its value, and where that goes
     int valueTryLocal_ = -1;
     bool shared_ = false;  // compiling into the script that a folder's files share
@@ -732,38 +770,97 @@ private:
         return -1;
     }
 
+    // A variable of a function around `state`, as an upvalue of it; for a member of an
+    // anonymous object's class, as a capture of the object (see ObjectBuild).
     int resolveUpvalue(FunctionState* state, const std::string& name, const Node& at, VarInfo& info) {
         info = VarInfo{};
         if (state->enclosing == nullptr) return -1;
+        if (state->object != nullptr) return captureFor(state, name, at, info);
 
         int local = resolveLocal(state->enclosing, name, at, info, true);
         if (local != -1) {
             Local& captured = state->enclosing->locals[static_cast<size_t>(local)];
+            noteOuterUse(state, static_cast<size_t>(local));
             captured.isCaptured = true;
             return addUpvalue(state, true, captured.slot);
         }
 
         int upvalue = resolveUpvalue(state->enclosing, name, at, info);
-        if (upvalue != -1) return addUpvalue(state, false, upvalue);
-        return -1;
+        if (upvalue == -1) return -1;
+        if (isCaptureMark(upvalue)) return addUpvalue(state, false, upvalue - kCaptureMark, true);
+        noteOuterUse(state, 0);
+        return addUpvalue(state, false, upvalue);
     }
 
-    int addUpvalue(FunctionState* state, bool isLocal, int index) {
+    // What a member of an anonymous object's class uses of the function the object is made in:
+    // captured when the object is made, and marked as such (kCaptureMark).
+    int captureFor(FunctionState* state, const std::string& name, const Node& at, VarInfo& info) {
+        ObjectBuild& object = *state->object;
+        FunctionState* around = state->enclosing;
+        const int local = resolveLocal(around, name, at, info, true);
+        if (local != -1) {
+            if (local == object.superLocal) return kCaptureMark + object.add(3, 0);  // the same for every object
+            Local& captured = around->locals[static_cast<size_t>(local)];
+            captured.isCaptured = true;
+            return kCaptureMark + object.add(0, captured.slot);
+        }
+        const int upvalue = resolveUpvalue(around, name, at, info);
+        if (upvalue == -1) return -1;
+        return kCaptureMark + (isCaptureMark(upvalue) ? object.add(2, upvalue - kCaptureMark) : object.add(1, upvalue));
+    }
+
+    // The code that makes an anonymous object's class, in the function around, uses one of its
+    // variables (`outer`, or a local from before the object): the class is made every time.
+    void noteMakingUses(bool outer) {
+        if (outer && objectBuild_ != nullptr && fs_ == objectBuild_->boundary) objectBuild_->usesOuter = true;
+    }
+    bool beforeObject(int local) const {
+        return objectBuild_ != nullptr && static_cast<size_t>(local) < objectBuild_->localsAtStart;
+    }
+
+    // A function made with an anonymous object's class, not a member of it (a field's type,
+    // a class declared inside), uses a variable of the code around: the class is made every time.
+    void noteOuterUse(const FunctionState* state, size_t local) {
+        if (objectBuild_ != nullptr && state->enclosing == objectBuild_->boundary && local < objectBuild_->localsAtStart)
+            objectBuild_->usesOuter = true;
+    }
+
+    int addUpvalue(FunctionState* state, bool isLocal, int index, bool fromCapture = false) {
         std::vector<UpvalueDesc>& upvalues = state->proto->upvalues;
         for (size_t i = 0; i < upvalues.size(); i++)
-            if (upvalues[i].isLocal == isLocal && upvalues[i].index == index) return static_cast<int>(i);
-        upvalues.push_back(UpvalueDesc{isLocal, static_cast<uint16_t>(index)});
+            if (upvalues[i].isLocal == isLocal && upvalues[i].index == index && upvalues[i].fromCapture == fromCapture)
+                return static_cast<int>(i);
+        upvalues.push_back(UpvalueDesc{isLocal, static_cast<uint16_t>(index), fromCapture});
         return static_cast<int>(upvalues.size()) - 1;
     }
 
     // Gives `state` access to slot 0 (the receiver, if there is one) of the function `levels`
-    // steps out from it, as an upvalue.
+    // steps out from it, as an upvalue; for a member of an anonymous object's class, as a
+    // capture of the object (kCaptureMark).
     int captureReceiver(FunctionState* state, int levels) {
+        if (state->object != nullptr) {
+            ObjectBuild& object = *state->object;
+            if (levels == 1) {
+                state->enclosing->locals[0].isCaptured = true;
+                return kCaptureMark + object.add(0, 0);
+            }
+            const int outer = captureReceiver(state->enclosing, levels - 1);
+            return kCaptureMark + (isCaptureMark(outer) ? object.add(2, outer - kCaptureMark) : object.add(1, outer));
+        }
+        noteOuterUse(state, 0);
         if (levels == 1) {
             state->enclosing->locals[0].isCaptured = true;
             return addUpvalue(state, true, 0);
         }
-        return addUpvalue(state, false, captureReceiver(state->enclosing, levels - 1));
+        const int outer = captureReceiver(state->enclosing, levels - 1);
+        return isCaptureMark(outer) ? addUpvalue(state, false, outer - kCaptureMark, true) : addUpvalue(state, false, outer);
+    }
+
+    // `state`, just made inside the class of the anonymous object being compiled: the object it
+    // reaches the code around through, if it is a member that runs on the object.
+    ObjectBuild* objectMember(const FunctionState& state) const {
+        if (objectBuild_ == nullptr || state.enclosing != objectBuild_->boundary || class_ != objectBuild_->classState) return nullptr;
+        return kindHasThis(state.kind) ? objectBuild_ : nullptr;
     }
 
     // ---- Global names ----
@@ -1398,12 +1495,19 @@ private:
         VarInfo info;
         int local = resolveLocal(fs_, name, at, info);
         if (local != -1) {
+            noteMakingUses(beforeObject(local));
             emit(Op::GetLocal, slotOf(local));
             return;
         }
 
         int upvalue = resolveUpvalue(fs_, name, at, info);
+        if (upvalue != -1 && isCaptureMark(upvalue)) {
+            emit(Op::GetCaptured, upvalue - kCaptureMark);
+            emitU16(stringConstant(name));
+            return;
+        }
         if (upvalue != -1) {
+            noteMakingUses(true);
             if (info.pending) {
                 emit(Op::GetUpvalueChecked, upvalue);
                 emitU16(stringConstant(name));
@@ -1471,6 +1575,7 @@ private:
         int local = resolveLocal(fs_, name, at, info);
         if (local != -1) {
             if (info.isVal) throw error(at, "cannot assign to val '" + name + "'");
+            noteMakingUses(beforeObject(local));
             emitTypeCheck(info.type, name, at);
             emit(Op::SetLocal, slotOf(local));
             return;
@@ -1480,7 +1585,12 @@ private:
         if (upvalue != -1) {
             if (info.isVal) throw error(at, "cannot assign to val '" + name + "'");
             emitTypeCheck(info.type, name, at);
-            emit(Op::SetUpvalue, upvalue);
+            if (isCaptureMark(upvalue)) {
+                emit(Op::SetCaptured, upvalue - kCaptureMark);
+            } else {
+                noteMakingUses(true);
+                emit(Op::SetUpvalue, upvalue);
+            }
             return;
         }
 
@@ -1580,11 +1690,26 @@ private:
     // What the value of `expr` is certain to be when the program runs, as far as can be told from
     // what is checked while it runs (M6.5 part 4): a literal; a local or parameter with a type
     // written, each value it is given being checked; arithmetic, comparisons and `!` of such;
-    // and a choice between two of one type. 0 where nothing is certain. Used only to leave out
-    // a check, never to report an error (staticTypeOf and the checker do that). A call is never
-    // certain: the name of a function may be given another function.
+    // a choice between two of one type; and a call of a function of the program declared once with
+    // a return type of those, whose returns are all checked or proved in turn (the name of a
+    // function is never given another value). 0 where nothing is certain. Used only to leave
+    // out a check, never to report an error (staticTypeOf and the checker do that).
     uint8_t provenType(const Expr& expr) const {
         switch (expr.kind) {
+            case ExprKind::Call: {
+                const auto& call = static_cast<const CallExpr&>(expr);
+                if (call.callee->kind != ExprKind::Name || mayBeMemberHere()) return 0;
+                const std::string& name = static_cast<const NameExpr&>(*call.callee).name;
+                // Not a variable of this function or of one around it, nor a member of a class.
+                for (const FunctionState* state = fs_; state != nullptr; state = state->enclosing)
+                    for (const Local& local : state->locals)
+                        if (local.name == name) return 0;
+                const ClassSide side = classSide();
+                if (side != ClassSide::None && (class_->statics.count(name) != 0 || class_->members.count(name) != 0)) return 0;
+                if (outerStaticOwner(name) != nullptr) return 0;
+                const GlobalName* global = findGlobal(name, *call.callee, true);
+                return global != nullptr && global->isFunction && global->forms.empty() ? global->returnType : 0;
+            }
             case ExprKind::Literal: {
                 const uint8_t literal = staticTypeOf(expr);
                 return literal == kStaticNull ? 0 : literal;
@@ -2452,6 +2577,8 @@ private:
 
         const bool all = part == ClassPart::All;
         if (all || part == ClassPart::Structure) declareClass(s, storage);
+        if (objectBuild_ != nullptr && objectBuild_->classState == nullptr && fs_ == objectBuild_->boundary)
+            objectBuild_->classState = &cls;  // the anonymous object's own (not one declared inside it)
         class_ = &cls;
         for (const auto& field : s.fields) cls.fieldTypes[field->name] = resolveType(field->type);
         for (const auto& field : s.staticFields) cls.fieldTypes[field->name] = resolveType(field->type);
@@ -2520,6 +2647,8 @@ private:
             // hidden local that methods capture for `super`.
             beginScope();
             addLocal("super", false, s, true);
+            if (objectBuild_ != nullptr && class_ == objectBuild_->classState && fs_ == objectBuild_->boundary)
+                objectBuild_->superLocal = static_cast<int>(fs_->locals.size()) - 1;
         }
 
         emitGet(storage, s);
@@ -2916,6 +3045,7 @@ private:
         FunctionState state;
         state.enclosing = fs_;
         state.kind = FunctionKind::Initializer;
+        state.object = objectMember(state);
         state.proto = newProto();
         state.proto->name = s.name + ".init";
         state.proto->source = file_;
@@ -3120,6 +3250,7 @@ private:
         FunctionState state;
         state.enclosing = fs_;
         state.kind = FunctionKind::Method;
+        state.object = objectMember(state);
         state.proto = newProto();
         state.proto->name = s.name + ".<fields>";
         state.proto->source = file_;
@@ -3180,6 +3311,7 @@ private:
         FunctionState state;
         state.enclosing = fs_;
         state.kind = kind;
+        state.object = objectMember(state);
         state.proto = newProto();
         state.proto->name = displayName;
         state.proto->source = file_;
@@ -3215,8 +3347,11 @@ private:
         {
             int levels = 1;
             for (FunctionState* outer = state.enclosing; outer != nullptr; outer = outer->enclosing, levels++) {
-                if (outer->isLambda || kindHasThis(outer->kind))
-                    state.proto->outerReceivers.push_back(static_cast<uint16_t>(captureReceiver(&state, levels)));
+                if (outer->isLambda || kindHasThis(outer->kind)) {
+                    const int receiver = captureReceiver(&state, levels);
+                    state.proto->outerReceivers.push_back(static_cast<uint16_t>(
+                        isCaptureMark(receiver) ? kCapturedReceiver | (receiver - kCaptureMark) : receiver));
+                }
                 if (outer->kind != FunctionKind::Function) break;
             }
         }
@@ -3465,16 +3600,62 @@ private:
                 break;
 
             case ExprKind::Object: {
-                // The class is made here, as a variable nothing else can name, and then its one object.
+                // The class is made the first time and kept in a global of the file's own that
+                // nothing else can name (M6.5 part 4), in a variable here as well; then its one
+                // object, which keeps what its members use of the code around (ObjectBuild).
                 const ClassStmt& cls = *static_cast<const ObjectExpr&>(expr).cls;
                 const int saved = enterValueBlock();
                 beginScope();
-                const std::string bound = "(object " + std::to_string(anonymousClasses_++) + ")";
+                const int number = anonymousClasses_++;
+                const std::string bound = "(object " + std::to_string(number) + ")";
+                ObjectBuild build;
+                build.boundary = fs_;
+                build.outer = objectBuild_;
+                build.localsAtStart = fs_->locals.size();
+                objectBuild_ = &build;
+
+                // The shell's inputs may write the same object again: there it is made every time.
+                int kept = 0xFFFF;
+                int skip = -1;
+                if (!shellInput_) {
+                    const std::string hiddenName = "(object class " + std::to_string(number) + ")";
+                    GlobalName& hidden = session_.privates_[fileKey_][hiddenName];
+                    if (hidden.slot < 0) hidden.slot = session_.newSlot(hiddenName);
+                    hidden.declared = true;
+                    kept = hidden.slot;
+                    line_ = cls.line;
+                    emit(Op::ObjectClass, kept);
+                    skip = static_cast<int>(code().size());
+                    emitI32(0);
+                }
                 compileClass(cls, bound);
+                objectBuild_ = build.outer;
                 line_ = cls.line;
+                if (skip >= 0) {
+                    emitGet(bound, cls);
+                    const int keptAt = static_cast<int>(code().size()) + 1;  // StoreClass's operand
+                    emit(Op::StoreClass, kept);
+                    emit(Op::Pop);
+                    patchJump(skip);
+                    if (build.usesOuter) {
+                        // Made from what the code around holds: made every time, and kept nowhere.
+                        code()[static_cast<size_t>(skip) - 2] = 0xFF;
+                        code()[static_cast<size_t>(skip) - 1] = 0xFF;
+                        code()[static_cast<size_t>(keptAt)] = 0xFF;
+                        code()[static_cast<size_t>(keptAt) + 1] = 0xFF;
+                    }
+                }
+
                 emitGet(bound, cls);
-                emit(Op::Call);
-                emitByte(0);
+                if (build.captures.size() > 255)
+                    throw error(cls, "an object can use at most 255 variables of the code around it");
+                for (size_t i = 0; i < build.captures.size(); i++) {
+                    const ObjectBuild::Capture& capture = build.captures[i];
+                    emit(Op::Capture, capture.kind == 3 ? static_cast<int>(i) : capture.index);
+                    emitByte(capture.kind);
+                }
+                emit(Op::NewObject);
+                emitByte(static_cast<int>(build.captures.size()));
                 endScopeKeepingValue();
                 leaveValueBlock(saved);
                 break;
@@ -4980,6 +5161,7 @@ void CompilerSession::predeclare(Namespace& ns, const std::string& fileKey, cons
                                        "; the forms of a name differ in their parameters' types");
             if (entry.forms.empty()) entry.forms.emplace_back(entry.firstSignature, newSlot(name + entry.firstSignature));
             entry.forms.emplace_back(signature, newSlot(name + signature));
+            entry.returnType = 0;  // which form a call gets is not known here
             return;
         }
         if (entry.declared) {
@@ -4996,6 +5178,16 @@ void CompilerSession::predeclare(Namespace& ns, const std::string& fileKey, cons
         entry.file = file;
         entry.isFunction = fn != nullptr;
         if (fn != nullptr) entry.firstSignature = signatureText(*fn);
+        entry.returnType = 0;
+        if (fn != nullptr && !shell) {
+            const TypeAnnotation& result = fn->returnType;
+            if (!result.nullable && !result.typeParam && result.args.empty() && result.result.empty()) {
+                if (result.name == "int") entry.returnType = kTypeInt;
+                else if (result.name == "float") entry.returnType = kTypeFloat;
+                else if (result.name == "bool") entry.returnType = kTypeBool;
+                else if (result.name == "string") entry.returnType = kTypeString;
+            }
+        }
     };
 
     for (const StmtPtr& stmt : statements) {
@@ -5470,6 +5662,7 @@ Namespace* CompilerSession::importModule(const std::string& path, const std::str
 void CompilerSession::checkConstAssignments() {
     for (const auto& [global, name, file, line, col] : globalAssignments_)
         if (global->isVal) throw CompileError(file, line, col, "cannot assign to val '" + name + "'");
+        else if (global->isFunction) throw CompileError(file, line, col, "cannot assign to '" + name + "': it is a function");
 }
 
 }  // namespace astra

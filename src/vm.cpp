@@ -578,6 +578,15 @@ AstraThrow VM::accessError(Value target, const ObjString* name, const FunctionPr
     return runtimeError("'" + name->chars + "' is " + word + " in class " + declaring->name->chars + ": " + who + "use it");
 }
 
+// An entry of FunctionProto::outerReceivers: an upvalue of the function, or with kCapturedReceiver
+// a capture of the anonymous object a member runs on.
+ObjUpvalue* VM::receiverUpvalue(const CallFrame* frame, const Value* base, uint16_t entry) const {
+    if ((entry & kCapturedReceiver) == 0) return frame->closure->upvalues[entry];
+    const uint16_t k = entry & static_cast<uint16_t>(~kCapturedReceiver);
+    if (!base[0].isObjType(ObjType::Instance) || k >= asInstance(base[0])->captureCount) return nullptr;
+    return asInstance(base[0])->captured(k);
+}
+
 Value VM::implicitReceiver(const CallFrame* frame, const Value* base, const ObjString* name) const {
     const FunctionProto* proto = frame->closure->proto;
     auto has = [&](Value candidate) {
@@ -585,8 +594,8 @@ Value VM::implicitReceiver(const CallFrame* frame, const Value* base, const ObjS
     };
     if (has(base[0])) return base[0];
     for (uint16_t upvalue : proto->outerReceivers) {
-        Value outer = *frame->closure->upvalues[upvalue]->location;
-        if (has(outer)) return outer;
+        const ObjUpvalue* cell = receiverUpvalue(frame, base, upvalue);
+        if (cell != nullptr && has(*cell->location)) return *cell->location;
     }
     return Value::undefined();
 }
@@ -598,7 +607,9 @@ AstraThrow VM::undefinedName(const CallFrame* frame, const Value* base, const Ob
     auto kept = [&](Value candidate) { return hasMember(candidate, name) && accessDenied(candidate, name, proto, false); };
     if (kept(base[0])) return accessError(base[0], name, proto);
     for (uint16_t upvalue : proto->outerReceivers) {
-        Value outer = *frame->closure->upvalues[upvalue]->location;
+        const ObjUpvalue* cell = receiverUpvalue(frame, base, upvalue);
+        if (cell == nullptr) continue;
+        Value outer = *cell->location;
         if (kept(outer)) return accessError(outer, name, proto);
     }
     return runtimeError("undefined variable '" + program_->globalNames[global] + "'");
@@ -1066,35 +1077,8 @@ bool VM::callValue(Value callee, int argc, bool packed) {
                 return false;
             }
 
-            case ObjType::Class: {
-                ObjClass* cls = asClass(callee);
-                if (cls->staticInit != nullptr) ensureClassInit(cls);  // an enum has its entries by now
-                if (cls->isAbstract)
-                    throw runtimeError(cls->name->chars + " is abstract and cannot be created; create a class that extends it");
-                if (cls->isInterface)
-                    throw runtimeError(cls->name->chars + " is an interface and cannot be created; create a class that implements it");
-                if (cls->enumSealed)
-                    throw runtimeError("enum " + cls->name->chars + " has only the entries it declares; " + cls->name->chars +
-                                       "() cannot make another");
-                ObjInstance* instance = newInstance(cls);
-                sp_[-argc - 1] = Value::object(instance);
-                instance->constructing = true;
-                if (cls->nextEntry != nullptr) {
-                    // An enum entry: it knows its name before its init runs.
-                    nameEntry(instance, cls->nextEntry, cls->nextOrdinal);
-                    cls->nextEntry = nullptr;
-                }
-                // Declared fields get their initial values before the initializer runs.
-                for (size_t i = 0; i < cls->fieldInits.size(); i++) callWithReceiver(Value::object(instance), cls->fieldInits[i]);
-                if (cls->init != nullptr) {
-                    callClosure(cls->init, argc, packed);
-                    return true;
-                }
-                instance->constructing = false;
-                if (argc != 0)
-                    throw runtimeError(cls->name->chars + "() takes no arguments but got " + std::to_string(argc));
-                return false;
-            }
+            case ObjType::Class:
+                return construct(asClass(callee), argc, packed);
 
             case ObjType::BoundMethod: {
                 ObjBoundMethod* bound = asBoundMethod(callee);
@@ -1649,6 +1633,41 @@ Value VM::getProperty(Value obj, ObjString* name) {
     if (const Value* extension = findExtension(obj, name))
         return Value::object(alloc<ObjBoundMethod>(obj, asClosure(*extension)));
     throw runtimeError("undefined property '" + name->chars + "' on a value of type " + typeName(obj));
+}
+
+bool VM::construct(ObjClass* cls, int argc, bool packed, const Value* captures, uint16_t captureCount) {
+    if (cls->staticInit != nullptr) ensureClassInit(cls);  // an enum has its entries by now
+    if (cls->isAbstract)
+        throw runtimeError(cls->name->chars + " is abstract and cannot be created; create a class that extends it");
+    if (cls->isInterface)
+        throw runtimeError(cls->name->chars + " is an interface and cannot be created; create a class that implements it");
+    if (cls->enumSealed)
+        throw runtimeError("enum " + cls->name->chars + " has only the entries it declares; " + cls->name->chars +
+                           "() cannot make another");
+    ObjInstance* instance = newInstance(cls, captureCount);
+    for (uint16_t i = 0; i < captureCount; i++) instance->fields()[instance->fieldCount + i] = captures[i];
+    sp_[-argc - 1] = Value::object(instance);
+    instance->constructing = true;
+    if (cls->nextEntry != nullptr) {
+        // An enum entry: it knows its name before its init runs.
+        nameEntry(instance, cls->nextEntry, cls->nextOrdinal);
+        cls->nextEntry = nullptr;
+    }
+    // Declared fields get their initial values before the initializer runs.
+    for (size_t i = 0; i < cls->fieldInits.size(); i++) callWithReceiver(Value::object(instance), cls->fieldInits[i]);
+    if (cls->init != nullptr) {
+        callClosure(cls->init, argc, packed);
+        return true;
+    }
+    instance->constructing = false;
+    if (argc != 0) throw runtimeError(cls->name->chars + "() takes no arguments but got " + std::to_string(argc));
+    return false;
+}
+
+ObjUpvalue* VM::capturedOf(Value receiver, int k) {
+    if (!receiver.isObjType(ObjType::Instance) || k >= asInstance(receiver)->captureCount)
+        throw runtimeError("invalid bytecode: no such captured variable");
+    return asInstance(receiver)->captured(static_cast<uint32_t>(k));
 }
 
 // Called when initializer `init` returns: the class it belongs to may have declared fields
@@ -2768,6 +2787,78 @@ void VM::run(int baseFrame) {
                         *sp_++ = value;
                         break;
                     }
+                    case Op::GetCaptured: {
+                        const ObjUpvalue* cell = capturedOf(base[0], READ_U16());
+                        ObjString* name = asString(consts[READ_U16()]);
+                        const Value value = *cell->location;
+                        if (value.kind == ValueKind::Undefined)
+                            throw runtimeError("'" + name->chars + "' is used before it has a value");
+                        *sp_++ = value;
+                        break;
+                    }
+                    case Op::SetCaptured: {
+                        ObjUpvalue* cell = capturedOf(base[0], READ_U16());
+                        // As SetUpvalue: a variable of the code around a section is nobody's to change there.
+                        if (cell->core != coreId_) throw notOwned("a variable from outside the section is shared");
+                        *cell->location = sp_[-1];
+                        break;
+                    }
+
+                    case Op::ObjectClass: {
+                        const int global = READ_U16();
+                        const int target = READ_I32();
+                        if (global != 0xFFFF) {
+                            const Value kept = globals_[static_cast<size_t>(global)];
+                            if (kept.isObjType(ObjType::Class)) {
+                                *sp_++ = kept;
+                                ip = code + target;
+                            }
+                        }
+                        break;
+                    }
+                    case Op::StoreClass: {
+                        const int global = READ_U16();
+                        // A core of a parallel section makes its own each time: the program's
+                        // globals are not its to change.
+                        if (global != 0xFFFF && coreId_ == 0) globals_[static_cast<size_t>(global)] = sp_[-1];
+                        break;
+                    }
+                    case Op::Capture: {
+                        const int index = READ_U16();
+                        const int kind = READ_U8();
+                        ObjUpvalue* cell = nullptr;
+                        if (kind == 0) {
+                            cell = captureUpvalue(base + index);
+                        } else if (kind == 1) {
+                            if (static_cast<size_t>(index) >= frame->closure->upvalues.size()) throw runtimeError("invalid bytecode: no such upvalue");
+                            cell = frame->closure->upvalues[static_cast<size_t>(index)];
+                        } else if (kind == 2) {
+                            cell = capturedOf(base[0], index);
+                        } else {
+                            // `super`: the class's superclass (null if it has only interfaces), in a cell of its own.
+                            const Value made = sp_[-1 - index];
+                            if (!made.isObjType(ObjType::Class)) throw runtimeError("invalid anonymous object");
+                            ObjClass* superclass = asClass(made)->super;
+                            cell = alloc<ObjUpvalue>(nullptr);
+                            cell->closed = superclass != nullptr ? Value::object(superclass) : Value::null();
+                            cell->location = &cell->closed;
+                        }
+                        *sp_++ = Value::object(cell);
+                        break;
+                    }
+                    case Op::NewObject: {
+                        const int count = READ_U8();
+                        const Value made = sp_[-count - 1];
+                        if (!made.isObjType(ObjType::Class)) throw runtimeError("invalid anonymous object");
+                        ObjClass* cls = asClass(made);
+                        SAVE_IP();
+                        if (cls->staticInit != nullptr) ensureClassInit(cls);  // with the captures still on the stack
+                        // The captures stay just above the stack's top until the object has them.
+                        sp_ -= count;
+                        if (construct(cls, 0, false, sp_, static_cast<uint16_t>(count))) LOAD_FRAME();
+                        break;
+                    }
+
                     case Op::Unset:
                         *sp_++ = Value::undefined();
                         break;
@@ -3415,8 +3506,9 @@ void VM::run(int baseFrame) {
                         account(proto->upvalues.size() * sizeof(ObjUpvalue*));
                         for (size_t i = 0; i < proto->upvalues.size(); i++) {
                             const UpvalueDesc& uv = proto->upvalues[i];
-                            closure->upvalues[i] = uv.isLocal ? captureUpvalue(base + uv.index)
-                                                              : frame->closure->upvalues[uv.index];
+                            closure->upvalues[i] = uv.isLocal       ? captureUpvalue(base + uv.index)
+                                                   : uv.fromCapture ? capturedOf(base[0], uv.index)
+                                                                    : frame->closure->upvalues[uv.index];
                         }
                         *sp_++ = Value::object(closure);
                         break;
@@ -4523,10 +4615,10 @@ void VM::blacken(Obj* obj) {
         }
         case ObjType::Instance: {
             ObjInstance* instance = static_cast<ObjInstance*>(obj);
-            liveBytes_ += sizeof(ObjInstance) + instance->fieldCount * sizeof(Value);
+            liveBytes_ += sizeof(ObjInstance) + (instance->fieldCount + instance->captureCount) * sizeof(Value);
             markObject(instance->cls);
             const Value* fields = instance->fields();
-            for (uint32_t i = 0; i < instance->fieldCount; i++) markValue(fields[i]);
+            for (uint32_t i = 0; i < instance->fieldCount + instance->captureCount; i++) markValue(fields[i]);
             break;
         }
         case ObjType::BoundMethod: {

@@ -1,0 +1,168 @@
+// An anonymous object's class is made once (M6.5 part 4): what its members use of the code
+// around is kept by each object, shared with that code as a lambda would share it.
+
+interface Counter {
+  fun bump() : int
+  fun total() : int
+}
+abstract class Named(val name : string) {
+  fun hello() : string => "hello " + name
+  abstract fun describe() : string
+}
+
+// A parameter, a val and a var of the code around, each object with its own.
+fun counter(start : int, step : int) : Counter {
+  var count = start
+  val twice = step * 2
+  return object : Counter {
+    override fun bump() : int {
+      count += step
+      return count
+    }
+    override fun total() : int => count + twice
+  }
+}
+val c1 = counter(0, 1)
+val c2 = counter(100, 10)
+c1.bump()
+c1.bump()
+c2.bump()
+print(c1.total(), c2.total())   // expect: 4 130
+
+// A var changed by the code around after the object is made, and by the object: one variable.
+fun shared() : string {
+  var seen = 1
+  val o = object : Counter {
+    override fun bump() : int {
+      seen *= 10
+      return seen
+    }
+    override fun total() : int => seen
+  }
+  seen = 5
+  o.bump()
+  return "$seen ${o.total()}"
+}
+print(shared())   // expect: 50 50
+
+// Field initial values, init blocks and the superclass's arguments use them too.
+fun named(who : string, times : int) : Named {
+  val loud = who.upper()
+  return object : Named(who + "!") {
+    val repeated = loud.repeat(times)
+    var made = ""
+    init { made = "made for " + who }
+    override fun describe() : string => hello() + " " + repeated + " " + made
+  }
+}
+print(named("ann", 2).describe())   // expect: hello ann! ANNANN made for ann
+print(named("bo", 1).describe())    // expect: hello bo! BO made for bo
+
+// super, a getter and a setter.
+abstract class Shape {
+  fun kind() : string => "shape"
+  abstract fun area() : float
+}
+fun square(side : float) : Shape {
+  var scale = 1.0
+  return object : Shape() {
+    var factor : float
+      get() => scale
+      set(value) { scale = value }
+    override fun area() : float => side * side * factor
+    fun kindOf() : string => super.kind() + "/square"
+  }
+}
+val sq = square(3.0)
+print(sq.area())   // expect: 9.0
+
+// A lambda inside a member, made after the object, sees the same variables.
+fun deferred(base : int) : () -> int {
+  var extra = 0
+  val o = object : Counter {
+    override fun bump() : int {
+      extra += 1
+      return extra
+    }
+    override fun total() : int {
+      val later = { base + extra }
+      return later()
+    }
+  }
+  o.bump()
+  o.bump()
+  return { o.total() }
+}
+print(deferred(40)())   // expect: 42
+
+// In a loop: each turn's variable is its own.
+val made : List<Counter> = []
+for i in 1..3 {
+  made.add(object : Counter {
+    override fun bump() : int => i
+    override fun total() : int => i * 100
+  })
+}
+print(made.map { it.bump() + it.total() })   // expect: [101, 202, 303]
+
+// Inside a method: the object reaches the members of the object the method runs on.
+class Shop(val owner : string) {
+  var sales = 0
+  fun till() : Counter => object : Counter {
+    override fun bump() : int {
+      sales += 1
+      return sales
+    }
+    override fun total() : int => sales * 10 + owner.length
+  }
+}
+val shop = Shop("eve")
+val till = shop.till()
+till.bump()
+shop.till().bump()
+print(shop.sales, till.total())   // expect: 2 23
+
+// An object inside an object's member, using what both see.
+fun nested(label : string) : Counter {
+  var outerCount = 0
+  return object : Counter {
+    override fun bump() : int {
+      outerCount += 1
+      val inner = object : Counter {
+        override fun bump() : int => outerCount * 1000
+        override fun total() : int => label.length
+      }
+      return inner.bump() + inner.total()
+    }
+    override fun total() : int => outerCount
+  }
+}
+val n = nested("four")
+n.bump()
+print(n.bump(), n.total())   // expect: 2004 2
+
+// An object that names the variable it is the value of.
+fun selfish() : string {
+  val me : Named = object : Named("me") {
+    override fun describe() : string => "I am " + me.name
+  }
+  return me.describe()
+}
+print(selfish())   // expect: I am me
+
+// A class declared in the function as its supertype: the class is made each time, from it.
+fun local(tag : string) : string {
+  class Base(val tag : string) {
+    fun show() : string => "<" + tag + ">"
+  }
+  val o = object : Base(tag) {
+    fun twice() : string => show() + show()
+  }
+  return o.twice()
+}
+print(local("a"), local("b"))   // expect: <a><a> <b><b>
+
+// Made many times: still each with its own.
+var sum = 0
+for i in 0..<1000 { sum += counter(i, 1).total() }
+print(sum)   // expect: 501500

@@ -32,6 +32,10 @@ struct GlobalName {
     // its signature, and the name's slot holds the set of them, which calls the form a call's
     // arguments fit. Empty for a name declared once.
     bool isFunction = false;
+    // For a function declared once outside the shell, with a return type written that is int,
+    // float, bool or string: that type. Every return of such a function is checked or proved,
+    // and its name is never given another value, so a call of it gives that type (M6.5 part 4).
+    uint8_t returnType = 0;
     std::string firstSignature;  // of the first form, until a second one comes
     std::vector<std::pair<std::string, int>> forms;  // signature and slot, in the order written
 

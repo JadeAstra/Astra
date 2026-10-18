@@ -486,11 +486,19 @@ struct ObjInstance final : Obj {
     const uint32_t shape;       // the class's layout when the object was made
     const uint32_t fieldCount;  // and the number of fields it has, which never changes
     bool constructing = false;  // from being made until its initializer has returned
+    // An anonymous object (`object : Shape { ... }`): the variables of the code around it that
+    // its members use, each an ObjUpvalue, kept after the fields (M6.5 part 4). Its class is
+    // made once, so they cannot be in its methods' closures.
+    const uint16_t captureCount;
 
-    ObjInstance(ObjClass* c, uint32_t count) : Obj(ObjType::Instance), cls(c), shape(c->shape), fieldCount(count) {
+    ObjInstance(ObjClass* c, uint32_t count, uint16_t captures)
+        : Obj(ObjType::Instance), cls(c), shape(c->shape), fieldCount(count), captureCount(captures) {
         Value* at = fields();
-        for (uint32_t i = 0; i < count; i++) new (at + i) Value(Value::undefined());
+        for (uint32_t i = 0; i < count + captures; i++) new (at + i) Value(Value::undefined());
     }
+
+    // Capture `k`, where the code that uses it was compiled for this object's class.
+    ObjUpvalue* captured(uint32_t k) const { return static_cast<ObjUpvalue*>(fields()[fieldCount + k].as.obj); }
 
     static void* operator new(size_t size, uint32_t count) { return ::operator new(size + count * sizeof(Value)); }
     static void operator delete(void* p, uint32_t) { ::operator delete(p); }

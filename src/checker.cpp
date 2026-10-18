@@ -2979,6 +2979,9 @@ struct Checker::Impl {
             if (local == nullptr) {
                 const GlobalSym* g = localClass(n.name) == nullptr ? findGlobal(*unit, n.name) : nullptr;
                 if (localClass(n.name) != nullptr || (g != nullptr && g->var == nullptr)) target = unknownType();
+                if (localClass(n.name) == nullptr && g != nullptr && g->var == nullptr && !g->funcs.empty())
+                    report(*a.target, "'" + n.name + "' is a function, and the name of a function is never given another value; " +
+                                          "to change what is called, keep it in a var of a function type");
             }
         } else if (a.target->kind == ExprKind::Member) {
             const auto& m = static_cast<const MemberExpr&>(*a.target);
