@@ -100,6 +100,10 @@ struct FunctionDecl : Node {
     // calls it (R1, D30).
     bool isSuspend = false;
 
+    // Where its body is among the file's tokens, from its first to past its last: what a
+    // file's summary leaves out, other files seeing only what is learned from it (D145).
+    size_t bodyFrom = 0, bodyTo = 0;
+
     // The access word in front of a member (an AccessWord): who may use it.
     uint8_t access = 0;
 

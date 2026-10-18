@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <iosfwd>
 #include <memory>
 #include <string>
@@ -335,5 +336,25 @@ void disassemble(const Program& program, std::ostream& out);
 void writeProgram(const Program& program, std::ostream& out);
 void readProgram(Program& program, VM& vm, const std::string& data);
 bool looksLikeBytecode(const std::string& data);
+
+// ---- A part of a program kept by itself (D145) ----
+//
+// A file's or a folder's modules are compiled once and kept, and put back into a later
+// compile of the program. What their code says of the rest of the program goes by numbers
+// that compile gave out: a global's slot, a module's index, and a class's or library's number
+// (Op::ClassNumber, Op::MemberAccess, FunctionProto::classIds). renumber gives each of those
+// to the function for its kind and puts in what it returns, all through a function and the
+// functions nested in it; with functions that return what they are given it only lists them.
+struct Renumbering {
+    std::function<int(int)> global, module, number;
+};
+void renumber(FunctionProto& f, const Renumbering& r, VM& vm);
+
+// The modules of such a part, by themselves: written, and read back into `program` (not yet
+// verified, since their numbers are still the ones they were kept with).
+void writeModules(const std::vector<const FunctionProto*>& modules, std::ostream& out);
+std::vector<FunctionProto*> readModules(Program& program, VM& vm, const std::string& data);
+// Verifies a module read back and renumbered, as readProgram does every module.
+void verifyModule(FunctionProto& module, const Program& program);
 
 }  // namespace astra

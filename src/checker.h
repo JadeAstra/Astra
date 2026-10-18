@@ -50,6 +50,19 @@ public:
     // are as they were before it.
     void forgetShellUnit();
 
+    // A file whose compiled code is put back from the cache (D145), with nothing it was compiled
+    // from changed: its declarations are read, but its bodies are not checked again. What was
+    // learned from them that other files rely on, which of its functions run a lambda they are
+    // given there and then (R1), is handed back as inPlaceFacts gave it. checkBodiesOf checks
+    // such a file after all, when its code could not be put back.
+    void skipBodiesOf(const std::string& fileKey, std::string inPlaceFacts);
+    void checkBodiesOf(const std::string& fileKey);
+    std::string inPlaceFacts(const std::string& fileKey);
+    // What other files can learn of a file's functions only from their bodies: the result
+    // types not written, and the lambda parameters run there and then. With the file's text
+    // outside those bodies it makes the file's summary (D145).
+    std::string summaryFacts(const std::string& fileKey);
+
     // An `import` in a file: what it imports, and how the file reaches it.
     void addImport(const std::string& fileKey, const std::string& alias, bool all, Namespace* ns);
 

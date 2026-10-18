@@ -1236,6 +1236,7 @@ std::unique_ptr<FunctionDecl> Parser::functionRest(std::string name, const Token
     if (decl->params.size() > 255) throw error(start, "a function cannot have more than 255 parameters");
     decl->returnType = optionalType();
 
+    decl->bodyFrom = p_;
     if (match(TokenType::Arrow)) {
         auto ret = node<ReturnStmt>(peek());
         ret->value = expression();
@@ -1245,6 +1246,7 @@ std::unique_ptr<FunctionDecl> Parser::functionRest(std::string name, const Token
     } else {
         decl->body = std::move(block()->statements);
     }
+    decl->bodyTo = p_;
     return decl;
 }
 

@@ -62,6 +62,7 @@ struct Namespace {
 struct CompileTimes {
     double parse = 0, check = 0, compile = 0;
     double cacheCheck = 0, cacheRead = 0;  // a kept program: its files looked at, and it read in
+    int unitsReused = 0, unitsCompiled = 0;  // units of the program put back from the cache, and compiled
 };
 extern CompileTimes compileTimes;
 
@@ -92,7 +93,7 @@ public:
     // The files the program was compiled from, and the folders whose files it took, for the
     // cache of compiled programs (D145).
     const std::vector<SourceRead>& sourcesRead() const { return sourcesRead_; }
-    std::vector<std::string> foldersRead() const { return {foldersRead_.begin(), foldersRead_.end()}; }
+    std::vector<FolderRead> foldersRead() const;
 
     // Compiles a file and everything it imports. Returns the entry module index.
     int compileFile(const std::string& path);
@@ -125,7 +126,8 @@ private:
     std::unordered_map<std::string, std::unique_ptr<std::vector<StmtPtr>>> parsed_;
     std::vector<std::unique_ptr<std::vector<StmtPtr>>> sources_;
     std::vector<SourceRead> sourcesRead_;
-    std::set<std::string> foldersRead_;
+    std::map<std::string, FolderRead> foldersRead_;
+    void noteFolder(const std::string& folder, const std::vector<std::filesystem::path>& files);
     std::unordered_set<std::string> gathered_;  // files handed to the checker
     bool gatheringShell_ = false;               // the unit being gathered is an input of the shell
 
@@ -138,12 +140,70 @@ private:
     std::vector<ShellImport> shellImports_;
     void check();
     std::vector<StmtPtr>* parseFile(const std::string& key, const std::string& path, const std::string& name);
+    // Files read and parsed ahead, a few at a time on threads of their own, for parseFile to
+    // take: the files a file imports, before they are gathered in order.
+    struct Prefetched {
+        bool read = false;
+        std::string source;
+        uintmax_t size = 0;
+        long long time = 0;
+        uint64_t skeleton = 0;
+        std::unique_ptr<std::vector<StmtPtr>> statements;
+        std::unique_ptr<CompileError> error;
+    };
+    std::unordered_map<std::string, Prefetched> prefetched_;
+    void prefetch(const std::vector<std::pair<std::string, std::string>>& files);  // key and name
     bool findImport(const std::string& path, const std::string& fromDirectory, const std::string& file,
                     std::string& found, bool& folder) const;
     void gather(const std::string& key, const std::string& name, const std::string& directory,
                 const std::vector<StmtPtr>& statements, Namespace* ns, bool prelude);
     FunctionProto* compileStatements(const std::vector<StmtPtr>& statements, const std::string& name,
-                                     const std::string& directory, const std::string& fileKey, bool shell, Namespace* ns);
+                                     const std::string& directory, const std::string& fileKey, bool shell, Namespace* ns,
+                                     bool predeclared = false);
+
+    // ---- Units kept compiled (D145) ----
+    // What each module is, for putting a kept unit's modules back: a file's key, "folder:" and
+    // the folder's path for the module its files share, "<worker>" and a worker's script; and
+    // the index of each.
+    std::vector<std::string> moduleKeys_;
+    std::unordered_map<std::string, int> moduleByKey_;
+    void noteModule(int index, const std::string& key);
+    // What compiling each file depended on, noted while gathering: the files it imports (a
+    // folder's, all of them), and the other files gathered from its folder, whose names it sees.
+    std::unordered_map<std::string, uint64_t> textHashes_;
+    std::unordered_map<std::string, uint64_t> skeletons_;  // the hash of what other files see of each
+    std::unordered_map<std::string, std::set<std::string>> fileUses_;
+    std::unordered_map<std::string, std::string> directoryOf_;
+    std::unordered_map<std::string, std::set<std::string>> filesByDirectory_;
+    std::vector<std::pair<std::string, uint64_t>> compiledFrom(const std::vector<std::string>& files) const;
+    // Units compiled this time, kept once the whole program is; only within compileFile.
+    struct ToKeep {
+        std::string unit;
+        std::vector<std::string> files;
+        std::vector<int> modules;
+    };
+    std::vector<ToKeep> toKeep_;
+    bool keepingUnits_ = false;
+    // 1: the unit was put back; 0: it was not, and nothing was done; 2: its names were declared
+    // already, but it has to be compiled after all.
+    int reuseUnit(const std::string& unit, const std::vector<std::string>& files, const std::vector<int>& modules,
+                  const std::vector<const std::vector<StmtPtr>*>& statements, const std::vector<std::string>& names,
+                  const std::string& directory, Namespace* ns);
+    void keepUnits();
+    int slotFor(const std::string& key);
+    // Before checking: the units whose code will be put back, whose bodies are then not checked
+    // again; and, for one that could not be after all, its bodies checked before it is compiled.
+    std::map<std::string, std::vector<std::string>> foldersGathered_;  // a folder imported whole, and its files
+    std::unordered_map<std::string, KeptUnit> planned_;
+    std::unordered_map<std::string, std::vector<std::string>> plannedFiles_;
+    std::unordered_map<std::string, uint64_t> summaries_;  // each file's, as this compile has it
+    std::vector<std::string> dependencies(const std::vector<std::string>& files) const;
+    void settleReuse();
+    void planReuse();
+    void planUnit(const std::string& unit, const std::vector<std::string>& files);
+    void checkSkipped(const std::vector<std::string>& files);
+    void reportNew(size_t before);
+    int libraryNumber(const std::string& library, const std::string& file, int line);
     std::unordered_map<std::string, std::unique_ptr<Namespace>> namespaces_;  // by folder
     Namespace* builtins_ = nullptr;                                           // the prelude and the built-in names
     std::unordered_map<std::string, std::unordered_map<std::string, GlobalName>> privates_;  // by file: its private names

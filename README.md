@@ -68,6 +68,14 @@ folder it imports, and `astra.exe` itself. A damaged entry counts as missing; pa
 entries used longest ago go first; deleting the cache costs one slower start. With
 `ASTRA_TIMES` set, astra says how long the program took to be ready, and on what.
 
+When something has changed, only what it touches is compiled again. Each file, or each folder
+imported whole, is kept compiled with its file's summary: what it declares, with what other
+files learn from its function bodies (a result type not written; whether a lambda passed in
+runs there and then). Another file is compiled again only if it changed itself or a summary it
+depends on did, so an edit inside a function's body compiles that file alone, and the bodies
+of what is put back are not checked again. Files are parsed a few at a time, on threads of
+their own.
+
 ### Standalone programs
 
 `astra build --exe` turns a script into an executable of its own:

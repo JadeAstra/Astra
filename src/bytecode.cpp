@@ -1084,7 +1084,78 @@ void verifyTree(FunctionProto& f, const Program& program) {
     for (FunctionProto* nested : f.protos) verifyTree(*nested, program);
 }
 
+void writeU16(std::vector<uint8_t>& code, size_t at, int v) {
+    code[at] = static_cast<uint8_t>(v & 0xFF);
+    code[at + 1] = static_cast<uint8_t>((v >> 8) & 0xFF);
+}
+
 }  // namespace
+
+void renumber(FunctionProto& f, const Renumbering& r, VM& vm) {
+    std::vector<uint8_t>& code = f.code;
+    for (size_t ip = 0; ip < code.size();) {
+        const uint8_t raw = code[ip];
+        if (raw >= static_cast<uint8_t>(Op::Count_)) break;  // malformed: verifying will say so
+        const size_t size = 1 + operandSize(kOps[raw].operand);
+        if (ip + size > code.size()) break;
+        auto first = [&](const std::function<int(int)>& map) { writeU16(code, ip + 1, map(readU16(code, ip + 1))); };
+        auto second = [&](const std::function<int(int)>& map) { writeU16(code, ip + 3, map(readU16(code, ip + 3))); };
+        switch (static_cast<Op>(raw)) {
+            case Op::GetGlobal:
+            case Op::SetGlobal:
+            case Op::DefineGlobal:
+            case Op::DefineTypedGlobal: first(r.global); break;
+            case Op::GetImplicit:
+            case Op::SetImplicit:
+            case Op::InvokeImplicit: second(r.global); break;
+            case Op::Import: first(r.module); break;
+            case Op::ClassNumber:
+                first(r.number);
+                second(r.number);
+                break;
+            case Op::MemberAccess:
+            case Op::StaticAccess: second(r.number); break;
+            default: break;
+        }
+        ip += size;
+    }
+    for (uint16_t& id : f.classIds) id = static_cast<uint16_t>(r.number(id));
+    if (f.ownClass != 0) f.ownClass = static_cast<uint16_t>(r.number(f.ownClass));
+    // The script a worker runs is named by a string the compiler made: "\x01<module>\x01<path>".
+    for (Value& c : f.constants) {
+        if (!c.isObjType(ObjType::String)) continue;
+        const std::string& text = asString(c)->chars;
+        if (text.size() < 3 || text[0] != '\x01') continue;
+        const size_t end = text.find('\x01', 1);
+        if (end == std::string::npos) continue;
+        const int module = r.module(std::stoi(text.substr(1, end - 1)));
+        c = Value::object(vm.intern('\x01' + std::to_string(module) + text.substr(end)));
+    }
+    for (FunctionProto* nested : f.protos) renumber(*nested, r, vm);
+}
+
+void writeModules(const std::vector<const FunctionProto*>& modules, std::ostream& out) {
+    Writer w{out};
+    w.u8(kFormatVersion);
+    w.u32(static_cast<uint32_t>(modules.size()));
+    for (const FunctionProto* module : modules) w.proto(*module);
+}
+
+std::vector<FunctionProto*> readModules(Program& program, VM& vm, const std::string& data) {
+    Reader r{data, program, vm, 0};
+    if (r.u8() != kFormatVersion) throw std::runtime_error("kept from another version of the bytecode");
+    std::vector<FunctionProto*> modules;
+    const uint32_t count = r.count(1);
+    for (uint32_t i = 0; i < count; i++) modules.push_back(r.proto(0));
+    if (r.pos != data.size()) r.corrupt();
+    return modules;
+}
+
+void verifyModule(FunctionProto& module, const Program& program) {
+    if (module.arity != 0 || !module.upvalues.empty())
+        throw std::runtime_error("invalid bytecode: a module cannot take arguments or capture variables");
+    verifyTree(module, program);
+}
 
 void writeProgram(const Program& program, std::ostream& out) {
     Writer w{out};

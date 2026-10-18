@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -21,10 +22,13 @@ namespace fs = std::filesystem;
 
 namespace {
 
-constexpr const char* kMagic = "ASTRA-PROGRAM-CACHE 2";
+constexpr const char* kMagic = "ASTRA-PROGRAM-CACHE 3";
+constexpr const char* kUnitMagic = "ASTRA-UNIT-CACHE 3";
 constexpr uintmax_t kMostBytes = 500ull * 1024 * 1024;
 
+// The entries to be written, and the thread that writes them, one after another.
 std::thread writer;
+std::vector<std::function<void()>> jobs;
 
 fs::path cacheDirectory() {
     if (const char* chosen = std::getenv("ASTRA_CACHE"); chosen != nullptr && *chosen != '\0') return fs::path(chosen);
@@ -85,10 +89,7 @@ uint64_t folderHash(const fs::path& folder) {
     std::vector<std::string> names;
     for (const fs::directory_entry& entry : fs::directory_iterator(folder, ec))
         if (entry.is_regular_file(ec) && entry.path().extension() == ".astra") names.push_back(entry.path().filename().string());
-    std::sort(names.begin(), names.end());
-    std::string joined;
-    for (const std::string& name : names) joined += name + "\n";
-    return textHash(joined);
+    return namesHash(std::move(names));
 }
 
 // What astra.exe is: a program kept by another build of it does not hold.
@@ -105,6 +106,11 @@ fs::path entryFor(const std::string& script) {
     std::error_code ec;
     fs::path full = fs::weakly_canonical(fs::absolute(script, ec), ec);
     return dir / (hex(textHash(full.string())) + ".program");
+}
+
+fs::path unitEntryFor(const std::string& unit) {
+    const fs::path dir = cacheDirectory();
+    return dir.empty() ? fs::path() : dir / (hex(textHash(unit)) + ".unit");
 }
 
 bool readAll(const fs::path& path, std::string& out) { return readWholeFile(path, out); }
@@ -162,7 +168,18 @@ void write(fs::path entry, std::string text) {
     }
     fs::rename(temporary, entry, ec);  // whole or not at all
     if (ec) fs::remove(temporary, ec);
-    trim(entry.parent_path());
+}
+
+// Sets the writer going on what is waiting, if anything is.
+void startKeeping() {
+    if (jobs.empty()) return;
+    if (writer.joinable()) writer.join();
+    writer = std::thread([todo = std::move(jobs)] {
+        for (const auto& job : todo) job();
+        const fs::path dir = cacheDirectory();
+        if (!dir.empty()) trim(dir);
+    });
+    jobs.clear();
 }
 
 }  // namespace
@@ -195,6 +212,13 @@ bool readWholeFile(const fs::path& path, std::string& out) {
     return true;
 }
 
+uint64_t namesHash(std::vector<std::string> names) {
+    std::sort(names.begin(), names.end());
+    std::string joined;
+    for (const std::string& name : names) joined += name + "\n";
+    return textHash(joined);
+}
+
 uint64_t textHash(const std::string& text) {
     uint64_t h = 1469598103934665603ull;
     for (unsigned char c : text) {
@@ -207,18 +231,27 @@ uint64_t textHash(const std::string& text) {
 // One thing an entry was made from, as the entry records it.
 struct Source {
     bool folder = false;
+    bool racy = false;
     uintmax_t size = 0;
     long long time = 0;
     std::string hash, path;
 };
 
-// Whether it is as it was: by its size and time, or, where those differ, by its text (a file)
-// or the files in it (a folder).
+// A time stamp this close to when it was taken may be shared with a change made just after,
+// within one tick of the file system's clock, so its file is told by its text each time.
+bool racy(long long time) {
+    const long long now = fs::file_time_type::clock::now().time_since_epoch().count();
+    const long long margin = std::chrono::duration_cast<fs::file_time_type::duration>(std::chrono::seconds(2)).count();
+    return now - time < margin;
+}
+
+// Whether it is as it was: by its size and time, or, where those differ or may not tell, by its
+// text (a file) or the files in it (a folder).
 bool unchanged(const Source& s) {
     uintmax_t size = 0;
     long long time = 0;
     if (!stamp(s.path, size, time)) return false;
-    if (size == s.size && time == s.time) return true;
+    if (size == s.size && time == s.time && !s.racy) return true;
     if (s.folder) return hex(folderHash(s.path)) == s.hash;
     std::string text;
     return size == s.size && readAll(s.path, text) && hex(textHash(text)) == s.hash;
@@ -241,10 +274,10 @@ bool cachedProgram(const std::string& path, std::string& bytecode) {
         fields >> kind;
         Source s;
         if (kind == "file") {
-            fields >> s.size >> s.time >> s.hash;
+            fields >> s.size >> s.time >> s.racy >> s.hash;
         } else if (kind == "folder") {
             s.folder = true;
-            fields >> s.time >> s.hash;
+            fields >> s.time >> s.racy >> s.hash;
         } else if (kind == "bytes") {
             fields >> n;
             at = static_cast<size_t>(in.tellg());
@@ -278,27 +311,82 @@ bool cachedProgram(const std::string& path, std::string& bytecode) {
     return true;
 }
 
-void keepProgram(const std::string& path, const std::vector<SourceRead>& files, const std::vector<std::string>& folders,
-                 std::string bytecode) {
+void keepProgram(const std::string& path, std::vector<SourceRead> files, std::vector<FolderRead> folders,
+                 std::function<std::string()> bytecode) {
     const fs::path entry = entryFor(path);
     if (entry.empty()) return;
-    std::string text = std::string(kMagic) + "\nexe " + executableStamp() + "\n";
-    for (const SourceRead& f : files)
-        text += "file " + std::to_string(f.size) + " " + std::to_string(f.time) + " " + hex(f.hash) + " " + f.path + "\n";
-    for (const std::string& folder : folders) {
-        uintmax_t size = 0;
-        long long time = 0;
-        if (!stamp(folder, size, time)) return;
-        text += "folder " + std::to_string(time) + " " + hex(folderHash(folder)) + " " + folder + "\n";
-    }
-    text += "bytes " + std::to_string(bytecode.size()) + "\n";
-    text += bytecode;
-    finishKeeping();
-    writer = std::thread(write, entry, std::move(text));
+    jobs.push_back([entry, files = std::move(files), folders = std::move(folders), bytecode = std::move(bytecode)] {
+        std::string text = std::string(kMagic) + "\nexe " + executableStamp() + "\n";
+        for (const SourceRead& f : files)
+            text += "file " + std::to_string(f.size) + " " + std::to_string(f.time) + " " + (racy(f.time) ? "1 " : "0 ") + hex(f.hash) +
+                    " " + f.path + "\n";
+        for (const FolderRead& f : folders)
+            text += "folder " + std::to_string(f.time) + " " + (racy(f.time) ? "1 " : "0 ") + hex(f.hash) + " " + f.path + "\n";
+        const std::string bytes = bytecode();
+        text += "bytes " + std::to_string(bytes.size()) + "\n";
+        text += bytes;
+        write(entry, std::move(text));
+    });
+    startKeeping();
 }
 
 void finishKeeping() {
+    startKeeping();
     if (writer.joinable()) writer.join();
+}
+
+bool keptUnit(const std::string& unit, KeptUnit& out) {
+    const fs::path entry = unitEntryFor(unit);
+    if (entry.empty()) return false;
+    std::string text;
+    if (!readAll(entry, text)) return false;
+    std::istringstream in(text);
+    std::string line;
+    if (!std::getline(in, line) || line != kUnitMagic) return false;
+    if (!std::getline(in, line) || line != "exe " + executableStamp()) return false;
+    if (!std::getline(in, line) || line != "unit " + unit) return false;
+    out.own.clear();
+    out.uses.clear();
+    while (std::getline(in, line)) {
+        std::istringstream fields(line);
+        std::string kind, ownText, summary;
+        fields >> kind;
+        if (kind == "own" || kind == "uses") {
+            KeptFile f;
+            if (kind == "own") fields >> ownText;
+            fields >> summary;
+            std::getline(fields >> std::ws, f.path);
+            f.text = kind == "own" ? std::stoull(ownText, nullptr, 16) : 0;
+            f.summary = std::stoull(summary, nullptr, 16);
+            (kind == "own" ? out.own : out.uses).push_back(std::move(f));
+        } else if (kind == "bytes") {
+            size_t n = 0;
+            fields >> n;
+            const auto at = static_cast<size_t>(in.tellg());
+            if (at == static_cast<size_t>(-1) || at + n != text.size()) return false;
+            out.image = text.substr(at, n);
+            std::error_code ec;
+            fs::last_write_time(entry, fs::file_time_type::clock::now(), ec);
+            return true;
+        } else {
+            return false;
+        }
+    }
+    return false;
+}
+
+void keepUnit(const std::string& unit, KeptUnit kept, std::function<std::string()> image) {
+    const fs::path entry = unitEntryFor(unit);
+    if (entry.empty()) return;
+    jobs.push_back([entry, unit, kept = std::move(kept), image = std::move(image)] {
+        std::string text = std::string(kUnitMagic) + "\nexe " + executableStamp() + "\nunit " + unit + "\n";
+        for (const KeptFile& f : kept.own) text += "own " + hex(f.text) + " " + hex(f.summary) + " " + f.path + "\n";
+        for (const KeptFile& f : kept.uses) text += "uses " + hex(f.summary) + " " + f.path + "\n";
+        const std::string bytes = image();
+        text += "bytes " + std::to_string(bytes.size()) + "\n";
+        text += bytes;
+        write(entry, std::move(text));
+    });
 }
 
 }  // namespace astra

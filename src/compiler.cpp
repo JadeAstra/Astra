@@ -2,14 +2,18 @@
 
 #include "checker.h"
 
+#include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <functional>
 #include <map>
+#include <optional>
 #include <sstream>
 #include <stdexcept>
+#include <thread>
 #include <utility>
 
 #include "parser.h"
@@ -1048,16 +1052,32 @@ private:
     }
 
     // The number of the library this file belongs to, from the same series.
-    int libraryId() {
-        auto found = session_.libraryIds_.find(ns_->library);
-        if (found != session_.libraryIds_.end()) return found->second;
-        Node here;
-        here.line = line_;
-        here.col = 1;
-        const int id = nextNumber(here);
-        session_.libraryIds_[ns_->library] = id;
-        return id;
+    int libraryId() { return session_.libraryNumber(ns_->library, file_, line_); }
+
+public:
+    // A kept unit put back without compiling it (D145): what compiling the file notes for the
+    // rest of the program. What it imports is loaded, its enums' entries are noted, and the
+    // classes its typed globals are declared with.
+    void declareKept(const std::vector<StmtPtr>& statements) {
+        noteEnums(statements);
+        for (const StmtPtr& stmt : statements) {
+            if (stmt->kind != StmtKind::Import) continue;
+            const auto& s = static_cast<const ImportStmt&>(*stmt);
+            std::vector<int> modules;
+            Namespace* imported = session_.importModule(s.path, directory_, file_, s, modules);
+            imports_.push_back(Import{imported, s.alias, s.path, s.all});
+        }
+        for (const StmtPtr& stmt : statements) {
+            if (stmt->kind != StmtKind::Var) continue;
+            const auto& v = static_cast<const VarStmt&>(*stmt);
+            if (v.isExternal || !v.pattern.empty()) continue;
+            const TypeSpec type = resolveType(v.type);
+            const GlobalName& entry = globalEntry(v.name);
+            if (type.id() == kTypeInstance && entry.slot >= 0) session_.globalClassTypes_[entry.slot] = type.className;
+        }
     }
+
+private:
 
     // Says who may use the members a class declares: the access word in front of each, and
     // the one in front of `set` under a property.
@@ -3980,20 +4000,58 @@ std::string signatureText(const FunctionDecl& fn) {
 // ---- CompilerSession ----
 
 // The key a file is known by: its canonical path.
+// What the system says of a path, asked once per compile: the answers do not change while a
+// program compiles, and on Windows each asking opens the file. The shell forgets them before
+// each input, since files may change between them.
+namespace {
+struct PathFacts {
+    std::unordered_map<fs::path::string_type, std::pair<fs::path, std::error_code>> canonical;
+    std::unordered_map<fs::path::string_type, int> kind;  // 0 nothing there, 1 a file, 2 a folder
+    std::unordered_map<std::string, std::vector<fs::path>> folders;
+};
+thread_local PathFacts pathFacts;
+}  // namespace
+
+static void forgetPaths() { pathFacts = PathFacts{}; }
+
+static fs::path canonicalPath(const fs::path& path, std::error_code& ec) {
+    auto found = pathFacts.canonical.find(path.native());
+    if (found == pathFacts.canonical.end()) {
+        std::error_code asked;
+        fs::path answer = fs::weakly_canonical(path, asked);
+        found = pathFacts.canonical.emplace(path.native(), std::make_pair(std::move(answer), asked)).first;
+    }
+    ec = found->second.second;
+    return found->second.first;
+}
+
+static int pathKind(const fs::path& path) {
+    auto found = pathFacts.kind.find(path.native());
+    if (found != pathFacts.kind.end()) return found->second;
+    std::error_code ec;
+    const fs::file_status status = fs::status(path, ec);
+    const int kind = ec ? 0 : fs::is_regular_file(status) ? 1 : fs::is_directory(status) ? 2 : 0;
+    pathFacts.kind.emplace(path.native(), kind);
+    return kind;
+}
+
 static std::string fileKeyOf(const fs::path& path) {
     std::error_code ec;
-    fs::path canonical = fs::weakly_canonical(path, ec);
+    fs::path canonical = canonicalPath(path, ec);
     if (ec) canonical = fs::absolute(path, ec);
     return canonical.string();
 }
 
 // The .astra files directly in a folder, in name order.
 static std::vector<fs::path> folderFiles(const std::string& folder) {
+    auto known = pathFacts.folders.find(folder);
+    if (known != pathFacts.folders.end()) return known->second;
     std::error_code ec;
     std::vector<fs::path> paths;
     for (const fs::directory_entry& entry : fs::directory_iterator(fs::path(folder), ec))
         if (entry.is_regular_file(ec) && entry.path().extension() == ".astra") paths.push_back(entry.path());
     std::sort(paths.begin(), paths.end());
+    pathFacts.folders.emplace(folder, paths);
     return paths;
 }
 
@@ -4019,12 +4077,52 @@ private:
 };
 }  // namespace
 
-static std::vector<StmtPtr> parseSource(const std::string& source, const std::string& name) {
-    PartTimer timed(compileTimes.parse);
+// What other files can see of a file, by hash: its tokens, but for the bodies of its named
+// functions and methods, of which they learn only what its summary adds (D145).
+static uint64_t skeletonOf(const std::vector<Token>& tokens, const std::vector<StmtPtr>& statements) {
+    std::vector<std::pair<size_t, size_t>> bodies;
+    auto add = [&](const FunctionDecl& d) {
+        if (d.bodyTo > d.bodyFrom) bodies.emplace_back(d.bodyFrom, d.bodyTo);
+    };
+    std::function<void(const ClassStmt&)> inClass = [&](const ClassStmt& c) {
+        for (const auto& m : c.methods) add(*m);
+        for (const auto& nested : c.nested) inClass(*nested);
+    };
+    for (const StmtPtr& s : statements) {
+        if (s->kind == StmtKind::Function) add(*static_cast<const FunctionStmt&>(*s).fn);
+        else if (s->kind == StmtKind::Class) inClass(static_cast<const ClassStmt&>(*s));
+    }
+    std::sort(bodies.begin(), bodies.end());
+    std::string text;
+    size_t body = 0;
+    for (size_t i = 0; i < tokens.size(); i++) {
+        while (body < bodies.size() && bodies[body].second <= i) body++;
+        if (body < bodies.size() && bodies[body].first <= i) {
+            i = bodies[body].second - 1;
+            text += "\x02";
+            continue;
+        }
+        const Token& t = tokens[i];
+        text += static_cast<char>(static_cast<int>(t.type) & 0x7F);
+        if (t.newlineBefore) text += "\n";
+        text += t.text;
+        text += "\x01";
+    }
+    return textHash(text);
+}
+
+// `timed` is false on the threads that parse ahead, whose time is counted where they are waited
+// for. With `skeleton` given, the file's skeleton hash goes there.
+static std::vector<StmtPtr> parseSource(const std::string& source, const std::string& name, bool timed = true,
+                                        uint64_t* skeleton = nullptr) {
+    std::optional<PartTimer> timer;
+    if (timed) timer.emplace(compileTimes.parse);
     Lexer lexer(source, name);
     std::vector<Token> tokens = lexer.scan();
     Parser parser(tokens, name);
-    return parser.parseProgram();
+    std::vector<StmtPtr> statements = parser.parseProgram();
+    if (skeleton != nullptr) *skeleton = skeletonOf(tokens, statements);
+    return statements;
 }
 
 CompilerSession::CompilerSession(VM& vm, Checker* given) : checker(given), vm_(vm) {
@@ -4041,6 +4139,7 @@ CompilerSession::CompilerSession(VM& vm, Checker* given) : checker(given), vm_(v
     std::string prelude = kPrelude;
     prelude.append(reinterpret_cast<const char*>(kStdSource), kStdSourceSize);
     program.modules.push_back(compileUnit(prelude, "<std>", "<builtin>", "<prelude>", false));
+    noteModule(0, "<prelude>");
     for (const auto& [what, cover] : externalForms_) {
         if (cover.lowest == cover.min && cover.highest == cover.max) continue;
         auto counts = [](int low, int high) {
@@ -4054,7 +4153,28 @@ CompilerSession::CompilerSession(VM& vm, Checker* given) : checker(given), vm_(v
 
 CompilerSession::~CompilerSession() = default;
 
+// A folder whose files the program took, noted for the cache as it was when listed.
+void CompilerSession::noteFolder(const std::string& folder, const std::vector<fs::path>& files) {
+    if (foldersRead_.count(folder)) return;
+    FolderRead read;
+    read.path = folder;
+    uintmax_t size = 0;
+    if (!fileStamp(folder, size, read.time)) return;
+    std::vector<std::string> names;
+    for (const fs::path& file : files) names.push_back(file.filename().string());
+    read.hash = namesHash(std::move(names));
+    foldersRead_[folder] = read;
+}
+
+std::vector<FolderRead> CompilerSession::foldersRead() const {
+    std::vector<FolderRead> all;
+    for (const auto& [path, read] : foldersRead_) all.push_back(read);
+    return all;
+}
+
 int CompilerSession::compileFile(const std::string& path) {
+    forgetPaths();
+    keepingUnits_ = stopAtTypeErrors;  // `astra check` lists mistakes, and keeps nothing
     try {
         // The whole program is parsed and checked first, then compiled.
         const std::string key = fileKeyOf(fs::path(path));
@@ -4063,24 +4183,411 @@ int CompilerSession::compileFile(const std::string& path) {
         const std::string directory = canonical.parent_path().string();
         if (std::vector<StmtPtr>* statements = parseFile(key, key, name)) {
             gather(key, name, directory, *statements, namespaceOf(directory), false);
+            planReuse();
             check();
+            settleReuse();
         }
         program.entry = loadModule(path, path, path, nullptr);
         checkConstAssignments();
     } catch (...) {
         globalAssignments_.clear();
+        toKeep_.clear();
+        keepingUnits_ = false;
         throw;
     }
     globalAssignments_.clear();
+    keepUnits();
+    keepingUnits_ = false;
     return program.entry;
+}
+
+// ---- Units kept compiled (D145, points 1 and 2) ----
+//
+// A file's modules, or a folder's, are kept once compiled, and put back into a later compile
+// of a program that has every file they were compiled from as it was. What their code says of
+// the rest of the program goes by numbers this compile gave out, so each is kept with what it
+// stands for: a global by the table its name is in and the name, a module by what it is, a
+// library by its name; the numbers of the unit's own classes need only be its own.
+
+void CompilerSession::noteModule(int index, const std::string& key) {
+    if (moduleKeys_.size() <= static_cast<size_t>(index)) moduleKeys_.resize(static_cast<size_t>(index) + 1);
+    moduleKeys_[static_cast<size_t>(index)] = key;
+    moduleByKey_[key] = index;
+}
+
+int CompilerSession::libraryNumber(const std::string& library, const std::string& file, int line) {
+    auto found = libraryIds_.find(library);
+    if (found != libraryIds_.end()) return found->second;
+    if (classCount_ >= 0xFFFF) throw CompileError(file, line, 1, "a program cannot have more than 65535 classes and libraries");
+    const int id = ++classCount_;
+    libraryIds_[library] = id;
+    return id;
+}
+
+// The files compiling `files` depended on, besides themselves, in path order.
+std::vector<std::string> CompilerSession::dependencies(const std::vector<std::string>& files) const {
+    const std::set<std::string> own(files.begin(), files.end());
+    std::vector<std::string> uses;
+    for (const auto& [file, hash] : compiledFrom(files))
+        if (own.count(file) == 0) uses.push_back(file);
+    return uses;
+}
+
+// Every file compiling `files` depended on, with its text's hash, in path order.
+std::vector<std::pair<std::string, uint64_t>> CompilerSession::compiledFrom(const std::vector<std::string>& files) const {
+    std::set<std::string> seen;
+    std::vector<std::string> todo(files.begin(), files.end());
+    while (!todo.empty()) {
+        const std::string file = todo.back();
+        todo.pop_back();
+        if (!seen.insert(file).second) continue;
+        if (auto uses = fileUses_.find(file); uses != fileUses_.end()) todo.insert(todo.end(), uses->second.begin(), uses->second.end());
+        if (auto dir = directoryOf_.find(file); dir != directoryOf_.end()) {
+            const std::set<std::string>& siblings = filesByDirectory_.at(dir->second);
+            todo.insert(todo.end(), siblings.begin(), siblings.end());
+        }
+    }
+    std::vector<std::pair<std::string, uint64_t>> all;
+    for (const std::string& file : seen) {
+        auto hash = textHashes_.find(file);
+        all.emplace_back(file, hash == textHashes_.end() ? 0 : hash->second);
+    }
+    return all;
+}
+
+namespace {
+
+const char kKeyPart = '\x1f';
+
+void putU32(std::string& out, uint32_t v) {
+    for (int i = 0; i < 4; i++) out.push_back(static_cast<char>((v >> (8 * i)) & 0xFF));
+}
+void putText(std::string& out, const std::string& s) {
+    putU32(out, static_cast<uint32_t>(s.size()));
+    out += s;
+}
+
+// What a kept unit's image holds besides its modules' code.
+struct UnitImage {
+    std::vector<std::string> own;                       // its modules, by what they are
+    std::vector<std::pair<int, std::string>> globals;   // a slot in its code, and the global it is
+    std::vector<std::pair<int, std::string>> modules;   // a module index in its code, and the module
+    std::vector<std::pair<int, std::string>> numbers;   // a class or library number, "lib:" and the library, or "own"
+    std::map<std::string, std::string> facts;           // a file, and what the checker learned of its functions (R1)
+    std::string code;
+};
+
+bool readImage(const std::string& data, UnitImage& image) {
+    size_t at = 0;
+    auto u32 = [&](uint32_t& v) {
+        if (data.size() - at < 4) return false;
+        v = 0;
+        for (int i = 0; i < 4; i++) v |= static_cast<uint32_t>(static_cast<uint8_t>(data[at++])) << (8 * i);
+        return true;
+    };
+    auto text = [&](std::string& s) {
+        uint32_t n = 0;
+        if (!u32(n) || data.size() - at < n) return false;
+        s = data.substr(at, n);
+        at += n;
+        return true;
+    };
+    uint32_t n = 0;
+    if (!u32(n)) return false;
+    for (uint32_t i = 0; i < n; i++) {
+        std::string key;
+        if (!text(key)) return false;
+        image.own.push_back(key);
+    }
+    for (auto* table : {&image.globals, &image.modules, &image.numbers}) {
+        if (!u32(n)) return false;
+        for (uint32_t i = 0; i < n; i++) {
+            uint32_t number = 0;
+            std::string key;
+            if (!u32(number) || !text(key)) return false;
+            table->emplace_back(static_cast<int>(number), key);
+        }
+    }
+    if (!u32(n)) return false;
+    for (uint32_t i = 0; i < n; i++) {
+        std::string file, facts;
+        if (!text(file) || !text(facts)) return false;
+        image.facts[file] = facts;
+    }
+    image.code = data.substr(at);
+    return true;
+}
+
+}  // namespace
+
+// The slot of the global a key names, in this compile; one the unit's own compile made up (an
+// object's hidden class) is made again. -1 if there is no such global any more.
+int CompilerSession::slotFor(const std::string& key) {
+    std::vector<std::string> parts;
+    for (size_t start = 0;;) {
+        const size_t end = key.find(kKeyPart, start);
+        parts.push_back(key.substr(start, end == std::string::npos ? std::string::npos : end - start));
+        if (end == std::string::npos) break;
+        start = end + 1;
+    }
+    if (parts.size() < 3) return -1;
+    std::unordered_map<std::string, GlobalName>* table = nullptr;
+    if (parts[0] == "n") {
+        auto ns = namespaces_.find(parts[1]);
+        if (ns == namespaces_.end()) return -1;
+        table = &ns->second->names;
+    } else if (parts[0] == "p") {
+        table = &privates_[parts[1]];
+    } else {
+        return -1;
+    }
+    GlobalName& entry = (*table)[parts[2]];
+    if (parts.size() == 4) return entry.formSlot(parts[3]);
+    if (entry.slot < 0) entry.slot = newSlot(parts[2]);
+    return entry.slot;
+}
+
+int CompilerSession::reuseUnit(const std::string& unit, const std::vector<std::string>& files, const std::vector<int>& modules,
+                               const std::vector<const std::vector<StmtPtr>*>& statements, const std::vector<std::string>& names,
+                               const std::string& directory, Namespace* ns) {
+    if (!keepingUnits_) return 0;
+    // Only what was settled to be put back, its own files and what it depends on as it was.
+    auto plannedUnit = planned_.find(unit);
+    if (plannedUnit == planned_.end()) return 0;
+    KeptUnit kept = std::move(plannedUnit->second);
+    planned_.erase(plannedUnit);
+    UnitImage image;
+    if (!readImage(kept.image, image) || image.own.size() != modules.size()) return 0;
+    for (size_t i = 0; i < modules.size(); i++)
+        if (image.own[i] != moduleKeys_[static_cast<size_t>(modules[i])]) return 0;
+    std::vector<FunctionProto*> protos;
+    try {
+        protos = readModules(program, vm_, image.code);
+    } catch (const std::exception&) {
+        return 0;
+    }
+    if (protos.size() != modules.size()) return 0;
+
+    // From here it is as if it had been compiled: what compiling it notes for the rest.
+    for (size_t i = 0; i < files.size(); i++) predeclare(*ns, files[i], names[i], *statements[i], false);
+    for (size_t i = 0; i < files.size(); i++) {
+        ModuleCompiler declaring(*this, names[i], directory, ns, files[i]);
+        declaring.declareKept(*statements[i]);
+    }
+    for (const auto& [old, key] : image.modules)
+        if (key.rfind("<worker>", 0) == 0 && moduleByKey_.count(key) == 0) loadWorker(key.substr(8), "", names[0], Node());
+
+    std::unordered_map<int, int> globals, moduleIndex, numbers;
+    for (const auto& [old, key] : image.globals) {
+        const int slot = slotFor(key);
+        if (slot < 0) return 2;
+        globals[old] = slot;
+    }
+    for (const auto& [old, key] : image.modules) {
+        auto found = moduleByKey_.find(key);
+        if (found == moduleByKey_.end()) return 2;
+        moduleIndex[old] = found->second;
+    }
+    for (const auto& [old, key] : image.numbers) {
+        if (key.rfind("lib:", 0) == 0) {
+            numbers[old] = libraryNumber(key.substr(4), names[0], 1);
+        } else {
+            if (classCount_ >= 0xFFFF) return 2;
+            numbers[old] = ++classCount_;
+        }
+    }
+    bool missing = false;
+    auto mapped = [&missing](const std::unordered_map<int, int>& map) {
+        return [&missing, &map](int v) {
+            auto found = map.find(v);
+            if (found == map.end()) {
+                missing = true;
+                return v;
+            }
+            return found->second;
+        };
+    };
+    const Renumbering into{mapped(globals), mapped(moduleIndex), mapped(numbers)};
+    for (FunctionProto* proto : protos) renumber(*proto, into, vm_);
+    if (missing) return 2;
+    try {
+        for (FunctionProto* proto : protos) verifyModule(*proto, program);
+    } catch (const std::exception&) {
+        return 2;
+    }
+    for (size_t i = 0; i < modules.size(); i++) program.modules[static_cast<size_t>(modules[i])] = protos[i];
+    compileTimes.unitsReused++;
+    return 1;
+}
+
+// Before checking: each unit whose kept code holds, everything it was compiled from being as it
+// was, will be put back, so its bodies are not checked again. A folder imported whole is one
+// unit; any other file is one by itself.
+void CompilerSession::planReuse() {
+    if (!keepingUnits_) return;
+    std::set<std::string> inFolders;
+    for (const auto& [folder, files] : foldersGathered_) {
+        inFolders.insert(files.begin(), files.end());
+        planUnit("folder:" + folder, files);
+    }
+    for (const auto& [file, directory] : directoryOf_)
+        if (inFolders.count(file) == 0 && file.rfind("<worker>", 0) != 0) planUnit("file:" + file, {file});
+}
+
+void CompilerSession::planUnit(const std::string& unit, const std::vector<std::string>& files) {
+    KeptUnit kept;
+    UnitImage image;
+    if (!keptUnit(unit, kept) || kept.own.size() != files.size() || !readImage(kept.image, image)) return;
+    std::vector<std::string> sorted(files.begin(), files.end());
+    std::sort(sorted.begin(), sorted.end());
+    for (size_t i = 0; i < sorted.size(); i++) {
+        auto text = textHashes_.find(sorted[i]);
+        if (kept.own[i].path != sorted[i] || text == textHashes_.end() || text->second != kept.own[i].text) return;
+    }
+    const std::vector<std::string> uses = dependencies(files);
+    if (uses.size() != kept.uses.size()) return;
+    for (size_t i = 0; i < uses.size(); i++)
+        if (kept.uses[i].path != uses[i]) return;
+    for (const std::string& file : files) {
+        auto facts = image.facts.find(file);
+        checker->skipBodiesOf(file, facts == image.facts.end() ? std::string() : facts->second);
+    }
+    planned_[unit] = std::move(kept);
+    plannedFiles_[unit] = files;
+}
+
+// After checking: a unit planned to be put back holds only if every file it depends on shows
+// the summary it was compiled against. Those of files checked this time are worked out; one
+// that differs makes the unit be checked and compiled after all, which may change its own
+// summary in turn, and so on until nothing more changes.
+void CompilerSession::settleReuse() {
+    if (!keepingUnits_) return;
+    for (;;) {
+        summaries_.clear();
+        for (const auto& [unit, kept] : planned_)
+            for (const KeptFile& f : kept.own) summaries_[f.path] = f.summary;
+        for (const auto& [file, directory] : directoryOf_) {
+            if (summaries_.count(file) != 0 || file.rfind("<worker>", 0) == 0) continue;
+            std::string seen = std::to_string(skeletons_[file]) + "\n" + checker->summaryFacts(file);
+            summaries_[file] = textHash(seen);
+        }
+        std::vector<std::string> stale;
+        for (const auto& [unit, kept] : planned_)
+            for (const KeptFile& f : kept.uses) {
+                auto now = summaries_.find(f.path);
+                if (now == summaries_.end() || now->second != f.summary) {
+                    stale.push_back(unit);
+                    break;
+                }
+            }
+        if (stale.empty()) return;
+        for (const std::string& unit : stale) {
+            planned_.erase(unit);
+            checkSkipped(plannedFiles_[unit]);
+        }
+    }
+}
+
+// A unit planned to be put back that is compiled after all: its bodies are checked first.
+void CompilerSession::checkSkipped(const std::vector<std::string>& files) {
+    const size_t before = checker->diagnostics.size();
+    for (const std::string& file : files) checker->checkBodiesOf(file);
+    reportNew(before);
+}
+
+// Keeps the units compiled this time, once the whole program has been: their code's numbers
+// listed now, their code written by the cache's own thread as the program runs.
+void CompilerSession::keepUnits() {
+    if (toKeep_.empty()) return;
+    std::unordered_map<int, std::string> slotKeys;
+    for (const auto& [nsKey, ns] : namespaces_)
+        for (const auto& [name, entry] : ns->names) {
+            const std::string key = std::string("n") + kKeyPart + nsKey + kKeyPart + name;
+            if (entry.slot >= 0) slotKeys[entry.slot] = key;
+            for (const auto& [signature, slot] : entry.forms) slotKeys[slot] = key + kKeyPart + signature;
+        }
+    for (const auto& [fileKey, names] : privates_)
+        for (const auto& [name, entry] : names) {
+            const std::string key = std::string("p") + kKeyPart + fileKey + kKeyPart + name;
+            if (entry.slot >= 0) slotKeys[entry.slot] = key;
+            for (const auto& [signature, slot] : entry.forms) slotKeys[slot] = key + kKeyPart + signature;
+        }
+    std::unordered_map<int, std::string> libraries;
+    for (const auto& [library, number] : libraryIds_) libraries[number] = library;
+
+    for (const ToKeep& unit : toKeep_) {
+        std::set<int> globals, modules, numbers;
+        const Renumbering listed{[&](int v) { globals.insert(v); return v; }, [&](int v) { modules.insert(v); return v; },
+                                 [&](int v) { numbers.insert(v); return v; }};
+        std::vector<const FunctionProto*> protos;
+        bool whole = true;
+        for (int index : unit.modules) {
+            FunctionProto* proto = program.modules[static_cast<size_t>(index)];
+            if (proto == nullptr) whole = false;
+            else {
+                renumber(*proto, listed, vm_);
+                protos.push_back(proto);
+            }
+        }
+        std::string head;
+        putU32(head, static_cast<uint32_t>(unit.modules.size()));
+        for (int index : unit.modules) putText(head, moduleKeys_[static_cast<size_t>(index)]);
+        putU32(head, static_cast<uint32_t>(globals.size()));
+        for (int slot : globals) {
+            auto key = slotKeys.find(slot);
+            if (key == slotKeys.end()) whole = false;
+            putU32(head, static_cast<uint32_t>(slot));
+            putText(head, key == slotKeys.end() ? std::string() : key->second);
+        }
+        putU32(head, static_cast<uint32_t>(modules.size()));
+        for (int index : modules) {
+            const bool known = static_cast<size_t>(index) < moduleKeys_.size() && !moduleKeys_[static_cast<size_t>(index)].empty();
+            if (!known) whole = false;
+            putU32(head, static_cast<uint32_t>(index));
+            putText(head, known ? moduleKeys_[static_cast<size_t>(index)] : std::string());
+        }
+        putU32(head, static_cast<uint32_t>(numbers.size()));
+        for (int number : numbers) {
+            auto library = libraries.find(number);
+            putU32(head, static_cast<uint32_t>(number));
+            putText(head, library == libraries.end() ? std::string("own") : "lib:" + library->second);
+        }
+        putU32(head, static_cast<uint32_t>(unit.files.size()));
+        for (const std::string& file : unit.files) {
+            putText(head, file);
+            putText(head, checker->inPlaceFacts(file));
+        }
+        KeptUnit kept;
+        std::vector<std::string> own(unit.files.begin(), unit.files.end());
+        std::sort(own.begin(), own.end());
+        for (const std::string& file : own) {
+            auto summary = summaries_.find(file);
+            if (summary == summaries_.end()) whole = false;
+            else kept.own.push_back(KeptFile{file, textHashes_[file], summary->second});
+        }
+        for (const std::string& file : dependencies(unit.files)) {
+            auto summary = summaries_.find(file);
+            if (summary == summaries_.end()) whole = false;
+            else kept.uses.push_back(KeptFile{file, 0, summary->second});
+        }
+        if (!whole) continue;  // something it says cannot be named again: compiled each time
+        keepUnit(unit.unit, std::move(kept), [head, protos] {
+            std::ostringstream code;
+            writeModules(protos, code);
+            return head + code.str();
+        });
+    }
+    toKeep_.clear();
 }
 
 int CompilerSession::compileSource(const std::string& source, const std::string& name,
                                    const std::string& baseDirectory, bool shell) {
+    forgetPaths();
     try {
         FunctionProto* proto = compileUnit(source, name, baseDirectory, name, shell);
         checkConstAssignments();
         program.modules.push_back(proto);
+        noteModule(static_cast<int>(program.modules.size()) - 1, "<input>");
     } catch (...) {
         globalAssignments_.clear();
         throw;
@@ -4098,7 +4605,7 @@ Namespace* CompilerSession::namespaceOf(const std::string& directory) {
     std::error_code ec;
     if (directory != "<builtin>") {
         fs::path folder(directory.empty() ? "." : directory);
-        fs::path canonical = fs::weakly_canonical(folder, ec);
+        fs::path canonical = canonicalPath(folder, ec);
         if (ec) canonical = fs::absolute(folder, ec);
         key = canonical.string();
     }
@@ -4109,7 +4616,7 @@ Namespace* CompilerSession::namespaceOf(const std::string& directory) {
     ns->directory = key;
     ns->library = "<program>";
     for (const std::string& library : libraryPaths) {
-        fs::path root = fs::weakly_canonical(fs::path(library), ec);
+        fs::path root = canonicalPath(fs::path(library), ec);
         fs::path relative = fs::path(key).lexically_relative(root);
         if (relative.empty() || *relative.begin() == "..") continue;
         ns->library = relative == "." ? root.string() : (root / *relative.begin()).string();
@@ -4196,11 +4703,26 @@ void CompilerSession::predeclare(Namespace& ns, const std::string& fileKey, cons
 std::vector<StmtPtr>* CompilerSession::parseFile(const std::string& key, const std::string& path, const std::string& name) {
     auto found = parsed_.find(key);
     if (found != parsed_.end()) return found->second.get();
+    if (auto ahead = prefetched_.find(key); ahead != prefetched_.end()) {
+        // Read and parsed ahead: taken as it was found then, and what went wrong is said now.
+        Prefetched done = std::move(ahead->second);
+        prefetched_.erase(ahead);
+        if (!done.read) return nullptr;
+        SourceRead read{path, textHash(done.source), done.size, done.time};
+        textHashes_[key] = read.hash;
+        skeletons_[key] = done.skeleton;
+        if (done.time != 0) sourcesRead_.push_back(std::move(read));
+        if (done.error) throw CompileError(*done.error);
+        std::vector<StmtPtr>* raw = done.statements.get();
+        parsed_[key] = std::move(done.statements);
+        return raw;
+    }
     std::string source;
     if (!readFile(path, source)) return nullptr;
     SourceRead read{path, textHash(source)};
+    textHashes_[key] = read.hash;
     if (fileStamp(path, read.size, read.time)) sourcesRead_.push_back(std::move(read));
-    auto statements = std::make_unique<std::vector<StmtPtr>>(parseSource(source, name));
+    auto statements = std::make_unique<std::vector<StmtPtr>>(parseSource(source, name, true, &skeletons_[key]));
     std::vector<StmtPtr>* raw = statements.get();
     parsed_[key] = std::move(statements);
     return raw;
@@ -4216,10 +4738,10 @@ bool CompilerSession::findImport(const std::string& path, const std::string& fro
     places.push_back(fs::path(fromDirectory));
     for (const std::string& library : libraryPaths) places.push_back(fs::path(library));
     std::error_code ec;
-    fs::path self = fs::weakly_canonical(fs::path(fromDirectory) / fs::path(file), ec);
+    fs::path self = canonicalPath(fs::path(fromDirectory) / fs::path(file), ec);
     auto usable = [&](const fs::path& candidate) {
-        if (!fs::is_regular_file(candidate, ec)) return false;
-        return fs::weakly_canonical(candidate, ec) != self;
+        if (pathKind(candidate) != 1) return false;
+        return canonicalPath(candidate, ec) != self;
     };
     for (const fs::path& place : places) {
         fs::path candidate = place / fs::path(path);
@@ -4234,8 +4756,8 @@ bool CompilerSession::findImport(const std::string& path, const std::string& fro
             found = withExtension.string();
             return true;
         }
-        if (fs::is_directory(candidate, ec)) {
-            found = fs::weakly_canonical(candidate, ec).string();
+        if (pathKind(candidate) == 2) {
+            found = canonicalPath(candidate, ec).string();
             folder = true;
             return true;
         }
@@ -4255,6 +4777,26 @@ void CompilerSession::gather(const std::string& key, const std::string& name, co
     gatheringShell_ = false;
     if (!gathered_.insert(key).second && !shell) return;
     checker->addUnit(statements, name, key, ns, prelude, shell);
+    if (!prelude && !shell) {
+        directoryOf_[key] = directory;
+        filesByDirectory_[directory].insert(key);
+    }
+    // What it imports is read and parsed ahead, all at once, then gathered in order.
+    std::vector<std::pair<std::string, std::string>> ahead;
+    for (const StmtPtr& stmt : statements) {
+        if (stmt->kind != StmtKind::Import) continue;
+        const auto& s = static_cast<const ImportStmt&>(*stmt);
+        std::string found;
+        bool folder = false;
+        if (!findImport(s.path, directory, name, found, folder)) continue;
+        if (folder) {
+            for (const fs::path& path : folderFiles(found)) ahead.emplace_back(fileKeyOf(path), path.filename().string());
+        } else {
+            const std::string fileKey = fileKeyOf(fs::path(found));
+            ahead.emplace_back(fileKey, fs::path(fileKey).filename().string());
+        }
+    }
+    prefetch(ahead);
     for (const StmtPtr& stmt : statements) {
         if (stmt->kind != StmtKind::Import) continue;
         const auto& s = static_cast<const ImportStmt&>(*stmt);
@@ -4264,10 +4806,14 @@ void CompilerSession::gather(const std::string& key, const std::string& name, co
         Namespace* imported = nullptr;
         if (folder) {
             imported = namespaceOf(found);
-            foldersRead_.insert(found);
+            noteFolder(found, folderFiles(found));
+            std::vector<std::string>& whole = foldersGathered_[found];
+            whole.clear();
             for (const fs::path& path : folderFiles(found)) {
                 const std::string fileKey = fileKeyOf(path);
                 const std::string fileName = path.filename().string();
+                fileUses_[key].insert(fileKey);
+                whole.push_back(fileKey);
                 if (std::vector<StmtPtr>* parsed = parseFile(fileKey, fileKey, fileName))
                     gather(fileKey, fileName, found, *parsed, imported, false);
             }
@@ -4276,11 +4822,49 @@ void CompilerSession::gather(const std::string& key, const std::string& name, co
             const fs::path canonical(fileKey);
             const std::string parent = canonical.parent_path().string();
             imported = namespaceOf(parent);
+            fileUses_[key].insert(fileKey);
             if (std::vector<StmtPtr>* parsed = parseFile(fileKey, fileKey, canonical.filename().string()))
                 gather(fileKey, canonical.filename().string(), parent, *parsed, imported, false);
         }
         checker->addImport(key, s.alias, s.all, imported);
     }
+}
+
+void CompilerSession::prefetch(const std::vector<std::pair<std::string, std::string>>& files) {
+    std::vector<std::pair<std::string, std::string>> todo;
+    for (const auto& [key, name] : files)
+        if (parsed_.count(key) == 0 && prefetched_.count(key) == 0) {
+            prefetched_[key];
+            todo.emplace_back(key, name);
+        }
+    if (todo.size() < 2) {
+        for (const auto& [key, name] : todo) prefetched_.erase(key);  // as well parsed when gathered
+        return;
+    }
+    PartTimer timed(compileTimes.parse);
+    std::vector<Prefetched*> slots;
+    for (const auto& [key, name] : todo) slots.push_back(&prefetched_[key]);
+    std::atomic<size_t> next{0};
+    auto work = [&] {
+        for (size_t i = next++; i < todo.size(); i = next++) {
+            Prefetched& p = *slots[i];
+            const std::string& key = todo[i].first;
+            if (!readFile(key, p.source)) continue;
+            p.read = true;
+            if (!fileStamp(key, p.size, p.time)) p.time = 0;
+            try {
+                p.statements = std::make_unique<std::vector<StmtPtr>>(parseSource(p.source, todo[i].second, false, &p.skeleton));
+            } catch (const CompileError& e) {
+                p.error = std::make_unique<CompileError>(e);
+            }
+        }
+    };
+    const size_t cores = std::max(1u, std::thread::hardware_concurrency());
+    const size_t helpers = std::min<size_t>({todo.size() - 1, cores - 1, 7});
+    std::vector<std::thread> threads;
+    for (size_t i = 0; i < helpers; i++) threads.emplace_back(work);
+    work();
+    for (std::thread& t : threads) t.join();
 }
 
 // Runs the type checker on what has been added, and makes what it finds in the program a
@@ -4291,6 +4875,11 @@ void CompilerSession::check() {
         PartTimer timed(compileTimes.check);
         checker->run();
     }
+    reportNew(before);
+}
+
+// What the checker found since `before` in the program, as a compile error.
+void CompilerSession::reportNew(size_t before) {
     if (!stopAtTypeErrors) return;
     // What `astra check --std` finds in the standard library is listed, never a program's error.
     std::vector<const CheckDiagnostic*> found;
@@ -4327,9 +4916,9 @@ FunctionProto* CompilerSession::compileUnit(const std::string& source, const std
 
 FunctionProto* CompilerSession::compileStatements(const std::vector<StmtPtr>& statements, const std::string& name,
                                                   const std::string& directory, const std::string& fileKey, bool shell,
-                                                  Namespace* ns) {
+                                                  Namespace* ns, bool predeclared) {
     PartTimer timed(compileTimes.compile);
-    predeclare(*ns, fileKey, name, statements, shell);
+    if (!predeclared) predeclare(*ns, fileKey, name, statements, shell);
     ModuleCompiler compiler(*this, name, directory == "<builtin>" ? "" : directory, ns, fileKey);
     if (!shell) return compiler.compile(statements, shell);
     compiler.useImports(shellImports_);
@@ -4349,7 +4938,7 @@ int CompilerSession::loadWorker(const std::string& path, const std::string& from
     if (!fs::is_regular_file(candidate, ec)) candidate += ".astra";
     if (!fs::is_regular_file(candidate, ec))
         throw CompileError(file, at.line, at.col, "cannot find the worker's script '" + path + "' next to this file");
-    const fs::path canonical = fs::weakly_canonical(candidate, ec);
+    const fs::path canonical = canonicalPath(candidate, ec);
     const std::string key = "<worker>" + canonical.string();
 
     auto found = modules_.find(key);
@@ -4363,6 +4952,7 @@ int CompilerSession::loadWorker(const std::string& path, const std::string& from
     if (index > 0xFFFF) throw CompileError(file, at.line, at.col, "too many modules");
     program.modules.push_back(nullptr);
     modules_[key] = index;
+    noteModule(index, key);
     std::unique_ptr<Namespace>& ns = namespaces_[key];
     if (ns == nullptr) {
         ns = std::make_unique<Namespace>();
@@ -4399,10 +4989,17 @@ int CompilerSession::loadModule(const std::string& path, const std::string& disp
     if (index > 0xFFFF) throw CompileError(file, at ? at->line : 1, at ? at->col : 1, "too many modules");
     program.modules.push_back(nullptr);
     modules_[key] = index;
+    noteModule(index, key);
     try {
         const std::string directory = canonical.parent_path().string();
-        program.modules[static_cast<size_t>(index)] = compileStatements(
-            *statements, canonical.filename().string(), directory, key, false, namespaceOf(directory));
+        const std::string name = canonical.filename().string();
+        Namespace* ns = namespaceOf(directory);
+        const int reused = reuseUnit("file:" + key, {key}, {index}, {statements}, {name}, directory, ns);
+        if (reused == 1) return index;
+        checkSkipped({key});
+        program.modules[static_cast<size_t>(index)] = compileStatements(*statements, name, directory, key, false, ns, reused == 2);
+        if (keepingUnits_) toKeep_.push_back(ToKeep{"file:" + key, {key}, {index}});
+        compileTimes.unitsCompiled++;
     } catch (...) {
         modules_.erase(key);
         throw;
@@ -4420,8 +5017,8 @@ void CompilerSession::loadFolder(const std::string& folder, const std::string& d
         const std::vector<StmtPtr>* statements = nullptr;
         int index = 0;
     };
-    foldersRead_.insert(folder);
     std::vector<fs::path> paths = folderFiles(folder);
+    noteFolder(folder, paths);
     if (paths.empty())
         throw CompileError(file, at.line, at.col, "the folder '" + displayPath + "' has no .astra files to import");
 
@@ -4443,6 +5040,7 @@ void CompilerSession::loadFolder(const std::string& folder, const std::string& d
         units.push_back(std::move(unit));
         program.modules.push_back(nullptr);
         modules_[units.back().key] = units.back().index;
+        noteModule(units.back().index, units.back().key);
         modules.push_back(units.back().index);
     }
 
@@ -4452,13 +5050,30 @@ void CompilerSession::loadFolder(const std::string& folder, const std::string& d
     const int header = static_cast<int>(program.modules.size());
     if (header > 0xFFFF) throw CompileError(file, at.line, at.col, "too many modules");
     program.modules.push_back(nullptr);
+    noteModule(header, "folder:" + folder);
     modules.insert(modules.end() - static_cast<std::ptrdiff_t>(units.size()), header);
     auto shared = std::make_shared<std::vector<int>>(modules);
     for (const Unit& unit : units) units_[unit.key] = shared;
 
     Namespace* ns = namespaceOf(folder);
     try {
-        for (Unit& unit : units) predeclare(*ns, unit.key, unit.name, *unit.statements, false);
+        // The whole folder is one unit kept compiled, when the whole of it is loaded here.
+        std::vector<std::string> keys, fileNames;
+        std::vector<int> indices{header};
+        std::vector<const std::vector<StmtPtr>*> statements;
+        for (const Unit& unit : units) {
+            keys.push_back(unit.key);
+            fileNames.push_back(unit.name);
+            indices.push_back(unit.index);
+            statements.push_back(unit.statements);
+        }
+        const int reused = units.size() == paths.size() ? reuseUnit("folder:" + folder, keys, indices, statements, fileNames, folder, ns) : 0;
+        if (reused == 1) return;
+        checkSkipped(keys);
+        if (reused != 2)
+            for (Unit& unit : units) predeclare(*ns, unit.key, unit.name, *unit.statements, false);
+        if (keepingUnits_ && units.size() == paths.size()) toKeep_.push_back(ToKeep{"folder:" + folder, keys, indices});
+        compileTimes.unitsCompiled++;
 
         std::vector<std::unique_ptr<ModuleCompiler>> compilers;
         std::vector<std::pair<size_t, const std::vector<StmtPtr>*>> files;

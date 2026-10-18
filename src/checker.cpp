@@ -21,6 +21,7 @@
 #include <functional>
 #include <map>
 #include <set>
+#include <sstream>
 #include <tuple>
 #include <unordered_map>
 #include <unordered_set>
@@ -202,6 +203,10 @@ struct Unit {
     Namespace* ns = nullptr;
     bool prelude = false;
     bool shell = false;  // one input of the shell, which may declare a name again
+    // Its bodies are not checked: its compiled code is put back from the cache (D145). What
+    // they say of its functions' lambda parameters comes with it, one line per function.
+    bool skipBodies = false;
+    std::vector<std::string> inPlaceFacts;
     const std::vector<StmtPtr>* statements = nullptr;  // the compiler's, which outlive the checker's use
     std::vector<ImportInfo> imports;
 };
@@ -4008,31 +4013,88 @@ struct Checker::Impl {
         formsAboveKnown.clear();
         familyKnown.clear();
         for (size_t i = first; i < units.size(); i++) gather(*units[i]);
-        for (size_t i = first; i < units.size(); i++) {
-            Unit* u = units[i].get();
-            unit = u;
-            // The top level, in order.
-            FnCtx top;
-            top.topLevel = true;
-            ctx = &top;
-            scopes.clear();
-            narrowed.clear();
-            tparams.clear();
-            push();
-            for (const StmtPtr& s : *u->statements) stmt(*s);
-            pop();
-            // Functions, classes and extensions.
-            for (const StmtPtr& s : *u->statements) {
-                if (s->kind == StmtKind::Function) {
-                    auto known = funcOf.find(static_cast<const FunctionStmt&>(*s).fn.get());
-                    if (known != funcOf.end()) checkFunctionBody(known->second, nullptr);
-                } else if (s->kind == StmtKind::Class) {
-                    checkClass(classOf[static_cast<const ClassStmt*>(s.get())]);
-                }
+        for (size_t i = first; i < units.size(); i++)
+            if (!units[i]->skipBodies) checkUnit(units[i].get());
+        ctx = nullptr;
+        judgeWaits();
+    }
+
+    // A file's top level, in order, then its functions, classes and extensions.
+    void checkUnit(Unit* u) {
+        unit = u;
+        FnCtx top;
+        top.topLevel = true;
+        ctx = &top;
+        scopes.clear();
+        narrowed.clear();
+        tparams.clear();
+        push();
+        for (const StmtPtr& s : *u->statements) stmt(*s);
+        pop();
+        for (const StmtPtr& s : *u->statements) {
+            if (s->kind == StmtKind::Function) {
+                auto known = funcOf.find(static_cast<const FunctionStmt&>(*s).fn.get());
+                if (known != funcOf.end()) checkFunctionBody(known->second, nullptr);
+            } else if (s->kind == StmtKind::Class) {
+                checkClass(classOf[static_cast<const ClassStmt*>(s.get())]);
             }
         }
         ctx = nullptr;
-        judgeWaits();
+    }
+
+    // ---- Files whose bodies are not checked again (D145) ----
+
+    // A file's functions, in the order they are written: its own, and its classes' methods,
+    // those of classes inside classes included. The same each time for the same text.
+    static void eachFunction(const std::vector<StmtPtr>& statements, const std::function<void(const FunctionDecl&)>& visit) {
+        std::function<void(const ClassStmt&)> inClass = [&](const ClassStmt& c) {
+            for (const auto& m : c.methods) visit(*m);
+            for (const auto& nested : c.nested) inClass(*nested);
+        };
+        for (const StmtPtr& s : statements) {
+            if (s->kind == StmtKind::Function) visit(*static_cast<const FunctionStmt&>(*s).fn);
+            else if (s->kind == StmtKind::Class) inClass(static_cast<const ClassStmt&>(*s));
+        }
+    }
+
+    Unit* unitByKey(const std::string& fileKey) {
+        auto found = unitsByKey.find(fileKey);
+        return found == unitsByKey.end() ? nullptr : found->second;
+    }
+
+    // Whether a function of a file whose bodies were not checked runs what is passed for a
+    // parameter there and then, as its kept facts say.
+    std::unordered_map<const FunctionDecl*, std::string> keptInPlace;
+    std::unordered_set<Unit*> keptInPlaceRead;
+    bool keptFact(FuncInfo* f, int param) {
+        Unit* u = f->unit;
+        if (keptInPlaceRead.insert(u).second) {
+            size_t i = 0;
+            eachFunction(*u->statements, [&](const FunctionDecl& d) {
+                if (i < u->inPlaceFacts.size()) keptInPlace[&d] = u->inPlaceFacts[i];
+                i++;
+            });
+        }
+        auto found = keptInPlace.find(f->decl);
+        return found != keptInPlace.end() && static_cast<size_t>(param) < found->second.size() && found->second[static_cast<size_t>(param)] == '1';
+    }
+
+    std::string inPlaceFactsOf(const std::string& fileKey) {
+        Unit* u = unitByKey(fileKey);
+        if (u == nullptr) return {};
+        std::string facts;
+        eachFunction(*u->statements, [&](const FunctionDecl& d) {
+            auto known = funcOf.find(&d);
+            std::string line;
+            if (known != funcOf.end()) {
+                FuncInfo* f = known->second;
+                resolveFunc(f);
+                for (size_t p = 0; p < f->params.size(); p++)
+                    line += f->params[p].kind != Type::Function ? '.' : inPlace(f, static_cast<int>(p)) ? '1' : '0';
+            }
+            facts += line + "\n";
+        });
+        return facts;
     }
 
     // ---- Constants: `const` (R2, D139) ----
@@ -4492,6 +4554,7 @@ struct Checker::Impl {
     bool inPlace(FuncInfo* f, int param) {
         if (f == nullptr || param < 0) return false;
         if (f->isExternal) return f->name == "with" && f->unit != nullptr && f->unit->prelude;
+        if (f->unit != nullptr && f->unit->skipBodies) return keptFact(f, param);
         if (f->decl == nullptr || param == f->vararg) return false;
         resolveFunc(f);
         // Only a parameter of a function type is followed; anything else may keep what it is given.
@@ -4629,6 +4692,53 @@ void Checker::addUnit(const std::vector<StmtPtr>& statements, const std::string&
 }
 
 void Checker::forgetShellUnit() { impl_->forgetShellUnit(); }
+
+void Checker::skipBodiesOf(const std::string& fileKey, std::string inPlaceFacts) {
+    Unit* u = impl_->unitByKey(fileKey);
+    if (u == nullptr) return;
+    u->skipBodies = true;
+    u->inPlaceFacts.clear();
+    std::istringstream lines(inPlaceFacts);
+    for (std::string line; std::getline(lines, line);) u->inPlaceFacts.push_back(line);
+}
+
+void Checker::checkBodiesOf(const std::string& fileKey) {
+    Unit* u = impl_->unitByKey(fileKey);
+    if (u == nullptr || !u->skipBodies) return;
+    u->skipBodies = false;
+    impl_->out = &diagnostics;
+    impl_->inPlaceKnown.clear();
+    impl_->checkUnit(u);
+    impl_->judgeWaits();
+}
+
+std::string Checker::inPlaceFacts(const std::string& fileKey) {
+    impl_->inPlaceKnown.clear();
+    return impl_->inPlaceFactsOf(fileKey);
+}
+
+std::string Checker::summaryFacts(const std::string& fileKey) {
+    Impl& c = *impl_;
+    Unit* u = c.unitByKey(fileKey);
+    if (u == nullptr) return {};
+    c.inPlaceKnown.clear();
+    std::string facts;
+    Impl::eachFunction(*u->statements, [&](const FunctionDecl& d) {
+        auto known = c.funcOf.find(&d);
+        if (known == c.funcOf.end()) {
+            facts += "\n";
+            return;
+        }
+        FuncInfo* f = known->second;
+        c.resolveFunc(f);
+        if (!f->resultWritten) facts += c.argText(c.resultOf(f));
+        facts += "|";
+        for (size_t p = 0; p < f->params.size(); p++)
+            facts += f->params[p].kind != Type::Function ? '.' : c.inPlace(f, static_cast<int>(p)) ? '1' : '0';
+        facts += "\n";
+    });
+    return facts;
+}
 
 void Checker::addImport(const std::string& fileKey, const std::string& alias, bool all, Namespace* ns) {
     auto found = impl_->unitsByKey.find(fileKey);

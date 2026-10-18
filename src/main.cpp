@@ -348,9 +348,12 @@ int loadProgram(const std::string& path, VM& vm, CompilerSession*& session, Prog
             sessionOwner->compileFile(path);
             session = sessionOwner.get();
             program = &sessionOwner->program;
-            std::ostringstream image;
-            writeProgram(*program, image);
-            keepProgram(path, session->sourcesRead(), session->foldersRead(), image.str());
+            const Program* made = program;
+            keepProgram(path, session->sourcesRead(), session->foldersRead(), [made] {
+                std::ostringstream image;
+                writeProgram(*made, image);
+                return image.str();
+            });
         }
     } catch (const CompileError& e) {
         std::cerr << e.format() << "\n";
@@ -394,12 +397,23 @@ static const auto mainStarted = std::chrono::steady_clock::now();
 static void showTimes(const char* what) {
     if (std::getenv("ASTRA_TIMES") == nullptr) return;
     const double ready = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - mainStarted).count();
+#ifdef _WIN32
+    // From when the system made the process, its loading included: the start a user waits for.
+    FILETIME created, exited, kernel, user, now;
+    if (GetProcessTimes(GetCurrentProcess(), &created, &exited, &kernel, &user)) {
+        GetSystemTimePreciseAsFileTime(&now);
+        auto ticks = [](const FILETIME& t) { return (static_cast<unsigned long long>(t.dwHighDateTime) << 32) | t.dwLowDateTime; };
+        std::fprintf(stderr, "astra: %s %.1f ms after the process was made\n", what, (ticks(now) - ticks(created)) / 10000.0);
+    }
+#endif
     if (compileTimes.cacheRead > 0)
         std::fprintf(stderr, "astra: %s %.1f ms after astra.exe started its work, from the program kept: its files looked at %.1f, "
                      "it read in %.1f\n", what, ready, compileTimes.cacheCheck, compileTimes.cacheRead);
     else
-        std::fprintf(stderr, "astra: %s %.1f ms after astra.exe started its work: parsing %.1f, checking %.1f, compiling %.1f\n",
-                     what, ready, compileTimes.parse, compileTimes.check, compileTimes.compile);
+        std::fprintf(stderr, "astra: %s %.1f ms after astra.exe started its work: parsing %.1f, checking %.1f, compiling %.1f "
+                     "(units put back %d, compiled %d)\n",
+                     what, ready, compileTimes.parse, compileTimes.check, compileTimes.compile, compileTimes.unitsReused,
+                     compileTimes.unitsCompiled);
 }
 
 int runFile(const std::string& path, std::vector<std::string> scriptArgs) {
@@ -416,7 +430,11 @@ int runFile(const std::string& path, std::vector<std::string> scriptArgs) {
     showTimes("ready to run");
     // ASTRA_TIMES=compile stops here: the budgets are timed on programs that are not run.
     if (const char* times = std::getenv("ASTRA_TIMES"); times != nullptr && std::strcmp(times, "compile") == 0) {
+        // What is kept is written as a program runs; here, with nothing to run, it is waited for.
+        const auto waited = std::chrono::steady_clock::now();
         finishKeeping();
+        std::fprintf(stderr, "astra: waited %.1f ms for the cache to be written\n",
+                     std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - waited).count());
         return 0;
     }
     setSelfCommand({executablePath().string(), std::filesystem::absolute(path).string()});

@@ -101,6 +101,9 @@ foreach ($test in Get-ChildItem (Join-Path $PSScriptRoot '*.astra') | Sort-Objec
         $results['script'] = Compare-Run (Invoke-Astra @($test.FullName)) $expected $errorText $exitCode
         # Run again, it starts from the program the first run kept.
         $results['cached'] = Compare-Run (Invoke-Astra @($test.FullName)) $expected $errorText $exitCode
+        # And without the program, it is compiled again from the units the first run kept.
+        Remove-Item (Join-Path $env:ASTRA_CACHE '*.program') -ErrorAction SilentlyContinue
+        $results['units'] = Compare-Run (Invoke-Astra @($test.FullName)) $expected $errorText $exitCode
 
         $build = Invoke-Astra @('build', $test.FullName, '-o', $bytecode)
         if ($build.Code -ne 0) {
@@ -197,6 +200,83 @@ foreach ($test in Get-ChildItem (Join-Path $PSScriptRoot 'shell\*.shell') | Sort
         if ($want -cne $got) { $result = "error $($i + 1):`n      expected: $want`n      actual:   $got" }
     }
     if ($null -eq $result) { $passed++ } else { $failures += "$($test.Name) [shell]`n    $result" }
+}
+
+# The cache (D145): what is put back and what is compiled again. Each scenario writes a few
+# files and runs main.astra, then changes some and runs it again, each step with what it should
+# print, or the compile error it should give. The files written at a step are the ones that change.
+$scenarios = @(
+    @{ Name = 'a body changes in an imported file'; Steps = @(
+        @{ Files = @{ 'lib.astra' = 'fun f() : int => 1'; 'main.astra' = "import lib.*`nprint(f())" }; Out = '1' },
+        # Only lib.astra is compiled again: main.astra was compiled against what lib.astra declares,
+        # which a body leaves as it was.
+        @{ Files = @{ 'lib.astra' = 'fun f() : int => 2' }; Out = '2'; Units = 'units put back 1, compiled 1' }) },
+    @{ Name = 'a body changes a result type not written'; Steps = @(
+        @{ Files = @{ 'lib.astra' = 'fun f() => 1'; 'main.astra' = "import lib.*`nval x : int = f()`nprint(x)" }; Out = '1' },
+        @{ Files = @{ 'lib.astra' = 'fun f() => "s"' }; Error = "main.astra:2:16: error: 'x' is an int; it cannot start as a string" }) },
+    @{ Name = 'a type changes in an imported file'; Steps = @(
+        @{ Files = @{ 'lib.astra' = 'fun f() : int => 1'; 'main.astra' = "import lib.*`nval x : int = f()`nprint(x)" }; Out = '1' },
+        @{ Files = @{ 'lib.astra' = 'fun f() : string => "s"' }; Error = "main.astra:2:16: error: 'x' is an int; it cannot start as a string" }) },
+    @{ Name = 'R1: a lambda kept by an unchanged file'; Steps = @(
+        @{ Files = @{ 'lib.astra' = "val held : List<() -> unit> = []`nfun keep(action : () -> unit) { held.add(action) }`nfun run(action : () -> unit) { action() }"
+                      'main.astra' = "import lib.*`nrun { print(1) }" }; Out = '1' },
+        @{ Files = @{ 'main.astra' = "import lib.*`nsuspend fun waits() { run { delay(1) } }`nsuspend fun stores() { keep { delay(1) } }`nprint(2)" }
+           Error = "main.astra:3:36: error: 'delay' may wait (it is a suspend function), and 'keep' does not run this lambda there and then: it keeps it or hands it on, and nothing waits for it. Start a task in it: task { delay() }" }) },
+    @{ Name = 'R1: a function that comes to keep its lambda'; Steps = @(
+        @{ Files = @{ 'lib.astra' = 'fun run(action : () -> unit) { action() }'; 'main.astra' = "import lib.*`nsuspend fun waits() { run { delay(1) } }`nprint(1)" }; Out = '1' },
+        @{ Files = @{ 'lib.astra' = "val held : List<() -> unit> = []`nfun run(action : () -> unit) { held.add(action) }" }
+           Error = "main.astra:2:34: error: 'delay' may wait (it is a suspend function), and 'run' does not run this lambda there and then: it keeps it or hands it on, and nothing waits for it. Start a task in it: task { delay() }" }) },
+    @{ Name = 'a folder gains a file'; Steps = @(
+        @{ Files = @{ 'parts\a.astra' = 'fun a() : int => 1'; 'main.astra' = "import parts.*`nprint(a())" }; Out = '1' },
+        @{ Files = @{ 'parts\b.astra' = 'fun b() : int => 2'; 'main.astra' = "import parts.*`nprint(a() + b())" }; Out = '3' },
+        @{ Files = @{ 'parts\b.astra' = 'fun b() : int => 20' }; Out = '21' }) },
+    @{ Name = 'a constant changes in an imported file'; Steps = @(
+        @{ Files = @{ 'lib.astra' = 'const limit = 10'; 'main.astra' = "import lib.*`nfun twice() : int => limit * 2`nprint(twice())" }; Out = '20' },
+        @{ Files = @{ 'lib.astra' = 'const limit = 11' }; Out = '22' }) }
+)
+foreach ($scenario in $scenarios) {
+    $dir = Join-Path $tmp ('scenario-' + [guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Force $dir | Out-Null
+    $savedCache = $env:ASTRA_CACHE
+    $env:ASTRA_CACHE = Join-Path $dir 'cache'
+    $result = $null
+    $stepNumber = 0
+    foreach ($step in $scenario.Steps) {
+        $stepNumber++
+        foreach ($name in $step.Files.Keys) {
+            $path = Join-Path $dir $name
+            New-Item -ItemType Directory -Force (Split-Path $path) | Out-Null
+            [IO.File]::WriteAllText($path, $step.Files[$name])
+        }
+        # Each step runs twice: as compiled, then as put back from the cache.
+        foreach ($run in 'first', 'again') {
+            # The first run says what it compiled and what it put back; the second starts from the
+            # program the first kept.
+            $counted = $step.Units -and $run -eq 'first'
+            if ($counted) { $env:ASTRA_TIMES = '1' }
+            $got = Invoke-Astra @((Join-Path $dir 'main.astra'))
+            $env:ASTRA_TIMES = $null
+            if ($counted) {
+                $said = $got.Error
+                $got.Error = (($got.Error -split "`r?`n") | Where-Object { $_ -notlike 'astra:*' }) -join "`n"
+                if ($said -notmatch [regex]::Escape($step.Units)) {
+                    $result = "step $stepNumber, $run run:`n      expected: $($step.Units)`n      got: $said"
+                    break
+                }
+            }
+            if ($step.Error) {
+                if ($got.Code -ne 65 -or $got.Error.Trim() -cne $step.Error) {
+                    $result = "step $stepNumber, $run run:`n      expected the error: $($step.Error)`n      got: $($got.Error.Trim()) $($got.Lines -join ' ')"
+                }
+            } elseif ($got.Code -ne 0 -or ($got.Lines -join ' ') -cne $step.Out) {
+                $result = "step $stepNumber, $run run:`n      expected: $($step.Out)`n      got: $($got.Lines -join ' ') $($got.Error.Trim())"
+            }
+            if ($null -ne $result) { break }
+        }
+        if ($null -ne $result) { break }
+    }
+    $env:ASTRA_CACHE = $savedCache
+    if ($null -eq $result) { $passed++ } else { $failures += "$($scenario.Name) [cache]`n    $result" }
 }
 
 # The --icon option of `astra build`: a program built with an icon runs as before, and
