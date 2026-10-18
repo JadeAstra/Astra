@@ -20,6 +20,24 @@ std::string notAstraWord(const std::string& word) {
     return "'" + word + "' is not a keyword; every class can be subclassed and every member overridden";
 }
 
+// Type names are Title case, but for a fixed set (R21): bool, char, byte, int, float, the
+// storage widths, string, any, nothing and unit. The lowercase names the other built-in
+// types had give the one to write.
+const char* oldTypeName(const std::string& name) {
+    if (name == "list") return "List";
+    if (name == "map") return "Map";
+    if (name == "number") return "Number";
+    if (name == "bytes") return "Bytes";
+    if (name == "range") return "Range";
+    if (name == "function") return "Function";
+    return nullptr;
+}
+
+std::string oldTypeMessage(const std::string& name, const char* titled) {
+    return "type names are written in Title case: '" + name + "' is " + titled +
+           " (only bool, char, byte, int, float, string, any, nothing, unit and the storage widths are lowercase)";
+}
+
 std::string describe(const Token& t) {
     return t.type == TokenType::Eof ? "end of input" : "'" + t.text + "'";
 }
@@ -170,6 +188,8 @@ StmtPtr Parser::declaration() {
             const bool declares = after.type == TokenType::Val || after.type == TokenType::Var || after.type == TokenType::Fun ||
                                   after.type == TokenType::Class || after.type == TokenType::Identifier;
             if (kotlinOnlyWord(word.text) && declares && !after.newlineBefore) throw error(word, notAstraWord(word.text));
+            if (word.text == "external" && (after.type == TokenType::Fun || after.type == TokenType::Val) && !after.newlineBefore)
+                return externalDeclaration();
             if (modifier && declares && !after.newlineBefore) {
                 advance();
                 StmtPtr declared = declaration();
@@ -236,6 +256,7 @@ StmtPtr Parser::declaration() {
                 // fun Shape.describe(), fun list<Shape>.total(), fun string?.orEmpty(): what stands
                 // before the last dot is the type the function is added to.
                 if (check(TokenType::Dot) || check(TokenType::Lt) || check(TokenType::QuestionDot)) {
+                    if (const char* titled = oldTypeName(name->text)) throw error(*name, oldTypeMessage(name->text, titled));
                     s->receiver = name->text;
                     s->receiverType.line = name->line;
                     s->receiverType.col = name->col;
@@ -271,6 +292,43 @@ StmtPtr Parser::declaration() {
     }
 }
 
+// `external fun name(...) : T`, `external fun Type.name(...) : T` or `external val Type.name : T`:
+// what the C++ provides, declared with its types. The word `external` is next.
+StmtPtr Parser::externalDeclaration() {
+    const Token& word = advance();
+    if (check(TokenType::Val)) {
+        advance();
+        auto v = node<VarStmt>(word);
+        v->isExternal = true;
+        v->isVal = true;
+        if (check(TokenType::Lt)) v->typeParams = typeParameters();
+        TypeParamScope typeParamsInReach(*this, v->typeParams);
+        v->receiverType = typeExpression();
+        // `String.size` reads as one dotted type name; `Map<K, V>.keys` has its dot after the '>'.
+        const size_t dot = v->receiverType.name.rfind('.');
+        if (dot != std::string::npos) {
+            v->name = v->receiverType.name.substr(dot + 1);
+            v->receiverType.name.resize(dot);
+        } else {
+            expect(TokenType::Dot, "'.' and the property's name: external val String.size : int");
+            v->name = expectName("the property's name").text;
+        }
+        v->type = optionalType();
+        if (!v->type.present()) throw error(word, "an external property writes its type");
+        endStatement();
+        return v;
+    }
+    const bool savedAbstract = abstractMember_;
+    abstractMember_ = true;  // no body
+    StmtPtr declared = declaration();
+    abstractMember_ = savedAbstract;
+    if (declared->kind != StmtKind::Function) throw error(word, "'external' goes in front of fun or val");
+    auto& fs = static_cast<FunctionStmt&>(*declared);
+    if (!fs.fn->isAbstract) throw error(word, "an external function has no body: the C++ provides it");
+    fs.isExternal = true;
+    return declared;
+}
+
 // Parses ": type" or ": type?" if a ':' comes next; otherwise returns an absent annotation.
 TypeAnnotation Parser::optionalType() {
     if (!match(TokenType::Colon)) return TypeAnnotation{};
@@ -278,8 +336,8 @@ TypeAnnotation Parser::optionalType() {
 }
 
 // A type: `int`, `Animal?`, `list<string>`, `(int, string) -> bool`, `Grid.() -> Unit`.
-// Everything is kept for the type checker; when the program runs only "list", "map" or
-// "function" is checked.
+// Everything is kept for the type checker; when the program runs only "List", "Map" or
+// "Function" is checked.
 TypeAnnotation Parser::typeExpression() {
     DepthGuard guard(*this);
     TypeAnnotation type;
@@ -315,7 +373,7 @@ TypeAnnotation Parser::typeExpression() {
         if (match(TokenType::ThinArrow)) {
             type.result.push_back(typeExpression());
             type.params = std::move(inside);
-            type.name = "function";
+            type.name = "Function";
         } else if (inside.size() == 1 && !named) {
             // A type in parentheses, there so that a '?' can follow: ((int) -> bool)?
             const bool nullable = type.nullable;
@@ -329,6 +387,7 @@ TypeAnnotation Parser::typeExpression() {
         }
     } else {
         const Token& name = expect(TokenType::Identifier, "a type name after ':'");
+        if (const char* titled = oldTypeName(name.text)) throw error(name, oldTypeMessage(name.text, titled));
         type.name = name.text;
         // A class declared inside another: `Event.Click`.
         while (check(TokenType::Dot) && peekNext().type == TokenType::Identifier) {
@@ -349,7 +408,7 @@ TypeAnnotation Parser::typeExpression() {
             type.params = std::move(inside);
             type.receiver.push_back(std::move(receiver));
             type.args.clear();
-            type.name = "function";
+            type.name = "Function";
         }
     }
     while (check(TokenType::Question) && (!tightNullable_ || adjacentToPrevious())) {

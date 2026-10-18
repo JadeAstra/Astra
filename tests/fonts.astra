@@ -63,7 +63,7 @@ val math = Fonts.find("Cambria Math")
 print(Fonts.count(math.path) >= 2, math.index, Fonts.load(math.path, 0).family, Fonts.load(math.path, 1).family)   // expect: true 1 Cambria Cambria Math
 print(attempt { Fonts.load(math.path, 7) }.endsWith("no such font in the collection"), attempt { Fonts.load(regular.path, 1) }.endsWith("the file holds one font"))   // expect: true true
 print(attempt { Fonts.load("no_such_font.ttf") })       // expect: IOException: cannot read no_such_font.ttf
-print(attempt { Fonts.load(bytes(100)) })               // expect: IOException: <bytes>: not a TrueType or OpenType font
+print(attempt { Fonts.load(Bytes(100)) })               // expect: IOException: <bytes>: not a TrueType or OpenType font
 print(Fonts.count("no_such_font.ttf"))                  // expect: 0
 // A font file cut short is refused or read as far as it goes: it never crashes.
 val whole = File(regular.path).readBytes()

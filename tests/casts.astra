@@ -11,8 +11,8 @@ val none = null
 
 // is works for classes and for the built-in types.
 print(circle is Circle, circle is Shape, circle is Square, circle is Other, none is Shape)   // expect: true true false false false
-print(1 is int, 1 is float, 1.5 is float, 1 is number, 1.5 is number, "1" is number)   // expect: true false true true true false
-print("a" is string, true is bool, [1] is list, {"k": 1} is map, 1..2 is range, print is function, { it } is function)
+print(1 is int, 1 is float, 1.5 is float, 1 is Number, 1.5 is Number, "1" is Number)   // expect: true false true true true false
+print("a" is string, true is bool, [1] is List, {"k": 1} is Map, 1..2 is Range, print is Function, { it } is Function)
 // expect: true true true true true true true
 print(circle is string, "circle" is Shape, [circle] is Shape, Circle is Shape)   // expect: false false false false
 
@@ -21,7 +21,7 @@ print(none is Shape?, circle is Shape?, none is int?, 3 is int?, "3" is int?, no
 // expect: true true true true false true true
 
 // Generic types are read, and only the outer type is tested.
-print([1, 2] is list<int>, ["a"] is list<int>, {:} is map<string, list<int>>, [] is list<*>)   // expect: true true true true
+print([1, 2] is List<int>, ["a"] is List<int>, {:} is Map<string, List<int>>, [] is List<*>)   // expect: true true true true
 
 // !is
 print(circle !is Square, circle !is Shape, none !is Shape, 1 !is string)   // expect: true false true true

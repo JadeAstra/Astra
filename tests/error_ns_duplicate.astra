@@ -1,5 +1,5 @@
-// A name can be declared once in a folder.
-fun area(w, h) => w * h
+// A name can have several forms (D56), but no two with the same parameters' types.
+fun area(w : float, h : float) => w * h
 val unit = 1
-fun area(r) => 3 * r * r
-// expect compile error: 'area' is already declared; a name can be declared only once in a folder
+fun area(a : float, b : float) => a + b
+// expect compile error: 'area(float, float)' is declared twice; the forms of a name differ in their parameters' types

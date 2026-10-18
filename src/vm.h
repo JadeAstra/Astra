@@ -270,6 +270,10 @@ public:
 
     void defineGlobal(const std::string& name, Value value) { builtins_[name] = value; }
     bool hasBuiltin(const std::string& name) const { return builtins_.count(name) != 0; }
+    // What the C++ provides, for `external` declarations to be checked against: whether a global
+    // function, or a built-in type's method, exists, and how many arguments it takes (-1: any).
+    bool builtinArity(const std::string& name, int& minArgs, int& maxArgs) const;
+    bool methodArity(BuiltinType type, const std::string& name, int& minArgs, int& maxArgs);
     void defineNative(const std::string& name, int minArgs, int maxArgs, NativeFn fn);
     void defineMethod(BuiltinType type, const std::string& name, int minArgs, int maxArgs, NativeMethodFn fn);
     // Says what the parameters of a built-in method are called, so that it takes them by name.
@@ -564,6 +568,11 @@ private:
     // `packed`: the arguments are already arranged one per parameter (see callNamed).
     bool callValue(Value callee, int argc, bool packed = false);
     void callClosure(ObjClosure* closure, int argc, bool packed = false);
+    ObjClosure* chooseForm(const ObjForms* set, const Value* args, int positional, const Value* pairs, int named);
+    bool formTakes(const FunctionProto* proto, const Value* args, int positional, const Value* pairs, int named,
+                   int& score, int& defaultsLeft) const;
+    int paramFit(Value v, uint8_t type, const ObjString* className) const;
+    ObjString* emptyName_ = nullptr;  // the name a lambda written after a call travels under
     void callTrailing(ObjClosure* closure, int argc);
     bool callValueTrailing(Value callee, int argc);
     int packVarargs(const FunctionProto* proto, int argc);
@@ -609,6 +618,8 @@ private:
     Table nullExtensionOwners_;  // for each of those, the type it was declared on
     Table anyExtensions_;
     bool hasExtensions_ = false;
+    void addExtensionForm(Table& table, ObjString* name, Value function);
+    std::unordered_map<std::string, std::unique_ptr<FunctionProto>> extensionSets_;  // the protos of their sets, by name
     const Value* findExtension(Value receiver, const ObjString* name) const;
     bool hasMember(Value candidate, const ObjString* name) const;
     void nameEntry(ObjInstance* entry, ObjString* name, int ordinal);

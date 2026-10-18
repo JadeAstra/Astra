@@ -24,7 +24,7 @@ class Grid {
   var insets = Insets(0, 0, 0, 0)
   var hgap = 0
   var vgap = 0
-  val cells : list = []
+  val cells : List = []
   var nextRow = 0
 
   // A property with a setter, to show that assignment through a block reaches it.

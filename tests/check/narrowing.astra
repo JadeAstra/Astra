@@ -4,7 +4,7 @@
 class Box(val item : int) {
   fun twice() : int => item * 2
 }
-class Crate(val items : list<Box>)
+class Crate(val items : List<Box>)
 
 fun first(maybe : Box?) : int {
   if (maybe == null) { return 0 }

@@ -57,7 +57,7 @@ val w = Way.up
 w.ordinal
 w.name
 object Registry {
-  val names : list<string> = []
+  val names : List<string> = []
   fun add(name : string) { }
 }
 Registry.add("x")

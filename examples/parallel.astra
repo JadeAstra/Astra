@@ -70,7 +70,7 @@ print()
 // Each core fills its own part of a picture: here a gradient, one byte for each point.
 val width = 512
 val height = 512
-val picture = bytes(width * height)
+val picture = Bytes(width * height)
 val (_, painting) = timed {
   picture.parallelChunks { positions ->
     for i in positions { picture[i] = (i % width + i / width) * 255 / (width + height - 2) }

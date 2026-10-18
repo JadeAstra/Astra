@@ -62,5 +62,5 @@ print(chr(65), ord("a"), len("hello"))           // expect: A 97 5
 try { print([1][5]) } catch (e) { print(e.message) }     // expect: list index 5 is out of range (length 1)
 try { [].pop() } catch (e) { print(e.message) }          // expect: pop() from an empty list
 try { [1, "a"].sort() } catch (e) { print(e.message) }   // expect: cannot compare string and int while sorting
-try { xs.nope() } catch (e) { print(e.message) }         // expect: undefined method 'nope' on a value of type list
+try { xs.nope() } catch (e) { print(e.message) }         // expect: undefined method 'nope' on a value of type List
 try { xs.push() } catch (e) { print(e.message) }         // expect: push() expects at least 1 argument(s) but got 0

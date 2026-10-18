@@ -16,14 +16,14 @@ val mapped = ints.map { it * 2.5 }
 val f : float = mapped.item
 val bad : int = mapped.item         // check: 'bad' is an int; it cannot start as a float
 
-fun <T> first(items : list<T>) : T => items[0]
+fun <T> first(items : List<T>) : T => items[0]
 val one : int = first([1, 2])
 val text : string = first([1, 2])   // check: 'text' is a string; it cannot start as an int
 val explicit = first<string>(["a"])
-first<string>([1])                  // check: first(...) takes a list<string> for 'items', not a list<int>
+first<string>([1])                  // check: first(...) takes a List<string> for 'items', not a List<int>
 
-fun <T> pair(a : T, b : T) : list<T> => [a, b]
-val both : list<int> = pair(1, 2)
+fun <T> pair(a : T, b : T) : List<T> => [a, b]
+val both : List<int> = pair(1, 2)
 
 // A subclass that fixes its superclass's type parameter
 class IntBox(value : int) : Box<int>(value)
@@ -44,8 +44,8 @@ fun <T : Named> greet(x : T) : string => "Hi " + x.name()
 greet(Person("Ann"))
 
 // Generic extension functions
-fun <T> list<T>.second() : T => this[1]
+fun <T> List<T>.second() : T => this[1]
 val sec : int = [1, 2, 3].second()
 val sec2 : string = [1, 2, 3].second()   // check: 'sec2' is a string; it cannot start as an int
-fun <T> T.twice() : list<T> => [this, this]
-val tw : list<string> = "a".twice()
+fun <T> T.twice() : List<T> => [this, this]
+val tw : List<string> = "a".twice()

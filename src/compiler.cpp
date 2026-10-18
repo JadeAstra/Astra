@@ -234,6 +234,7 @@ public:
         noteEnums(statements);
         hoistImports(statements);
         hoistFunctions(statements);
+        defineForms();
         std::vector<std::pair<size_t, const std::vector<StmtPtr>*>> files{{0, &statements}};
         std::vector<std::string> names{file_};
         for (const UnitClass& cls : orderClasses(files, names)) hoistClass(*cls.stmt);
@@ -294,6 +295,24 @@ public:
             compileStmt(*stmt);
             hoisted_.insert(stmt.get());
         }
+    }
+
+    // The sets of the names with several forms whose forms were just defined: each name's slot
+    // gets one, which calls the form a call's arguments fit.
+    void defineForms() {
+        for (const auto& [entry, name] : session_.pendingForms_) {
+            for (const auto& [signature, slot] : entry->forms) emit(Op::GetGlobal, slot);
+            FunctionProto* set = newProto();
+            set->name = name;
+            set->source = file_;
+            set->chooser = true;
+            const int index = static_cast<int>(fs_->proto->protos.size());
+            fs_->proto->protos.push_back(set);
+            emit(Op::MakeForms, index);
+            emitByte(static_cast<int>(entry->forms.size()));
+            emit(Op::DefineGlobal, entry->slot);
+        }
+        session_.pendingForms_.clear();
     }
 
     // Extension functions are added once the classes they are for exist.
@@ -723,9 +742,88 @@ private:
     GlobalName* resolveGlobal(const std::string& name, const Node& at) const {
         if (GlobalName* known = findGlobal(name, at)) return known;
         if (libraryOnly(name)) throw error(at, "'" + name + "' is for the standard library's own use");
+        // The built-ins named after their types took the types' names when those became Title case.
+        if (auto it = ns_->names.find(name); (it == ns_->names.end() || !it->second.declared) &&
+                                             (name == "bytes" || name == "range"))
+            throw error(at, "'" + name + "' is now written '" + (name == "bytes" ? "Bytes" : "Range") +
+                                "', as its type is (type names are Title case)");
         GlobalName& fresh = ns_->names[name];
         if (fresh.slot < 0) fresh.slot = session_.newSlot(name);
         return &fresh;
+    }
+
+    // The entry of a name this file declares at its top level.
+    GlobalName& globalEntry(const std::string& name) {
+        auto& mine = session_.privates_[fileKey_];
+        auto priv = mine.find(name);
+        return priv != mine.end() ? priv->second : ns_->names[name];
+    }
+
+    // What the program needs to choose a form when it runs: its signature and its parameters' types.
+    void markForm(FunctionProto& proto, const FunctionDecl& fn) {
+        proto.signature = signatureText(fn);
+        for (size_t i = 0; i < fn.params.size(); i++) {
+            TypeSpec type = i < fn.paramTypes.size() ? resolveType(fn.paramTypes[i]) : TypeSpec{};
+            proto.paramTypes.push_back(type.flags);
+            ObjString* cls = nullptr;
+            if (type.id() == kTypeInstance) {
+                const size_t dot = type.className.rfind('.');
+                cls = session_.vm_.intern(dot == std::string::npos ? type.className : type.className.substr(dot + 1));
+            }
+            proto.paramClasses.push_back(cls);
+        }
+    }
+
+    // The name a method is known by when the program runs: where its name has several forms,
+    // the name with the signature of the form it is (`draw(Canvas)`); otherwise the name.
+    std::string formNameOf(const ClassStmt& cls, const FunctionDecl& method) {
+        if (method.accessor != FunctionDecl::Accessor::None || method.name == "init") return method.name;
+        if (method.isStatic) return staticForms(cls, method.name) > 1 ? method.name + signatureText(method) : method.name;
+        const FunctionDecl* root = session_.checker->formRoot(method);
+        return root != nullptr ? method.name + signatureText(*root) : method.name;
+    }
+
+    // How many static methods of a name a class declares: its forms, statics being nobody else's.
+    static int staticForms(const ClassStmt& cls, const std::string& name) {
+        int count = 0;
+        for (const auto& method : cls.methods)
+            count += method->isStatic && method->accessor == FunctionDecl::Accessor::None && method->name == name;
+        return count;
+    }
+
+    // The name a method call is compiled with: where the checker could tell which of a name's
+    // several forms the call means, that form's own name, with nothing to choose when it runs.
+    std::string calledName(const CallExpr& e, const std::string& name) {
+        const FunctionDecl* chosen = session_.checker->chosenForm(e);
+        if (chosen == nullptr) return name;
+        if (chosen->isStatic) return name + signatureText(*chosen);  // chosen among the class's own
+        if (const TypeAnnotation* receiver = session_.checker->extensionReceiver(*chosen))
+            return name + "[" + annotationText(*receiver) + "]" + signatureText(*chosen);
+        const FunctionDecl* root = session_.checker->formRoot(*chosen);
+        return root != nullptr ? name + signatureText(*root) : name;
+    }
+
+    // The function a call names. Where the name has several forms and the checker could tell
+    // which one the call means, that form is called directly, with nothing to choose when it runs.
+    void compileCallee(const CallExpr& e) {
+        if (e.callee->kind == ExprKind::Name) {
+            if (const FunctionDecl* form = session_.checker->chosenForm(e)) {
+                const auto& callee = static_cast<const NameExpr&>(*e.callee);
+                VarInfo info;
+                if (resolveLocal(fs_, callee.name, callee, info) == -1 && resolveUpvalue(fs_, callee.name, callee, info) == -1) {
+                    const GlobalName* global = findGlobal(callee.name, callee, true);
+                    if (global != nullptr && !global->forms.empty()) {
+                        const int slot = global->formSlot(signatureText(*form));
+                        if (slot >= 0) {
+                            line_ = callee.line;
+                            emit(Op::GetGlobal, slot);
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+        compileExpr(*e.callee);
     }
 
     // The slot of a name this file declares at its top level. Names the program writes were
@@ -986,6 +1084,9 @@ private:
             // A setter written on its own, `set name(value)`, speaks for assigning only.
             mark(method->isStatic, method->name, method->access, method->isOverride,
                  method->accessor == FunctionDecl::Accessor::Set, method->line);
+            const std::string runtimeName = formNameOf(s, *method);
+            if (runtimeName != method->name)
+                mark(method->isStatic, runtimeName, method->access, method->isOverride, false, method->line);
         }
         for (const auto& inner : s.nested) mark(true, inner->name, inner->access, false, false, inner->line);
     }
@@ -1422,6 +1523,10 @@ private:
 
             case StmtKind::Var: {
                 const auto& s = static_cast<const VarStmt&>(stmt);
+                if (s.isExternal) {
+                    checkExternalProperty(s);
+                    break;
+                }
                 if (!s.pattern.empty()) {
                     compileDestructuring(s);
                     break;
@@ -1622,19 +1727,33 @@ private:
                 for (const Import& earlier : imports_)
                     known = known || (earlier.ns == imported && earlier.alias == s.alias && earlier.all == s.all);
                 if (!known) imports_.push_back(Import{imported, s.alias, s.path, s.all});
-                if (session_.checker != nullptr) session_.checker->addImport(fileKey_, s.alias, s.all, imported);
                 break;
             }
 
             case StmtKind::Function: {
                 const FunctionDecl& fn = *static_cast<const FunctionStmt&>(stmt).fn;
+                if (static_cast<const FunctionStmt&>(stmt).isExternal) {
+                    checkExternal(static_cast<const FunctionStmt&>(stmt));
+                    break;
+                }
                 if (!static_cast<const FunctionStmt&>(stmt).receiver.empty()) {
                     compileExtension(static_cast<const FunctionStmt&>(stmt));
                     break;
                 }
                 if (isGlobalScope()) {
                     int global = declareGlobal(fn.name, false, stmt);
+                    GlobalName& entry = globalEntry(fn.name);
                     compileFunction(fn, FunctionKind::Function, fn.name);
+                    if (!entry.forms.empty()) {
+                        // One of several forms: in its own slot, and the set is made once all are.
+                        const int form = entry.formSlot(signatureText(fn));
+                        if (form < 0) throw error(stmt, "'" + fn.name + "' was not noted as a form");
+                        markForm(*fs_->proto->protos.back(), fn);
+                        global = form;
+                        bool pending = false;
+                        for (const auto& [name, noted] : session_.pendingForms_) pending = pending || name == &entry;
+                        if (!pending) session_.pendingForms_.emplace_back(&entry, fn.name);
+                    }
                     emit(Op::DefineGlobal, global);
                 } else {
                     // Initialized up front so the function can call itself.
@@ -1784,9 +1903,73 @@ private:
         nextIsExtension_ = true;
         if (type == kTypeInstance) nextReceiverType_ = s.receiver;
         compileFunction(fn, FunctionKind::Method, s.receiver + "." + fn.name);
+        // Extensions of a name for the same type are its forms (D56): the receiver's type as
+        // written is part of what tells them apart, with the parameters'.
+        FunctionProto& proto = *fs_->proto->protos.back();
+        markForm(proto, fn);
+        proto.signature = "[" + annotationText(s.receiverType) + "]" + proto.signature;
         emit(Op::Extension);
         emitU16(stringConstant(fn.name));
         emitByte(type | (s.receiverNullable ? kTypeNullable : 0));
+    }
+
+    // ---- External declarations ----
+
+    // The built-in type an external method or property is declared on.
+    bool builtinTypeOf(const std::string& name, BuiltinType& type) const {
+        if (name == "string") type = BuiltinType::String;
+        else if (name == "List") type = BuiltinType::List;
+        else if (name == "Map") type = BuiltinType::Map;
+        else if (name == "Range") type = BuiltinType::Range;
+        else if (name == "Bytes") type = BuiltinType::Bytes;
+        else if (name == "Number" || name == "int" || name == "float") type = BuiltinType::Number;
+        else return false;
+        return true;
+    }
+
+    // `external fun`: compiles to nothing, but must name what the C++ provides, taking as many
+    // arguments as it says, so a declaration cannot drift from the code it describes.
+    void checkExternal(const FunctionStmt& s) {
+        const FunctionDecl& fn = *s.fn;
+        if (ns_ != session_.builtins_) throw error(s, "'external' declarations are the standard library's: they describe what the C++ provides");
+        int min = 0, max = 0;
+        bool found;
+        std::string what;
+        if (s.receiver.empty()) {
+            found = session_.vm_.builtinArity(fn.name, min, max);
+            what = "built-in function '" + fn.name + "'";
+        } else {
+            BuiltinType type;
+            if (!builtinTypeOf(s.receiver, type)) throw error(s, "'" + s.receiver + "' is not a built-in type");
+            found = session_.vm_.methodArity(type, fn.name, min, max);
+            what = "method '" + fn.name + "' on " + s.receiver;
+        }
+        if (!found) throw error(s, "there is no " + what + " in the C++ for this declaration");
+        int required = 0;
+        for (size_t i = 0; i < fn.params.size(); i++)
+            if (fn.paramDefaults[i] == nullptr && static_cast<int>(i) != fn.varargIndex) required++;
+        const int most = fn.varargIndex >= 0 ? -1 : static_cast<int>(fn.params.size());
+        auto counts = [](int low, int high) {
+            return std::to_string(low) + " to " + (high < 0 ? std::string("any number of") : std::to_string(high));
+        };
+        // A name with several forms (`add(item)`, `add(index, item)`) has each within what the
+        // C++ takes, and all of them together cover it, which the session checks at the end.
+        if (required < min || (max >= 0 && (most < 0 || most > max)))
+            throw error(s, "the " + what + " takes " + counts(min, max) + " arguments in the C++; this declaration says " +
+                               counts(required, most));
+        auto& cover = session_.externalForms_[what];
+        if (cover.file.empty()) {
+            cover = {min, max, required, most, file_, s.line, s.col};
+        } else {
+            cover.lowest = std::min(cover.lowest, required);
+            cover.highest = cover.highest < 0 || most < 0 ? -1 : std::max(cover.highest, most);
+        }
+    }
+
+    void checkExternalProperty(const VarStmt& s) {
+        if (ns_ != session_.builtins_) throw error(s, "'external' declarations are the standard library's: they describe what the C++ provides");
+        BuiltinType type;
+        if (!builtinTypeOf(s.receiverType.name, type)) throw error(s, "'" + s.receiverType.name + "' is not a built-in type");
     }
 
     // The loop a break or continue is for: the innermost, or with `@name` the one of that name.
@@ -2119,6 +2302,8 @@ private:
 
         std::unordered_set<std::string> seen;
         for (const auto& method : s.methods) {
+            // A form of a name with several (D56) is known by its signature as well.
+            const std::string runtimeName = formNameOf(s, *method);
             if (s.isInterface && !method->isStatic && method->name == "init")
                 throw error(*method, "an interface cannot have an init: it is never created");
             if (!hasGeneratedInit(s) && !s.initBlocks.empty())
@@ -2126,7 +2311,7 @@ private:
             const bool isAccessor = method->accessor != FunctionDecl::Accessor::None;
             if (!method->isStatic && !method->isAbstract && !method->generated && (isAccessor || method->name != "init")) {
                 line_ = method->line;
-                emitOverrideCheck(s, method->name, method->isOverride, isAccessor);
+                emitOverrideCheck(s, runtimeName, method->isOverride, isAccessor);
             }
             if (method->isAbstract) {
                 // No body: the class that implements the interface, or extends the abstract
@@ -2136,7 +2321,7 @@ private:
                     throw error(*method, "'" + method->name + "' has no body, which only a method of an interface or of an " +
                                              std::string("abstract class can be without"));
                 if (method->isStatic) throw error(*method, "a static method needs a body");
-                emit(Op::Require, stringConstant(method->name));
+                emit(Op::Require, stringConstant(runtimeName));
                 continue;
             }
             if (method->accessor != FunctionDecl::Accessor::None) {
@@ -2159,14 +2344,59 @@ private:
                 continue;
             }
 
-            if (!seen.insert((method->isStatic ? "static " : "") + method->name).second)
-                throw error(*method, "duplicate method '" + method->name + "' in class '" + s.name + "'");
+            if (!seen.insert((method->isStatic ? "static " : "") + runtimeName).second)
+                throw error(*method, "'" + method->name + signatureText(*method) + "' is declared twice in class '" + s.name +
+                                         "'; the forms of a name differ in their parameters' types");
 
             FunctionKind kind = method->isStatic ? FunctionKind::StaticMethod
                                 : method->name == "init" ? FunctionKind::Initializer
                                 : FunctionKind::Method;
             compileFunction(*method, kind, s.name + "." + method->name);
-            emit(method->isStatic ? Op::StaticMethod : Op::Method, stringConstant(method->name));
+            if (runtimeName != method->name) markForm(*fs_->proto->protos.back(), *method);
+            emit(method->isStatic ? Op::StaticMethod : Op::Method, stringConstant(runtimeName));
+        }
+        // A name with several forms: the class's set of them goes under the name, the forms it
+        // declares and those it inherits.
+        if (!s.isInterface) {
+            std::unordered_set<std::string> made;
+            for (const auto& method : s.methods) {
+                if (method->isStatic || method->accessor != FunctionDecl::Accessor::None || method->name == "init" ||
+                    !made.insert(method->name).second)
+                    continue;
+                const std::vector<const FunctionDecl*> roots = session_.checker->formRoots(s, method->name);
+                if (roots.empty()) continue;
+                line_ = method->line;
+                for (const FunctionDecl* root : roots) emit(Op::Const, stringConstant(method->name + signatureText(*root)));
+                FunctionProto* set = newProto();
+                set->name = method->name;
+                set->source = file_;
+                set->chooser = true;
+                const int index = static_cast<int>(fs_->proto->protos.size());
+                fs_->proto->protos.push_back(set);
+                emit(Op::MethodForms, index);
+                emitByte(static_cast<int>(roots.size()));
+            }
+        }
+        std::unordered_set<std::string> madeStatic;
+        for (const auto& method : s.methods) {
+            if (!method->isStatic || method->accessor != FunctionDecl::Accessor::None || staticForms(s, method->name) < 2 ||
+                !madeStatic.insert(method->name).second)
+                continue;
+            line_ = method->line;
+            int count = 0;
+            for (const auto& form : s.methods) {
+                if (!form->isStatic || form->accessor != FunctionDecl::Accessor::None || form->name != method->name) continue;
+                emit(Op::Const, stringConstant(form->name + signatureText(*form)));
+                count++;
+            }
+            FunctionProto* set = newProto();
+            set->name = method->name;
+            set->source = file_;
+            set->chooser = true;
+            const int index = static_cast<int>(fs_->proto->protos.size());
+            fs_->proto->protos.push_back(set);
+            emit(Op::StaticForms, index);
+            emitByte(count);
         }
         // The accessors written under properties.
         for (const auto& field : s.fields) {
@@ -2300,7 +2530,7 @@ private:
             const char* form;
         };
         static const Given kGiven[] = {
-            {"entries", true, "list", "the list of its entries", "override static get entries() : list"},
+            {"entries", true, "List", "the list of its entries", "override static get entries() : List"},
             {"name", false, "string", "each entry's name", "override get name() : string"},
             {"ordinal", false, "int", "each entry's place in the list", "override get ordinal() : int"},
         };
@@ -3061,9 +3291,9 @@ private:
                     compileArgs(e.args);
                     line_ = member.line;
                     if (ownMember(*member.object, member.name))
-                        emit(e.trailingLambda ? Op::InvokeOwnTrailing : Op::InvokeOwn, stringConstant(member.name));
+                        emit(e.trailingLambda ? Op::InvokeOwnTrailing : Op::InvokeOwn, stringConstant(calledName(e, member.name)));
                     else
-                        emit(e.trailingLambda ? Op::InvokeTrailing : Op::Invoke, stringConstant(member.name));
+                        emit(e.trailingLambda ? Op::InvokeTrailing : Op::Invoke, stringConstant(calledName(e, member.name)));
                     emitByte(argc);
                     if (toEnd >= 0) patchJump(toEnd);
                 } else if (e.callee->kind == ExprKind::Name && compileBareCall(e)) {
@@ -3075,10 +3305,10 @@ private:
                     compileArgs(e.args);
                     emitGet("super", sup);
                     line_ = sup.line;
-                    emit(e.trailingLambda ? Op::SuperInvokeTrailing : Op::SuperInvoke, stringConstant(sup.method));
+                    emit(e.trailingLambda ? Op::SuperInvokeTrailing : Op::SuperInvoke, stringConstant(calledName(e, sup.method)));
                     emitByte(argc);
                 } else {
-                    compileExpr(*e.callee);
+                    compileCallee(e);
                     compileArgs(e.args);
                     line_ = e.line;
                     emit(Op::Call);
@@ -3394,7 +3624,7 @@ private:
             emit(Op::GetLocal, 0);
             compileArgs(e.args);
             line_ = e.line;
-            emit(Op::InvokeOwn, stringConstant(name));
+            emit(Op::InvokeOwn, stringConstant(calledName(e, name)));
             emitByte(argc);
             return true;
         }
@@ -3426,9 +3656,15 @@ private:
             compileExpr(*member.object);
             line_ = member.line;
             toEnd = emitJump(Op::JumpIfNull);
-            emit(Op::GetProp, stringConstant(member.name));
+            emit(Op::GetProp, stringConstant(calledName(e, member.name)));
+        } else if (e.callee->kind == ExprKind::Member && calledName(e, static_cast<const MemberExpr&>(*e.callee).name) !=
+                                                             static_cast<const MemberExpr&>(*e.callee).name) {
+            const auto& member = static_cast<const MemberExpr&>(*e.callee);
+            compileExpr(*member.object);
+            line_ = member.line;
+            emit(Op::GetProp, stringConstant(calledName(e, member.name)));
         } else {
-            compileExpr(*e.callee);
+            compileCallee(e);
         }
 
         // A lambda written after the ')' goes to the last parameter, whatever was named before
@@ -3589,9 +3825,70 @@ private:
     }
 };
 
+// ---- Forms ----
+
+std::string annotationText(const TypeAnnotation& t) {
+    if (!t.present() || t.star) return "*";
+    std::string text;
+    if (t.isFunction()) {
+        text = "(";
+        for (size_t i = 0; i < t.params.size(); i++) text += (i > 0 ? ", " : "") + annotationText(t.params[i]);
+        text += ") -> " + annotationText(t.result[0]);
+        return t.nullable ? "(" + text + ")?" : text;
+    }
+    // A class is known by the last part of its name, however it was reached (ui.Button).
+    const size_t dot = t.name.rfind('.');
+    text = dot == std::string::npos ? t.name : t.name.substr(dot + 1);
+    if (!t.args.empty()) {
+        text += "<";
+        for (size_t i = 0; i < t.args.size(); i++) text += (i > 0 ? ", " : "") + annotationText(t.args[i]);
+        text += ">";
+    }
+    return t.nullable ? text + "?" : text;
+}
+
+std::string signatureText(const FunctionDecl& fn) {
+    std::string text = "(";
+    for (size_t i = 0; i < fn.params.size(); i++) {
+        if (i > 0) text += ", ";
+        if (static_cast<int>(i) == fn.varargIndex) text += "vararg ";
+        text += i < fn.paramTypes.size() ? annotationText(fn.paramTypes[i]) : std::string("*");
+    }
+    return text + ")";
+}
+
 // ---- CompilerSession ----
 
-CompilerSession::CompilerSession(VM& vm, Checker* checker) : checker(checker), vm_(vm) {
+// The key a file is known by: its canonical path.
+static std::string fileKeyOf(const fs::path& path) {
+    std::error_code ec;
+    fs::path canonical = fs::weakly_canonical(path, ec);
+    if (ec) canonical = fs::absolute(path, ec);
+    return canonical.string();
+}
+
+// The .astra files directly in a folder, in name order.
+static std::vector<fs::path> folderFiles(const std::string& folder) {
+    std::error_code ec;
+    std::vector<fs::path> paths;
+    for (const fs::directory_entry& entry : fs::directory_iterator(fs::path(folder), ec))
+        if (entry.is_regular_file(ec) && entry.path().extension() == ".astra") paths.push_back(entry.path());
+    std::sort(paths.begin(), paths.end());
+    return paths;
+}
+
+static std::vector<StmtPtr> parseSource(const std::string& source, const std::string& name) {
+    Lexer lexer(source, name);
+    std::vector<Token> tokens = lexer.scan();
+    Parser parser(tokens, name);
+    return parser.parseProgram();
+}
+
+CompilerSession::CompilerSession(VM& vm, Checker* given) : checker(given), vm_(vm) {
+    if (checker == nullptr) {
+        ownChecker_ = std::make_unique<Checker>();
+        checker = ownChecker_.get();
+    }
     auto builtins = std::make_unique<Namespace>();
     builtins->directory = "<builtin>";
     builtins->library = "<builtin>";
@@ -3601,10 +3898,30 @@ CompilerSession::CompilerSession(VM& vm, Checker* checker) : checker(checker), v
     std::string prelude = kPrelude;
     prelude.append(reinterpret_cast<const char*>(kStdSource), kStdSourceSize);
     program.modules.push_back(compileUnit(prelude, "<std>", "<builtin>", "<prelude>", false));
+    for (const auto& [what, cover] : externalForms_) {
+        if (cover.lowest == cover.min && cover.highest == cover.max) continue;
+        auto counts = [](int low, int high) {
+            return std::to_string(low) + " to " + (high < 0 ? std::string("any number of") : std::to_string(high));
+        };
+        throw CompileError(cover.file, cover.line, cover.col,
+                           "the " + what + " takes " + counts(cover.min, cover.max) + " arguments in the C++; its declarations say " +
+                               counts(cover.lowest, cover.highest));
+    }
 }
+
+CompilerSession::~CompilerSession() = default;
 
 int CompilerSession::compileFile(const std::string& path) {
     try {
+        // The whole program is parsed and checked first, then compiled.
+        const std::string key = fileKeyOf(fs::path(path));
+        const fs::path canonical(key);
+        const std::string name = canonical.filename().string();
+        const std::string directory = canonical.parent_path().string();
+        if (std::vector<StmtPtr>* statements = parseFile(key, key, name)) {
+            gather(key, name, directory, *statements, namespaceOf(directory), false);
+            checker->run();
+        }
         program.entry = loadModule(path, path, path, nullptr);
         checkConstAssignments();
     } catch (...) {
@@ -3672,7 +3989,7 @@ int CompilerSession::newSlot(const std::string& name) {
 // an import. Declaring a name twice in one folder is an error (the shell may declare again).
 void CompilerSession::predeclare(Namespace& ns, const std::string& fileKey, const std::string& file,
                                  const std::vector<StmtPtr>& statements, bool shell) {
-    auto declare = [&](const std::string& name, bool isVal, const Stmt& at) {
+    auto declare = [&](const std::string& name, bool isVal, const Stmt& at, const FunctionDecl* fn = nullptr) {
         if (name == "_") return;
         const bool isPrivate = at.visibility == GlobalName::Private;
         auto& mine = privates_[fileKey];
@@ -3684,6 +4001,18 @@ void CompilerSession::predeclare(Namespace& ns, const std::string& fileKey, cons
                 throw CompileError(file, at.line, at.col, "'" + name + "' is already declared in this file");
         }
         GlobalName& entry = isPrivate ? mine[name] : ns.names[name];
+        if (entry.declared && fn != nullptr && entry.isFunction && !shell) {
+            // Another form of a function: it differs from the others in its parameters' types.
+            const std::string signature = signatureText(*fn);
+            const bool repeated = entry.forms.empty() ? signature == entry.firstSignature : entry.formSlot(signature) >= 0;
+            if (repeated)
+                throw CompileError(file, at.line, at.col,
+                                   "'" + name + signature + "' is declared twice" + (entry.file != file ? " (also in " + entry.file + ")" : "") +
+                                       "; the forms of a name differ in their parameters' types");
+            if (entry.forms.empty()) entry.forms.emplace_back(entry.firstSignature, newSlot(name + entry.firstSignature));
+            entry.forms.emplace_back(signature, newSlot(name + signature));
+            return;
+        }
         if (entry.declared) {
             if (entry.isVal) throw CompileError(file, at.line, at.col, "cannot redeclare val '" + name + "'");
             if (!shell)
@@ -3696,17 +4025,21 @@ void CompilerSession::predeclare(Namespace& ns, const std::string& fileKey, cons
         entry.isVal = isVal;
         entry.visibility = static_cast<GlobalName::Visibility>(at.visibility);
         entry.file = file;
+        entry.isFunction = fn != nullptr;
+        if (fn != nullptr) entry.firstSignature = signatureText(*fn);
     };
 
     for (const StmtPtr& stmt : statements) {
         if (stmt->kind == StmtKind::Var) {
             const auto& var = static_cast<const VarStmt&>(*stmt);
+            if (var.isExternal) continue;  // a property of a built-in type: no name of its own
             if (var.pattern.empty()) declare(var.name, var.isVal, var);
             for (const std::string& name : var.pattern) declare(name, var.isVal, var);
         } else if (stmt->kind == StmtKind::Function) {
-            // An extension function is added to a type; it declares no name of its own.
-            if (!static_cast<const FunctionStmt&>(*stmt).receiver.empty()) continue;
-            declare(static_cast<const FunctionStmt&>(*stmt).fn->name, false, *stmt);
+            // An extension function is added to a type; it declares no name of its own. An
+            // external one names what the C++ provides, which needs no slot.
+            if (!static_cast<const FunctionStmt&>(*stmt).receiver.empty() || static_cast<const FunctionStmt&>(*stmt).isExternal) continue;
+            declare(static_cast<const FunctionStmt&>(*stmt).fn->name, false, *stmt, static_cast<const FunctionStmt&>(*stmt).fn.get());
         } else if (stmt->kind == StmtKind::Class) {
             const auto& cls = static_cast<const ClassStmt&>(*stmt);
             declare(cls.name, cls.isObject, cls);
@@ -3714,19 +4047,112 @@ void CompilerSession::predeclare(Namespace& ns, const std::string& fileKey, cons
     }
 }
 
+// A file's statements, parsed the first time they are asked for and kept: the checker reads
+// them, then the compiler. Null if the file cannot be read.
+std::vector<StmtPtr>* CompilerSession::parseFile(const std::string& key, const std::string& path, const std::string& name) {
+    auto found = parsed_.find(key);
+    if (found != parsed_.end()) return found->second.get();
+    std::string source;
+    if (!readFile(path, source)) return nullptr;
+    auto statements = std::make_unique<std::vector<StmtPtr>>(parseSource(source, name));
+    std::vector<StmtPtr>* raw = statements.get();
+    parsed_[key] = std::move(statements);
+    return raw;
+}
+
+// Where an import leads: a file (as written, or with ".astra" added) or a folder, looked for
+// next to the importing file first, then in the library directories. A file never imports
+// itself: a script called Shapes.astra that says `import Shapes` means the library, so the
+// importing file is passed over.
+bool CompilerSession::findImport(const std::string& path, const std::string& fromDirectory, const std::string& file,
+                                 std::string& found, bool& folder) const {
+    std::vector<fs::path> places;
+    places.push_back(fs::path(fromDirectory));
+    for (const std::string& library : libraryPaths) places.push_back(fs::path(library));
+    std::error_code ec;
+    fs::path self = fs::weakly_canonical(fs::path(fromDirectory) / fs::path(file), ec);
+    auto usable = [&](const fs::path& candidate) {
+        if (!fs::is_regular_file(candidate, ec)) return false;
+        return fs::weakly_canonical(candidate, ec) != self;
+    };
+    for (const fs::path& place : places) {
+        fs::path candidate = place / fs::path(path);
+        fs::path withExtension = candidate;
+        withExtension += ".astra";
+        folder = false;
+        if (usable(candidate)) {
+            found = candidate.string();
+            return true;
+        }
+        if (usable(withExtension)) {
+            found = withExtension.string();
+            return true;
+        }
+        if (fs::is_directory(candidate, ec)) {
+            found = fs::weakly_canonical(candidate, ec).string();
+            folder = true;
+            return true;
+        }
+    }
+    return false;
+}
+
+// Before any of a program is compiled: a file and everything it imports, each parsed once and
+// handed to the checker, which then checks them together (M6.5 part 3), so that compiling
+// can use what it worked out. What cannot be found or read is passed over here; compiling the
+// import reports it.
+void CompilerSession::gather(const std::string& key, const std::string& name, const std::string& directory,
+                             const std::vector<StmtPtr>& statements, Namespace* ns, bool prelude) {
+    if (!gathered_.insert(key).second) return;
+    checker->addUnit(statements, name, key, ns, prelude);
+    for (const StmtPtr& stmt : statements) {
+        if (stmt->kind != StmtKind::Import) continue;
+        const auto& s = static_cast<const ImportStmt&>(*stmt);
+        std::string found;
+        bool folder = false;
+        if (!findImport(s.path, directory, name, found, folder)) continue;
+        Namespace* imported = nullptr;
+        if (folder) {
+            imported = namespaceOf(found);
+            for (const fs::path& path : folderFiles(found)) {
+                const std::string fileKey = fileKeyOf(path);
+                const std::string fileName = path.filename().string();
+                if (std::vector<StmtPtr>* parsed = parseFile(fileKey, fileKey, fileName))
+                    gather(fileKey, fileName, found, *parsed, imported, false);
+            }
+        } else {
+            const std::string fileKey = fileKeyOf(fs::path(found));
+            const fs::path canonical(fileKey);
+            const std::string parent = canonical.parent_path().string();
+            imported = namespaceOf(parent);
+            if (std::vector<StmtPtr>* parsed = parseFile(fileKey, fileKey, canonical.filename().string()))
+                gather(fileKey, canonical.filename().string(), parent, *parsed, imported, false);
+        }
+        checker->addImport(key, s.alias, s.all, imported);
+    }
+}
+
+// Source text that is not a file (the standard library, the shell, `astra -e`): parsed, and
+// unless it is the shell's, checked with what it imports; then compiled.
 FunctionProto* CompilerSession::compileUnit(const std::string& source, const std::string& name,
                                             const std::string& directory, const std::string& fileKey, bool shell,
                                             Namespace* into) {
-    Lexer lexer(source, name);
-    std::vector<Token> tokens = lexer.scan();
-    Parser parser(tokens, name);
-    std::vector<StmtPtr> statements = parser.parseProgram();
+    sources_.push_back(std::make_unique<std::vector<StmtPtr>>(parseSource(source, name)));
+    std::vector<StmtPtr>& statements = *sources_.back();
     Namespace* ns = into != nullptr ? into : namespaceOf(directory);
+    if (!shell) {
+        gather(fileKey, name, directory, statements, ns, directory == "<builtin>");
+        checker->run();
+    }
+    return compileStatements(statements, name, directory, fileKey, shell, ns);
+}
+
+FunctionProto* CompilerSession::compileStatements(const std::vector<StmtPtr>& statements, const std::string& name,
+                                                  const std::string& directory, const std::string& fileKey, bool shell,
+                                                  Namespace* ns) {
     predeclare(*ns, fileKey, name, statements, shell);
     ModuleCompiler compiler(*this, name, directory == "<builtin>" ? "" : directory, ns, fileKey);
-    FunctionProto* proto = compiler.compile(statements, shell);
-    if (checker != nullptr) checker->addUnit(std::move(statements), name, fileKey, ns, directory == "<builtin>");
-    return proto;
+    return compiler.compile(statements, shell);
 }
 
 // The script named in `Worker("physics.astra")`, looked for next to the file that names it.
@@ -3745,8 +4171,10 @@ int CompilerSession::loadWorker(const std::string& path, const std::string& from
 
     auto found = modules_.find(key);
     if (found != modules_.end()) return found->second;
-    std::string source;
-    if (!readFile(canonical.string(), source)) throw CompileError(file, at.line, at.col, "cannot read '" + path + "'");
+    const std::string name = canonical.filename().string();
+    const std::string directory = canonical.parent_path().string();
+    std::vector<StmtPtr>* statements = parseFile(key, canonical.string(), name);
+    if (statements == nullptr) throw CompileError(file, at.line, at.col, "cannot read '" + path + "'");
 
     int index = static_cast<int>(program.modules.size());
     if (index > 0xFFFF) throw CompileError(file, at.line, at.col, "too many modules");
@@ -3755,12 +4183,13 @@ int CompilerSession::loadWorker(const std::string& path, const std::string& from
     std::unique_ptr<Namespace>& ns = namespaces_[key];
     if (ns == nullptr) {
         ns = std::make_unique<Namespace>();
-        ns->directory = canonical.parent_path().string();
+        ns->directory = directory;
         ns->library = "<program>";
     }
     try {
-        program.modules[static_cast<size_t>(index)] =
-            compileUnit(source, canonical.filename().string(), canonical.parent_path().string(), key, false, ns.get());
+        gather(key, name, directory, *statements, ns.get(), false);
+        checker->run();
+        program.modules[static_cast<size_t>(index)] = compileStatements(*statements, name, directory, key, false, ns.get());
     } catch (...) {
         modules_.erase(key);
         throw;
@@ -3772,16 +4201,14 @@ int CompilerSession::loadWorker(const std::string& path, const std::string& from
 // the entry file.
 int CompilerSession::loadModule(const std::string& path, const std::string& displayPath, const std::string& file,
                                 const Node* at) {
-    std::error_code ec;
-    fs::path canonical = fs::weakly_canonical(fs::path(path), ec);
-    if (ec) canonical = fs::absolute(fs::path(path), ec);
-    std::string key = canonical.string();
+    const std::string key = fileKeyOf(fs::path(path));
+    const fs::path canonical(key);
 
     auto found = modules_.find(key);
     if (found != modules_.end()) return found->second;
 
-    std::string source;
-    if (!readFile(key, source))
+    std::vector<StmtPtr>* statements = parseFile(key, key, canonical.filename().string());
+    if (statements == nullptr)
         throw CompileError(file, at ? at->line : 1, at ? at->col : 1, "cannot read '" + displayPath + "'");
 
     // Registered before compiling so that circular imports resolve to this slot.
@@ -3790,8 +4217,9 @@ int CompilerSession::loadModule(const std::string& path, const std::string& disp
     program.modules.push_back(nullptr);
     modules_[key] = index;
     try {
-        program.modules[static_cast<size_t>(index)] =
-            compileUnit(source, canonical.filename().string(), canonical.parent_path().string(), key, false);
+        const std::string directory = canonical.parent_path().string();
+        program.modules[static_cast<size_t>(index)] = compileStatements(
+            *statements, canonical.filename().string(), directory, key, false, namespaceOf(directory));
     } catch (...) {
         modules_.erase(key);
         throw;
@@ -3805,31 +4233,26 @@ int CompilerSession::loadModule(const std::string& path, const std::string& disp
 void CompilerSession::loadFolder(const std::string& folder, const std::string& displayPath, const std::string& file,
                                  const Node& at, std::vector<int>& modules) {
     struct Unit {
-        std::string key, name, source;
-        std::vector<StmtPtr> statements;
+        std::string key, name;
+        const std::vector<StmtPtr>* statements = nullptr;
         int index = 0;
     };
-    std::error_code ec;
-    std::vector<fs::path> paths;
-    for (const fs::directory_entry& entry : fs::directory_iterator(fs::path(folder), ec))
-        if (entry.is_regular_file(ec) && entry.path().extension() == ".astra") paths.push_back(entry.path());
-    std::sort(paths.begin(), paths.end());
+    std::vector<fs::path> paths = folderFiles(folder);
     if (paths.empty())
         throw CompileError(file, at.line, at.col, "the folder '" + displayPath + "' has no .astra files to import");
 
     std::vector<Unit> units;
     for (const fs::path& path : paths) {
-        fs::path canonical = fs::weakly_canonical(path, ec);
-        std::string key = canonical.string();
-        auto found = modules_.find(key);
+        Unit unit;
+        unit.key = fileKeyOf(path);
+        auto found = modules_.find(unit.key);
         if (found != modules_.end()) {
             modules.push_back(found->second);
             continue;
         }
-        Unit unit;
-        unit.key = key;
-        unit.name = canonical.filename().string();
-        if (!readFile(key, unit.source))
+        unit.name = fs::path(unit.key).filename().string();
+        unit.statements = parseFile(unit.key, unit.key, unit.name);
+        if (unit.statements == nullptr)
             throw CompileError(file, at.line, at.col, "cannot read '" + displayPath + "/" + unit.name + "'");
         unit.index = static_cast<int>(program.modules.size());
         if (unit.index > 0xFFFF) throw CompileError(file, at.line, at.col, "too many modules");
@@ -3851,20 +4274,14 @@ void CompilerSession::loadFolder(const std::string& folder, const std::string& d
 
     Namespace* ns = namespaceOf(folder);
     try {
-        for (Unit& unit : units) {
-            Lexer lexer(unit.source, unit.name);
-            std::vector<Token> tokens = lexer.scan();
-            Parser parser(tokens, unit.name);
-            unit.statements = parser.parseProgram();
-            predeclare(*ns, unit.key, unit.name, unit.statements, false);
-        }
+        for (Unit& unit : units) predeclare(*ns, unit.key, unit.name, *unit.statements, false);
 
         std::vector<std::unique_ptr<ModuleCompiler>> compilers;
         std::vector<std::pair<size_t, const std::vector<StmtPtr>*>> files;
         std::vector<std::string> names;
         for (size_t i = 0; i < units.size(); i++) {
             compilers.push_back(std::make_unique<ModuleCompiler>(*this, units[i].name, folder, ns, units[i].key));
-            files.emplace_back(i, &units[i].statements);
+            files.emplace_back(i, units[i].statements);
             names.push_back(units[i].name);
         }
 
@@ -3873,13 +4290,14 @@ void CompilerSession::loadFolder(const std::string& folder, const std::string& d
         compilers[0]->beginScript(ahead, displayPath);
         for (size_t i = 0; i < units.size(); i++) {
             compilers[i]->continueScript(ahead);
-            compilers[i]->noteEnums(units[i].statements);
-            compilers[i]->hoistImports(units[i].statements);
+            compilers[i]->noteEnums(*units[i].statements);
+            compilers[i]->hoistImports(*units[i].statements);
         }
         for (size_t i = 0; i < units.size(); i++) {
             compilers[i]->continueScript(ahead);
-            compilers[i]->hoistFunctions(units[i].statements);
+            compilers[i]->hoistFunctions(*units[i].statements);
         }
+        compilers.back()->defineForms();
         const std::vector<ModuleCompiler::UnitClass> classes = ModuleCompiler::orderClasses(files, names);
         for (const ModuleCompiler::UnitClass& cls : classes) {
             compilers[cls.file]->continueScript(ahead);
@@ -3887,7 +4305,7 @@ void CompilerSession::loadFolder(const std::string& folder, const std::string& d
         }
         for (size_t i = 0; i < units.size(); i++) {
             compilers[i]->continueScript(ahead);
-            compilers[i]->hoistExtensions(units[i].statements);
+            compilers[i]->hoistExtensions(*units[i].statements);
         }
         compilers[0]->endScript(ahead);
         program.modules[static_cast<size_t>(header)] = ahead.proto;
@@ -3895,12 +4313,10 @@ void CompilerSession::loadFolder(const std::string& folder, const std::string& d
         for (size_t i = 0; i < units.size(); i++) {
             FunctionState rest;
             compilers[i]->beginScript(rest, units[i].name);
-            compilers[i]->compileRemainder(units[i].statements, false);
+            compilers[i]->compileRemainder(*units[i].statements, false);
             compilers[i]->endScript(rest);
             program.modules[static_cast<size_t>(units[i].index)] = rest.proto;
         }
-        if (checker != nullptr)
-            for (Unit& unit : units) checker->addUnit(std::move(unit.statements), unit.name, unit.key, ns, false);
     } catch (...) {
         for (const Unit& unit : units) {
             modules_.erase(unit.key);
@@ -3912,45 +4328,23 @@ void CompilerSession::loadFolder(const std::string& folder, const std::string& d
 
 Namespace* CompilerSession::importModule(const std::string& path, const std::string& fromDirectory,
                                          const std::string& file, const Node& at, std::vector<int>& modules) {
-    // Looked for next to the importing file first, then in the library directories. In each
-    // place the name is tried as a file, as written and with ".astra" added, then as a folder.
-    std::vector<fs::path> places;
-    places.push_back(fs::path(fromDirectory));
-    for (const std::string& library : libraryPaths) places.push_back(fs::path(library));
-
-    // A file never imports itself: a script called Shapes.astra that says `import Shapes` means
-    // the library, so the importing file is passed over.
-    std::error_code ec;
-    fs::path self = fs::weakly_canonical(fs::path(fromDirectory) / fs::path(file), ec);
-    auto usable = [&](const fs::path& candidate) {
-        if (!fs::is_regular_file(candidate, ec)) return false;
-        return fs::weakly_canonical(candidate, ec) != self;
-    };
-    auto loadFile = [&](const fs::path& candidate) {
-        fs::path canonical = fs::weakly_canonical(candidate, ec);
-        auto unit = units_.find(canonical.string());
-        if (unit != units_.end()) {
-            // A file that was loaded as part of its folder runs as part of it.
-            modules.insert(modules.end(), unit->second->begin(), unit->second->end());
-        } else {
-            modules.push_back(loadModule(candidate.string(), path, file, &at));
-        }
-        return namespaceOf(canonical.parent_path().string());
-    };
-
-    for (const fs::path& place : places) {
-        fs::path candidate = place / fs::path(path);
-        if (usable(candidate)) return loadFile(candidate);
-        fs::path withExtension = candidate;
-        withExtension += ".astra";
-        if (usable(withExtension)) return loadFile(withExtension);
-        if (fs::is_directory(candidate, ec)) {
-            std::string folder = fs::weakly_canonical(candidate, ec).string();
-            loadFolder(folder, path, file, at, modules);
-            return namespaceOf(folder);
-        }
+    std::string found;
+    bool folder = false;
+    if (!findImport(path, fromDirectory, file, found, folder))
+        throw CompileError(file, at.line, at.col, "cannot find module '" + path + "'");
+    if (folder) {
+        loadFolder(found, path, file, at, modules);
+        return namespaceOf(found);
     }
-    throw CompileError(file, at.line, at.col, "cannot find module '" + path + "'");
+    const std::string key = fileKeyOf(fs::path(found));
+    auto unit = units_.find(key);
+    if (unit != units_.end()) {
+        // A file that was loaded as part of its folder runs as part of it.
+        modules.insert(modules.end(), unit->second->begin(), unit->second->end());
+    } else {
+        modules.push_back(loadModule(found, path, file, &at));
+    }
+    return namespaceOf(fs::path(key).parent_path().string());
 }
 
 // A function may assign to a global that is only declared const further down, so

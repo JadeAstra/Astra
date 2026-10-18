@@ -212,7 +212,7 @@ class ProcessBuilder {
 
   // ProcessBuilder("git", "status") or ProcessBuilder(["git", "status"]).
   fun init(vararg command) {
-    this.parts = command.size == 1 and command[0] is list ? command[0].toList() : command
+    this.parts = command.size == 1 and command[0] is List ? command[0].toList() : command
   }
 
   fun command() => parts

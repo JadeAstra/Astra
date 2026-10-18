@@ -148,6 +148,24 @@ void VM::defineMethod(BuiltinType type, const std::string& name, int minArgs, in
     methods_[static_cast<int>(type)][intern(name)] = NativeMethod{name, minArgs, maxArgs, fn, {}};
 }
 
+bool VM::builtinArity(const std::string& name, int& minArgs, int& maxArgs) const {
+    auto found = builtins_.find(name);
+    if (found == builtins_.end() || !found->second.isObjType(ObjType::Native)) return false;
+    const ObjNative* native = static_cast<const ObjNative*>(found->second.as.obj);
+    minArgs = native->minArgs;
+    maxArgs = native->maxArgs;
+    return true;
+}
+
+bool VM::methodArity(BuiltinType type, const std::string& name, int& minArgs, int& maxArgs) {
+    const auto& table = methods_[static_cast<int>(type)];
+    auto found = table.find(intern(name));
+    if (found == table.end()) return false;
+    minArgs = found->second.minArgs;
+    maxArgs = found->second.maxArgs;
+    return true;
+}
+
 void VM::nameParams(BuiltinType type, const std::string& method, std::initializer_list<const char*> params) {
     NativeMethod& native = methods_[static_cast<int>(type)].at(intern(method));
     native.params.assign(params.begin(), params.end());
@@ -250,6 +268,47 @@ Value VM::callOn(Value receiver, Value callee, int argc, const Value* args) {
 // Undefined if none has, in which case the name is a global.
 // The extension function called `name` that a value has, if any: one for its class, a class
 // above it or an interface it implements; for its built-in type; or one for every value.
+// An extension added to a type under a name: in place of one with the same signature (the
+// receiver's type and the parameters' types, as written), or as another form beside those
+// there already (D56). A name with several forms holds the set of them, and each form is also
+// found under its own name, the name with its signature, for calls that know which they mean.
+void VM::addExtensionForm(Table& table, ObjString* name, Value function) {
+    ObjClosure* added = asClosure(function);
+    const Value* existing = table.find(name);
+    if (existing == nullptr || !existing->isObjType(ObjType::Closure) || added->proto->signature.empty()) {
+        table.set(name, function);
+        return;
+    }
+    TempRoot keep(*this, function);
+    ObjClosure* before = asClosure(*existing);
+    std::vector<ObjClosure*> forms;
+    if (before->proto->chooser) forms = static_cast<const ObjForms*>(before)->forms;
+    else forms.push_back(before);
+    bool replaced = false;
+    for (ObjClosure*& form : forms) {
+        if (form->proto->signature.empty() || form->proto->signature == added->proto->signature) {
+            form = added;
+            replaced = true;
+        }
+    }
+    if (!replaced) forms.push_back(added);
+    if (forms.size() == 1) {
+        table.set(name, function);
+        return;
+    }
+    std::unique_ptr<FunctionProto>& proto = extensionSets_[name->chars];
+    if (proto == nullptr) {
+        proto = std::make_unique<FunctionProto>();
+        proto->name = name->chars;
+        proto->chooser = true;
+    }
+    for (ObjClosure* form : forms) table.set(intern(name->chars + form->proto->signature), Value::object(form));
+    ObjForms* set = alloc<ObjForms>(proto.get());
+    set->forms = std::move(forms);
+    account(set->forms.size() * sizeof(ObjClosure*));
+    table.set(name, Value::object(set));
+}
+
 const Value* VM::findExtension(Value receiver, const ObjString* name) const {
     if (!hasExtensions_) return nullptr;
     const Value* found = nullptr;
@@ -610,15 +669,15 @@ std::string VM::typeName(Value v) const {
     }
     switch (v.as.obj->type) {
         case ObjType::String: return "string";
-        case ObjType::List: return "list";
-        case ObjType::Map: return "map";
-        case ObjType::Range: return "range";
-        case ObjType::Bytes: return "bytes";
+        case ObjType::List: return "List";
+        case ObjType::Map: return "Map";
+        case ObjType::Range: return "Range";
+        case ObjType::Bytes: return "Bytes";
         case ObjType::Closure:
         case ObjType::Native:
         case ObjType::BoundMethod:
-        case ObjType::BoundNative: return "function";
-        case ObjType::Class: return "class";
+        case ObjType::BoundNative: return "Function";
+        case ObjType::Class: return "Class";
         case ObjType::Instance: return asInstance(v)->cls->name->chars;
         case ObjType::Fiber: return "flow";
         case ObjType::Resource: return static_cast<const ObjResource*>(v.as.obj)->kind;
@@ -696,7 +755,155 @@ int VM::packVarargs(const FunctionProto* proto, int argc) {
     return at + 1;
 }
 
+// How well an argument fits a parameter of a form: -1 not at all, 0 a parameter without a
+// type, more the narrower the type is (a class nearer the object's own, more still).
+int VM::paramFit(Value v, uint8_t type, const ObjString* className) const {
+    if (type == 0) return 0;
+    if ((type & kTypeMask) != kTypeInstance) {
+        if (!matchesType(v, type, nullptr)) return -1;
+        return (type & kTypeMask) == kTypeNumber ? 1 : 2;
+    }
+    if (v.isNull()) return (type & kTypeNullable) != 0 ? 1 : -1;
+    if (!v.isObjType(ObjType::Instance) || className == nullptr) return -1;
+    // The class is known by its name, as written: the last part of it.
+    auto named = [&](const ObjClass* c) {
+        const std::string& n = c->name->chars;
+        const std::string& want = className->chars;
+        return n == want || (n.size() > want.size() && n[n.size() - want.size() - 1] == '.' &&
+                             n.compare(n.size() - want.size(), want.size(), want) == 0);
+    };
+    int distance = 0;
+    for (const ObjClass* c = asInstance(v)->cls; c != nullptr; c = c->super, distance++) {
+        if (named(c)) return 2 + std::max(0, 64 - distance);
+        for (const ObjClass* i : c->interfaces)
+            if (named(i)) return 2 + std::max(0, 63 - distance);
+    }
+    return -1;
+}
+
+// Whether a form takes a call's arguments: as many as there are, each of a type its parameter
+// takes. `pairs` holds a named call's (name, value) pairs; the empty name is a lambda written
+// after the call, which goes where callNamed puts it. `score` says how narrowly the types fit.
+bool VM::formTakes(const FunctionProto* proto, const Value* args, int positional, const Value* pairs, int named,
+                   int& score, int& defaultsLeft) const {
+    const int arity = proto->arity;
+    const int vararg = proto->varargIndex;
+    const int required = proto->requiredArgs();
+    if (vararg < 0 && positional > arity) return false;
+    const bool typed = proto->paramTypes.size() == static_cast<size_t>(arity);
+    auto fit = [&](int param, Value v) {
+        if (!typed || param == vararg) return 0;
+        return paramFit(v, proto->paramTypes[static_cast<size_t>(param)], proto->paramClasses[static_cast<size_t>(param)]);
+    };
+    uint64_t given = 0;  // the parameters given a value (the first 64)
+    auto give = [&](int param) {
+        if (param < 64) given |= uint64_t{1} << param;
+    };
+    auto isGiven = [&](int param) { return param < 64 && ((given >> param) & 1) != 0; };
+    score = 0;
+    const int direct = vararg >= 0 && positional > vararg ? vararg : positional;
+    for (int i = 0; i < direct; i++) {
+        const int f = fit(i, args[i]);
+        if (f < 0) return false;
+        score += f;
+        give(i);
+    }
+    if (vararg >= 0 && positional > vararg) give(vararg);
+    for (int k = 0; k < named; k++) {
+        const ObjString* name = asString(pairs[2 * k]);
+        const Value value = pairs[2 * k + 1];
+        int index = -1;
+        if (name->chars.empty()) {
+            if (arity == 0) return false;
+            index = arity - 1;
+            if (vararg < 0 && required > 0 && positional == required - 1 && !isGiven(required - 1)) index = required - 1;
+        } else {
+            for (int p = 0; p < arity && index < 0; p++)
+                if (proto->paramNames.size() == static_cast<size_t>(arity) && proto->paramNames[static_cast<size_t>(p)] == name) index = p;
+        }
+        if (index < 0 || isGiven(index)) return false;
+        const int f = fit(index, value);
+        if (f < 0) return false;
+        score += f;
+        give(index);
+    }
+    defaultsLeft = 0;
+    for (int p = 0; p < arity; p++) {
+        if (isGiven(p) || p == vararg || p >= 64) continue;
+        if (p < required) return false;
+        defaultsLeft++;
+    }
+    return true;
+}
+
+// The form of a name with several (D56) that a call means, when the compiler could not tell
+// (an argument whose type was not known, or code compiled on its own): of the forms that take
+// the arguments, the one whose parameters' types fit them most narrowly; between two as
+// narrow, one without a vararg, then one that leaves fewer parameters to their defaults.
+ObjClosure* VM::chooseForm(const ObjForms* set, const Value* args, int positional, const Value* pairs, int named) {
+    ObjClosure* best = nullptr;
+    int bestScore = -1, bestDefaults = 0;
+    bool bestVararg = false, tie = false;
+    for (ObjClosure* form : set->forms) {
+        int score = 0, defaults = 0;
+        if (!formTakes(form->proto, args, positional, pairs, named, score, defaults)) continue;
+        const bool vararg = form->proto->varargIndex >= 0;
+        bool better = best == nullptr || score > bestScore;
+        bool same = !better && score == bestScore;
+        if (same && vararg != bestVararg) {
+            better = !vararg;
+            same = false;
+        }
+        if (same && defaults != bestDefaults) {
+            better = defaults < bestDefaults;
+            same = false;
+        }
+        if (better) {
+            best = form;
+            bestScore = score;
+            bestDefaults = defaults;
+            bestVararg = vararg;
+            tie = false;
+        } else if (same) {
+            tie = true;
+        }
+    }
+    const std::string& name = set->proto->name;
+    auto formsText = [&](const std::vector<ObjClosure*>& forms) {
+        std::string text;
+        for (size_t i = 0; i < forms.size(); i++) {
+            if (i > 0) text += i + 1 == forms.size() ? " and " : ", ";
+            text += name + forms[i]->proto->signature;
+        }
+        return text;
+    };
+    if (best == nullptr) {
+        std::string given;
+        for (int i = 0; i < positional; i++) given += (given.empty() ? "" : ", ") + typeName(args[i]);
+        for (int k = 0; k < named; k++) {
+            const std::string& n = asString(pairs[2 * k])->chars;
+            given += (given.empty() ? "" : ", ") + (n.empty() ? std::string() : n + " = ") + typeName(pairs[2 * k + 1]);
+        }
+        throw runtimeError("no form of " + name + "() takes " + (given.empty() ? std::string("no arguments") : "(" + given + ")") +
+                           "; there are " + formsText(set->forms));
+    }
+    if (tie) {
+        // Every form that fits as well as the best, in the order they were written.
+        std::vector<ObjClosure*> tied;
+        for (ObjClosure* form : set->forms) {
+            int score = 0, defaults = 0;
+            if (formTakes(form->proto, args, positional, pairs, named, score, defaults) && score == bestScore &&
+                defaults == bestDefaults && (form->proto->varargIndex >= 0) == bestVararg)
+                tied.push_back(form);
+        }
+        throw runtimeError("this call fits more than one form of " + name + "(): " + formsText(tied) +
+                           "; write the types of what is passed, so that the form is chosen when compiling");
+    }
+    return best;
+}
+
 void VM::callClosure(ObjClosure* closure, int argc, bool packed) {
+    if (closure->proto->chooser) closure = chooseForm(static_cast<const ObjForms*>(closure), sp_ - argc, argc, nullptr, 0);
     const FunctionProto* proto = closure->proto;
     if (proto->varargIndex >= 0 && !packed) argc = packVarargs(proto, argc);
     if (argc != proto->arity && (argc > proto->arity || argc < proto->requiredArgs()))
@@ -732,6 +939,11 @@ void VM::callClosure(ObjClosure* closure, int argc, bool packed) {
 // `groupBy { it.size }` gives keySelector, and `groupBy({ it.size }) { it.name }` gives both.
 // (callNamed does the same for a call to a plain function.)
 void VM::callTrailing(ObjClosure* closure, int argc) {
+    if (closure->proto->chooser) {
+        if (emptyName_ == nullptr) emptyName_ = intern("");
+        const Value lambda[2] = {Value::object(emptyName_), sp_[-1]};
+        closure = chooseForm(static_cast<const ObjForms*>(closure), sp_ - argc, argc - 1, lambda, 1);
+    }
     const FunctionProto* proto = closure->proto;
     const int arity = proto->arity;
     const int vararg = proto->varargIndex;
@@ -907,10 +1119,21 @@ bool VM::callNamed(int positional, int named) {
     if (callee.isObj()) {
         switch (callee.as.obj->type) {
             case ObjType::Closure:
+                if (asClosure(callee)->proto->chooser) {
+                    callee = Value::object(chooseForm(static_cast<const ObjForms*>(asClosure(callee)), first, positional,
+                                                      first + positional, named));
+                    first[-1] = callee;
+                }
                 proto = asClosure(callee)->proto;
                 break;
             case ObjType::BoundMethod:
-                proto = asBoundMethod(callee)->method->proto;
+                if (asBoundMethod(callee)->method->proto->chooser) {
+                    // The form is called on the object as a method is: the object in slot 0.
+                    first[-1] = asBoundMethod(callee)->receiver;
+                    callee = Value::object(chooseForm(static_cast<const ObjForms*>(asBoundMethod(callee)->method), first,
+                                                      positional, first + positional, named));
+                }
+                proto = callee.isObjType(ObjType::Closure) ? asClosure(callee)->proto : asBoundMethod(callee)->method->proto;
                 break;
             case ObjType::Class: {
                 ObjClass* cls = asClass(callee);
@@ -2712,6 +2935,70 @@ void VM::run(int baseFrame) {
                         *sp_++ = Value::object(closure);
                         break;
                     }
+                    case Op::MakeForms: {
+                        const FunctionProto* chooser = frame->closure->proto->protos[static_cast<size_t>(READ_U16())];
+                        const int count = READ_U8();
+                        ObjForms* set = alloc<ObjForms>(chooser);
+                        account(static_cast<size_t>(count) * sizeof(ObjClosure*));
+                        for (int i = count; i > 0; i--) {
+                            if (!sp_[-i].isObjType(ObjType::Closure)) throw runtimeError("invalid set of forms");
+                            set->forms.push_back(asClosure(sp_[-i]));
+                        }
+                        sp_ -= count;
+                        *sp_++ = Value::object(set);
+                        break;
+                    }
+                    case Op::MethodForms: {
+                        const FunctionProto* chooser = frame->closure->proto->protos[static_cast<size_t>(READ_U16())];
+                        const int count = READ_U8();
+                        if (!sp_[-count - 1].isObjType(ObjType::Class)) throw runtimeError("invalid class declaration");
+                        ObjClass* cls = asClass(sp_[-count - 1]);
+                        ObjString* methodName = intern(chooser->name);
+                        std::vector<ObjClosure*> forms;
+                        for (int i = count; i > 0; i--) {
+                            ObjString* name = asString(sp_[-i]);
+                            const Value* method = cls->methods.find(name);
+                            if (method == nullptr) {
+                                // A form under the method's own name: compiled where the name had one form.
+                                const Value* plain = cls->methods.find(methodName);
+                                if (plain != nullptr && plain->isObjType(ObjType::Closure) && !asClosure(*plain)->proto->chooser &&
+                                    asClosure(*plain)->proto->signature.empty())
+                                    method = plain;
+                            }
+                            if (method == nullptr || !method->isObjType(ObjType::Closure)) {
+                                if (cls->isAbstract) continue;  // one left to the classes below
+                                throw runtimeError("class " + cls->name->chars + " has no form " + name->chars);
+                            }
+                            forms.push_back(asClosure(*method));
+                            cls->methods.set(name, *method);
+                        }
+                        sp_ -= count;
+                        if (forms.size() == 1) {
+                            cls->methods.set(methodName, Value::object(forms[0]));
+                        } else if (!forms.empty()) {
+                            ObjForms* set = alloc<ObjForms>(chooser);
+                            set->forms = std::move(forms);
+                            account(set->forms.size() * sizeof(ObjClosure*));
+                            cls->methods.set(methodName, Value::object(set));
+                        }
+                        break;
+                    }
+                    case Op::StaticForms: {
+                        const FunctionProto* chooser = frame->closure->proto->protos[static_cast<size_t>(READ_U16())];
+                        const int count = READ_U8();
+                        if (!sp_[-count - 1].isObjType(ObjType::Class)) throw runtimeError("invalid class declaration");
+                        ObjClass* cls = asClass(sp_[-count - 1]);
+                        ObjForms* set = alloc<ObjForms>(chooser);
+                        cls->statics.set(intern(chooser->name), Value::object(set));
+                        for (int i = count; i > 0; i--) {
+                            const Value* method = cls->statics.find(asString(sp_[-i]));
+                            if (method == nullptr || !method->isObjType(ObjType::Closure)) throw runtimeError("invalid class declaration");
+                            set->forms.push_back(asClosure(*method));
+                        }
+                        account(set->forms.size() * sizeof(ObjClosure*));
+                        sp_ -= count;
+                        break;
+                    }
                     case Op::CloseUpvalue:
                         closeUpvalues(sp_ - 1);
                         sp_--;
@@ -2884,11 +3171,11 @@ void VM::run(int baseFrame) {
                             if (!target.isObjType(ObjType::Class))
                                 throw runtimeError("an extension function is added to a class or a built-in type, not to a value of type " +
                                                    typeName(target));
-                            asClass(target)->extensions.set(name, function);
+                            addExtensionForm(asClass(target)->extensions, name, function);
                         } else if (id == 0) {
-                            anyExtensions_.set(name, function);
+                            addExtensionForm(anyExtensions_, name, function);
                         } else {
-                            typeExtensions_[id].set(name, function);
+                            addExtensionForm(typeExtensions_[id], name, function);
                         }
                         extensionEpoch_++;
                         if (type & kTypeNullable) {
@@ -2919,6 +3206,13 @@ void VM::run(int baseFrame) {
                         // a field or property for a field or property; or something an interface
                         // or an abstract class asks for, which either kind supplies.
                         auto has = [&](const ObjClass* from) {
+                            if (!property && from->methods.find(name) == nullptr && name->chars.find('(') != std::string::npos) {
+                                // A form of a name with several (D56): the one above may have been
+                                // compiled where the name had one form, under the name alone.
+                                const Value* plain = from->methods.find(intern(name->chars.substr(0, name->chars.find('('))));
+                                return plain != nullptr && plain->isObjType(ObjType::Closure) && !asClosure(*plain)->proto->chooser &&
+                                       asClosure(*plain)->proto->signature.empty();
+                            }
                             if (!property) return from->methods.find(name) != nullptr;
                             return from->getters.find(name) != nullptr || from->setters.find(name) != nullptr ||
                                    from->declaredIndex.find(name) != nullptr;
@@ -3390,7 +3684,7 @@ void VM::stringifyInto(std::string& out, Value v, bool quote, int depth) {
 
         case ObjType::Bytes: {
             const std::vector<uint8_t>& data = asBytes(v)->data;
-            out += "bytes[";
+            out += "Bytes[";
             for (size_t i = 0; i < data.size() && i < 32; i++) {
                 if (i > 0) out += ", ";
                 out += std::to_string(data[i]);
@@ -3592,6 +3886,11 @@ void VM::blacken(Obj* obj) {
             ObjClosure* closure = static_cast<ObjClosure*>(obj);
             liveBytes_ += sizeof(ObjClosure) + closure->upvalues.size() * sizeof(ObjUpvalue*);
             for (ObjUpvalue* upvalue : closure->upvalues) markObject(upvalue);
+            if (closure->proto->chooser) {
+                const ObjForms* set = static_cast<const ObjForms*>(closure);
+                liveBytes_ += sizeof(ObjForms) - sizeof(ObjClosure) + set->forms.size() * sizeof(ObjClosure*);
+                for (ObjClosure* form : set->forms) markObject(form);
+            }
             break;
         }
         case ObjType::Upvalue: {

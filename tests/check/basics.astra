@@ -12,7 +12,7 @@ ratio += 1
 var label = "a"
 label += 1
 label = null                  // check: 'label' is a string; it cannot be given null
-var total : number = 0
+var total : Number = 0
 total = 2.5
 val typed : string = "x"
 var later = null              // check: 'later' starts as null, so its type must be written (later : Type? = null)

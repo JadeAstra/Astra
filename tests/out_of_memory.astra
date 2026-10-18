@@ -10,14 +10,14 @@ fun tryToMake(what, make) {
   }
 }
 
-tryToMake("a petabyte of bytes") { bytes(1 << 50) }              // expect: a petabyte of bytes: out of memory
+tryToMake("a petabyte of bytes") { Bytes(1 << 50) }              // expect: a petabyte of bytes: out of memory
 tryToMake("a petabyte of text") { "x".repeat(1 << 50) }          // expect: a petabyte of text: out of memory
 
 // It is an Error, so a catch of every error catches it too.
-try { bytes(1 << 50) } catch (e : Error) { print(type(e), e is OutOfMemoryError) }   // expect: OutOfMemoryError true
+try { Bytes(1 << 50) } catch (e : Error) { print(type(e), e is OutOfMemoryError) }   // expect: OutOfMemoryError true
 
 // And the program goes on as before.
-val after = bytes(16)
+val after = Bytes(16)
 val words = {:}
 for i in 0..<100 { words["w$i"] = i }
 print(after.size, words.size, words["w42"])   // expect: 16 100 42

@@ -2,7 +2,7 @@
 class Counter {
   var count : int = 0
   var label : string = "counter"
-  var history : list = []
+  var history : List = []
   var note                              // untyped, starts as null
   var owner : string?                   // nullable, starts as null
 
@@ -41,15 +41,15 @@ print(attempt(fun() { c.cuont += 1 }))        // expect: undefined property 'cuo
 
 // fields without an initial value are set by init; a val can be set only once
 class Point {
-  val x : number
-  val y : number
+  val x : Number
+  val y : Number
   var tag : string = "point"
 
-  fun init(x : number, y : number) {
+  fun init(x : Number, y : Number) {
     this.x = x
     this.y = y
   }
-  fun moved(dx : number, dy : number) : Point => Point(this.x + dx, this.y + dy)
+  fun moved(dx : Number, dy : Number) : Point => Point(this.x + dx, this.y + dy)
   fun toString() : string => "${this.tag}(${this.x}, ${this.y})"
 }
 val p = Point(1, 2.5)
@@ -57,7 +57,7 @@ p.tag = "pt"
 print(p, p.moved(1, 1))                 // expect: pt(1, 2.5) point(2, 3.5)
 print(attempt(fun() { p.x = 10 }))      // expect: cannot assign to val field 'x' of Point
 print(attempt(fun() { p.x += 1 }))      // expect: cannot assign to val field 'x' of Point
-print(attempt(fun() => Point("a", 2)))  // expect: argument 'x' of Point.init() must be number, got string
+print(attempt(fun() => Point("a", 2)))  // expect: argument 'x' of Point.init() must be Number, got string
 print(p.x)                              // expect: 1
 
 // a val with an initial value is fixed from the start
@@ -98,7 +98,7 @@ class Derived {
   var a : int = base * 2
   var b : int = this.a + 1
   var c : string = "${this.a}/${this.b}"
-  var made : list = [this.describe()]
+  var made : List = [this.describe()]
   fun describe() : string => "a=${this.a}"
 }
 val d = Derived()
@@ -123,7 +123,7 @@ class Animal {
   fun speak() : string => "${this.name} says ${this.sound}"
 }
 class Dog : Animal {
-  var tricks : list = []
+  var tricks : List = []
   var sound2 : string = this.sound + "!"
   fun init(name : string) {
     super.init(name)

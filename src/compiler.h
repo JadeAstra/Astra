@@ -25,7 +25,27 @@ struct GlobalName {
     bool isVal = false;
     bool declared = false;  // a declaration of it has been seen; otherwise it has only been used
     std::string file;       // the file that declares it
+
+    // A function with several forms (overloads, D56): each form is in a slot of its own, by
+    // its signature, and the name's slot holds the set of them, which calls the form a call's
+    // arguments fit. Empty for a name declared once.
+    bool isFunction = false;
+    std::string firstSignature;  // of the first form, until a second one comes
+    std::vector<std::pair<std::string, int>> forms;  // signature and slot, in the order written
+
+    int formSlot(const std::string& signature) const {
+        for (const auto& [written, at] : forms)
+            if (written == signature) return at;
+        return -1;
+    }
 };
+
+// What tells the forms of a name apart: the types of its parameters as written,
+// `(float, float)`; one without a type is `*`.
+std::string signatureText(const FunctionDecl& fn);
+
+// A type as written, as signatures show it: the last part of a class's name, `List<int>`, `string?`.
+std::string annotationText(const TypeAnnotation& t);
 
 // A folder of source files. Its files share their top-level names; other folders see the
 // public ones when they import it, and the internal ones too if they belong to the same library.
@@ -43,10 +63,12 @@ bool readFile(const std::string& path, std::string& out);
 class CompilerSession {
 public:
     // The VM supplies interned strings for the constants; it must outlive the program.
-    // With a checker, every file compiled is handed to it as well (`astra check`).
+    // Every file is parsed and handed to the checker before anything is compiled; without a
+    // checker given (`astra check` gives one, to read what it found) the session has its own.
     explicit CompilerSession(VM& vm, Checker* checker = nullptr);
+    ~CompilerSession();
 
-    Checker* const checker;
+    Checker* checker = nullptr;
 
     Program program;
 
@@ -65,6 +87,32 @@ private:
     friend class ModuleCompiler;
 
     VM& vm_;
+    std::unique_ptr<Checker> ownChecker_;
+
+    // For each function or method of the C++ that the standard library declares: how many
+    // arguments the C++ takes, how many its declarations cover between them, and the first.
+    struct ExternalForms {
+        int min = 0, max = 0, lowest = 0, highest = 0;
+        std::string file;
+        int line = 0, col = 0;
+    };
+    std::map<std::string, ExternalForms> externalForms_;
+
+    // Names with several forms whose forms have been defined, and whose set is made next.
+    std::vector<std::pair<GlobalName*, std::string>> pendingForms_;
+
+    // Each file's statements, parsed once (by its key), and those of source text that is not a
+    // file: the checker reads them, then the compiler. They live as long as the session.
+    std::unordered_map<std::string, std::unique_ptr<std::vector<StmtPtr>>> parsed_;
+    std::vector<std::unique_ptr<std::vector<StmtPtr>>> sources_;
+    std::unordered_set<std::string> gathered_;  // files handed to the checker
+    std::vector<StmtPtr>* parseFile(const std::string& key, const std::string& path, const std::string& name);
+    bool findImport(const std::string& path, const std::string& fromDirectory, const std::string& file,
+                    std::string& found, bool& folder) const;
+    void gather(const std::string& key, const std::string& name, const std::string& directory,
+                const std::vector<StmtPtr>& statements, Namespace* ns, bool prelude);
+    FunctionProto* compileStatements(const std::vector<StmtPtr>& statements, const std::string& name,
+                                     const std::string& directory, const std::string& fileKey, bool shell, Namespace* ns);
     std::unordered_map<std::string, std::unique_ptr<Namespace>> namespaces_;  // by folder
     Namespace* builtins_ = nullptr;                                           // the prelude and the built-in names
     std::unordered_map<std::string, std::unordered_map<std::string, GlobalName>> privates_;  // by file: its private names

@@ -45,11 +45,11 @@ for i in 0..<200000 { var g = [i, i] }
 print(makers[999](), makers[0]())       // expect: 2997 0
 
 // values held by native code while it calls back into the program
-var big = range(0, 50000).toList().map(fun(x) { var t = [x, x]; return "v" + x })
+var big = Range(0, 50000).toList().map(fun(x) { var t = [x, x]; return "v" + x })
 print(big.length, big[0], big[49999])   // expect: 50000 v0 v49999
-var sorted = range(0, 20000).toList().map(fun(x) => "k" + (20000 - x)).sort(fun(a, b) { var t = [a, b]; return len(a) - len(b) })
+var sorted = Range(0, 20000).toList().map(fun(x) => "k" + (20000 - x)).sort(fun(a, b) { var t = [a, b]; return len(a) - len(b) })
 print(sorted[0], sorted.length)         // expect: k9 20000
-var folded = range(0, 50000).toList().reduce(fun(acc, x) { var t = [x]; return acc + [x].length }, 0)
+var folded = Range(0, 50000).toList().reduce(fun(acc, x) { var t = [x]; return acc + [x].length }, 0)
 print(folded)                           // expect: 50000
 
 // objects reachable only through a method running on them

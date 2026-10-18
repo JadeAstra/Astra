@@ -74,7 +74,7 @@ fun any?.isNullOrEmpty() => this == null or this.isEmpty()
 // ---- Functions ----
 
 // callback.invoke(a, b) is callback(a, b); with ?. it calls a function that may be null.
-fun function.invoke(vararg arguments) {
+fun Function.invoke(vararg arguments) {
   val callee = this
   return callee(*arguments)
 }
@@ -99,14 +99,14 @@ fun compareByDescending(selector) => { a, b -> compareValues(selector(b), select
 fun naturalOrder() => { a, b -> compareValues(a, b) }
 fun reverseOrder() => { a, b -> compareValues(b, a) }
 
-fun function.compare(a, b) {
+fun Function.compare(a, b) {
   val comparator = this
   return comparator(a, b)
 }
 
 // A comparator that falls back on a selector, or on another comparator, where this one
 // finds two values equal.
-fun function.thenBy(selector) {
+fun Function.thenBy(selector) {
   val first = this
   return { a, b ->
     val order = first(a, b)
@@ -114,7 +114,7 @@ fun function.thenBy(selector) {
   }
 }
 
-fun function.thenByDescending(selector) {
+fun Function.thenByDescending(selector) {
   val first = this
   return { a, b ->
     val order = first(a, b)
@@ -122,7 +122,7 @@ fun function.thenByDescending(selector) {
   }
 }
 
-fun function.then(comparator) {
+fun Function.then(comparator) {
   val first = this
   return { a, b ->
     val order = first(a, b)
@@ -130,7 +130,7 @@ fun function.then(comparator) {
   }
 }
 
-fun function.reversed() {
+fun Function.reversed() {
   val comparator = this
   return { a, b -> comparator(b, a) }
 }

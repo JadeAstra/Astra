@@ -14,7 +14,7 @@ class Box(val items) {
     for x in items { action(x, extra) }
   }
   fun twice(a, b = a, block) => block(a, b)
-  static fun build(size = 2, make) => Box(range(size).toList().map(make))
+  static fun build(size = 2, make) => Box(Range(size).toList().map(make))
 }
 
 val box = Box([1, 2, 3])
@@ -38,7 +38,7 @@ print()                                         // expect: 12 22 32
 print(Box.build { it * it }.show())             // expect: 0, 1
 print(Box.build(4) { it }.show())               // expect: 0, 1, 2, 3
 
-fun list.joined(separator = "+", transform = null) {
+fun List.joined(separator = "+", transform = null) {
   var out = ""
   for i in 0..<length {
     if (i > 0) { out += separator }
@@ -63,7 +63,7 @@ print([3, 1, 2].map { it * 2 })                 // expect: [6, 2, 4]
 
 // Optional parameters may come after a function parameter. When every parameter that has to
 // be given is there but the last of them, the lambda is that one.
-fun list.grouped(keySelector, valueTransform = null) {
+fun List.grouped(keySelector, valueTransform = null) {
   val out = {:}
   for item in this {
     val key = keySelector(item)
@@ -92,9 +92,9 @@ class Derived : Base {
 print(Derived().render { "content" })                     // expect: >[content]-x
 
 // A parameter with no default that the lambda skipped over is reported.
-fun list.needs(count, block) => block(count)
+fun List.needs(count, block) => block(count)
 try {
   [1].needs { it }
 } catch (e) {
-  print(e.message)                              // expect: list.needs() is missing argument 'count'
+  print(e.message)                              // expect: List.needs() is missing argument 'count'
 }

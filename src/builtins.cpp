@@ -280,7 +280,7 @@ void registerGlobals(VM& vm) {
         return Value::number(std::chrono::duration<double>(now).count());
     });
 
-    vm.defineNative("range", 1, 3, [](VM& vm, int argc, Value* args) -> Value {
+    vm.defineNative("Range", 1, 3, [](VM& vm, int argc, Value* args) -> Value {
         int64_t start = 0, end, step = 1;
         if (argc == 1) {
             end = vm.toInt(args[0], "range end");
@@ -769,7 +769,7 @@ void registerRangeMethods(VM& vm) {
 
 void registerBytes(VM& vm) {
     // bytes(16): sixteen zeros. bytes([1, 2, 255]) or bytes(other): a copy.
-    vm.defineNative("bytes", 1, 1, [](VM& vm, int, Value* args) -> Value {
+    vm.defineNative("Bytes", 1, 1, [](VM& vm, int, Value* args) -> Value {
         ObjBytes* made = vm.alloc<ObjBytes>();
         Value from = args[0];
         if (from.isInt()) {

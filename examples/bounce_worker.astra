@@ -6,9 +6,9 @@
 // (how big the canvas is, to add balls, to pause) and, when it is asked, says where its
 // balls are.
 
-class Ball(var x : number, var y : number, var dx : number, var dy : number, val radius : number) {
+class Ball(var x : Number, var y : Number, var dx : Number, var dy : Number, val radius : Number) {
   // Moves on by `steps` sixtieths of a second, turning back at the edges.
-  fun move(width : number, height : number, steps : number) {
+  fun move(width : Number, height : Number, steps : Number) {
     x += dx * steps
     y += dy * steps
     if x < radius { x = radius; dx = dx.absoluteValue }

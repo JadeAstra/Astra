@@ -130,7 +130,7 @@ class Continuation {
 // first set itself aside. `completion` is told how it turned out, when it has. Without one,
 // an error the flow does not catch goes to whoever was running it at the time: the caller of
 // startCoroutine, or of the resume that took it up.
-fun function.startCoroutine(completion = null) {
+fun Function.startCoroutine(completion = null) {
   val body = this
   __flow.start {
     val result = runCatching(body)

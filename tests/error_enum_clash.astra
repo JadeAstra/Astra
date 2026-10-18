@@ -3,4 +3,4 @@ enum Bad {
   first, second
   static fun entries() => [first]
 }
-// expect compile error: enum 'Bad' already has 'entries' (the list of its entries); write it as an override to replace that: override static get entries() : list
+// expect compile error: enum 'Bad' already has 'entries' (the list of its entries); write it as an override to replace that: override static get entries() : List

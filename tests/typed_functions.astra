@@ -1,6 +1,6 @@
 // Parameters and return values can be typed, with the same types as variables.
 fun add(a : int, b : int) : int { return a + b }
-fun half(x : number) : float => x / 2.0
+fun half(x : Number) : float => x / 2.0
 fun greet(name : string, punctuation : string?) : string {
   return "Hello, " + name + (punctuation == null ? "" : punctuation)
 }
@@ -12,7 +12,7 @@ fun attempt(f) {
 print(attempt(fun() => add(1, "2")))      // expect: argument 'b' of add() must be int, got string
 print(attempt(fun() => add(1.5, 2)))      // expect: argument 'a' of add() must be int, got float
 print(attempt(fun() => greet(null, "!"))) // expect: argument 'name' of greet() must be string, got null
-print(attempt(fun() => half("x")))        // expect: argument 'x' of half() must be number, got string
+print(attempt(fun() => half("x")))        // expect: argument 'x' of half() must be Number, got string
 
 // return types
 fun parse(text : string) : int => int(text)
@@ -45,13 +45,13 @@ print(attempt(fun() => ["a"].map(triple)))    // expect: argument 'n' of <lambda
 print(true ? fun() : int => 1 : 2)        // expect: <fun <lambda>>
 
 // functions as typed parameters and return values
-fun apply(f : function, x : int) : int => f(x)
-fun adder(by : int) : function => fun(n : int) : int => n + by
+fun apply(f : Function, x : int) : int => f(x)
+fun adder(by : int) : Function => fun(n : int) : int => n + by
 print(apply(triple, 5), adder(10)(5))    // expect: 15 15
-print(attempt(fun() => apply(3, 5)))      // expect: argument 'f' of apply() must be function, got int
+print(attempt(fun() => apply(3, 5)))      // expect: argument 'f' of apply() must be Function, got int
 
 // a typed parameter keeps its type inside the function
-fun countdown(n : int) : list {
+fun countdown(n : int) : List {
   val seen = []
   while n > 0 {
     seen.push(n)

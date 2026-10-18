@@ -120,7 +120,7 @@ try { print(Plain.name) } catch (e) { print(e.message) }   // expect: undefined 
 // override, as long as it is still a property of the same type.
 enum Rank {
   low, mid, high, hidden
-  override static get entries() : list => [low, mid, high]      // leaves one out
+  override static get entries() : List => [low, mid, high]      // leaves one out
   static fun all() => [low, mid, high, hidden]
 }
 print(Rank.entries, Rank.all().length, Rank.hidden.ordinal, Rank.hidden.name)   // expect: [low, mid, high] 4 3 hidden
@@ -148,7 +148,7 @@ print(entries, Journal.ordinal)             // expect: ["a", "b"] 1
 // super reaches what was replaced: the full list, an entry's own name and place.
 enum Stage {
   draft, review, done, archived
-  override static get entries() : list => super.entries.filter { it != archived }
+  override static get entries() : List => super.entries.filter { it != archived }
   override get name() : string => "stage " + super.name
   override get ordinal() : int => super.ordinal + 1
   static fun all() => super.entries

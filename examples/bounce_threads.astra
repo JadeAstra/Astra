@@ -13,9 +13,9 @@ import Jade.*
 val startingBalls = 50000
 val threadCount = 4
 
-class Ball(var x : number, var y : number, var dx : number, var dy : number, val radius : number, val color) {
+class Ball(var x : Number, var y : Number, var dx : Number, var dy : Number, val radius : Number, val color) {
   // Moves on by `steps` sixtieths of a second, turning back at the edges.
-  fun move(width : number, height : number, steps : number) {
+  fun move(width : Number, height : Number, steps : Number) {
     x += dx * steps
     y += dy * steps
     if x < radius { x = radius; dx = dx.absoluteValue }
@@ -36,7 +36,7 @@ var ballCount = 0
 @Volatile var paused = false
 val steps = AtomicInteger()          // how many times a group has been moved, for the status line
 
-fun addBall(x : number, y : number) {
+fun addBall(x : Number, y : Number) {
   val speed = 1 + Math.random() * 3
   val angle = Math.random() * 2 * Math.pi
   val ball = Ball(x, y, Math.cos(angle) * speed, Math.sin(angle) * speed, 3 + Math.randomInt(0, 4), palette[ballCount % palette.size])

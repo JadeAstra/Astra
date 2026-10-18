@@ -3,24 +3,24 @@
 
 enum Kind { paidIn, paidOut }
 
-data Entry(val kind : Kind, val amount : number)
+data Entry(val kind : Kind, val amount : Number)
 
-class InsufficientFunds(val needed : number, val available : number)
+class InsufficientFunds(val needed : Number, val available : Number)
     : Error("need $needed but only $available available") {
   val shortfall = needed - available
 }
 
-class Account(val owner : string, var balance : number = 0) {
+class Account(val owner : string, var balance : Number = 0) {
   val history = []
 
-  fun deposit(amount : number) : Account {
+  fun deposit(amount : Number) : Account {
     if amount <= 0 { throw Error("a deposit has to be more than nothing") }
     balance += amount
     history.add(Entry(paidIn, amount))         // the parameter is a Kind, so the bare name will do
     return this
   }
 
-  fun withdraw(amount : number) : Account {
+  fun withdraw(amount : Number) : Account {
     if amount > balance { throw InsufficientFunds(amount, balance) }
     balance -= amount
     history.add(Entry(paidOut, amount))
@@ -36,7 +36,7 @@ class Account(val owner : string, var balance : number = 0) {
 object Bank {
   val accounts = {:}
 
-  fun open(owner : string, balance : number = 0) : Account {
+  fun open(owner : string, balance : Number = 0) : Account {
     val account = Account(owner, balance)
     accounts[owner] = account
     return account
@@ -44,7 +44,7 @@ object Bank {
 
   fun find(owner : string) : Account => accounts[owner] ?: throw Error("there is no account for $owner")
 
-  fun transfer(from : string, to : string, amount : number) {
+  fun transfer(from : string, to : string, amount : Number) {
     val source = find(from)
     val target = find(to)
     source.withdraw(amount)

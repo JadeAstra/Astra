@@ -30,7 +30,7 @@ print(square.describe(), square.draw())     // expect: a square, 9 drawing in bl
 // is, as and typed variables go by interface as well.
 print(circle is Shape, circle is Drawable, circle is Marker, square is Marker, 5 is Shape, null is Shape)   // expect: true true true false false false
 print(circle !is Marker, (square as? Marker) == null, (circle as Drawable).colour)   // expect: false true red
-fun total(shapes : list) {
+fun total(shapes : List) {
   var sum = 0
   for shape in shapes { sum += (shape as Shape).area() }
   return sum

@@ -150,12 +150,12 @@ There is no separate character type: `"a"` and `'a'` are both strings of length 
 a string. A character outside the basic plane, such as an emoji, is one character. One made
 of several code points (a letter followed by a combining accent, a flag) counts as several.
 
-**`bytes` is for data that is not text**: a fixed number of bytes, each a number from 0 to
+**`Bytes` is for data that is not text**: a fixed number of bytes, each a number from 0 to
 255, that can be changed in place.
 
 ```astra
-val b = bytes(16)                    // sixteen zeros
-val c = bytes([1, 2, 255])           // from a list; bytes(b) copies
+val b = Bytes(16)                    // sixteen zeros
+val c = Bytes([1, 2, 255])           // from a list; Bytes(b) copies
 c[0] = 7                             // read and written by position
 c.size        c + b        c.slice(1, 3)        c.toList()        c.fill(0)
 "héllo".toBytes()                    // the text as UTF-8: 6 bytes
@@ -164,7 +164,7 @@ for byte in c { ... }
 File("photo.png").readBytes()        // files give and take bytes (see File)
 ```
 
-Two `bytes` are `==` if they hold the same bytes. In a type it is written `bytes`.
+Two `Bytes` are `==` if they hold the same bytes. In a type it is written `Bytes`.
 
 ### Keywords as names
 
@@ -193,7 +193,7 @@ Variables are declared with `val` (immutable) or `var` (mutable). A type may fol
 ```astra
 val name : string = "Astra"
 var total : int = 0
-var ratio : number = 1       // int or float
+var ratio : Number = 1       // int or float
 var owner : Person? = null   // "?" also allows null
 var pet : Animal = Dog()     // a class type accepts its subclasses
 
@@ -207,16 +207,16 @@ assignments made from other functions or closures. A literal of the wrong type i
 when the program is compiled; everything else is checked as the program runs and raises a
 catchable `Error`.
 
-Type names: `int`, `float`, `number`, `string`, `bool`, `list`, `map`, `range`, `function`,
-`any`, or the name of a class, interface or enum (`Event.Click` for one declared inside
+Type names: `int`, `float`, `Number`, `string`, `bool`, `List`, `Map`, `Range`, `Function`,
+`Bytes`, `any`, or the name of a class, interface or enum (`Event.Click` for one declared inside
 another class). Without `?`, a typed variable must be initialized and can never be null.
 
 A type can say more, for the reader's sake: what a list or map holds, and what a function
 takes and gives back.
 
 ```astra
-val names : list<string> = []
-var index : map<string, list<int>> = {:}
+val names : List<string> = []
+var index : Map<string, List<int>> = {:}
 fun each(action : (int) -> unit) { ... }           // unit: gives nothing back
 var onChange : ((Settings) -> unit)? = null        // a function, or null
 fun build(block : Grid.() -> unit) { ... }         // a function run on a Grid
@@ -414,8 +414,8 @@ compile error, and a function that runs before the variable has its value fails 
 Parameters and the return value can be typed, with the same types as variables:
 
 ```astra
-fun area(width : number, height : number) : number => width * height
-fun find(name : string, pets : list) : Animal? { ... }     // may return null
+fun area(width : Number, height : Number) : Number => width * height
+fun find(name : string, pets : List) : Animal? { ... }     // may return null
 val double = fun(n : int) : int => n * 2                   // lambdas too
 
 area(3, "4")     // error: argument 'height' of area() must be number, got string
@@ -478,6 +478,42 @@ to return a non-nullable type that reaches its end without returning a value rai
 error. Returning a literal of the wrong type is a compile error. Methods, static methods,
 initializers and operators take types the same way (an initializer has no return type).
 
+#### A name with several forms
+
+A function can be declared more than once under one name, as long as each form differs from
+the others in its parameters' types or in how many there are (D56). A call means the most
+specific form its arguments fit:
+
+```astra
+fun area(r : float) : float => 3.0 * r * r
+fun area(w : float, h : float) : float => w * h
+
+fun describe(x : int) => "an int"
+fun describe(x : string) => "a string"
+fun describe(x) => "something"    // takes anything, so it is chosen last
+
+area(2.0)                         // the first form
+area(2.0, 3.0)                    // the second
+describe(1)                       // an int
+describe(true)                    // something
+```
+
+Where the arguments' types are known when compiling, the form is chosen then and called
+directly. Where they are not (an argument without a type, or of type `any`), the call
+chooses when it runs, by the values it is given. Between two forms that fit as well, one
+without a `vararg` comes first, then one that leaves fewer parameters to their defaults. A
+call that no form takes, or that two fit as well (`pair(1, 1)` with `pair(a : int, b : Number)`
+and `pair(a : Number, b : int)`), is an error that lists the forms; two forms with the same
+parameters' types are a compile error.
+
+Methods, static methods, operators and extension functions have forms in the same way. A
+subclass may override one form and add others: an override takes the place of the form with
+its parameters' types, or, written `override`, of the only form of its name above it.
+Extension functions for one type are told apart by the receiver's type too, type arguments
+included, so `List<int>` and `List<float>` can each have a `total()`. A list does not carry
+its element type when the program runs, so such forms are chosen only when compiling, where
+the list's type has to be known.
+
 ### Lambdas
 
 A function can be written in braces where a value is expected. Its value is its last
@@ -502,7 +538,7 @@ parameter: when every parameter that has to be given is there but the last of th
 lambda is that one.
 
 ```astra
-fun list.groupBy(keySelector, valueTransform = null) { ... }
+fun List.groupBy(keySelector, valueTransform = null) { ... }
 words.groupBy { it.length }                      // the lambda is keySelector
 words.groupBy({ it.length }) { it.upper() }      // keySelector, then valueTransform
 ```
@@ -570,13 +606,13 @@ val pick = larger@ { a, b -> if a > b { return@larger a }; b }
 class Shape(val name : string) {             // header: a field, set when the object is made
   var visible : bool = true                  // field with an initial value
 
-  fun area() : number { return 0 }
+  fun area() : Number { return 0 }
   fun describe() : string => "${this.name}: ${this.area()}"
   static fun unit() : Shape => Square(1)     // called as Shape.unit()
 }
 
-class Square(val side : number) : Shape("square") {    // single inheritance
-  override fun area() : number => this.side * this.side
+class Square(val side : Number) : Shape("square") {    // single inheritance
+  override fun area() : Number => this.side * this.side
 }
 
 val s = Square(3)
@@ -590,7 +626,7 @@ The parentheses after the class name list what an object is made from:
 ```astra
 class Student(var name : string, var grade : int)      // a complete class; no body needed
 
-class Vec2(val x : number, val y : number) {           // the same as declaring x and y in the body
+class Vec2(val x : Number, val y : Number) {           // the same as declaring x and y in the body
   fun length() : float => Math.sqrt(this.x * this.x + this.y * this.y)
 }
 
@@ -618,7 +654,7 @@ Config("example.org", 443)
 ```
 
 Entries with defaults come after those without. A default is computed afresh for each object
-that needs it, and may use the entries before it (`val height : number = width`). To skip an
+that needs it, and may use the entries before it (`val height : Number = width`). To skip an
 earlier entry, pass the later one by name: `Config(port = 21)`.
 
 A class that needs more than that writes `fun init(...)`. The header's fields are then plain
@@ -634,8 +670,8 @@ initial value are both optional.
 ```astra
 class Account {
   val owner : string            // no initial value: init must set it
-  var balance : number = 0
-  val history : list = []       // a fresh list for every instance
+  var balance : Number = 0
+  val history : List = []       // a fresh list for every instance
   var manager : Person? = null  // class types may name a class declared later
   var note                      // untyped, starts as null
 }
@@ -713,9 +749,9 @@ A property looks like a field from outside but runs code: `get name()` when it i
 `set name(value)` when it is assigned.
 
 ```astra
-class Temperature(var celsius : number) {
-  get fahrenheit() : number => this.celsius * 9 / 5 + 32
-  set fahrenheit(value : number) { this.celsius = (value - 32) * 5 / 9 }
+class Temperature(var celsius : Number) {
+  get fahrenheit() : Number => this.celsius * 9 / 5 + 32
+  set fahrenheit(value : Number) { this.celsius = (value - 32) * 5 / 9 }
 }
 
 val t = Temperature(100)
@@ -1057,7 +1093,7 @@ one of those names clashes with what the enum is given and is an error, unless i
 ```astra
 enum Level {
   low, mid, high, hidden
-  override static get entries() : list => super.entries.filter { it != hidden }
+  override static get entries() : List => super.entries.filter { it != hidden }
   override get name() : string => "level " + super.name
   static fun all() => super.entries
 }
@@ -1112,7 +1148,7 @@ type. It is declared with the type in front of its name, and called like a metho
 fun Shape.describe() => "$name of area ${area()}"    // bare names are the shape's members
 fun string.shout() => upper() + "!"
 fun int.isEven() => this % 2 == 0
-fun list.second() => this[1]
+fun List.second() => this[1]
 fun string?.orEmpty() => this == null ? "" : this    // with ?, null takes it too
 fun any.tag() => "<" + this + ">"                    // every value
 
@@ -1120,8 +1156,8 @@ Shape("dot", 1, 1).describe()        "hi".shout()        4.isEven()        null.
 ```
 
 Inside, `this` is the value the function was called on. The types are a class, an interface,
-an enum, or `int`, `float`, `number`, `string`, `bool`, `list`, `map`, `range`, `function`
-and `any`. A member of the same name always comes first, so an extension cannot change what
+an enum, or `int`, `float`, `Number`, `string`, `bool`, `List`, `Map`, `Range`, `Function`,
+`Bytes` and `any`. A member of the same name always comes first, so an extension cannot change what
 a type already does. An extension function belongs to the type, not to a file: once the file
 that declares it has been loaded, every value of that type has it.
 
@@ -1200,8 +1236,9 @@ import "../shared/util" as Util    // a path that is not made of plain names goe
 **How names are written.** Libraries (folders) and classes, enums, interfaces and objects
 are in Title case: `Jade`, `Jade.Chart`, `ListBox`. Functions, methods, fields, variables and
 constants and enum entries are in camelCase: `openWindow`, `windowOpener`, `Color.black`,
-`Fill.horizontal`. The built-in type names (`int`,
-`string`, `list`, ...) are lowercase, and are the only exception. The language does not
+`Fill.horizontal`. Types are in Title case too (`List`, `Map`, `Number`, `Bytes`), except a fixed
+set of basic ones, which are lowercase: `bool`, `char`, `byte`, `int`, `float`, the storage widths,
+`string`, `any`, `nothing` and `unit`. The language does not
 enforce this; it is how everything that comes with it is named.
 - Built-in names (`print`, `Error`, the types) are in reach everywhere.
 
@@ -1508,9 +1545,9 @@ of the library is built into the runtime and the rest is written in Astra itself
 `examples\words.astra` puts a good part of it to work on a piece of text.
 
 **Functions:** `print(...)`, `write(...)` (no newline), `input(prompt?)`, `len(x)`, `str(x)`,
-`int(x)`, `float(x)`, `type(x)`, `range(end)` / `range(start, end, step?)`,
+`int(x)`, `float(x)`, `type(x)`, `Range(end)` / `Range(start, end, step?)`,
 `assert(cond, message?)`, `clock()`, `args()`, `exit(code?)`, `chr(n)`, `ord(s)`,
-`bytes(size | list)`, `with(object, lambda)`, `repeat(times) { index -> }`, `flush()`
+`Bytes(size | list)`, `with(object, lambda)`, `repeat(times) { index -> }`, `flush()`
 
 **Checks:** `require(condition) { message }`, `check(condition) { message }`,
 `requireNotNull(value)`, `checkNotNull(value)` and `error(message)` throw an `Error`. The
@@ -1621,7 +1658,7 @@ taken apart: `for (name, age) in ages.entries { ... }`.
 | --- | --- |
 | Making | `{"a": 1}`, `{:}`, `mapOf("a" to 1, ...)`, `mutableMapOf(...)`, `emptyMap()`, `buildMap { put(k, v) }` |
 | Reading | `map[key]`, `get(key, default?)`, `getValue(key)` (an error if it is not there), `getOrDefault(key, d)`, `getOrElse(key) { }`, `containsKey(key)`, `key in map`, `has(key)`, `containsValue(v)` |
-| Writing | `map[key] = v`, `put(key, v)` and `remove(key)` (both give what was there before), `set(key, v)`, `putAll(map or pairs)`, `getOrPut(key) { }`, `clear()` |
+| Writing | `map[key] = v`, `put(key, v)` and `remove(key)` (both give what was there before), `set(key, v)`, `putAll(map or pairs)`, `getOrPut(key) { }`, `update(key, start) { old -> new }` (a missing key starts from `start`; gives the new value), `clear()` |
 | Asking | `isEmpty()`, `isNotEmpty()`, `isNullOrEmpty()`, `any { }`, `all { }`, `none { }`, `count { }` |
 | Going through | `forEach { entry -> }`, `forEach { (key, value) -> }`, `forEach { key, value -> }` |
 | A list | `map { }`, `mapNotNull { }`, `flatMap { }`, `toList()` (of pairs) |
@@ -1697,7 +1734,7 @@ for line in notes.readLines() { ... }
 
 val folder = File("out")
 folder.mkdirs()
-File(folder, "data.bin").writeBytes(bytes([1, 2, 3]))    // a file inside a folder
+File(folder, "data.bin").writeBytes(Bytes([1, 2, 3]))    // a file inside a folder
 for file in folder.listFiles() { print(file.name, file.length()) }
 ```
 
@@ -2238,7 +2275,7 @@ opportunity, which is slow but useful for finding memory bugs when changing the 
   Windows-only and needs OpenGL 3.3.
 - Types are checked while the program runs (only literals are checked at compile time), so
   a mismatch shows up when the offending line executes. Typed calls cost a little speed.
-- Loop variables cannot be typed, and the element types in `list<int>` or `(int) -> bool` are
+- Loop variables cannot be typed, and the element types in `List<int>` or `(int) -> bool` are
   read but not checked.
 - Which characters are letters, digits or spaces, and what their upper and lower case are,
   is asked of Windows for characters outside ASCII. There are no regular expressions yet.

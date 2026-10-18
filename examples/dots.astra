@@ -26,15 +26,15 @@ import Jade.*
 
 // ---- What is on the screen ----
 
-class Dot(var x : number, var y : number, var radius : number, val color) {
+class Dot(var x : Number, var y : Number, var radius : Number, val color) {
   var alpha = 1.0                // 0 when it has faded away
   var deadline = 0.0             // when its time runs out, by clock()
   var timeLimit = 1.0            // how long it was given, in seconds
 
-  fun contains(px : number, py : number) => (px - x) * (px - x) + (py - y) * (py - y) <= radius * radius
+  fun contains(px : Number, py : Number) => (px - x) * (px - x) + (py - y) * (py - y) <= radius * radius
 }
 
-class Spark(var x : number, var y : number, val dx : number, val dy : number, val color) {
+class Spark(var x : Number, var y : Number, val dx : Number, val dy : Number, val color) {
   var life = 1.0                 // 1 when it flies out, 0 when it is gone
 }
 
@@ -70,7 +70,7 @@ suspend fun waitForClick() => suspendCoroutine { continuation ->
 
 // Waits for a click on the dot, for at most `millis` milliseconds: true if the click came in
 // time, false if the time ran out first. Two things race, and whichever comes first answers.
-suspend fun clickOn(dot : Dot, millis : number) => suspendCoroutine { continuation ->
+suspend fun clickOn(dot : Dot, millis : Number) => suspendCoroutine { continuation ->
   var done = false
   dot.timeLimit = millis / 1000
   dot.deadline = clock() + dot.timeLimit
@@ -92,7 +92,7 @@ suspend fun clickOn(dot : Dot, millis : number) => suspendCoroutine { continuati
 
 // Runs `step` once a frame for `millis` milliseconds, giving it how far along it is, from 0
 // to 1. Waits until it has run to the end.
-suspend fun animate(millis : number, step) {
+suspend fun animate(millis : Number, step) {
   val start = clock()
   while (true) {
     val t = Math.min((clock() - start) * 1000 / millis, 1.0)
@@ -102,7 +102,7 @@ suspend fun animate(millis : number, step) {
   }
 }
 
-fun easeOut(t : number) => 1 - (1 - t) * (1 - t)
+fun easeOut(t : Number) => 1 - (1 - t) * (1 - t)
 
 // ---- The game ----
 

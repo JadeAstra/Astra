@@ -1,12 +1,12 @@
 // A data class that behaves like a number: operators, a property, destructuring, and
 // extension functions.
 
-data Vec2(val x : number, val y : number) {
+data Vec2(val x : Number, val y : Number) {
   static val zero = Vec2(0, 0)
 
   op +(other : Vec2) => Vec2(x + other.x, y + other.y)
   op -(other : Vec2) => Vec2(x - other.x, y - other.y)
-  op *(scale : number) => Vec2(x * scale, y * scale)
+  op *(scale : Number) => Vec2(x * scale, y * scale)
   op -() => Vec2(-x, -y)
   op <(other : Vec2) => length < other.length
   op [](i : int) => i == 0 ? x : y
@@ -16,7 +16,7 @@ data Vec2(val x : number, val y : number) {
 }
 
 fun Vec2.dot(other : Vec2) => x * other.x + y * other.y
-fun number.times(v : Vec2) => v * this        // so that 2.times(v) reads the other way round
+fun Number.times(v : Vec2) => v * this        // so that 2.times(v) reads the other way round
 
 val a = Vec2(3, 4)
 val b = Vec2(1, 2)

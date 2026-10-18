@@ -8,29 +8,29 @@ interface Drawable {
 abstract class Shape(val name : string) : Drawable {
   static {
     var made = 0
-    fun round2(x : number) : string => "%.2f".format(x)
+    fun round2(x : Number) : string => "%.2f".format(x)
   }
 
   init { made += 1 }                         // runs for every shape that is made
 
-  abstract fun area() : number                // for each kind of shape to write
-  abstract fun perimeter() : number
+  abstract fun area() : Number                // for each kind of shape to write
+  abstract fun perimeter() : Number
 
   override fun outline() => "$name, ${round2(perimeter())} around"
   override fun toString() => "$name: area ${round2(area())}, perimeter ${round2(perimeter())}"
 }
 
-class Circle(val radius : number) : Shape("circle") {
+class Circle(val radius : Number) : Shape("circle") {
   override fun area() => Math.pi * radius * radius
   override fun perimeter() => 2 * Math.pi * radius
 }
 
-class Rect(val width : number, val height : number, name : string = "rectangle") : Shape(name) {
+class Rect(val width : Number, val height : Number, name : string = "rectangle") : Shape(name) {
   override fun area() => width * height
   override fun perimeter() => 2 * (width + height)
 }
 
-class Square(side : number) : Rect(side, side, "square")
+class Square(side : Number) : Rect(side, side, "square")
 
 // An extension function adds to a type from outside. `this` is the shape it is called on.
 fun Shape.describe() => when (this) {

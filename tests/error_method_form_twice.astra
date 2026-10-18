@@ -1,0 +1,6 @@
+// A class's forms of a method differ in their parameters' types (D56).
+class Painter {
+  fun draw(x : int) => "one"
+  fun draw(y : int) => "two"
+}
+// expect compile error: 'draw(int)' is declared twice in class 'Painter'; the forms of a name differ in their parameters' types

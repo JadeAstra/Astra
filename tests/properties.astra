@@ -1,8 +1,8 @@
 // Properties: `get name()` computes a value when it is read, `set name(value)` runs when it
 // is assigned. They are used like fields.
-class Temperature(var celsius : number) {
-  get fahrenheit() : number => this.celsius * 9 / 5 + 32
-  set fahrenheit(value : number) { this.celsius = (value - 32) * 5 / 9 }
+class Temperature(var celsius : Number) {
+  get fahrenheit() : Number => this.celsius * 9 / 5 + 32
+  set fahrenheit(value : Number) { this.celsius = (value - 32) * 5 / 9 }
 
   get description() : string => "${this.celsius} C"
 }
@@ -21,22 +21,22 @@ fun attempt(f) {
 // a property with only a getter cannot be assigned, and its types are checked like a function's
 print(attempt(fun() { t.description = "x" }))    // expect: property 'description' of Temperature cannot be assigned: it has no setter
 print(attempt(fun() { t.description += "x" }))   // expect: property 'description' of Temperature cannot be assigned: it has no setter
-print(attempt(fun() { t.fahrenheit = "hot" }))   // expect: argument 'value' of Temperature.fahrenheit() must be number, got string
+print(attempt(fun() { t.fahrenheit = "hot" }))   // expect: argument 'value' of Temperature.fahrenheit() must be Number, got string
 
 // a setter can check and react before storing the value somewhere
 class Account {
-  var stored : number = 0
-  val history : list = []
+  var stored : Number = 0
+  val history : List = []
 
-  get balance() : number => this.stored
-  set balance(amount : number) {
+  get balance() : Number => this.stored
+  set balance(amount : Number) {
     if amount < 0 { throw Error("balance cannot be negative") }
     if amount == this.stored { return }
     this.history.push(amount)
     this.stored = amount
   }
 
-  fun deposit(amount : number) { this.balance += amount }
+  fun deposit(amount : Number) { this.balance += amount }
 }
 val account = Account()
 account.balance = 50
@@ -47,7 +47,7 @@ print(attempt(fun() { account.balance = -1 }), account.balance)   // expect: bal
 
 // only a setter: the property can be assigned but not read
 class Logger {
-  val lines : list = []
+  val lines : List = []
   set message(text) { this.lines.push("log: $text") }
 }
 val logger = Logger()
@@ -97,7 +97,7 @@ print(handlers.increment(5), handlers.increment(2))   // expect: 5 7
 
 // `get` and `set` are only special at the start of a class member
 class Store {
-  val data : map = {:}
+  val data : Map = {:}
   fun get(key) => this.data.get(key, "missing")
   fun set(key, value) { this.data[key] = value }
   get size() : int => this.data.length
@@ -109,9 +109,9 @@ val set = store.get("b")
 print(get, set, store.size)                      // expect: 1 missing 1
 
 // string interpolation and methods see properties as values
-class Circle(val radius : number) {
-  get area() : number => Math.pi * this.radius * this.radius
-  get diameter() : number => this.radius * 2
+class Circle(val radius : Number) {
+  get area() : Number => Math.pi * this.radius * this.radius
+  get diameter() : Number => this.radius * 2
   fun describe() : string => "circle of diameter ${this.diameter}"
 }
 val c = Circle(2)

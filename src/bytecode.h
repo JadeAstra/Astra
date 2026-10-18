@@ -197,6 +197,15 @@ enum class Op : uint8_t {
     InvokeOwn,          // u16 name, u8 argc               receiver args... -> result
     InvokeOwnTrailing,  // u16 name, u8 argc               receiver args... lambda -> result
 
+    // A name with several forms (overloads, D56): MakeForms gathers them into one value whose
+    // proto is the nested function given, a set of forms (FunctionProto::chooser), and which
+    // calls the form a call's arguments fit.
+    MakeForms,          // u16 nested function, u8 count   forms... -> the set of them
+    // The same for a method of a class: the names of its forms, each the method's name with the
+    // signature of the form it is, are on the stack; the set goes under the method's name.
+    MethodForms,        // u16 nested function, u8 count   class names... -> class
+    StaticForms,        // u16 nested function, u8 count   class names... -> class  (the same for static methods)
+
     Count_,
 };
 
@@ -274,6 +283,18 @@ struct FunctionProto {
     // function when one of these is among the numbers the member is marked with.
     std::vector<uint16_t> classIds;
     uint16_t ownClass = 0;  // the first of them, when the function is written in a class
+
+    // A form of a name that has several (overloads, D56): what tells it from the others, the
+    // types of its parameters as written, `(float, float)`; and those types for choosing a
+    // form when the program runs, where the compiler could not: a TypeId with kTypeNullable
+    // per parameter (0 untyped), and for kTypeInstance the class's name. Empty otherwise.
+    std::string signature;
+    std::vector<uint8_t> paramTypes;
+    std::vector<ObjString*> paramClasses;
+
+    // The set of a name's forms, made by MakeForms: it has no code of its own; calling it
+    // calls the form the arguments fit (VM::chooseForm).
+    bool chooser = false;
 };
 
 // A whole compiled program, ready to run or to write to a bytecode file.

@@ -99,12 +99,12 @@ print(attempt(fun() => 1 >> "2"))                // expect: unsupported operand 
 
 // classes can define them
 class Stream {
-  val parts : list = []
+  val parts : List = []
   op <<(item) : Stream {
     this.parts.push(item)
     return this
   }
-  op >>(count : int) : list => this.parts.slice(0, count)
+  op >>(count : int) : List => this.parts.slice(0, count)
 }
 val out = Stream() << "a" << "b" << 3
 print(out.parts, out >> 2)                       // expect: ["a", "b", 3] ["a", "b"]

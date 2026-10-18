@@ -108,7 +108,7 @@ object Fonts {
 
   // A font from a file that is not installed, or from the bytes of one. A collection
   // (.ttc) holds several: `count` says how many, `index` picks one.
-  fun load(path, index = 0) => Typeface(path is bytes ? __text.fromBytes(path, index) : __text.load(path is File ? path.path : path, index))
+  fun load(path, index = 0) => Typeface(path is Bytes ? __text.fromBytes(path, index) : __text.load(path is File ? path.path : path, index))
   fun count(path) => __text.countIn(path is File ? path.path : path)
 }
 
@@ -224,14 +224,14 @@ class Picture {
       if (pixels.size != width * height * 4) { throw Error("the pixels do not fit a picture of $width by $height") }
       this.pixels = pixels
     } else {
-      this.pixels = bytes(width * height * 4)
+      this.pixels = Bytes(width * height * 4)
       if (color != 0) { __text.fill(this.pixels, width, height, 0, 0, width, height, color) }
     }
   }
 
   // Reads a PNG file, or the bytes of one.
   static fun load(source) {
-    val data = source is bytes ? source : (source is File ? source : File(source)).readBytes()
+    val data = source is Bytes ? source : (source is File ? source : File(source)).readBytes()
     val read = __text.decodePng(data)
     return Picture(read[0], read[1], 0, read[2])
   }
@@ -293,7 +293,7 @@ class Picture {
     return out
   }
 
-  fun copy() => Picture(width, height, 0, bytes(pixels))
+  fun copy() => Picture(width, height, 0, Bytes(pixels))
 
   // The same size and the same pixels.
   op ==(other) => other is Picture and other.width == width and other.height == height and other.pixels == pixels

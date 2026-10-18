@@ -40,7 +40,7 @@ print(attempt(fun() => nope))                 // expect: error: undefined variab
 print(attempt(fun() => null.x))               // expect: error: undefined property 'x' on a value of type null
 print(attempt(fun() => 5()))                  // expect: error: cannot call a value of type int
 print(attempt(fun() => "a" - 1))              // expect: error: unsupported operand types for '-': string and int
-print(attempt(fun() => [] < 1))               // expect: error: cannot compare list and int with '<'
+print(attempt(fun() => [] < 1))               // expect: error: cannot compare List and int with '<'
 print(attempt(fun(a) => a))                   // expect: error: <lambda>() expects 1 argument(s) but got 0
 print(attempt(fun() => Error("x").missing())) // expect: error: undefined method 'missing' on Error
 print(attempt(fun() => assert(1 == 2, "math is broken")))   // expect: error: math is broken

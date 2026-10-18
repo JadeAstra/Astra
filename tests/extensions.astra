@@ -24,18 +24,18 @@ fun string.words() => split(" ")
 fun string.isLong(limit = 5) => length > limit
 fun int.double() => this * 2
 fun int.isEven() => this % 2 == 0
-fun number.half() => this / 2
+fun Number.half() => this / 2
 fun float.rounded() => int(this + 0.5)
 fun bool.toInt() => this ? 1 : 0
-fun list.second() => this[1]
-fun list<int>.total() : int {
+fun List.second() => this[1]
+fun List<int>.total() : int {
   var sum = 0
   for n in this { sum += n }
   return sum
 }
-fun map.keyCount() => keys().length
-fun range.middle() => (start + end) / 2
-fun function.twice(x) => this(this(x))
+fun Map.keyCount() => keys().length
+fun Range.middle() => (start + end) / 2
+fun Function.twice(x) => this(this(x))
 print("hi".shout(), "a b c".words(), "hello!".isLong(), "hey".isLong(2), 21.double(), 3.isEven(), 4.isEven())   // expect: HI! ["a", "b", "c"] true true 42 false true
 print(9.half(), 9.0.half(), 2.6.rounded(), true.toInt(), [1, 2, 3].second(), [1, 2, 3].total(), {"a": 1, "b": 2}.keyCount(), (0..10).middle())   // expect: 4 4.5 3 1 2 6 2 5
 print({ it + 1 }.twice(5), "x".shout().shout(), [3, 4].total().double())   // expect: 7 X!! 14

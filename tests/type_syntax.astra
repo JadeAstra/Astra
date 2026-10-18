@@ -2,15 +2,15 @@
 // their outer type: list, map, function.
 
 class Grid
-fun shapes(items : list<string>, lookup : map<string, list<int>>, test : (int) -> bool,
-           build : (a : int, b : string) -> list<int>) : list<int> => [items.length, lookup.length]
+fun shapes(items : List<string>, lookup : Map<string, List<int>>, test : (int) -> bool,
+           build : (a : int, b : string) -> List<int>) : List<int> => [items.length, lookup.length]
 fun later(callback : ((int) -> bool)? = null, done : () -> unit = {}) : unit { done() }
-fun run(block : Grid.() -> unit, pairs : list<map<string, int>>?, n : number?) : any => n
+fun run(block : Grid.() -> unit, pairs : List<Map<string, int>>?, n : Number?) : any => n
 val add : (int, int) -> int = { x, y -> x + y }
-var tests : list<(string) -> bool> = []
+var tests : List<(string) -> bool> = []
 
-class Box(val items : list<int> = [], var onChange : ((Box) -> unit)? = null) {
-  var cache : map<string, list<Box>>? = null
+class Box(val items : List<int> = [], var onChange : ((Box) -> unit)? = null) {
+  var cache : Map<string, List<Box>>? = null
   fun each(action : (int) -> unit) : Box {
     for item in items { action(item) }
     return this
@@ -22,11 +22,11 @@ val seen = []
 print(Box([1, 2]).each { seen.push(it) } is Box, seen, Box().cache, Box().onChange)   // expect: true [1, 2] null null
 
 // The outer type is enforced.
-try { shapes("a", {:}, { true }, { x, y -> [] }) } catch (e) { print(e.message) }   // expect: argument 'items' of shapes() must be list, got string
-try { shapes([], [], { true }, { x, y -> [] }) } catch (e) { print(e.message) }     // expect: argument 'lookup' of shapes() must be map, got list
-try { shapes([], {:}, 5, { x, y -> [] }) } catch (e) { print(e.message) }           // expect: argument 'test' of shapes() must be function, got int
-try { later(5) } catch (e) { print(e.message) }                                     // expect: argument 'callback' of later() must be function?, got int
-try { tests = "none" } catch (e) { print(e.message) }                               // expect: cannot assign a value of type string to 'tests', which is declared as list
+try { shapes("a", {:}, { true }, { x, y -> [] }) } catch (e) { print(e.message) }   // expect: argument 'items' of shapes() must be List, got string
+try { shapes([], [], { true }, { x, y -> [] }) } catch (e) { print(e.message) }     // expect: argument 'lookup' of shapes() must be Map, got List
+try { shapes([], {:}, 5, { x, y -> [] }) } catch (e) { print(e.message) }           // expect: argument 'test' of shapes() must be Function, got int
+try { later(5) } catch (e) { print(e.message) }                                     // expect: argument 'callback' of later() must be Function?, got int
+try { tests = "none" } catch (e) { print(e.message) }                               // expect: cannot assign a value of type string to 'tests', which is declared as List
 print(shapes([1, 2], {:}, print, fun(a, b) => []))   // expect: [2, 0]
 
 // unit: a function that gives nothing back. any: no check at all.

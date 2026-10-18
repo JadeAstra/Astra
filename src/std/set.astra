@@ -50,7 +50,7 @@ class Set {
   fun removeAll(what) {
     val before = items.size
     for item in items.keys {
-      if (what is function ? what(item) : what.contains(item)) { items.remove(item) }
+      if (what is Function ? what(item) : what.contains(item)) { items.remove(item) }
     }
     return items.size != before
   }
@@ -58,7 +58,7 @@ class Set {
   fun retainAll(what) {
     val before = items.size
     for item in items.keys {
-      if (!(what is function ? what(item) : what.contains(item))) { items.remove(item) }
+      if (!(what is Function ? what(item) : what.contains(item))) { items.remove(item) }
     }
     return items.size != before
   }
@@ -100,13 +100,13 @@ class Set {
   // set + item, set + collection, and the same with -, each giving a new set.
   op +(other) {
     val out = Set(this)
-    if (other is list or other is Set or other is range) { out.addAll(other) } else { out.add(other) }
+    if (other is List or other is Set or other is Range) { out.addAll(other) } else { out.add(other) }
     return out
   }
 
   op -(other) {
     val out = Set(this)
-    if (other is list or other is Set or other is range) {
+    if (other is List or other is Set or other is Range) {
       for item in other { out.remove(item) }
     } else {
       out.remove(other)

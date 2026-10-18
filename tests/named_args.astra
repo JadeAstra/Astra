@@ -29,7 +29,7 @@ print(describe("Ann", city = "Oslo", age = 30))  // expect: Ann, 30, Oslo
 print(attempt(fun() => describe("Ann", city = "Oslo")))     // expect: describe() is missing argument 'age'
 print(attempt(fun() => describe(name = "Ann", age = "x", city = "Oslo")))   // expect: argument 'age' of describe() must be int, got string
 print(attempt(fun() => describe("a", 1, "b", "c", name = "d")))             // expect: describe() expects 3 argument(s) but got 5
-val scale = fun(value : number, by : number) : number => value * by
+val scale = fun(value : Number, by : Number) : Number => value * by
 print(scale(by = 3, value = 2))                  // expect: 6
 
 // arguments are evaluated in the order they are written
@@ -40,7 +40,7 @@ print(order)                                     // expect: ["city", "name", "ag
 
 // methods, static methods, initializers and super calls
 class Shape(val name : string, val sides : int = 4) {
-  fun scaled(factor : number, label : string) : string => "${this.name} x$factor ($label)"
+  fun scaled(factor : Number, label : string) : string => "${this.name} x$factor ($label)"
   static fun make(name : string, sides : int) : Shape => Shape(sides = sides, name = name)
 }
 class Triangle : Shape {
@@ -62,7 +62,7 @@ print(penguin.name, penguin.legs, penguin.canFly, Bird(name = "robin").canFly)  
 print(attempt(fun() => Bird(canFly = false)))    // expect: Bird() is missing argument 'name'
 
 // defaults that depend on earlier entries still work when those are passed by name
-class Box(val width : number, val height : number = width, val label : string = "${width}x$height")
+class Box(val width : Number, val height : Number = width, val label : string = "${width}x$height")
 print(Box(width = 2).label, Box(label = "L", width = 3).height, Box(2, label = "named").label)   // expect: 2x2 3 named
 
 // built-in functions and classes without an init have no names to match

@@ -1,0 +1,67 @@
+// A name with several forms (D56): the call means the most specific form its arguments fit.
+// One no form takes, and one two fit as well, are reported where they are written.
+
+fun area(r : float) : float => 3.0 * r * r
+fun area(w : float, h : float) : float => w * h
+fun describe(x : int) : string => "an int"
+fun describe(x) : string => "something"
+fun pair(a : int, b : Number) : string => "int first"
+fun pair(a : Number, b : int) : string => "int second"
+fun run(block : () -> int) : int => block()
+fun run(times : int, block : () -> int) : int => times * block()
+
+fun uses(text : string) {
+  val whole : float = area(2.0) + area(2.0, 3.0)
+  val one : string = describe(1) + describe(text)
+  val runs : int = run { 1 } + run(2) { 3 }
+  print(area(text))           // check: no form of area(...) takes a string; there are area(r : float) and area(w : float, h : float)
+  print(area(1.0, 2.0, 3.0))  // check: no form of area(...) takes a float, a float, a float; there are area(r : float) and area(w : float, h : float)
+  print(pair(1, 1))           // check: this call fits more than one form of pair(...): pair(a : int, b : Number) and pair(a : Number, b : int); give an argument a type that tells them apart, with a typed variable or 'as'
+  val wrong : int = area(2.0) // check: 'wrong' is an int; it cannot start as a float
+  print(whole, one, runs, wrong)
+}
+
+class Pen(val width : int)
+class Painter {
+  fun draw(p : Pen) : string => "with a pen"
+  fun draw(x : int, y : int) : string => "at a point"
+}
+class Fancy : Painter() {
+  fun draw(text : string) : string => "writing"
+}
+fun painting(fancy : Fancy, painter : Painter) {
+  val drawn : string = fancy.draw(Pen(1)) + fancy.draw("hi") + fancy.draw(1, 2) + painter.draw(Pen(2))
+  print(painter.draw("hi"))   // check: no form of Painter.draw(...) takes a string; there are Painter.draw(p : Pen) and Painter.draw(x : int, y : int)
+  print(fancy.draw(true))     // check: no form of Fancy.draw(...) takes a bool; there are Fancy.draw(text : string), Fancy.draw(p : Pen) and Fancy.draw(x : int, y : int)
+  print(drawn)
+}
+
+class Level(val value : int) {
+  op +(by : int) : Level => Level(this.value + by)
+  op +(other : Level) : Level => Level(this.value + other.value)
+}
+class Maker {
+  static fun of(x : int) : string => "int"
+  static fun of(s : string) : string => "string"
+}
+fun operating(a : Level) {
+  val b : Level = a + 2 + Level(5)
+  val made : string = Maker.of(1) + Maker.of("a")
+  val wrong : int = a + 2     // check: 'wrong' is an int; it cannot start as a Level
+  print(a + true)             // check: no form of Level's operator + takes a bool
+  print(Maker.of(true))       // check: no form of Maker.of(...) takes a bool; there are Maker.of(x : int) and Maker.of(s : string)
+  print(b, made, wrong)
+}
+
+fun List<int>.total() : int => 0
+fun List<float>.total() : float => 0.0
+fun string.pad(n : int) : string => this
+fun string.pad(s : string) : string => this
+fun extending(ints : List<int>, floats : List<float>, words : List<string>) {
+  val a : int = ints.total()
+  val b : float = floats.total()
+  val c : string = "x".pad(1) + "y".pad("z")
+  print(words.total())        // check: no form of total(...) is for a List<string>; there are List<int>.total() and List<float>.total()
+  print("x".pad(true))        // check: no form of pad(...) takes a bool; there are string.pad(n : int) and string.pad(s : string)
+  print(a, b, c)
+}

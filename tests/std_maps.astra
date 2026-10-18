@@ -35,6 +35,13 @@ for word in ["a", "b", "a"] { counts[word] = counts.getOrDefault(word, 0) + 1 }
 val groups = {:}
 for n in 1..5 { groups.getOrPut(n % 2) { [] }.add(n) }
 print(counts, groups)                                        // expect: {"a": 2, "b": 1} {1: [1, 3, 5], 0: [2, 4]}
+// Changing what a key holds, from a start value where the key is not there (L118).
+val byKind = {:}
+for n in 1..5 { byKind.update(n % 2 == 0 ? "even" : "odd", []) { it + [n] } }
+print(byKind)                                                // expect: {"odd": [1, 3, 5], "even": [2, 4]}
+print(byKind.update("odd", []) { it.size }, byKind.update("none", "") { it + "!" }, byKind)   // expect: 3 ! {"odd": 3, "even": [2, 4], "none": "!"}
+val held = {"x": null}
+print(held.update("x", 5) { it == null ? "was null" : "had a value" })   // expect: was null
 
 // forEach takes an entry, an entry taken apart, or a key and a value.
 ages.forEach { write(it.key, " ") }
@@ -67,10 +74,10 @@ grid[Point(1, 2)] = "a point"
 grid[[1, 2]] = "a list"
 grid[1 to "role"] = "a pair"
 grid[1..3] = "a range"
-grid[bytes([1, 2])] = "bytes"
+grid[Bytes([1, 2])] = "bytes"
 val plain = Plain(1)
 grid[plain] = "an object"
-print(grid[Point(1, 2)], grid[[1, 2]], grid[Pair(1, "role")], grid[1..3], grid[bytes([1, 2])])   // expect: a point a list a pair a range bytes
+print(grid[Point(1, 2)], grid[[1, 2]], grid[Pair(1, "role")], grid[1..3], grid[Bytes([1, 2])])   // expect: a point a list a pair a range bytes
 print(grid[Point(2, 1)], grid[[2, 1]], grid[1..<3], grid[plain], grid[Plain(1)], grid.size)   // expect: null null null an object null 6
 print(grid.containsKey([1, 2]), Point(1, 2) in grid, grid.remove(Point(1, 2)), grid.size)   // expect: true true a point 5
 // Keys that hold keys.

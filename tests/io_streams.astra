@@ -25,10 +25,10 @@ val file = File("io-streams-test.txt")
 file.outputStream().use { out ->
   out.println("one")
   out.write("two\n")
-  out.write(bytes([116, 104, 114, 101, 101]))
+  out.write(Bytes([116, 104, 114, 101, 101]))
 }
 val stream = file.inputStream()
-print(stream.readLine(), stream.read(2), stream.isOpen)      // expect: one bytes[116, 119] true
+print(stream.readLine(), stream.read(2), stream.isOpen)      // expect: one Bytes[116, 119] true
 print(stream.readText() == "o\nthree", stream.readLine(), stream.read())   // expect: true null null
 stream.close()
 print(stream.isOpen)                                         // expect: false

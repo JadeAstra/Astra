@@ -1,0 +1,148 @@
+// A name with several forms (D56): each differs from the others in its parameters' types, and
+// a call means the most specific form its arguments fit. Where the types are known that is
+// worked out when compiling; otherwise when the call runs.
+
+fun area(r : float) : float => 3.0 * r * r
+fun area(w : float, h : float) : float => w * h
+print(area(2.0), area(2.0, 3.0))                 // expect: 12.0 6.0
+
+// By type: a form without a type takes anything, and is the last chosen.
+fun describe(x : int) => "an int"
+fun describe(x : string) => "a string"
+fun describe(x : List<int>) => "a list"
+fun describe(x) => "something"
+print(describe(1), describe("a"), describe([1, 2]), describe(true))   // expect: an int a string a list something
+
+// Chosen when the call runs, where the argument's type is not known when compiling.
+fun pick(v) => describe(v)
+print(pick(5), pick("b"), pick(null), pick(2.5))   // expect: an int a string something something
+val described = describe
+print(described(7), described("x"))              // expect: an int a string
+
+// Classes: the nearest class wins.
+class Shape(val name : string)
+class Circle(val r : float) : Shape("circle")
+fun show(s : Shape) => "a shape"
+fun show(c : Circle) => "a circle"
+val shapes : List<Shape> = [Shape("square"), Circle(1.0)]
+print(show(Shape("x")), show(Circle(2.0)), show(shapes[0]), pick2(shapes[1]))   // expect: a shape a circle a shape a circle
+fun pick2(v) => show(v)
+
+// By name, and with a lambda after the call.
+fun label(text : string) => "label " + text
+fun label(text : string, size : int) => "label " + text + " at " + size
+print(label(text = "a"), label("b", size = 3), label(size = 4, text = "c"))   // expect: label a label b at 3 label c at 4
+fun run(block : () -> int) => "run " + block()
+fun run(times : int, block : () -> int) => "run " + times + " times: " + block()
+print(run { 1 }, run(2) { 3 })                   // expect: run 1 run 2 times: 3
+
+// Between two that fit as well, one without a vararg, then one that leaves fewer defaults.
+fun total(a : int, b : int) => "two"
+fun total(vararg items : int) => "many"
+print(total(1, 2), total(1, 2, 3), total())      // expect: two many many
+fun greet(name : string) => "hi " + name
+fun greet(name : string, loud : bool = false) => loud ? "HI " + name : "hello " + name
+print(greet("a"), greet("b", true))              // expect: hi a HI b
+
+fun attempt(f) {
+  try { return f() } catch (e) { return e.message }
+}
+
+// What no form takes, and what two fit as well, are errors.
+fun anyArea(v) => area(v)
+print(attempt(fun() => anyArea("wide")))         // expect: argument 'r' of area() must be float, got string
+fun pair(a : int, b : Number) => "int first"
+fun pair(a : Number, b : int) => "int second"
+fun anyPair(x, y) => pair(x, y)
+print(pair(1, 2.5), pair(2.5, 1), attempt(fun() => anyPair(1, 1)))   // expect: int first int second this call fits more than one form of pair(): pair(int, Number) and pair(Number, int); write the types of what is passed, so that the form is chosen when compiling
+
+// Methods: a class may have several forms of a method, and a subclass may override one form
+// and add others. An override takes the place of the form with its parameters' types.
+class Canvas
+class Pen(val width : int)
+class Painter {
+  fun draw(c : Canvas) => "on a canvas"
+  fun draw(p : Pen) => "with a pen " + p.width
+  fun draw(x : int, y : int) => "at " + x + "," + y
+}
+val painter = Painter()
+fun loose(p, v) => p.draw(v)
+print(painter.draw(Canvas()), painter.draw(Pen(2)), painter.draw(1, 2), loose(painter, Pen(3)))   // expect: on a canvas with a pen 2 at 1,2 with a pen 3
+class Fancy : Painter() {
+  override fun draw(c : Canvas) => "fancy on a canvas"
+  fun draw(text : string) => "writing " + text
+}
+val fancy = Fancy()
+val asPainter : Painter = fancy
+print(fancy.draw(Canvas()), fancy.draw(Pen(1)), fancy.draw("hi"), asPainter.draw(Canvas()), loose(fancy, "x"))   // expect: fancy on a canvas with a pen 1 writing hi fancy on a canvas writing x
+
+// One form above and another below: the class above has only its own.
+class Base {
+  fun size(x : int) => "int " + x
+}
+class Derived : Base() {
+  fun size(s : string) => "string " + s
+}
+fun looseSize(o, v) => o.size(v)
+print(Derived().size(1), Derived().size("a"), Base().size(2), looseSize(Derived(), 5), attempt(fun() => looseSize(Base(), "b")))   // expect: int 1 string a int 2 int 5 argument 'x' of Base.size() must be int, got string
+
+// Interfaces, and the forms they ask for.
+interface Speaker {
+  fun say(n : int) : string
+  fun say(s : string) : string
+}
+class Parrot : Speaker {
+  override fun say(n : int) => "number " + n
+  override fun say(s : string) => "word " + s
+}
+val speaker : Speaker = Parrot()
+fun looseSay(o, v) => o.say(v)
+print(speaker.say(1), speaker.say("hello"), looseSay(speaker, 2))   // expect: number 1 word hello number 2
+
+// Written override, an untyped method with one form above takes its place, even with a
+// parameter more that has a default.
+class Plain {
+  fun paint(g) => "plain"
+}
+class Extra : Plain() {
+  override fun paint(g, alpha = 1.0) => "extra " + alpha
+}
+val plain : Plain = Extra()
+print(plain.paint(0), Extra().paint(0, 0.5))     // expect: extra 1.0 extra 0.5
+
+// Operators and static methods have forms too.
+class Level(val value : int) {
+  op +(by : int) : Level => Level(this.value + by)
+  op +(other : Level) : Level => Level(this.value + other.value)
+  fun toString() : string => "L${this.value}"
+}
+var level = Level(1)
+level++
+print(level + 2, level + Level(5), level)        // expect: L4 L7 L2
+class Maker {
+  static fun of(x : int) => "made of an int"
+  static fun of(s : string) => "made of a string"
+  static fun both() => of(1) + ", " + of("a")
+}
+print(Maker.of(1), Maker.of("a"), Maker.both())  // expect: made of an int made of a string made of an int, made of a string
+
+// Extension functions: the receiver's type is part of what tells forms apart, its type
+// arguments too, so List<int> and List<float> can each have a total().
+fun string.pad(n : int) : string => this + ".".repeat(n)
+fun string.pad(s : string) : string => this + s
+fun loosePad(t, v) => t.pad(v)
+print("a".pad(2), "a".pad("--"), loosePad("b", 1), loosePad("b", "!"))   // expect: a.. a-- b. b!
+fun List<int>.total() : int {
+  var sum = 0
+  for x in this { sum += x }
+  return sum
+}
+fun List<float>.total() : float {
+  var sum = 0.0
+  for x in this { sum += x }
+  return sum
+}
+val ints : List<int> = [1, 2, 3]
+val floats : List<float> = [1.5, 2.5]
+fun looseTotal(xs) => xs.total()
+print(ints.total(), floats.total(), attempt(fun() => looseTotal(ints)))   // expect: 6 4.0 this call fits more than one form of total(): total[List<int>]() and total[List<float>](); write the types of what is passed, so that the form is chosen when compiling

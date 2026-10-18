@@ -303,11 +303,18 @@ struct ObjUpvalue final : Obj {
     explicit ObjUpvalue(Value* slot) : Obj(ObjType::Upvalue), location(slot) {}
 };
 
-struct ObjClosure final : Obj {
+struct ObjClosure : Obj {
     const FunctionProto* const proto;
     std::vector<ObjUpvalue*> upvalues;
     ObjClosure(const FunctionProto* p, size_t upvalueCount)
         : Obj(ObjType::Closure), proto(p), upvalues(upvalueCount, nullptr) {}
+};
+
+// The forms of a name that has several (overloads, D56), as one function. Its proto is a set
+// of forms (FunctionProto::chooser); calling it calls the form the arguments fit.
+struct ObjForms final : ObjClosure {
+    std::vector<ObjClosure*> forms;
+    explicit ObjForms(const FunctionProto* p) : ObjClosure(p, 0) {}
 };
 
 // Native functions receive their arguments as a pointer into the VM stack.

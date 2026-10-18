@@ -51,6 +51,7 @@ private:
     void skipAnnotations();
 
     StmtPtr declaration();
+    StmtPtr externalDeclaration();
     TypeAnnotation optionalType();
     TypeAnnotation typeExpression();
     TypeAnnotation checkedType();

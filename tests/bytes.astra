@@ -1,29 +1,29 @@
 // bytes: binary data. A fixed number of elements, each a whole number from 0 to 255.
 
-val zeros = bytes(4)
-val data = bytes([1, 2, 255])
-print(zeros, data, data.size, data.length, data[0], data[2], data[-1], zeros is bytes, [1] is bytes, type(data))   // expect: bytes[0, 0, 0, 0] bytes[1, 2, 255] 3 3 1 255 255 true false bytes
+val zeros = Bytes(4)
+val data = Bytes([1, 2, 255])
+print(zeros, data, data.size, data.length, data[0], data[2], data[-1], zeros is Bytes, [1] is Bytes, type(data))   // expect: Bytes[0, 0, 0, 0] Bytes[1, 2, 255] 3 3 1 255 255 true false Bytes
 
 // Elements can be changed; nothing but a byte fits.
 zeros[1] = 200
 zeros[-1] = 7
 zeros[0] += 5
-print(zeros)                                // expect: bytes[5, 200, 0, 7]
+print(zeros)                                // expect: Bytes[5, 200, 0, 7]
 try { zeros[0] = 256 } catch (e) { print(e.message) }    // expect: a byte is a whole number from 0 to 255, not 256
 try { zeros[0] = -1 } catch (e) { print(e.message) }     // expect: a byte is a whole number from 0 to 255, not -1
 try { zeros[0] = 1.5 } catch (e) { print(e.message) }    // expect: a byte is a whole number from 0 to 255, not 1.5
 try { zeros[4] = 1 } catch (e) { print(e.message) }      // expect: bytes index 4 is out of range (size 4)
-try { bytes([1, 300]) } catch (e) { print(e.message) }   // expect: a byte is a whole number from 0 to 255, not 300
-try { bytes("text") } catch (e) { print(e.message) }
+try { Bytes([1, 300]) } catch (e) { print(e.message) }   // expect: a byte is a whole number from 0 to 255, not 300
+try { Bytes("text") } catch (e) { print(e.message) }
 // expect: bytes() takes a size, a list of numbers or other bytes, not a value of type string; text becomes bytes with toBytes()
 
 // Joining, slicing, copying, comparing by content.
-val joined = data + bytes([9])
-val copy = bytes(data)
+val joined = data + Bytes([9])
+val copy = Bytes(data)
 copy[0] = 100
-print(joined, joined.slice(1, 3), joined.slice(-2), data, copy, data == bytes([1, 2, 255]), data == copy, data === data)
-// expect: bytes[1, 2, 255, 9] bytes[2, 255] bytes[255, 9] bytes[1, 2, 255] bytes[100, 2, 255] true false true
-print(data.toList(), data.contains(255), 255 in data, 3 in data, data.indexOf(2), bytes(2).fill(9))   // expect: [1, 2, 255] true true false 1 bytes[9, 9]
+print(joined, joined.slice(1, 3), joined.slice(-2), data, copy, data == Bytes([1, 2, 255]), data == copy, data === data)
+// expect: Bytes[1, 2, 255, 9] Bytes[2, 255] Bytes[255, 9] Bytes[1, 2, 255] Bytes[100, 2, 255] true false true
+print(data.toList(), data.contains(255), 255 in data, 3 in data, data.indexOf(2), Bytes(2).fill(9))   // expect: [1, 2, 255] true true false 1 Bytes[9, 9]
 
 // A loop gives the numbers.
 var sum = 0
@@ -33,18 +33,18 @@ print(sum)                                  // expect: 258
 // To and from text, as UTF-8.
 val encoded = "héllo €".toBytes()
 print(encoded.size, "héllo €".length, encoded.slice(0, 3), encoded.decodeToString(), encoded.decodeToString() == "héllo €")
-// expect: 10 7 bytes[104, 195, 169] héllo € true
-print(bytes([72, 105]).decodeToString(), "".toBytes().size, bytes(0))   // expect: Hi 0 bytes[]
+// expect: 10 7 Bytes[104, 195, 169] héllo € true
+print(Bytes([72, 105]).decodeToString(), "".toBytes().size, Bytes(0))   // expect: Hi 0 Bytes[]
 
 // As a declared type, and long ones print in short.
-fun checksum(payload : bytes) : int {
+fun checksum(payload : Bytes) : int {
   var total = 0
   for b in payload { total = (total + b) % 256 }
   return total
 }
-print(checksum(joined), bytes(40).size)     // expect: 11 40
-print(bytes(40))   // expect: bytes[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, ... 8 more]
-try { checksum([1, 2]) } catch (e) { print(e.message) }   // expect: argument 'payload' of checksum() must be bytes, got list
+print(checksum(joined), Bytes(40).size)     // expect: 11 40
+print(Bytes(40))   // expect: Bytes[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, ... 8 more]
+try { checksum([1, 2]) } catch (e) { print(e.message) }   // expect: argument 'payload' of checksum() must be Bytes, got List
 
 // size works on the other collections too, beside length.
 print([1, 2, 3].size, {"a": 1}.size, "abc".size, (1..5).size)   // expect: 3 1 3 5

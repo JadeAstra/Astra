@@ -1,5 +1,5 @@
 // Fields can be listed in a header after the class name.
-class Vec2(val x : number, val y : number) {
+class Vec2(val x : Number, val y : Number) {
   op +(other : Vec2) : Vec2 => Vec2(this.x + other.x, this.y + other.y)
   fun toString() : string => "(${this.x}, ${this.y})"
 }
@@ -25,7 +25,7 @@ print(attempt(fun() { s.nickname = "A" }))       // expect: Student has no field
 
 // header and body fields together; untyped and nullable header fields
 class Order(val id : int, var note, var customer : string?) {
-  var items : list = []
+  var items : List = []
   val created : string = "today"
   fun add(item : string) : Order { this.items.push(item); return this }
   fun summary() : string => "#${this.id} for ${this.customer}: ${this.items.length} item(s), note=${this.note}"
@@ -37,8 +37,8 @@ o.note = null
 print(o.summary())                               // expect: #7 for ada: 2 item(s), note=null
 
 // a class that writes its own init keeps control; the header then only declares fields
-class Temperature(val celsius : number, val label : string) {
-  fun init(celsius : number) {
+class Temperature(val celsius : Number, val label : string) {
+  fun init(celsius : Number) {
     this.celsius = celsius
     this.label = celsius > 25 ? "warm" : "cool"
   }
@@ -69,7 +69,7 @@ print(attempt(fun() { Snake("Sid").name = "x" }))    // expect: cannot assign to
 
 // superclasses with a hand-written init, with no init at all, and one that needs arguments
 class Base {
-  var log : list = []
+  var log : List = []
   fun init(tag : string) { this.log.push(tag) }
 }
 class Derived(val extra : int) : Base("from derived")
@@ -100,7 +100,7 @@ class Scaled(factor : int) : Animal("scaled x$factor", factor * 2)
 print(Scaled(3).describe())                      // expect: scaled x3 has 6 legs
 
 // header entries can have default values, which makes those arguments optional
-class Config(val host : string = "localhost", var port : int = 8080, val tags : list = [])
+class Config(val host : string = "localhost", var port : int = 8080, val tags : List = [])
 val c0 = Config()
 val c1 = Config("example.org")
 val c2 = Config("example.org", 443, ["tls"])
@@ -112,7 +112,7 @@ print(attempt(fun() => Config("a", 1, [], 4)))   // expect: Config.init() expect
 print(attempt(fun() => Config("a", "80")))       // expect: cannot assign a value of type string to field 'port' of Config, which is declared as int
 
 // required entries come first; a default can use the entries before it
-class Box(val width : number, val height : number = width, val label : string = "${width}x$height")
+class Box(val width : Number, val height : Number = width, val label : string = "${width}x$height")
 print(Box(2).label, Box(2, 3).label, Box(2, 3, "custom").label)   // expect: 2x2 2x3 custom
 print(attempt(fun() => Box()))                   // expect: Box.init() expects 1 to 3 argument(s) but got 0
 

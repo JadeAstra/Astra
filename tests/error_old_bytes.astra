@@ -1,0 +1,3 @@
+// The built-ins named after their types took the types' names (R21).
+val buffer = bytes(16)
+// expect compile error: error_old_bytes.astra:2:14: error: 'bytes' is now written 'Bytes', as its type is (type names are Title case)

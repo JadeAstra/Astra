@@ -2,17 +2,17 @@
 // A range can be looped over, and has the methods of a list that only read: each makes a
 // list of its numbers where it needs one.
 
-fun range.forEach(action) {
+fun Range.forEach(action) {
   for number in this { action(number) }
 }
 
-fun range.map(transform) {
+fun Range.map(transform) {
   val out = []
   for number in this { out.add(transform(number)) }
   return out
 }
 
-fun range.mapNotNull(transform) {
+fun Range.mapNotNull(transform) {
   val out = []
   for number in this {
     val made = transform(number)
@@ -21,13 +21,13 @@ fun range.mapNotNull(transform) {
   return out
 }
 
-fun range.flatMap(transform) {
+fun Range.flatMap(transform) {
   val out = []
   for number in this { out.addAll(transform(number)) }
   return out
 }
 
-fun range.filter(predicate) {
+fun Range.filter(predicate) {
   val out = []
   for number in this {
     if (predicate(number)) { out.add(number) }
@@ -35,7 +35,7 @@ fun range.filter(predicate) {
   return out
 }
 
-fun range.any(predicate = null) {
+fun Range.any(predicate = null) {
   if (predicate == null) { return this.length > 0 }
   for number in this {
     if (predicate(number)) { return true }
@@ -43,14 +43,14 @@ fun range.any(predicate = null) {
   return false
 }
 
-fun range.all(predicate) {
+fun Range.all(predicate) {
   for number in this {
     if (!predicate(number)) { return false }
   }
   return true
 }
 
-fun range.none(predicate = null) {
+fun Range.none(predicate = null) {
   if (predicate == null) { return this.length == 0 }
   for number in this {
     if (predicate(number)) { return false }
@@ -58,7 +58,7 @@ fun range.none(predicate = null) {
   return true
 }
 
-fun range.count(predicate = null) {
+fun Range.count(predicate = null) {
   if (predicate == null) { return this.length }
   var total = 0
   for number in this {
@@ -67,43 +67,43 @@ fun range.count(predicate = null) {
   return total
 }
 
-fun range.firstOrNull(predicate = null) {
+fun Range.firstOrNull(predicate = null) {
   for number in this {
     if (predicate == null or predicate(number)) { return number }
   }
   return null
 }
 
-fun range.find(predicate) => this.firstOrNull(predicate)
+fun Range.find(predicate) => this.firstOrNull(predicate)
 
-fun range.sum() {
+fun Range.sum() {
   var total = 0
   for number in this { total += number }
   return total
 }
 
-fun range.sumOf(selector) {
+fun Range.sumOf(selector) {
   var total = 0
   for number in this { total += selector(number) }
   return total
 }
 
-fun range.associateWith(valueSelector) {
+fun Range.associateWith(valueSelector) {
   val out = {:}
   for number in this { out[number] = valueSelector(number) }
   return out
 }
 
-fun range.isNotEmpty() => this.length > 0
-fun range.reversed() => this.toList().reversed()
-fun range.toMutableList() => this.toList()
-fun range.toSet() => Set(this)
+fun Range.isNotEmpty() => this.length > 0
+fun Range.reversed() => this.toList().reversed()
+fun Range.toMutableList() => this.toList()
+fun Range.toSet() => Set(this)
 
-fun range.random() {
+fun Range.random() {
   if (this.length == 0) { throw Error("random() of an empty range") }
   return this.start + Math.randomInt(0, this.length - 1) * this.step
 }
 
-fun range.joinToString(separator = ", ", prefix = "", postfix = "", limit = -1, truncated = "...", transform = null) {
+fun Range.joinToString(separator = ", ", prefix = "", postfix = "", limit = -1, truncated = "...", transform = null) {
   return this.toList().joinToString(separator, prefix, postfix, limit, truncated, transform)
 }

@@ -1,0 +1,3 @@
+// Type names are Title case but for a fixed set (R21): the old lowercase names say what to write.
+val names : list<string> = []
+// expect compile error: error_old_type_name.astra:2:13: error: type names are written in Title case: 'list' is List (only bool, char, byte, int, float, string, any, nothing, unit and the storage widths are lowercase)

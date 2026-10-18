@@ -37,7 +37,7 @@ using StmtPtr = std::unique_ptr<Stmt>;
 // position is that of the type name. When the program runs only `name` and `nullable` are
 // looked at; the type checker reads the rest.
 struct TypeAnnotation : Node {
-    std::string name;       // empty when no type was written; "function" for a function type
+    std::string name;       // empty when no type was written; "Function" for a function type
     bool nullable = false;  // ends in '?'
 
     // `list<int>`, `map<string, Shape>`: the type arguments. `list<*>` has one star.
@@ -317,6 +317,12 @@ struct VarStmt : Stmt {
 
     TypeAnnotation type;
 
+    // `external val String.size : int`: a property the C++ provides on a built-in type, and the
+    // type parameters it names (`external val <K, V> Map<K, V>.keys : List<K>`).
+    bool isExternal = false;
+    TypeAnnotation receiverType;
+    std::vector<TypeParam> typeParams;
+
     VarStmt() : Stmt(StmtKind::Var) {}
 };
 
@@ -449,7 +455,11 @@ struct FunctionStmt : Stmt {
     // named, a class or a built-in type, for every value of that type; `this` is the value.
     std::string receiver;
     bool receiverNullable = false;  // `fun string?.orEmpty()`: null takes it too
-    TypeAnnotation receiverType;    // the receiver in full, type arguments included: `list<T>`
+    TypeAnnotation receiverType;    // the receiver in full, type arguments included: `List<T>`
+
+    // `external fun print(vararg items : any?)`: provided by the C++, declared in Astra so that its
+    // types and parameter names are known. Only in the standard library; it has no body.
+    bool isExternal = false;
     FunctionStmt() : Stmt(StmtKind::Function) {}
 };
 

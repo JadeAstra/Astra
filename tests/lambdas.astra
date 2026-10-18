@@ -19,7 +19,7 @@ print(hello(), hello("ignored"))                  // expect: hello hello
 // The empty lambda does nothing; {:} is the empty map.
 val nothing = {}
 val empty = {:}
-print(nothing(), nothing(1), type(nothing), type(empty), empty)   // expect: null null function map {}
+print(nothing(), nothing(1), type(nothing), type(empty), empty)   // expect: null null Function Map {}
 
 // Maps with entries are still maps.
 val ages = { "Ann": 9, bob: 10, 3: "three", [1 + 1]: "two" }
@@ -70,6 +70,6 @@ print(table)                                      // expect: [[11, 21], [12, 22]
 
 // A function type as a declared type.
 fun run(f : (int) -> int, start : int) : int => f(start)
-val callbacks : list<(int) -> int> = [{ it + 1 }, { it * 3 }]
-val names : map<string, list<int>> = { "a": [1] }
+val callbacks : List<(int) -> int> = [{ it + 1 }, { it * 3 }]
+val names : Map<string, List<int>> = { "a": [1] }
 print(run(callbacks[1], 5), names)                // expect: 15 {"a": [1]}

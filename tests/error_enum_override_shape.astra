@@ -3,4 +3,4 @@ enum Bad {
   first, second
   override static fun entries(count) => [first]
 }
-// expect compile error: an override of 'entries' has to keep its shape: override static get entries() : list
+// expect compile error: an override of 'entries' has to keep its shape: override static get entries() : List

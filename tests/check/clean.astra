@@ -13,7 +13,7 @@ class Square(val side : float) : Shape {
   override fun area() : float => side * side
 }
 
-fun largest(shapes : list<Shape>) : Shape? {
+fun largest(shapes : List<Shape>) : Shape? {
   var best : Shape? = null
   for (s in shapes) {
     if (best == null or s.area() > best.area()) { best = s }
@@ -21,7 +21,7 @@ fun largest(shapes : list<Shape>) : Shape? {
   return best
 }
 
-val shapes : list<Shape> = [Circle(1.0), Square(2.0)]
+val shapes : List<Shape> = [Circle(1.0), Square(2.0)]
 val big = largest(shapes)
 val area : float = big?.area() ?: 0.0
 print(area > 0.0)

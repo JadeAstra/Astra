@@ -23,7 +23,7 @@ class ParallelStream {
   private val items
 
   fun init(source) {
-    this.items = source is list ? source : source.toList()
+    this.items = source is List ? source : source.toList()
   }
 
   // Runs the action on every item, the items dealt out to the cores.
@@ -65,14 +65,14 @@ class ParallelStream {
   fun joinToString(separator = ", ") => items.joinToString(separator)
 }
 
-fun list.parallelStream() => ParallelStream(this)
-fun range.parallelStream() => ParallelStream(this)
+fun List.parallelStream() => ParallelStream(this)
+fun Range.parallelStream() => ParallelStream(this)
 
 // The buffer in as many parts as there are cores, each core given the positions of one part:
 // it may write those and no others.
 //
 //   pixels.parallelChunks { positions -> for i in positions { pixels[i] = shade(i) } }
-fun bytes.parallelChunks(action) {
+fun Bytes.parallelChunks(action) {
   __parallel.chunks(this, action)
 }
 

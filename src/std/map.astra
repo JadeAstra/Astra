@@ -2,7 +2,7 @@
 // The methods a map has besides the built-in ones. A function given to one of them takes an
 // entry, which has a `key` and a `value` and can be taken apart: { (key, value) -> ... }
 
-fun map.getOrPut(key, defaultValue) {
+fun Map.getOrPut(key, defaultValue) {
   val had = this[key]
   if (had != null) { return had }
   val made = defaultValue()
@@ -10,26 +10,34 @@ fun map.getOrPut(key, defaultValue) {
   return made
 }
 
-fun map.getOrElse(key, defaultValue) {
+fun Map.getOrElse(key, defaultValue) {
   val had = this[key]
   return had == null ? defaultValue() : had
 }
 
+// Changing what a key holds, where a key that is not there starts from `start`, for a change
+// that is not one operator (L118; counting is counts[word, default = 0]++). Gives the new value.
+fun Map.update(key, start, change) {
+  val value = change(this.containsKey(key) ? this[key] : start)
+  this[key] = value
+  return value
+}
+
 // Takes another map, or a list of pairs.
-fun map.putAll(from) {
-  if (from is map) {
+fun Map.putAll(from) {
+  if (from is Map) {
     for key in from.keys { this[key] = from[key] }
   } else {
     for (key, value) in from { this[key] = value }
   }
 }
 
-fun map?.orEmpty() => this == null ? {:} : this
-fun map.ifEmpty(defaultValue) => this.size == 0 ? defaultValue() : this
+fun Map?.orEmpty() => this == null ? {:} : this
+fun Map.ifEmpty(defaultValue) => this.size == 0 ? defaultValue() : this
 
 // forEach { entry -> }, forEach { (key, value) -> } or forEach { key, value -> }: the function
 // says which it wants by how many parameters it has.
-fun map.forEach(action) {
+fun Map.forEach(action) {
   if (__flow.arity(action) == 2) {
     for entry in this.entries { action(entry.key, entry.value) }
   } else {
@@ -39,7 +47,7 @@ fun map.forEach(action) {
 
 // -- Asking about the entries --
 
-fun map.any(predicate = null) {
+fun Map.any(predicate = null) {
   if (predicate == null) { return this.size > 0 }
   for entry in this.entries {
     if (predicate(entry)) { return true }
@@ -47,14 +55,14 @@ fun map.any(predicate = null) {
   return false
 }
 
-fun map.all(predicate) {
+fun Map.all(predicate) {
   for entry in this.entries {
     if (!predicate(entry)) { return false }
   }
   return true
 }
 
-fun map.none(predicate = null) {
+fun Map.none(predicate = null) {
   if (predicate == null) { return this.size == 0 }
   for entry in this.entries {
     if (predicate(entry)) { return false }
@@ -62,7 +70,7 @@ fun map.none(predicate = null) {
   return true
 }
 
-fun map.count(predicate = null) {
+fun Map.count(predicate = null) {
   if (predicate == null) { return this.size }
   var total = 0
   for entry in this.entries {
@@ -73,13 +81,13 @@ fun map.count(predicate = null) {
 
 // -- Making a list --
 
-fun map.map(transform) {
+fun Map.map(transform) {
   val out = []
   for entry in this.entries { out.add(transform(entry)) }
   return out
 }
 
-fun map.mapNotNull(transform) {
+fun Map.mapNotNull(transform) {
   val out = []
   for entry in this.entries {
     val made = transform(entry)
@@ -88,14 +96,14 @@ fun map.mapNotNull(transform) {
   return out
 }
 
-fun map.flatMap(transform) {
+fun Map.flatMap(transform) {
   val out = []
   for entry in this.entries { out.addAll(transform(entry)) }
   return out
 }
 
 // The entries as a list of pairs.
-fun map.toList() {
+fun Map.toList() {
   val out = []
   for entry in this.entries { out.add(Pair(entry.key, entry.value)) }
   return out
@@ -103,19 +111,19 @@ fun map.toList() {
 
 // -- Making another map --
 
-fun map.mapValues(transform) {
+fun Map.mapValues(transform) {
   val out = {:}
   for entry in this.entries { out[entry.key] = transform(entry) }
   return out
 }
 
-fun map.mapKeys(transform) {
+fun Map.mapKeys(transform) {
   val out = {:}
   for entry in this.entries { out[transform(entry)] = entry.value }
   return out
 }
 
-fun map.filter(predicate) {
+fun Map.filter(predicate) {
   val out = {:}
   for entry in this.entries {
     if (predicate(entry)) { out[entry.key] = entry.value }
@@ -123,7 +131,7 @@ fun map.filter(predicate) {
   return out
 }
 
-fun map.filterNot(predicate) {
+fun Map.filterNot(predicate) {
   val out = {:}
   for entry in this.entries {
     if (!predicate(entry)) { out[entry.key] = entry.value }
@@ -131,7 +139,7 @@ fun map.filterNot(predicate) {
   return out
 }
 
-fun map.filterKeys(predicate) {
+fun Map.filterKeys(predicate) {
   val out = {:}
   for entry in this.entries {
     if (predicate(entry.key)) { out[entry.key] = entry.value }
@@ -139,7 +147,7 @@ fun map.filterKeys(predicate) {
   return out
 }
 
-fun map.filterValues(predicate) {
+fun Map.filterValues(predicate) {
   val out = {:}
   for entry in this.entries {
     if (predicate(entry.value)) { out[entry.key] = entry.value }
@@ -148,16 +156,16 @@ fun map.filterValues(predicate) {
 }
 
 // A new map with a pair, a list of pairs or another map added.
-fun map.plus(other) {
+fun Map.plus(other) {
   val out = this.toMutableMap()
   if (other is Pair) { out[other.first] = other.second } else { out.putAll(other) }
   return out
 }
 
 // A new map without a key, or without each key of a list.
-fun map.minus(key) {
+fun Map.minus(key) {
   val out = this.toMutableMap()
-  if (key is list or key is Set) {
+  if (key is List or key is Set) {
     for each in key { out.remove(each) }
   } else {
     out.remove(key)
@@ -167,7 +175,7 @@ fun map.minus(key) {
 
 // -- Picking an entry --
 
-fun map.maxByOrNull(selector) => this.entries.maxByOrNull(selector)
-fun map.minByOrNull(selector) => this.entries.minByOrNull(selector)
-fun map.firstOrNull(predicate = null) => this.entries.firstOrNull(predicate)
-fun map.sumOf(selector) => this.entries.sumOf(selector)
+fun Map.maxByOrNull(selector) => this.entries.maxByOrNull(selector)
+fun Map.minByOrNull(selector) => this.entries.minByOrNull(selector)
+fun Map.firstOrNull(predicate = null) => this.entries.firstOrNull(predicate)
+fun Map.sumOf(selector) => this.entries.sumOf(selector)

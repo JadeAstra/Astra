@@ -19,6 +19,7 @@
 
 #include <algorithm>
 #include <functional>
+#include <map>
 #include <set>
 #include <tuple>
 #include <unordered_map>
@@ -122,6 +123,7 @@ struct FuncInfo {
     ClassInfo* owner = nullptr;          // a method's class
     bool isStatic = false;
     bool isExtension = false;
+    bool isExternal = false;             // provided by the C++, declared with `external`
     const FunctionStmt* stmt = nullptr;  // an extension's declaration
     Type receiver;                       // an extension's receiver
 
@@ -196,7 +198,7 @@ struct Unit {
     std::string file, fileKey;
     Namespace* ns = nullptr;
     bool prelude = false;
-    std::vector<StmtPtr> statements;
+    const std::vector<StmtPtr>* statements = nullptr;  // the compiler's, which outlive the checker's use
     std::vector<ImportInfo> imports;
 };
 
@@ -261,6 +263,17 @@ struct Checker::Impl {
     // type parameter (`fun <T> T.twice()`) is filed under "<T>": it is for every type.
     std::unordered_map<std::string, std::unordered_map<std::string, std::vector<FuncInfo*>>> extensions;
     std::unordered_map<const ClassStmt*, ClassInfo*> classOf;
+    // What the C++ provides on the built-in types, declared with `external`: methods, which
+    // come before extensions when the program runs, and properties. By type name.
+    std::unordered_map<std::string, std::unordered_map<std::string, std::vector<FuncInfo*>>> builtinMethods;
+    struct BuiltinProp {
+        const VarStmt* decl = nullptr;
+        Unit* unit = nullptr;
+        bool resolved = false;
+        Type receiver, type;
+        std::vector<std::string> typeParams;
+    };
+    std::unordered_map<std::string, std::unordered_map<std::string, BuiltinProp>> builtinProps;
     std::unordered_map<const FunctionDecl*, FuncInfo*> funcOf;
     std::vector<std::unique_ptr<Unit>> pendingHolders;  // imports seen before their file is added
 
@@ -272,6 +285,9 @@ struct Checker::Impl {
     Unit* unit = nullptr;
     FnCtx* ctx = nullptr;
     std::vector<std::unordered_map<std::string, Local>> scopes;
+    // Classes declared in a block, innermost last. Not cleared for a body checked inside the
+    // block, so the methods of a local class see it, and so do the functions beside it.
+    std::vector<std::unordered_map<std::string, ClassInfo*>> localClasses;
     // Narrowed types of locals, innermost last: `x` after `x != null` or `x is Box`.
     std::vector<std::unordered_map<std::string, Type>> narrowed;
     // The type parameters in reach, innermost last, with their bounds.
@@ -301,18 +317,18 @@ struct Checker::Impl {
             case Type::Bool: s = "bool"; break;
             case Type::Int: s = "int"; break;
             case Type::Float: s = "float"; break;
-            case Type::Number: s = "number"; break;
+            case Type::Number: s = "Number"; break;
             case Type::String: s = "string"; break;
-            case Type::Bytes: s = "bytes"; break;
-            case Type::Range: s = "range"; break;
-            case Type::List: s = "list<" + (t.args.empty() ? std::string("*") : argText(t.args[0])) + ">"; break;
+            case Type::Bytes: s = "Bytes"; break;
+            case Type::Range: s = "Range"; break;
+            case Type::List: s = "List<" + (t.args.empty() ? std::string("*") : argText(t.args[0])) + ">"; break;
             case Type::Map:
-                s = "map<" + (t.args.size() < 2 ? std::string("*") : argText(t.args[0])) + ", " +
+                s = "Map<" + (t.args.size() < 2 ? std::string("*") : argText(t.args[0])) + ", " +
                     (t.args.size() < 2 ? std::string("*") : argText(t.args[1])) + ">";
                 break;
             case Type::Function:
                 if (!t.knownParams) {
-                    s = "function";
+                    s = "Function";
                 } else {
                     s = t.receiver ? argText(*t.receiver) + ".(" : "(";
                     for (size_t i = 0; i < t.args.size(); i++) s += (i ? ", " : "") + argText(t.args[i]);
@@ -601,10 +617,17 @@ struct Checker::Impl {
 
     void gather(Unit& u) {
         if (u.ns != nullptr && u.ns->directory == "<builtin>") builtinNs = u.ns;
-        for (const StmtPtr& stmt : u.statements) {
+        for (const StmtPtr& stmt : *u.statements) {
             switch (stmt->kind) {
                 case StmtKind::Var: {
                     const auto& v = static_cast<const VarStmt&>(*stmt);
+                    if (v.isExternal) {
+                        BuiltinProp& p = builtinProps[v.receiverType.name][v.name];
+                        p.decl = &v;
+                        p.unit = &u;
+                        for (const TypeParam& t : v.typeParams) p.typeParams.push_back(t.name);
+                        break;
+                    }
                     if (!v.pattern.empty()) {
                         for (const std::string& name : v.pattern) {
                             FieldInfo* f = newField(name, &u, nullptr);
@@ -623,7 +646,12 @@ struct Checker::Impl {
                 case StmtKind::Function: {
                     const auto& fs = static_cast<const FunctionStmt&>(*stmt);
                     FuncInfo* f = newFunc(*fs.fn, &u, nullptr);
-                    if (!fs.receiver.empty()) {
+                    f->isExternal = fs.isExternal;
+                    if (!fs.receiver.empty() && fs.isExternal) {
+                        f->isExtension = true;
+                        f->stmt = &fs;
+                        builtinMethods[fs.receiver][fs.fn->name].push_back(f);
+                    } else if (!fs.receiver.empty()) {
                         f->isExtension = true;
                         f->stmt = &fs;
                         extensions[fs.receiverType.typeParam ? std::string("<T>") : fs.receiver][fs.fn->name].push_back(f);
@@ -699,7 +727,9 @@ struct Checker::Impl {
         }
         ClassInfo* k = nullptr;
         size_t i = 1;
-        // A class nested in the one around the code comes first.
+        // A class declared in a block around the code comes first, then one nested in the
+        // class around it.
+        k = localClass(parts[0]);
         for (ClassInfo* c = around; c != nullptr && k == nullptr; c = c->outer) {
             auto n = c->nested.find(parts[0]);
             if (n != c->nested.end()) k = n->second;
@@ -779,19 +809,19 @@ struct Checker::Impl {
             const std::string& n = a.name;
             if (n == "int") t.kind = Type::Int;
             else if (n == "float") t.kind = Type::Float;
-            else if (n == "number") t.kind = Type::Number;
+            else if (n == "Number") t.kind = Type::Number;
             else if (n == "string") t.kind = Type::String;
             else if (n == "bool") t.kind = Type::Bool;
-            else if (n == "bytes") t.kind = Type::Bytes;
-            else if (n == "range") t.kind = Type::Range;
+            else if (n == "Bytes") t.kind = Type::Bytes;
+            else if (n == "Range") t.kind = Type::Range;
             else if (n == "any") t.kind = Type::Any;
             else if (n == "unit" || n == "Unit") t.kind = Type::Unit;
             else if (n == "nothing" || n == "Nothing") t.kind = Type::Nothing;
-            else if (n == "function") t.kind = Type::Function;
-            else if (n == "list") {
+            else if (n == "Function") t.kind = Type::Function;
+            else if (n == "List") {
                 t.kind = Type::List;
                 t.args.push_back(a.args.empty() ? unknownType() : resolve(a.args[0], u));
-            } else if (n == "map") {
+            } else if (n == "Map") {
                 t.kind = Type::Map;
                 t.args.push_back(a.args.size() < 2 ? unknownType() : resolve(a.args[0], u));
                 t.args.push_back(a.args.size() < 2 ? unknownType() : resolve(a.args[1], u));
@@ -881,6 +911,9 @@ struct Checker::Impl {
             f->resultWritten = true;
             f->result = resolve(d.returnType, *f->unit);
             f->resultState = 2;
+        } else if (f->isExternal) {
+            f->result = Type::of(Type::Unit);  // a built-in that writes no result gives none
+            f->resultState = 2;
         }
         ctx = savedCtx;
     }
@@ -922,6 +955,7 @@ struct Checker::Impl {
         FuncInfo* getter = nullptr;
         FuncInfo* setter = nullptr;
         std::vector<FuncInfo*> methods;
+        std::vector<Env> methodEnvs;  // per method: what the type parameters of the class it is in stand for
         Env env;
         bool found() const { return field || getter || setter || !methods.empty(); }
     };
@@ -964,11 +998,290 @@ struct Checker::Impl {
             return false;
         };
         walk(obj.cls, envOf(obj));
+        if (!m.methods.empty()) addInheritedForms(obj, name, m);
         return m;
     }
 
-    // The extension functions of that name that apply to a value of type `t`.
+    // The forms of a method a class has: its own and those of the classes and interfaces
+    // above it, the nearest first, a form its parameters' types repeat being one it overrides.
+    void addInheritedForms(const Type& obj, const std::string& name, Member& m) {
+        m.methods.clear();
+        m.methodEnvs.clear();
+        std::unordered_set<ClassInfo*> visited;
+        std::vector<FuncInfo*> seenMethods;  // nearer ones, those overridden too
+        std::function<void(ClassInfo*, const Env&)> walk = [&](ClassInfo* c, const Env& env) {
+            if (c == nullptr || !visited.insert(c).second) return;
+            if (auto ms = c->methods.find(name); ms != c->methods.end()) {
+                for (FuncInfo* f : ms->second) {
+                    bool overridden = false;
+                    for (FuncInfo* nearer : seenMethods) overridden = overridden || takesPlaceOf(nearer, f);
+                    seenMethods.push_back(f);
+                    if (overridden) continue;
+                    m.methods.push_back(f);
+                    m.methodEnvs.push_back(env);
+                }
+            }
+            resolveSupers(c);
+            auto envFor = [&](ClassInfo* s, const std::vector<Type>& args) {
+                Env e;
+                for (size_t i = 0; i < s->typeParams.size(); i++) e[s->typeParams[i]] = i < args.size() ? subst(args[i], env) : unknownType();
+                return e;
+            };
+            if (c->superclass != nullptr) walk(c->superclass, envFor(c->superclass, c->superArgs));
+            for (size_t i = 0; i < c->interfaces.size(); i++) walk(c->interfaces[i], envFor(c->interfaces[i], c->interfaceArgs[i]));
+        };
+        walk(obj.cls, envOf(obj));
+        if (!m.methodEnvs.empty()) m.env = m.methodEnvs[0];
+    }
+
+    // Whether one method takes the place of another: as many parameters, a vararg in the same
+    // place, and each parameter of the same type, or of a type not written in either.
+    bool sameForm(FuncInfo* a, FuncInfo* b) {
+        resolveFunc(a);
+        resolveFunc(b);
+        if (a->params.size() != b->params.size() || a->vararg != b->vararg) return false;
+        for (size_t i = 0; i < a->params.size(); i++) {
+            const Type& x = static_cast<int>(i) == a->vararg ? a->varargItem : a->params[i];
+            const Type& y = static_cast<int>(i) == b->vararg ? b->varargItem : b->params[i];
+            if (x.unknown() || y.unknown() || x.kind == Type::TypeParam || y.kind == Type::TypeParam) continue;
+            if (argText(x) != argText(y)) return false;
+        }
+        return true;
+    }
+
+    // Of an operator's several forms (`op +(by : int)`, `op +(other : Level)`), the one the operand
+    // fits most narrowly; null where none does, or two as well, or the operand is not known.
+    FuncInfo* operatorForm(const std::vector<FuncInfo*>& forms, const Env& env, const std::vector<Type>& args) {
+        for (const Type& a : args)
+            if (a.unknown()) return nullptr;
+        std::vector<FuncInfo*> fitting;
+        for (FuncInfo* f : forms) {
+            resolveFunc(f);
+            if (f->params.size() != args.size()) continue;
+            bool ok = true;
+            for (size_t i = 0; i < args.size() && ok; i++) ok = fits(args[i], subst(f->params[i], env));
+            if (ok) fitting.push_back(f);
+        }
+        for (FuncInfo* f : fitting) {
+            bool narrowest = true;
+            for (FuncInfo* g : fitting)
+                for (size_t i = 0; i < args.size() && narrowest && g != f; i++)
+                    narrowest = fits(subst(f->params[i], env), subst(g->params[i], env));
+            if (narrowest) return f;
+        }
+        return nullptr;
+    }
+
+    // Whether a method takes the place of one above it: as the same form, or written override
+    // where the name has only that one form above, as untyped code has done with an override
+    // that adds a parameter with a default.
+    bool takesPlaceOf(FuncInfo* f, FuncInfo* g) {
+        if (f == g || sameForm(f, g)) return true;
+        if (f->decl == nullptr || !f->decl->isOverride || f->owner == nullptr) return false;
+        const std::vector<FuncInfo*> forms = formsAbove(f->owner, f->name);
+        return forms.size() == 1 && forms[0] == g;
+    }
+
+    // What formsAbove and familyForms found, by class and name; worked out again when more of
+    // the program is checked.
+    std::map<std::pair<ClassInfo*, std::string>, std::vector<FuncInfo*>> formsAboveKnown, familyKnown;
+
+    // The forms of a method name the classes directly above a class have.
+    std::vector<FuncInfo*> formsAbove(ClassInfo* k, const std::string& name) {
+        auto known = formsAboveKnown.find({k, name});
+        if (known != formsAboveKnown.end()) return known->second;
+        resolveSupers(k);
+        std::vector<ClassInfo*> supers = k->interfaces;
+        if (k->superclass != nullptr) supers.insert(supers.begin(), k->superclass);
+        std::vector<FuncInfo*> forms;
+        for (ClassInfo* s : supers) {
+            Member m;
+            addInheritedForms(selfType(s), name, m);
+            for (FuncInfo* f : m.methods)
+                if (isPlainMethod(f) && std::find(forms.begin(), forms.end(), f) == forms.end()) forms.push_back(f);
+        }
+        formsAboveKnown[{k, name}] = forms;
+        return forms;
+    }
+
+    // ---- Methods with several forms, for the compiler ----
+
+    // The classes each class is the superclass or an interface of.
+    std::unordered_map<ClassInfo*, std::vector<ClassInfo*>> below;
+    size_t belowCounted = 0;
+
+    void countBelow() {
+        for (; belowCounted < classStore.size(); belowCounted++) {
+            ClassInfo* k = classStore[belowCounted].get();
+            resolveSupers(k);
+            if (k->superclass != nullptr) below[k->superclass].push_back(k);
+            for (ClassInfo* i : k->interfaces) below[i].push_back(k);
+        }
+    }
+
+    static bool isPlainMethod(const FuncInfo* f) {
+        return f->decl != nullptr && !f->isStatic && f->decl->accessor == FunctionDecl::Accessor::None && f->name != "init";
+    }
+
+    // The classes above a class, the nearest first: its superclass and interfaces, theirs, ...
+    std::vector<ClassInfo*> above(ClassInfo* k) {
+        std::unordered_set<ClassInfo*> visited{k};
+        std::vector<ClassInfo*> order{k};
+        for (size_t i = 0; i < order.size(); i++) {
+            ClassInfo* c = order[i];
+            resolveSupers(c);
+            std::vector<ClassInfo*> supers = c->interfaces;
+            if (c->superclass != nullptr) supers.insert(supers.begin(), c->superclass);
+            for (ClassInfo* s : supers)
+                if (visited.insert(s).second) order.push_back(s);
+        }
+        order.erase(order.begin());
+        return order;
+    }
+
+    // The forms a method name has among the classes a class is related to: every class below
+    // the highest ones that declare it, above the class or the class itself. One of each.
+    std::vector<FuncInfo*> familyForms(ClassInfo* k, const std::string& name) {
+        auto known = familyKnown.find({k, name});
+        if (known != familyKnown.end()) return known->second;
+        countBelow();
+        std::vector<ClassInfo*> tops;
+        std::vector<ClassInfo*> chain = above(k);
+        chain.insert(chain.begin(), k);
+        for (ClassInfo* c : chain) {
+            if (!c->methods.count(name)) continue;
+            bool higher = false;
+            for (ClassInfo* a : above(c)) higher = higher || a->methods.count(name) != 0;
+            if (!higher) tops.push_back(c);
+        }
+        std::vector<FuncInfo*> forms;
+        std::vector<FuncInfo*> seenMethods;
+        std::unordered_set<ClassInfo*> visited;
+        std::function<void(ClassInfo*)> walk = [&](ClassInfo* c) {
+            if (!visited.insert(c).second) return;
+            if (auto ms = c->methods.find(name); ms != c->methods.end()) {
+                for (FuncInfo* f : ms->second) {
+                    if (!isPlainMethod(f)) continue;
+                    bool known = false;
+                    for (FuncInfo* g : seenMethods) known = known || takesPlaceOf(f, g);
+                    seenMethods.push_back(f);
+                    if (!known) forms.push_back(f);
+                }
+            }
+            auto b = below.find(c);
+            if (b != below.end())
+                for (ClassInfo* d : b->second) walk(d);
+        };
+        for (ClassInfo* t : tops) walk(t);
+        familyKnown[{k, name}] = forms;
+        return forms;
+    }
+
+    // The highest declaration of the form a method is: what it overrides, or itself.
+    FuncInfo* rootOf(FuncInfo* f) {
+        if (f->owner == nullptr) return f;
+        for (FuncInfo* g : formsAbove(f->owner, f->name))
+            if (g != f && takesPlaceOf(f, g)) return rootOf(g);
+        return f;
+    }
+
+    const FunctionDecl* formRoot(const FunctionDecl& method) {
+        auto found = funcOf.find(&method);
+        if (found == funcOf.end()) return nullptr;
+        FuncInfo* f = found->second;
+        if (f->owner == nullptr || !isPlainMethod(f)) return nullptr;
+        if (familyForms(f->owner, f->name).size() < 2) return nullptr;
+        return rootOf(f)->decl;
+    }
+
+    std::vector<const FunctionDecl*> formRoots(const ClassStmt& cls, const std::string& name) {
+        std::vector<const FunctionDecl*> roots;
+        auto found = classOf.find(&cls);
+        if (found == classOf.end()) return roots;
+        ClassInfo* k = found->second;
+        if (familyForms(k, name).size() < 2) return roots;
+        Member m;
+        addInheritedForms(selfType(k), name, m);
+        for (FuncInfo* f : m.methods) {
+            if (!isPlainMethod(f)) continue;
+            const FunctionDecl* root = rootOf(f)->decl;
+            if (std::find(roots.begin(), roots.end(), root) == roots.end()) roots.push_back(root);
+        }
+        return roots;
+    }
+
+    // What tells a function's forms apart: its parameters' types.
+    std::string signatureOf(FuncInfo* f, const Env& env) {
+        resolveFunc(f);
+        std::string sig;
+        for (size_t i = 0; i < f->params.size(); i++) {
+            if (i > 0) sig += ", ";
+            if (static_cast<int>(i) == f->vararg) sig += "vararg ";
+            sig += argText(subst(static_cast<int>(i) == f->vararg ? f->varargItem : f->params[i], env));
+        }
+        return sig;
+    }
+
+    // A form as an error shows it: `area(w : float, h : float)`.
+    std::string formText(const std::string& what, FuncInfo* f, const Env& env) {
+        resolveFunc(f);
+        std::string s = (f->isExtension ? argText(subst(f->receiver, env)) + "." : std::string()) + what + "(";
+        for (size_t i = 0; i < f->params.size(); i++) {
+            if (i > 0) s += ", ";
+            if (static_cast<int>(i) == f->vararg) s += "vararg ";
+            s += f->paramNames[i] + " : " + argText(subst(static_cast<int>(i) == f->vararg ? f->varargItem : f->params[i], env));
+        }
+        return s + ")";
+    }
+
+    // The names a built-in type's own methods and properties are declared under.
+    static std::vector<std::string> builtinKeys(const Type& t) {
+        switch (t.kind) {
+            case Type::String: return {"string"};
+            case Type::List: return {"List"};
+            case Type::Map: return {"Map"};
+            case Type::Range: return {"Range"};
+            case Type::Bytes: return {"Bytes"};
+            case Type::Int: return {"int", "Number"};
+            case Type::Float: return {"float", "Number"};
+            case Type::Number: return {"Number"};
+            default: return {};
+        }
+    }
+
+    // A property the C++ provides on a built-in type, with its type parameters filled in from
+    // the value's type (a Map<string, int>'s keys are a List<string>).
+    bool builtinProperty(const Type& t, const std::string& name, Type& found) {
+        for (const std::string& key : builtinKeys(t)) {
+            auto type = builtinProps.find(key);
+            if (type == builtinProps.end()) continue;
+            auto prop = type->second.find(name);
+            if (prop == type->second.end()) continue;
+            BuiltinProp& p = prop->second;
+            if (!p.resolved) {
+                p.resolved = true;
+                TParamsSaved saved(*this);
+                pushTypeParams(p.decl->typeParams, *p.unit);
+                p.receiver = resolve(p.decl->receiverType, *p.unit);
+                p.type = resolve(p.decl->type, *p.unit);
+            }
+            Env env;
+            unify(p.receiver, withNull(t, false), env, p.typeParams);
+            found = finish(p.type, env, p.typeParams);
+            return true;
+        }
+        return false;
+    }
+
+    // The extension functions of that name that apply to a value of type `t`: for a built-in
+    // type, its own methods (in C++) first, as when the program runs.
     std::vector<FuncInfo*> findExtensions(const Type& t, const std::string& name) {
+        for (const std::string& key : builtinKeys(t)) {
+            auto type = builtinMethods.find(key);
+            if (type == builtinMethods.end()) continue;
+            auto found = type->second.find(name);
+            if (found != type->second.end()) return found->second;
+        }
         auto in = [&](const std::string& key) -> const std::vector<FuncInfo*>* {
             auto e = extensions.find(key);
             if (e == extensions.end()) return nullptr;
@@ -989,16 +1302,16 @@ struct Checker::Impl {
                 walk(t.cls);
                 break;
             }
-            case Type::List: keys.push_back("list"); break;
-            case Type::Map: keys.push_back("map"); break;
+            case Type::List: keys.push_back("List"); break;
+            case Type::Map: keys.push_back("Map"); break;
             case Type::String: keys.push_back("string"); break;
-            case Type::Bytes: keys.push_back("bytes"); break;
-            case Type::Range: keys.push_back("range"); break;
-            case Type::Int: keys.push_back("int"); keys.push_back("number"); break;
-            case Type::Float: keys.push_back("float"); keys.push_back("number"); break;
-            case Type::Number: keys.push_back("number"); break;
+            case Type::Bytes: keys.push_back("Bytes"); break;
+            case Type::Range: keys.push_back("Range"); break;
+            case Type::Int: keys.push_back("int"); keys.push_back("Number"); break;
+            case Type::Float: keys.push_back("float"); keys.push_back("Number"); break;
+            case Type::Number: keys.push_back("Number"); break;
             case Type::Bool: keys.push_back("bool"); break;
-            case Type::Function: keys.push_back("function"); break;
+            case Type::Function: keys.push_back("Function"); break;
             default: break;
         }
         keys.push_back("any");
@@ -1130,10 +1443,20 @@ struct Checker::Impl {
     void push() {
         scopes.emplace_back();
         narrowed.emplace_back();
+        localClasses.emplace_back();
     }
     void pop() {
         scopes.pop_back();
         narrowed.pop_back();
+        localClasses.pop_back();
+    }
+
+    ClassInfo* localClass(const std::string& name) {
+        for (auto it = localClasses.rbegin(); it != localClasses.rend(); ++it) {
+            auto f = it->find(name);
+            if (f != it->end()) return f->second;
+        }
+        return nullptr;
     }
 
     Local* findLocal(const std::string& name) {
@@ -1191,7 +1514,15 @@ struct Checker::Impl {
                 const Expr* name = nullptr;
                 if (isNullLiteral(*b.right)) name = b.left.get();
                 else if (isNullLiteral(*b.left)) name = b.right.get();
-                if (name == nullptr || name->kind != ExprKind::Name) return;
+                if (name == nullptr) return;
+                if (name->kind == ExprKind::This) {
+                    if ((ne && whenTrue) || (eq && !whenTrue)) {
+                        Type t = thisType();
+                        if (t.known()) into[thisKey()] = withNull(t, false);
+                    }
+                    return;
+                }
+                if (name->kind != ExprKind::Name) return;
                 // x != null when true, or x == null when false: x is not null.
                 if ((ne && whenTrue) || (eq && !whenTrue)) {
                     const std::string& n = static_cast<const NameExpr&>(*name).name;
@@ -1204,7 +1535,14 @@ struct Checker::Impl {
             }
             case ExprKind::Is: {
                 const auto& i = static_cast<const IsExpr&>(cond);
-                if (i.value->kind != ExprKind::Name || i.negated == whenTrue) return;
+                if (i.negated == whenTrue) return;
+                if (i.value->kind == ExprKind::This) {
+                    if (!thisType().known()) return;
+                    Type t = resolve(i.type, *unit);
+                    if (t.known()) into[thisKey()] = t;
+                    return;
+                }
+                if (i.value->kind != ExprKind::Name) return;
                 const std::string& n = static_cast<const NameExpr&>(*i.value).name;
                 if (findLocal(n) == nullptr) return;
                 Type t = resolve(i.type, *unit);
@@ -1402,12 +1740,20 @@ struct Checker::Impl {
                 checkFunctionBody(f, nullptr);
                 break;
             }
-            case StmtKind::Class:
+            case StmtKind::Class: {
+                if (ctx != nullptr && ctx->topLevel && scopes.size() <= 1) break;  // a file's class: already gathered
+                const auto& cs = static_cast<const ClassStmt&>(s);
+                ClassInfo* k = gatherClass(cs, unit, nullptr);
+                if (localClasses.empty()) push();
+                localClasses.back()[cs.name] = k;
+                checkClass(k);
                 break;
+            }
         }
     }
 
     void varStmt(const VarStmt& v) {
+        if (v.isExternal) return;
         // A top-level val or var of the file: already gathered; its type is worked out once.
         const bool global = ctx != nullptr && ctx->topLevel && scopes.size() <= 1 && v.pattern.empty();
         Type declared = v.type.present() ? resolve(v.type, *unit) : unknownType();
@@ -1817,7 +2163,12 @@ struct Checker::Impl {
             case ExprKind::IncDec: {
                 const auto& i = static_cast<const IncDecExpr&>(e);
                 Type t = expr(*i.target);
-                if (t.known() && t.kind != Type::TypeParam && !isNumeric(t))
+                // a?.count++ does nothing when a is null, so the null that ?. adds is not the
+                // field's own
+                if (t.nullable && safeChain(*i.target)) t = withNull(t, false);
+                if (t.kind == Type::Class && !t.nullable)
+                    operatorResult(t, i.increment ? "+" : "-", e, {Type::of(Type::Int)});
+                else if (t.known() && t.kind != Type::TypeParam && !isNumeric(t))
                     report(e, std::string(i.increment ? "++" : "--") + " needs a number; this is " + describe(t));
                 return Type::of(Type::Unit);
             }
@@ -1915,6 +2266,18 @@ struct Checker::Impl {
     // `this`: the object the innermost lambda runs on, an extension's receiver, or the object
     // of the method.
     Type thisType() {
+        Type t = unthisType();
+        if (!t.known()) return t;
+        const std::string key = thisKey();
+        for (auto it = narrowed.rbegin(); it != narrowed.rend(); ++it) {
+            auto f = it->find(key);
+            if (f != it->end()) return f->second;
+        }
+        return t;
+    }
+
+    // What `this` is, before any test narrows it.
+    Type unthisType() {
         for (FnCtx* c = ctx; c != nullptr; c = c->isLambda ? c->parent : nullptr) {
             if (c->isLambda) {
                 if (c->receiverUnknown) return unknownType();
@@ -1926,6 +2289,17 @@ struct Checker::Impl {
             return unknownType();
         }
         return unknownType();
+    }
+
+    // The name a test on `this` is noted under: one no local can have, and one for each body
+    // `this` belongs to, so a lambda's receiver is not narrowed by a test on the function's.
+    std::string thisKey() {
+        FnCtx* owner = nullptr;
+        for (FnCtx* c = ctx; c != nullptr; c = c->isLambda ? c->parent : nullptr) {
+            owner = c;
+            if (!c->isLambda || c->hasReceiver || c->receiverUnknown) break;
+        }
+        return "this#" + std::to_string(reinterpret_cast<std::uintptr_t>(owner));
     }
 
     // The value of an `if` or `try` used as an expression: that of its blocks' last lines.
@@ -2068,6 +2442,7 @@ struct Checker::Impl {
     // the class around the code, or a top-level name.
     Type name(const NameExpr& n) {
         if (Local* l = findLocal(n.name)) return localType(n.name, *l);
+        if (ClassInfo* k = localClass(n.name)) return k->isObject ? classType(k) : unknownType();
         bool escape = false;
         if (const Type* t = onReceivers(n.name, escape)) return *t;
         if (escape) return unknownType();
@@ -2167,6 +2542,15 @@ struct Checker::Impl {
     }
 
     // The result of an operator a class declares (`op +(other)`); reports one it lacks.
+    // Whether a member or index chain goes through ?. somewhere.
+    static bool safeChain(const Expr& e) {
+        if (e.kind == ExprKind::Member) {
+            const auto& m = static_cast<const MemberExpr&>(e);
+            return m.safe || safeChain(*m.object);
+        }
+        return false;
+    }
+
     Type operatorResult(const Type& left, const std::string& op, const Node& at, std::vector<Type> args) {
         if (left.cls == nullptr) return unknownType();
         Member m = lookupMember(withNull(left, false), op);
@@ -2179,8 +2563,22 @@ struct Checker::Impl {
             }
             return unknownType();
         }
-        if (found.size() != 1) return unknownType();
-        FuncInfo* f = found[0];
+        FuncInfo* f = found.size() == 1 ? found[0] : operatorForm(found, m.env, args);
+        if (f == nullptr) {
+            bool known = true, anyFits = false;
+            for (const Type& a : args) known = known && !a.unknown();
+            for (FuncInfo* g : found) {
+                bool ok = g->params.size() == args.size();
+                for (size_t i = 0; i < args.size() && ok; i++) ok = fits(args[i], subst(g->params[i], m.env));
+                anyFits = anyFits || ok;
+            }
+            if (known && !anyFits) {
+                std::string given;
+                for (const Type& a : args) given += (given.empty() ? "" : ", ") + describe(a);
+                report(at, "no form of " + left.cls->name + "'s operator " + op + " takes " + given);
+            }
+            return unknownType();
+        }
         resolveFunc(f);
         for (size_t i = 0; i < args.size() && i < f->params.size(); i++) {
             Type want = subst(f->params[i], m.env);
@@ -2370,6 +2768,7 @@ struct Checker::Impl {
 
     // A class named by a bare name in the code (not an object, whose name is its instance).
     ClassInfo* classNamed(const std::string& base) {
+        if (ClassInfo* k = localClass(base)) return k->isObject ? nullptr : k;
         for (ClassInfo* c = classAround(); c != nullptr; c = c->outer) {
             if (c->decl->name == base && !c->isObject) return c;
             auto n = c->nested.find(base);
@@ -2437,8 +2836,10 @@ struct Checker::Impl {
                 else if (findExtensions(plain, name).empty() && reportMissing(k, name))
                     report(at, k->name + " has no member '" + name + "'");
             }
-        } else if (obj.kind == Type::List || obj.kind == Type::String || obj.kind == Type::Map || obj.kind == Type::Bytes) {
-            if (name == "size" || name == "length" || name == "lastIndex") result = Type::of(Type::Int);
+        } else if (!builtinProperty(obj, name, result)) {
+            if ((obj.kind == Type::List || obj.kind == Type::String || obj.kind == Type::Map || obj.kind == Type::Bytes) &&
+                (name == "size" || name == "length" || name == "lastIndex"))
+                result = Type::of(Type::Int);
         }
         return safe ? withNull(result) : result;
     }
@@ -2485,6 +2886,7 @@ struct Checker::Impl {
         std::vector<int> paramOf;    // per argument
         std::vector<bool> given;     // per parameter
         bool failed = false;         // an argument fit no parameter: missing ones are not reported
+        bool missing = false;        // a parameter without a default was given no value
     };
 
     Binding bind(FuncInfo* f, const Args& args, const Node& at, const std::string& what) {
@@ -2550,6 +2952,7 @@ struct Checker::Impl {
         if (!b.failed && !f->isLambda()) {
             for (size_t p = 0; p < n; p++) {
                 if (b.given[p] || f->hasDefault[p] || static_cast<int>(p) == f->vararg) continue;
+                b.missing = true;
                 report(at, what + " needs a value for '" + f->paramNames[p] + "'");
             }
         }
@@ -2568,7 +2971,10 @@ struct Checker::Impl {
         for (size_t i = 0; i < typeArgs.size() && i < f->typeParams.size(); i++) env[f->typeParams[i]] = resolve(typeArgs[i], *unit);
         // What is written at the call (`first<string>(...)`, `Box<string>(...)`) is not worked out again.
         vars.erase(std::remove_if(vars.begin(), vars.end(), [&](const std::string& v) { return env.count(v) > 0; }), vars.end());
-        if (receiver != nullptr && f->isExtension) unify(f->receiver, *receiver, env, vars);
+        if (receiver != nullptr && f->isExtension) {
+            unify(f->receiver, *receiver, env, vars);
+            fixByReceiver(env, vars);
+        }
         if (args.spread) {
             for (const ExprPtr& a : args.exprs) expr(*a);
             if (envOut != nullptr) *envOut = env;
@@ -2604,6 +3010,17 @@ struct Checker::Impl {
         return finish(resultOf(f), env, vars);
     }
 
+    // What the object a function is called on says of its type parameters is so: `words.add(1)` on
+    // a List<string> does not make T something both fit, as an argument would.
+    static void fixByReceiver(const Env& env, std::vector<std::string>& vars) {
+        vars.erase(std::remove_if(vars.begin(), vars.end(),
+                                  [&](const std::string& v) {
+                                      auto found = env.find(v);
+                                      return found != env.end() && found->second.known();
+                                  }),
+                   vars.end());
+    }
+
     // A result with what is known of the type parameters filled in, and the rest unknown.
     Type finish(const Type& result, Env env, const std::vector<std::string>& vars) {
         for (const std::string& v : vars)
@@ -2628,16 +3045,232 @@ struct Checker::Impl {
         return t;
     }
 
-    // Calls among overloads, or of a function whose types are not worked out yet: the
-    // arguments are looked at, nothing more (overloads are chosen in part 3).
+    // A call of a name that may have several forms (overloads, D56): the form it means is
+    // chosen, and the call checked against it. `envs`, when given, holds each form's own `env`.
     Type callFunctions(const std::vector<FuncInfo*>& fs, const CallExpr& c, const std::string& what, const Env& env,
-                       const Type* receiver) {
-        if (fs.size() != 1) {
+                       const Type* receiver, const std::vector<Env>* envs = nullptr) {
+        Args args{c.args, c.names, c.trailingLambda, c.hasSpread};
+        auto envOfForm = [&](size_t i) -> const Env& { return envs != nullptr && i < envs->size() ? (*envs)[i] : env; };
+        if (fs.size() == 1) return callWith(fs[0], args, c.typeArgs, envOfForm(0), receiver, c, what + "(...)");
+        // Forms with the same receiver and parameters are one form declared in several places:
+        // the nearest is the one meant, as for any name.
+        std::vector<FuncInfo*> forms;
+        std::vector<Env> formEnvs;
+        std::unordered_map<std::string, size_t> bySignature;
+        for (size_t i = 0; i < fs.size(); i++) {
+            FuncInfo* f = fs[i];
+            const std::string key = (f->isExtension ? argText(f->receiver) : std::string()) + "|" + signatureOf(f, envOfForm(i));
+            auto [at, added] = bySignature.emplace(key, forms.size());
+            if (added) {
+                forms.push_back(f);
+                formEnvs.push_back(envOfForm(i));
+            } else if (nearness(f) < nearness(forms[at->second])) {
+                forms[at->second] = f;
+                formEnvs[at->second] = envOfForm(i);
+            }
+        }
+        if (forms.size() == 1) return callWith(forms[0], args, c.typeArgs, formEnvs[0], receiver, c, what + "(...)");
+        size_t index = 0;
+        auto envOfChosen = [&](size_t i) -> const Env& { return formEnvs[i]; };
+        FuncInfo* f = args.spread ? nullptr : chooseForm(forms, envOfChosen, args, c.typeArgs, receiver, c, what, index);
+        if (f == nullptr) {
             for (const ExprPtr& a : c.args) expr(*a);
             return unknownType();
         }
-        Args args{c.args, c.names, c.trailingLambda, c.hasSpread};
-        return callWith(fs[0], args, c.typeArgs, env, receiver, c, what + "(...)");
+        chosenForms[&c] = f;
+        return callWith(f, args, c.typeArgs, formEnvs[index], receiver, c, what + "(...)");
+    }
+
+    // How near a declaration is to the code being checked: its own file, its folder, another
+    // part of the program, the standard library.
+    int nearness(const FuncInfo* f) const {
+        if (f->unit == unit) return 0;
+        if (f->unit != nullptr && unit != nullptr && f->unit->ns == unit->ns) return 1;
+        if (f->unit != nullptr && !f->unit->prelude) return 2;
+        return 3;
+    }
+
+    // Which form of a name a call means, chosen as Kotlin does: of the forms the arguments
+    // fit, the most specific, the one whose parameters all fit those of each other. Between
+    // two that are as specific, one that needs neither a vararg nor a default it is not given
+    // goes first. Null where none fits or several do, which is reported, and where an argument
+    // or a parameter has a type not known well enough to choose by, which is not.
+    std::unordered_map<const CallExpr*, FuncInfo*> chosenForms;
+
+    struct Fit {
+        size_t index = 0;
+        Binding binding;
+        Env env;
+        int defaultsUsed = 0;
+        bool vararg = false;
+    };
+
+    template <typename EnvOf>
+    FuncInfo* chooseForm(const std::vector<FuncInfo*>& fs, const EnvOf& envOfForm, const Args& args,
+                         const std::vector<TypeAnnotation>& typeArgs, const Type* receiver, const Node& at,
+                         const std::string& what, size_t& index) {
+        // The arguments' types, once, without reporting: the call is checked again against
+        // the form chosen.
+        std::vector<Type> types(args.exprs.size());
+        bool unknownArgument = false;
+        silent++;
+        for (size_t i = 0; i < args.exprs.size(); i++) {
+            if (args.exprs[i]->kind == ExprKind::Function) continue;
+            types[i] = expr(*args.exprs[i]);
+            if (types[i].unknown()) unknownArgument = true;
+        }
+        std::vector<Fit> candidates;
+        bool receiverFits = false;  // some form is for the object the call is made on
+        for (size_t k = 0; k < fs.size(); k++) {
+            FuncInfo* f = fs[k];
+            resolveFunc(f);
+            Fit fit;
+            fit.index = k;
+            fit.env = envOfForm(k);
+            std::vector<std::string> vars = f->typeParams;
+            for (size_t i = 0; i < typeArgs.size() && i < f->typeParams.size(); i++) fit.env[f->typeParams[i]] = resolve(typeArgs[i], *unit);
+            vars.erase(std::remove_if(vars.begin(), vars.end(), [&](const std::string& v) { return fit.env.count(v) > 0; }), vars.end());
+            if (receiver != nullptr && f->isExtension) {
+                unify(f->receiver, *receiver, fit.env, vars);
+                fixByReceiver(fit.env, vars);
+                if (!fits(*receiver, subst(f->receiver, fit.env))) continue;
+                receiverFits = true;
+            }
+            fit.binding = bind(f, args, at, what + "(...)");
+            if (fit.binding.failed || fit.binding.missing) continue;
+            bool ok = true;
+            for (size_t i = 0; i < args.exprs.size() && ok; i++) {
+                const int p = fit.binding.paramOf[i];
+                if (p < 0) continue;
+                if (p == f->vararg) fit.vararg = true;
+                const Type want = p == f->vararg ? f->varargItem : f->params[static_cast<size_t>(p)];
+                if (args.exprs[i]->kind == ExprKind::Function) {
+                    ok = lambdaFits(static_cast<const FunctionExpr&>(*args.exprs[i]), subst(want, fit.env));
+                } else {
+                    unify(want, types[i], fit.env, vars);
+                    ok = fits(types[i], subst(want, fit.env));
+                }
+            }
+            if (!ok) continue;
+            for (size_t p = 0; p < f->params.size(); p++)
+                if (!fit.binding.given[p] && f->hasDefault[p]) fit.defaultsUsed++;
+            candidates.push_back(std::move(fit));
+        }
+        silent--;
+
+        auto argumentsText = [&] {
+            std::string s;
+            for (size_t i = 0; i < args.exprs.size(); i++) {
+                if (i > 0) s += ", ";
+                s += args.exprs[i]->kind == ExprKind::Function ? std::string("a lambda") : describe(types[i]);
+            }
+            return s.empty() ? std::string("no arguments") : s;
+        };
+        auto formsText = [&](const std::vector<size_t>& which) {
+            std::string s;
+            for (size_t i = 0; i < which.size(); i++) {
+                if (i > 0) s += i + 1 == which.size() ? " and " : ", ";
+                FuncInfo* f = fs[which[i]];
+                Env e = envOfForm(which[i]);
+                if (receiver != nullptr && f->isExtension) {
+                    std::vector<std::string> vars = f->typeParams;
+                    unify(f->receiver, *receiver, e, vars);
+                }
+                s += formText(what, f, e);
+            }
+            return s;
+        };
+
+        if (candidates.empty()) {
+            if (unknownArgument) return nullptr;
+            std::vector<size_t> all;
+            for (size_t k = 0; k < fs.size(); k++) all.push_back(k);
+            if (receiver != nullptr && !receiverFits && fs[0]->isExtension)
+                report(at, "no form of " + what + "(...) is for " + describe(*receiver) + "; there are " + formsText(all));
+            else
+                report(at, "no form of " + what + "(...) takes " + argumentsText() + "; there are " + formsText(all));
+            return nullptr;
+        }
+        if (candidates.size() == 1) {
+            index = candidates[0].index;
+            return fs[index];
+        }
+
+        // The parameter each argument goes to, in a form; unknown where it goes to none.
+        auto paramType = [&](const Fit& fit, size_t i) -> Type {
+            FuncInfo* f = fs[fit.index];
+            const int p = fit.binding.paramOf[i];
+            if (p < 0) return unknownType();
+            // A parameter without a type, or of a type parameter, takes anything: it is the least
+            // specific there is.
+            Type t = subst(p == f->vararg ? f->varargItem : f->params[static_cast<size_t>(p)], fit.env);
+            return t.unknown() || t.kind == Type::TypeParam ? withNull(Type::of(Type::Any)) : t;
+        };
+        // Where an argument's type is not known, the forms cannot be told apart by it: that is
+        // left to when the program runs.
+        for (size_t i = 0; i < args.exprs.size(); i++) {
+            if (!types[i].unknown()) continue;
+            const std::string first = argText(paramType(candidates[0], i));
+            for (const Fit& fit : candidates)
+                if (argText(paramType(fit, i)) != first) return nullptr;
+        }
+        // a is at least as specific as b: its receiver fits b's, and each argument's parameter
+        // in a fits b's.
+        auto asSpecific = [&](const Fit& a, const Fit& b) {
+            FuncInfo* fa = fs[a.index];
+            FuncInfo* fb = fs[b.index];
+            if (fa->isExtension && fb->isExtension && !fits(subst(fa->receiver, a.env), subst(fb->receiver, b.env))) return false;
+            for (size_t i = 0; i < args.exprs.size(); i++) {
+                if (args.exprs[i]->kind == ExprKind::Function) continue;
+                if (!fits(paramType(a, i), paramType(b, i))) return false;
+            }
+            return true;
+        };
+        auto better = [&](const Fit& a, const Fit& b) {
+            const bool ab = asSpecific(a, b), ba = asSpecific(b, a);
+            if (ab && !ba) return true;
+            if (ba && !ab) return false;
+            if (!ab) return false;
+            if (a.vararg != b.vararg) return !a.vararg;
+            return a.defaultsUsed < b.defaultsUsed;
+        };
+        std::vector<size_t> best;
+        for (size_t i = 0; i < candidates.size(); i++) {
+            bool beaten = false;
+            for (size_t j = 0; j < candidates.size() && !beaten; j++)
+                if (i != j && better(candidates[j], candidates[i])) beaten = true;
+            if (!beaten) best.push_back(i);
+        }
+        if (best.size() == 1) {
+            index = candidates[best[0]].index;
+            return fs[index];
+        }
+        // Forms told apart only by parameters whose types are not written cannot be chosen
+        // between yet: that is left to when the program runs.
+        for (size_t i : best) {
+            FuncInfo* f = fs[candidates[i].index];
+            for (const Type& p : f->params)
+                if (p.unknown()) return nullptr;
+            if (f->isExtension && f->receiver.unknown()) return nullptr;
+        }
+        std::vector<size_t> which;
+        for (size_t i : best) which.push_back(candidates[i].index);
+        report(at, "this call fits more than one form of " + what + "(...): " + formsText(which) +
+                       "; give an argument a type that tells them apart, with a typed variable or 'as'");
+        return nullptr;
+    }
+
+    // Whether a lambda literal could be given for a parameter of this type: a function type
+    // taking as many parameters as it names (one or none, if it names none and may use `it`).
+    static bool lambdaFits(const FunctionExpr& lambda, const Type& want) {
+        if (want.kind != Type::Function || !want.knownParams) return true;
+        const FunctionDecl& d = *lambda.fn;
+        // Without an arrow a lambda has `it`, a parameter with a default: it takes one argument or none.
+        const bool it = d.params.size() == 1 && d.params[0] == "it" && !d.paramTypes[0].present() && d.paramDefaults.size() == 1 &&
+                        d.paramDefaults[0] != nullptr;
+        const size_t n = it ? 0 : d.params.size();
+        const size_t wanted = want.args.size();
+        return n == 0 ? wanted <= 1 : n == wanted;
     }
 
     // A method of a value: declared on its class or above, or an extension.
@@ -2657,7 +3290,7 @@ struct Checker::Impl {
         if (obj.kind == Type::Class && obj.cls != nullptr) {
             ClassInfo* k = obj.cls;
             Member mem = lookupMember(plain, m.name);
-            if (!mem.methods.empty()) return callFunctions(mem.methods, c, k->name + "." + m.name, mem.env, nullptr);
+            if (!mem.methods.empty()) return callFunctions(mem.methods, c, k->name + "." + m.name, mem.env, nullptr, &mem.methodEnvs);
             if (mem.field || mem.getter) return callValue(memberOf(plain, m.name, m, false), c, m.name);
             std::vector<FuncInfo*> ext = findExtensions(plain, m.name);
             if (!ext.empty()) return callFunctions(ext, c, m.name, {}, &plain);
@@ -2670,13 +3303,48 @@ struct Checker::Impl {
         std::vector<FuncInfo*> ext = findExtensions(plain, m.name);
         if (!ext.empty()) return callFunctions(ext, c, m.name, {}, &plain);
         for (const ExprPtr& a : c.args) expr(*a);
+        if (builtinDeclared(plain) && !anyExtension(m.name) && !builtinMember(m.name)) {
+            Type property;
+            if (!builtinProperty(plain, m.name, property)) report(m, describe(plain) + " has no method '" + m.name + "'");
+        }
         return unknownType();
+    }
+
+    // Whether the methods of a built-in type are all declared (src/std/builtins.astra), so
+    // one that is not there does not exist.
+    bool builtinDeclared(const Type& t) const {
+        switch (t.kind) {
+            case Type::String:
+            case Type::List:
+            case Type::Map:
+            case Type::Range:
+            case Type::Bytes:
+            case Type::Int:
+            case Type::Float:
+            case Type::Number:
+                return !builtinMethods.empty();
+            default:
+                return false;
+        }
+    }
+
+    // Whether an extension on every value (`fun any.name`, `fun <T> T.name`) has this name.
+    bool anyExtension(const std::string& name) const {
+        for (const char* key : {"any", "<T>"}) {
+            auto e = extensions.find(key);
+            if (e != extensions.end() && e->second.count(name)) return true;
+        }
+        return false;
     }
 
     Type call(const CallExpr& c) {
         if (c.callee->kind == ExprKind::Name) {
             const std::string& n = static_cast<const NameExpr&>(*c.callee).name;
             if (Local* l = findLocal(n)) return callValue(localType(n, *l), c, n);
+            if (ClassInfo* k = localClass(n); k != nullptr && !k->isObject) {
+                Args args{c.args, c.names, c.trailingLambda, c.hasSpread};
+                return constructorCall(k, args, c.typeArgs, c);
+            }
             // A method of an object the code runs on.
             for (FnCtx* x = ctx; x != nullptr; x = x->isLambda ? x->parent : nullptr) {
                 if (x->isLambda && x->receiverUnknown) {
@@ -2687,7 +3355,7 @@ struct Checker::Impl {
                     const Type& r = x->receiver;
                     if (r.kind == Type::Class && !r.nullable) {
                         Member mem = lookupMember(r, n);
-                        if (!mem.methods.empty()) return callFunctions(mem.methods, c, n, mem.env, nullptr);
+                        if (!mem.methods.empty()) return callFunctions(mem.methods, c, n, mem.env, nullptr, &mem.methodEnvs);
                         if (mem.field || mem.getter) return callValue(subst(mem.field ? fieldType(mem.field) : resultOf(mem.getter), mem.env), c, n);
                         std::vector<FuncInfo*> ext = findExtensions(r, n);
                         if (!ext.empty()) return callFunctions(ext, c, n, {}, &r);
@@ -2711,7 +3379,7 @@ struct Checker::Impl {
                 if (!ctx->isStatic) {
                     Type self = selfType(ctx->cls);
                     Member mem = lookupMember(self, n);
-                    if (!mem.methods.empty()) return callFunctions(mem.methods, c, n, mem.env, nullptr);
+                    if (!mem.methods.empty()) return callFunctions(mem.methods, c, n, mem.env, nullptr, &mem.methodEnvs);
                     if (mem.field || mem.getter)
                         return callValue(subst(mem.field ? fieldType(mem.field) : resultOf(mem.getter), mem.env), c, n);
                     std::vector<FuncInfo*> ext = findExtensions(self, n);
@@ -2847,10 +3515,18 @@ struct Checker::Impl {
 
     // ---- The whole program ----
 
+    // Checks the files added since the last time: the standard library on its own first, then
+    // a program and what it imports, then any worker's script the program names.
+    size_t checkedUnits = 0;
     void runAll() {
-        for (auto& u : units) gather(*u);
-        for (auto& u : units) {
-            unit = u.get();
+        const size_t first = checkedUnits;
+        checkedUnits = units.size();
+        formsAboveKnown.clear();
+        familyKnown.clear();
+        for (size_t i = first; i < units.size(); i++) gather(*units[i]);
+        for (size_t i = first; i < units.size(); i++) {
+            Unit* u = units[i].get();
+            unit = u;
             // The top level, in order.
             FnCtx top;
             top.topLevel = true;
@@ -2859,10 +3535,10 @@ struct Checker::Impl {
             narrowed.clear();
             tparams.clear();
             push();
-            for (const StmtPtr& s : u->statements) stmt(*s);
+            for (const StmtPtr& s : *u->statements) stmt(*s);
             pop();
             // Functions, classes and extensions.
-            for (const StmtPtr& s : u->statements) {
+            for (const StmtPtr& s : *u->statements) {
                 if (s->kind == StmtKind::Function) {
                     auto known = funcOf.find(static_cast<const FunctionStmt&>(*s).fn.get());
                     if (known != funcOf.end()) checkFunctionBody(known->second, nullptr);
@@ -2878,14 +3554,14 @@ struct Checker::Impl {
 Checker::Checker() : impl_(std::make_unique<Impl>()) {}
 Checker::~Checker() = default;
 
-void Checker::addUnit(std::vector<StmtPtr> statements, const std::string& file, const std::string& fileKey, Namespace* ns,
-                      bool prelude) {
+void Checker::addUnit(const std::vector<StmtPtr>& statements, const std::string& file, const std::string& fileKey,
+                      Namespace* ns, bool prelude) {
     auto u = std::make_unique<Unit>();
     u->file = file;
     u->fileKey = fileKey;
     u->ns = ns;
     u->prelude = prelude;
-    u->statements = std::move(statements);
+    u->statements = &statements;
     auto pending = impl_->unitsByKey.find(fileKey);
     if (pending != impl_->unitsByKey.end()) u->imports = std::move(pending->second->imports);
     Unit* raw = u.get();
@@ -2907,6 +3583,25 @@ void Checker::addImport(const std::string& fileKey, const std::string& alias, bo
         u = found->second;
     }
     u->imports.push_back(ImportInfo{alias, all, ns});
+}
+
+const FunctionDecl* Checker::formRoot(const FunctionDecl& method) { return impl_->formRoot(method); }
+
+std::vector<const FunctionDecl*> Checker::formRoots(const ClassStmt& cls, const std::string& name) {
+    return impl_->formRoots(cls, name);
+}
+
+const TypeAnnotation* Checker::extensionReceiver(const FunctionDecl& fn) const {
+    auto found = impl_->funcOf.find(&fn);
+    // A built-in method (`external`) is the C++'s, which tells its forms apart itself.
+    if (found == impl_->funcOf.end() || !found->second->isExtension || found->second->isExternal || found->second->stmt == nullptr)
+        return nullptr;
+    return &found->second->stmt->receiverType;
+}
+
+const FunctionDecl* Checker::chosenForm(const CallExpr& call) const {
+    auto found = impl_->chosenForms.find(&call);
+    return found == impl_->chosenForms.end() ? nullptr : found->second->decl;
 }
 
 void Checker::run() {

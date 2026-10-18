@@ -1,0 +1,193 @@
+// ---- What the C++ provides, declared ----
+//
+// The built-in functions, and the methods and properties of the built-in types, are written
+// in C++ (src/builtins.cpp, src/stdlib.cpp, src/vm.cpp). They are declared here so that their
+// types and parameter names are known to the type checker. An `external` declaration has no
+// body and compiles to nothing; the compiler checks that the C++ has what it names, taking as
+// many arguments as it says.
+//
+// Where one name takes different shapes (`add(item)` and `add(index, item)`), each is declared:
+// the checker chooses the form a call means, and the C++ tells them apart when it runs.
+
+// -- Functions --
+
+external fun print(vararg items : any?)
+external fun write(vararg items : any?)
+external fun str(value : any?) : string
+external fun int(value : any?) : int
+external fun float(value : any?) : float
+external fun len(value : any) : int
+external fun type(value : any?) : string
+external fun Range(first : int, end : int = 0, step : int = 1) : Range
+external fun Bytes(source : any) : Bytes
+external fun args() : List<string>
+external fun assert(condition : bool, message : string = "assertion failed")
+external fun chr(code : int) : string
+external fun ord(character : string) : int
+external fun clock() : float
+external fun compareValues(a : any?, b : any?) : int
+external fun exit(code : int = 0) : nothing
+external fun flush()
+external fun input(prompt : string = "") : string?
+external fun <T> maxOf(first : T, vararg rest : T) : T
+external fun <T> minOf(first : T, vararg rest : T) : T
+external fun <T, R> with(receiver : T, block : T.() -> R) : R
+
+// -- string --
+
+external val string.size : int
+external val string.length : int
+external val string.lastIndex : int
+external val string.indices : Range
+external val string.code : int
+external fun string.upper() : string
+external fun string.lower() : string
+external fun string.uppercase() : string
+external fun string.lowercase() : string
+external fun string.trim() : string
+external fun string.trimStart() : string
+external fun string.trimEnd() : string
+external fun string.trimIndent() : string
+external fun string.trimMargin(marginPrefix : string = "|") : string
+external fun string.split(delimiter : string = " ") : List<string>
+external fun string.lines() : List<string>
+external fun string.slice(start : int, end : int = 0) : string
+external fun string.substring(startIndex : int, endIndex : int = 0) : string
+external fun string.repeat(times : int) : string
+external fun string.reversed() : string
+external fun string.contains(other : string, ignoreCase : bool = false) : bool
+external fun string.startsWith(prefix : string, ignoreCase : bool = false) : bool
+external fun string.endsWith(suffix : string, ignoreCase : bool = false) : bool
+external fun string.indexOf(other : string, startIndex : int = 0, ignoreCase : bool = false) : int
+external fun string.lastIndexOf(other : string, startIndex : int = 0, ignoreCase : bool = false) : int
+external fun string.replace(oldValue : string, newValue : string, ignoreCase : bool = false) : string
+external fun string.equals(other : any?, ignoreCase : bool = false) : bool
+external fun string.compareTo(other : string, ignoreCase : bool = false) : int
+external fun string.isEmpty() : bool
+external fun string.isNotEmpty() : bool
+external fun string.isBlank() : bool
+external fun string.isNotBlank() : bool
+external fun string.isLetter() : bool
+external fun string.isDigit() : bool
+external fun string.isLetterOrDigit() : bool
+external fun string.isWhitespace() : bool
+external fun string.isUpperCase() : bool
+external fun string.isLowerCase() : bool
+external fun string.padStart(length : int, padChar : string = " ") : string
+external fun string.padEnd(length : int, padChar : string = " ") : string
+external fun string.toInt(radix : int = 10) : int
+external fun string.toIntOrNull(radix : int = 10) : int?
+external fun string.toDouble() : float
+external fun string.toDoubleOrNull() : float?
+external fun string.format(vararg values : any?) : string
+external fun string.toBytes() : Bytes
+
+// -- List --
+
+external val List.size : int
+external val List.length : int
+external val List.lastIndex : int
+external val List.indices : Range
+external fun <T> List<T>.push(item : T, vararg more : T)
+external fun <T> List<T>.pop() : T
+external fun <T> List<T>.add(item : T) : bool
+external fun <T> List<T>.add(index : int, item : T) : bool
+// `items` is anything a for loop takes
+external fun <T> List<T>.addAll(items : any) : bool
+external fun <T> List<T>.addAll(index : int, items : any) : bool
+external fun <T> List<T>.insert(index : int, item : T)
+external fun <T> List<T>.get(index : int) : T
+external fun <T> List<T>.getOrNull(index : int) : T?
+external fun <T> List<T>.set(index : int, item : T)
+external fun <T> List<T>.removeAt(index : int) : T
+external fun <T> List<T>.remove(item : any?) : bool
+external fun <T> List<T>.removeFirst() : T
+external fun <T> List<T>.removeLast() : T
+external fun <T> List<T>.removeFirstOrNull() : T?
+external fun <T> List<T>.removeLastOrNull() : T?
+external fun <T> List<T>.clear()
+external fun <T> List<T>.contains(item : any?) : bool
+external fun <T> List<T>.indexOf(item : any?) : int
+external fun <T> List<T>.lastIndexOf(item : any?) : int
+external fun <T> List<T>.isEmpty() : bool
+external fun <T> List<T>.isNotEmpty() : bool
+external fun <T> List<T>.slice(start : int = 0, end : int = 0) : List<T>
+external fun <T> List<T>.subList(fromIndex : int, toIndex : int) : List<T>
+external fun <T> List<T>.toList() : List<T>
+external fun <T> List<T>.toMutableList() : List<T>
+external fun <T> List<T>.reversed() : List<T>
+external fun <T> List<T>.reverse()
+external fun <T> List<T>.sort(comparator : any? = null)
+external fun <T> List<T>.join(separator : string = ", ") : string
+external fun <T> List<T>.fill(item : T)
+
+// -- Map --
+
+external val Map.size : int
+external val Map.length : int
+external val <K, V> Map<K, V>.keys : List<K>
+external val <K, V> Map<K, V>.values : List<V>
+external val Map.entries : List<MapEntry>
+external fun <K, V> Map<K, V>.keys() : List<K>
+external fun <K, V> Map<K, V>.values() : List<V>
+external fun <K, V> Map<K, V>.entries() : List<MapEntry>
+external fun <K, V> Map<K, V>.has(key : any?) : bool
+external fun <K, V> Map<K, V>.contains(key : any?) : bool
+external fun <K, V> Map<K, V>.containsKey(key : any?) : bool
+external fun <K, V> Map<K, V>.containsValue(value : any?) : bool
+external fun <K, V> Map<K, V>.get(key : K, defaultValue : V? = null) : V?
+external fun <K, V> Map<K, V>.getValue(key : K) : V
+external fun <K, V> Map<K, V>.getOrDefault(key : K, defaultValue : V) : V
+external fun <K, V> Map<K, V>.put(key : K, value : V) : V?
+external fun <K, V> Map<K, V>.set(key : K, value : V)
+external fun <K, V> Map<K, V>.remove(key : any?) : V?
+external fun <K, V> Map<K, V>.clear()
+external fun <K, V> Map<K, V>.isEmpty() : bool
+external fun <K, V> Map<K, V>.isNotEmpty() : bool
+external fun <K, V> Map<K, V>.toMap() : Map<K, V>
+external fun <K, V> Map<K, V>.toMutableMap() : Map<K, V>
+
+// -- Range --
+
+external fun Range.toList() : List<int>
+external fun Range.contains(value : any?) : bool
+external fun Range.first() : int
+external fun Range.last() : int
+external fun Range.isEmpty() : bool
+
+// -- Bytes --
+
+external fun Bytes.slice(start : int = 0, end : int = 0) : Bytes
+external fun Bytes.toList() : List<int>
+external fun Bytes.decodeToString() : string
+external fun Bytes.fill(value : int) : Bytes
+external fun Bytes.indexOf(value : int) : int
+external fun Bytes.contains(value : any?) : bool
+
+// -- int and float --
+
+external fun int.coerceIn(minimumValue : int, maximumValue : int) : int
+external fun int.coerceIn(range : Range) : int
+external fun int.coerceIn(minimumValue : Number, maximumValue : Number) : Number
+external fun int.coerceAtLeast(minimumValue : Number) : int
+external fun int.coerceAtMost(maximumValue : Number) : int
+external fun int.pow(exponent : Number) : Number
+external fun int.mod(divisor : int) : int
+external fun float.coerceIn(minimumValue : Number, maximumValue : Number) : float
+external fun float.coerceIn(range : Range) : float
+external fun float.coerceAtLeast(minimumValue : Number) : float
+external fun float.coerceAtMost(maximumValue : Number) : float
+external fun float.pow(exponent : Number) : float
+external fun float.mod(divisor : Number) : float
+external fun Number.roundToInt() : int
+external fun Number.roundToLong() : int
+external fun Number.toInt() : int
+external fun Number.toLong() : int
+external fun Number.toDouble() : float
+external fun Number.toFloat() : float
+external fun Number.toChar() : string
+external fun Number.toString(radix : int = 10) : string
+external fun Number.compareTo(other : Number) : int
+external fun Number.isNaN() : bool
+external fun Number.isInfinite() : bool
+external fun Number.isFinite() : bool

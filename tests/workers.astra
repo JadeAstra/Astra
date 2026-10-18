@@ -35,7 +35,7 @@ startCoroutine {
   print(next(idle))                                          // expect: ready, in a worker: true
 
   // Every kind of value a message can hold comes back as it was sent.
-  for value in [42, 2.5, "naïve", true, null, bytes([1, 255]), [1, [2, "three"]], {"k": {"deep": [null]}, 7: 8}] {
+  for value in [42, 2.5, "naïve", true, null, Bytes([1, 255]), [1, [2, "three"]], {"k": {"deep": [null]}, 7: 8}] {
     echo.post(value)
     print(next(echo))
   }
@@ -44,9 +44,9 @@ startCoroutine {
   // expect: ["string", "naïve"]
   // expect: ["bool", true]
   // expect: ["null", null]
-  // expect: ["bytes", bytes[1, 255]]
-  // expect: ["list", [1, [2, "three"]]]
-  // expect: ["map", {"k": {"deep": [null]}, 7: 8}]
+  // expect: ["Bytes", Bytes[1, 255]]
+  // expect: ["List", [1, [2, "three"]]]
+  // expect: ["Map", {"k": {"deep": [null]}, 7: 8}]
 
   // A message is a copy: what the worker does to it does not reach the original.
   val original = ["keep", 1]
@@ -60,7 +60,7 @@ startCoroutine {
   class Point(val x, val y)
   try { echo.post(Point(1, 2)) } catch (e) { print(e.message) }
   // expect: a message to or from a worker can hold numbers, strings, booleans, null, bytes, and lists and maps of those, not a value of type Point: the two share no objects
-  try { echo.post([{ 1 }]) } catch (e) { print(e.message.endsWith("not a value of type function: the two share no objects")) }   // expect: true
+  try { echo.post([{ 1 }]) } catch (e) { print(e.message.endsWith("not a value of type Function: the two share no objects")) }   // expect: true
 
   // A worker has an event loop, threads and flows of its own.
   echo.post("inside")

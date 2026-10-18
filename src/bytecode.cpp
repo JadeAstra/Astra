@@ -141,9 +141,12 @@ const OpInfo kOps[] = {
     {"SET_OWN", Operand::U16},
     {"INVOKE_OWN", Operand::U16U8},
     {"INVOKE_OWN_TRAILING", Operand::U16U8},
+    {"MAKE_FORMS", Operand::U16U8},
+    {"METHOD_FORMS", Operand::U16U8},
+    {"STATIC_FORMS", Operand::U16U8},
 };
 
-const char* const kTypeNames[] = {"", "int", "float", "number", "string", "bool", "list", "map", "range", "function", "bytes"};
+const char* const kTypeNames[] = {"", "int", "float", "Number", "string", "bool", "List", "Map", "Range", "Function", "Bytes"};
 
 static_assert(sizeof(kOps) / sizeof(kOps[0]) == static_cast<size_t>(Op::Count_), "kOps must match the Op enum");
 
@@ -229,6 +232,11 @@ static int analyzeStack(FunctionProto& f, const Program& program, bool partial) 
         throw std::runtime_error("invalid bytecode in " + f.name + ": " + why);
     };
 
+    if (f.chooser) {
+        // A set of forms runs none of its own code.
+        if (!f.code.empty() || f.arity != 0) fail("a set of forms has code of its own");
+        return 1;
+    }
     const std::vector<uint8_t>& code = f.code;
     const size_t n = code.size();
     if (n == 0 && partial) return 1 + f.arity;
@@ -573,6 +581,19 @@ static int analyzeStack(FunctionProto& f, const Program& program, bool partial) 
                     pops = 1 + a + 2 * b;
                     pushes = 1;
                     break;
+                case Op::MakeForms:
+                    if (static_cast<size_t>(a) >= f.protos.size() || !f.protos[a]->chooser) fail("bad set of forms");
+                    if (b < 2) fail("a set of forms has fewer than two");
+                    pops = b;
+                    pushes = 1;
+                    break;
+                case Op::MethodForms:
+                case Op::StaticForms:
+                    if (static_cast<size_t>(a) >= f.protos.size() || !f.protos[a]->chooser) fail("bad set of forms");
+                    if (b < 1) fail("a set of forms has none");
+                    pops = b + 1;
+                    pushes = 1;
+                    break;
                 case Op::Closure: {
                     if (static_cast<size_t>(a) >= f.protos.size()) fail("nested function out of range");
                     // A local function may capture its own slot, which is the one being pushed.
@@ -776,6 +797,11 @@ void disassembleFunction(const FunctionProto& f, const Program& program, std::os
             case Op::Closure:
                 out << " " << a << "  ; " << f.protos[a]->name;
                 break;
+            case Op::MakeForms:
+            case Op::MethodForms:
+            case Op::StaticForms:
+                out << " " << a << " count=" << b << "  ; " << f.protos[a]->name;
+                break;
             case Op::DefaultArg:
             case Op::IterNext:
                 out << " slot=" << a << " -> " << b;
@@ -837,7 +863,7 @@ void disassemble(const Program& program, std::ostream& out) {
 namespace {
 
 const char kMagic[4] = {'A', 'S', 'T', 'R'};
-const uint8_t kFormatVersion = 5;
+const uint8_t kFormatVersion = 6;
 const int kMaxProtoNesting = 200;
 
 enum ConstantTag : uint8_t { TagInt = 0, TagFloat = 1, TagString = 2 };
@@ -881,6 +907,13 @@ struct Writer {
         u32(static_cast<uint32_t>(f.classIds.size()));
         for (uint16_t id : f.classIds) u16(id);
         u16(f.ownClass);
+        u8(f.chooser ? 1 : 0);
+        str(f.signature);
+        u32(static_cast<uint32_t>(f.paramTypes.size()));
+        for (size_t i = 0; i < f.paramTypes.size(); i++) {
+            u8(f.paramTypes[i]);
+            str(i < f.paramClasses.size() && f.paramClasses[i] != nullptr ? f.paramClasses[i]->chars : std::string());
+        }
 
         u32(static_cast<uint32_t>(f.code.size()));
         out.write(reinterpret_cast<const char*>(f.code.data()), static_cast<std::streamsize>(f.code.size()));
@@ -989,6 +1022,15 @@ struct Reader {
         uint32_t classCount = count(2);
         for (uint32_t i = 0; i < classCount; i++) f->classIds.push_back(u16());
         f->ownClass = u16();
+        f->chooser = u8() != 0;
+        f->signature = str();
+        uint32_t typed = count(2);
+        if (typed != 0 && typed != static_cast<uint32_t>(f->arity)) corrupt();
+        for (uint32_t i = 0; i < typed; i++) {
+            f->paramTypes.push_back(u8());
+            const std::string cls = str();
+            f->paramClasses.push_back(cls.empty() ? nullptr : vm.intern(cls));
+        }
 
         uint32_t codeSize = count(1);
         f->code.assign(data.begin() + static_cast<std::ptrdiff_t>(pos),

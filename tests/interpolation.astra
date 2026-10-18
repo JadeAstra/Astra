@@ -54,7 +54,7 @@ print("escaped: \$name and \${name}")           // expect: escaped: $name and ${
 print("keywords stay text: $if $class $for")    // expect: keywords stay text: $if $class $for
 
 // local variables, parameters and loop variables
-fun describe(label : string, values : list) : string {
+fun describe(label : string, values : List) : string {
   val size = values.length
   var out = "$label has $size:"
   for v in values { out += " $v" }

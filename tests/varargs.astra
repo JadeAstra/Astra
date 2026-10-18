@@ -78,7 +78,7 @@ print(nothing?.all(*three), v?.all(*[9]))   // expect: null [1, 2, 9]
 val lambda = { a, b -> a * b }
 val pushed = [0]
 pushed.push(*three)
-print(lambda(*[6, 7]), range(*[1, 7, 2]).toList(), pushed, "a-b-c".replace(*["-", "+"]))   // expect: 42 [1, 3, 5] [0, 1, 2, 3] a+b+c
+print(lambda(*[6, 7]), Range(*[1, 7, 2]).toList(), pushed, "a-b-c".replace(*["-", "+"]))   // expect: 42 [1, 3, 5] [0, 1, 2, 3] a+b+c
 print(*three, *["and", "more"])             // expect: 1 2 3 and more
 
 class Stack {
@@ -101,7 +101,7 @@ print(add3(k * 2, k
   * 3, 1), [k * k].length)                  // expect: 11 1
 
 // Many arguments, many calls.
-val big = range(0, 500).toList()
+val big = Range(0, 500).toList()
 print(count(*big), sum(*big), count(*big, *big))   // expect: 500 124750 1000
 var total = 0
 for i in 1..20000 { total += sum(i, *[1, 1]) - i }

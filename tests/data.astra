@@ -93,7 +93,7 @@ data Version(val major : int, val minor : int, val note : string = "") {
 print(Version(1, 2, "a") == Version(1, 2, "b"), Version(1, 2), Version(1, 2).copy(3))   // expect: true v1.2 v3.0
 
 // Data objects inside data objects, and inside lists.
-data Line(val from : Point, val to : Point, val tags : list = [])
+data Line(val from : Point, val to : Point, val tags : List = [])
 val line = Line(Point(0, 0), Point(1, 1), ["a"])
 print(line, line == Line(Point(0, 0), Point(1, 1), ["a"]), line == Line(Point(0, 0), Point(1, 2), ["a"]))
 // expect: Line(from=Point(x=0, y=0), to=Point(x=1, y=1), tags=["a"]) true false

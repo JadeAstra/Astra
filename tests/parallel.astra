@@ -90,20 +90,20 @@ fun refused(action) {
 val moved = []
 var total = 0
 refused { moved.add(it) }
-// expect: a parallel section changes only the item it was given and what it makes itself: this list is shared with the other cores, so here it can be read and not changed
+// expect: a parallel section changes only the item it was given and what it makes itself: this List is shared with the other cores, so here it can be read and not changed
 refused { total += 1 }
 // expect: a parallel section changes only the item it was given and what it makes itself: the variable 'total' is shared
 refused { prices["new"] = 1 }
-// expect: a parallel section changes only the item it was given and what it makes itself: this map is shared with the other cores, so here it can be read and not changed
+// expect: a parallel section changes only the item it was given and what it makes itself: this Map is shared with the other cores, so here it can be read and not changed
 refused { settings.x = 99 }
 // expect: a parallel section changes only the item it was given and what it makes itself: this Ball is shared with the other cores, so here it can be read and not changed
 refused { names[0] = "changed" }
-// expect: a parallel section changes only the item it was given and what it makes itself: this list is shared with the other cores, so here it can be read and not changed
+// expect: a parallel section changes only the item it was given and what it makes itself: this List is shared with the other cores, so here it can be read and not changed
 refused { names.clear() }
-// expect: a parallel section changes only the item it was given and what it makes itself: this list is shared with the other cores, so here it can be read and not changed
+// expect: a parallel section changes only the item it was given and what it makes itself: this List is shared with the other cores, so here it can be read and not changed
 // What an item holds that is an object of its own is shared too: it was not dealt out.
 refused { it.trail.add(1) }
-// expect: a parallel section changes only the item it was given and what it makes itself: this list is shared with the other cores, so here it can be read and not changed
+// expect: a parallel section changes only the item it was given and what it makes itself: this List is shared with the other cores, so here it can be read and not changed
 fun inside() {
   var local = 0
   shared.parallelStream().forEach { local += 1 }
@@ -145,7 +145,7 @@ print(places(plain) == places(shared))                       // expect: true
 
 // ---- A buffer, in parts ----
 // Each core gets the positions of one part, and may write those and no others.
-val buffer = bytes(10000)
+val buffer = Bytes(10000)
 buffer.parallelChunks { positions -> for i in positions { buffer[i] = i % 251 } }
 print(buffer[0], buffer[250], buffer[251], buffer[9999], (0..<10000).all { buffer[it] == it % 251 })   // expect: 0 250 0 210 true
 val firstParts = []
@@ -159,7 +159,7 @@ try {
 }
 // expect: outside this core's part
 try { buffer.parallelChunks { buffer.fill(0) } } catch (e) { print(e.message) }
-// expect: a parallel section changes only the item it was given and what it makes itself: this bytes is shared with the other cores, so here it can be read and not changed
+// expect: a parallel section changes only the item it was given and what it makes itself: this Bytes is shared with the other cores, so here it can be read and not changed
 
 // ---- From a thread, and from a flow ----
 var fromThread = null
