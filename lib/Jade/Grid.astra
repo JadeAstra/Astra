@@ -11,50 +11,50 @@
 //   }
 
 class Grid : Content, OwnedContent {
-  override var owner = null
+  override var owner : Component? = null
 
   // Room kept free around the cells, and between one column or row and the next.
-  var insets = null
+  var insets : Insets = Insets(0, 0, 0, 0)
     set(value) {
       field = value
       owner?.invalidate()
     }
-  var hgap = null
+  var hgap : int = 0
     set(value) {
       field = value
       owner?.invalidate()
     }
-  var vgap = null
+  var vgap : int = 0
     set(value) {
       field = value
       owner?.invalidate()
     }
 
   // A name for the grid, under which a layout written for it outside the program is found.
-  var viewId = null
+  var viewId : string? = null
     set(value) {
       field = value
       if (value != null) { Jade.register(value, this) }
     }
 
   // One widget's place in the grid.
-  class Cell(val component, val row, val col, val rowSpan, val colSpan, val fill, val anchor, val weightX, val weightY)
+  class Cell(val component : Component, val row : int, val col : int, val rowSpan : int, val colSpan : int, val fill : Fill, val anchor : Anchor, val weightX : float, val weightY : float)
 
-  private val cellList = []
-  private val occupied = mutableSetOf()
+  private val cellList : List<Cell> = []
+  private val occupied : Set<int> = mutableSetOf()
   private var builderRow = 0
 
-  fun init(insets = null, hgap = 0, vgap = 0) {
+  fun init(insets : Insets? = null, hgap : int = 0, vgap : int = 0) {
     this.insets = insets ?: Insets(0, 0, 0, 0)
     this.hgap = hgap
     this.vgap = vgap
   }
 
-  get cells() => cellList
-  get children() => cellList.map { it.component }
+  get cells() : List<Cell> => cellList
+  get children() : List<Component> => cellList.map { it.component }
 
   // Puts a component at a row and a column, counted from 0.
-  fun add(component, row, col, rowSpan = 1, colSpan = 1, fill : Fill = Fill.none, anchor : Anchor = Anchor.center, weightX = 0.0, weightY = 0.0) {
+  fun add(component : Component, row : int, col : int, rowSpan : int = 1, colSpan : int = 1, fill : Fill = Fill.none, anchor : Anchor = Anchor.center, weightX : float = 0.0, weightY : float = 0.0) : Component {
     require(rowSpan >= 1 and colSpan >= 1) { "spans must be at least 1 (got $rowSpan x $colSpan)" }
     cellList.add(Cell(component, row, col, rowSpan, colSpan, fill, anchor, weightX, weightY))
     for (r in row..<row + rowSpan) {
@@ -67,7 +67,7 @@ class Grid : Content, OwnedContent {
     return component
   }
 
-  fun remove(component) {
+  fun remove(component : Component) {
     if (cellList.removeAll { it.component === component }) {
       occupied.clear()
       for (cell in cellList) {
@@ -90,12 +90,12 @@ class Grid : Content, OwnedContent {
 
   // What the block of row { } runs on. Its fields are private, so that in the block `grid`
   // is still the function grid() and `row` the grid's own row { }.
-  class RowScope(private val grid, private val row) {
+  class RowScope(private val grid : Grid, private val row : int) {
     private var col = 0
 
     // The next cell of the row. It goes in the first column that is free: one taken by a
     // cell from a row above that spans down is passed over.
-    fun cell(component, rowSpan = 1, colSpan = 1, fill : Fill = Fill.none, anchor : Anchor = Anchor.center, weightX = 0.0, weightY = 0.0) {
+    fun cell(component : Component, rowSpan : int = 1, colSpan : int = 1, fill : Fill = Fill.none, anchor : Anchor = Anchor.center, weightX : float = 0.0, weightY : float = 0.0) : Component {
       while (grid.isOccupied(row, col)) { col += 1 }
       grid.add(component, row, col, rowSpan, colSpan, fill, anchor, weightX, weightY)
       col += colSpan
@@ -103,15 +103,15 @@ class Grid : Content, OwnedContent {
     }
   }
 
-  fun isOccupied(row, col) => occupied.contains(Grid.key(row, col))
+  fun isOccupied(row : int, col : int) : bool => occupied.contains(Grid.key(row, col))
 
   // A layout written for the grid outside the program takes the place of the one built
   // here. (Those files are read from a later milestone on; until then there is none.)
   fun invalidateOverride() {}
-  private fun effective() => ResolvedLayout(cellList, insets, hgap, vgap)
-  internal fun effectiveComponents() => effective().cells.map { it.component }
+  private fun effective() : ResolvedLayout => ResolvedLayout(cellList, insets, hgap, vgap)
+  internal fun effectiveComponents() : List<Component> => effective().cells.map { it.component }
 
-  override fun sizes() {
+  override fun sizes() : Sizes {
     val e = effective()
     val nc = Grid.numCols(e.cells)
     val nr = Grid.numRows(e.cells)
@@ -131,7 +131,7 @@ class Grid : Content, OwnedContent {
     return Sizes(Dimension(minW, minH), Dimension(prefW, prefH), Dimension(maxW, maxH))
   }
 
-  override fun paint(canvas) {
+  override fun paint(canvas : Canvas) {
     val e = effective()
     for (cell in e.cells) {
       val comp = cell.component
@@ -148,7 +148,7 @@ class Grid : Content, OwnedContent {
   }
 
   // Places every cell's component in a grid of this size.
-  fun layout(width, height) {
+  fun layout(width : int, height : int) {
     val e = effective()
     val nc = Grid.numCols(e.cells)
     val nr = Grid.numRows(e.cells)
@@ -166,7 +166,7 @@ class Grid : Content, OwnedContent {
   }
 
   // The component at a point: the last one added, if several overlap.
-  fun childAt(x, y) {
+  fun childAt(x : int, y : int) : Component? {
     val found = effective().cells.lastOrNull { it.component.visible and it.component.bounds.contains(x, y) }
     return found?.component
   }
@@ -174,7 +174,7 @@ class Grid : Content, OwnedContent {
   // What each column and row would like, needs at least and may have at most, and its
   // weight. A cell in one column or row sets them outright; one that spans several then
   // spreads whatever it still lacks over the ones it covers.
-  private fun tracks(cells, hgap, vgap, nc, nr) {
+  private fun tracks(cells : List<Cell>, hgap : int, vgap : int, nc : int, nr : int) : Tracks {
     val t = Tracks(nc, nr)
     for (cell in cells) {
       if (!cell.component.visible) { continue }
@@ -215,7 +215,7 @@ class Grid : Content, OwnedContent {
   }
 
   // Gives a component its size and place in the room its cell has.
-  private fun place(cell, cx, cy, cw, ch) {
+  private fun place(cell : Cell, cx : int, cy : int, cw : int, ch : int) {
     val comp = cell.component
     val pref = comp.prefSize()
     val min = comp.minSize()
@@ -228,7 +228,7 @@ class Grid : Content, OwnedContent {
     comp.bounds = Rectangle(cx + Grid.anchorOffsetX(cell.anchor, cw - w), cy + Grid.anchorOffsetY(cell.anchor, ch - h), w, h)
   }
 
-  class Tracks(nc, nr) {
+  class Tracks(nc : int, nr : int) {
     val colPref = List(nc) { 0 }
     val colMin = List(nc) { 0 }
     val colMax = List(nc) { 0 }
@@ -239,12 +239,12 @@ class Grid : Content, OwnedContent {
     val rowWt = List(nr) { 0.0 }
   }
 
-  static fun key(row, col) => row * 100000 + col
-  static fun numCols(cells) => cells.maxOfOrNull { it.col + it.colSpan } ?: 0
-  static fun numRows(cells) => cells.maxOfOrNull { it.row + it.rowSpan } ?: 0
+  static fun key(row : int, col : int) : int => row * 100000 + col
+  static fun numCols(cells : List<Cell>) : int => cells.maxOfOrNull { it.col + it.colSpan } ?: 0
+  static fun numRows(cells : List<Cell>) : int => cells.maxOfOrNull { it.row + it.rowSpan } ?: 0
 
   // The most the tracks may be together; no limit if any of them has none.
-  static fun trackMaxSum(maxes, gap, edge) {
+  static fun trackMaxSum(maxes : List<int>, gap : int, edge : int) : int {
     var sum = edge + gap * Math.max(maxes.size - 1, 0)
     for (m in maxes) {
       if (m <= 0 or m >= maxInt) { return maxInt }
@@ -253,8 +253,8 @@ class Grid : Content, OwnedContent {
     return sum >= maxInt ? maxInt : sum
   }
 
-  static fun positions(sizes, start, gap) {
-    val pos = []
+  static fun positions(sizes : List<int>, start : int, gap : int) : List<int> {
+    val pos : List<int> = []
     var x = start
     for (size in sizes) {
       pos.add(x)
@@ -263,20 +263,20 @@ class Grid : Content, OwnedContent {
     return pos
   }
 
-  static fun spanSize(sizes, start, span, gap) {
+  static fun spanSize(sizes : List<int>, start : int, span : int, gap : int) : int {
     var s = gap * (span - 1)
     for (i in start..<start + span) { s += sizes[i] }
     return s
   }
 
-  static fun distributeDeficit(arr, start, span, gap, need, weight) {
+  static fun distributeDeficit(arr : List<int>, start : int, span : int, gap : int, need : int, weight : List<float>) {
     var cur = gap * (span - 1)
     for (i in start..<start + span) { cur += arr[i] }
     if (need > cur) { Grid.distribute(arr, start, span, need - cur, weight) }
   }
 
   // Shares an amount among some tracks: by weight if any has one, evenly if none has.
-  static fun distribute(arr, start, span, amount, weight) {
+  static fun distribute(arr : List<int>, start : int, span : int, amount : int, weight : List<float>) {
     var wsum = 0.0
     for (i in start..<start + span) { wsum += weight[i] }
     if (wsum > 0.0) {
@@ -299,7 +299,7 @@ class Grid : Content, OwnedContent {
   }
 
   // A weight given to a cell that spans tracks none of which has one is shared among them.
-  static fun spreadWeight(weight, start, span, w) {
+  static fun spreadWeight(weight : List<float>, start : int, span : int, w : float) {
     if (w <= 0.0) { return }
     for (i in start..<start + span) {
       if (weight[i] > 0.0) { return }
@@ -310,7 +310,7 @@ class Grid : Content, OwnedContent {
 
   // The size of each track for the room there is: room to spare goes to the weighted
   // ones, and too little is taken from each by how much it can give up.
-  static fun resolveSizes(pref, min, weight, available) {
+  static fun resolveSizes(pref : List<int>, min : List<int>, weight : List<float>, available : int) : List<int> {
     val n = pref.size
     val sizes = pref.toList()
     val extra = available - pref.sum()
@@ -355,12 +355,12 @@ class Grid : Content, OwnedContent {
     return sizes
   }
 
-  static fun anchorOffsetX(anchor, extra) {
+  static fun anchorOffsetX(anchor : Anchor, extra : int) : int {
     if (anchor == Anchor.west or anchor == Anchor.northwest or anchor == Anchor.southwest) { return 0 }
     if (anchor == Anchor.east or anchor == Anchor.northeast or anchor == Anchor.southeast) { return extra }
     return extra / 2
   }
-  static fun anchorOffsetY(anchor, extra) {
+  static fun anchorOffsetY(anchor : Anchor, extra : int) : int {
     if (anchor == Anchor.north or anchor == Anchor.northwest or anchor == Anchor.northeast) { return 0 }
     if (anchor == Anchor.south or anchor == Anchor.southwest or anchor == Anchor.southeast) { return extra }
     return extra / 2
@@ -368,4 +368,4 @@ class Grid : Content, OwnedContent {
 }
 
 // The cells a grid is laid out by: its own, or a layout written for it outside the program.
-internal class ResolvedLayout(val cells, val insets, val hgap, val vgap)
+internal class ResolvedLayout(val cells : List<Grid.Cell>, val insets : Insets, val hgap : int, val vgap : int)

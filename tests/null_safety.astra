@@ -1,12 +1,15 @@
 // ?.  ?:  !!  and return / throw / break / continue where a value is expected.
 
-class Node(val name, var next = null) {
+class Node(val name : string, var next : Node? = null) {
   var visits = 0
   fun label() => "<" + this.name + ">"
-  fun tag(prefix = "", suffix = "") => prefix + this.name + suffix
+  fun tag(prefix : string = "", suffix : string = "") => prefix + this.name + suffix
 }
 
-val none = null
+val none : Node? = null
+
+// A value whose type the checker does not see, for testing the checks made when running.
+val unknown = { value -> value }
 val a = Node("a")
 var calls = 0
 fun counted() {
@@ -16,20 +19,20 @@ fun counted() {
 
 // ?. reads a member, or gives null when there is nothing to read it from.
 print(a?.name, none?.name, a?.label(), none?.label())   // expect: a null <a> null
-print(a.next?.name, a?.next?.name, "abc"?.length, none?.length)   // expect: null null 3 null
+print(a.next?.name, a?.next?.name, "abc"?.length, unknown(none)?.length)   // expect: null null 3 null
 
 // With no object, the arguments of the call are not worked out.
 print(none?.tag(counted()), none?.tag(suffix = counted()), calls)   // expect: null null 0
 print(a?.tag(counted()), a?.tag(suffix = "!"), calls)   // expect: xa a! 1
 
 // A lambda after the call, and the scope functions.
-print([1, 2]?.map { it * 2 }, none?.map { counted() }, a?.let { it.name + "!" }, none?.let { counted() }, calls)
+print([1, 2]?.map { it * 2 }, unknown(none)?.map { counted() }, a?.let { it.name + "!" }, none?.let { counted() }, calls)
 // expect: [2, 4] null a! null 1
 
 // Each step of a chain needs its own ?.
 a.next = Node("b")
 print(a?.next?.name, a.next?.next?.name)    // expect: b null
-try { print(none?.next.name) } catch (e) { print("caught") }   // expect: caught
+try { print(unknown(none)?.next.name) } catch (e) { print("caught") }   // expect: caught
 
 // ?: gives the left side unless it is null. Only null counts: 0, false and "" are values.
 print(none ?: "default", a.name ?: "unused", 0 ?: 1, false ?: true, "" ?: "empty")   // expect: default a 0 false
@@ -48,14 +51,14 @@ val chained = a.next
 print(chained)                              // expect: fallback
 
 // !! insists on a value.
-print(a!!.name, a.next!!.label(), !!true, !!none)   // expect: a <b> true false
+print(a!!.name, a.next!!.label(), !!true, !!unknown(none))   // expect: a <b> true false
 try { print(none!!) } catch (e) { print(e.message) }   // expect: '!!' was used on a value that is null
-try { print(a.next.next!!.name) } catch (e) { print(e.message) }   // expect: '!!' was used on a value that is null
+try { print(a.next!!.next!!.name) } catch (e) { print(e.message) }   // expect: '!!' was used on a value that is null
 
 // Assigning through ?. does nothing when there is no object, and the value is not worked out.
 calls = 0
 val missing = none
-missing?.next = counted()
+missing?.next = unknown(counted())
 missing?.visits += 5
 missing?.visits++
 a?.visits = 2
@@ -64,15 +67,15 @@ a?.visits++
 print(calls, a.visits, (a?.visits = 10), (missing?.visits = 10))   // expect: 0 6 10 null
 
 // return and throw as the other side of ?:
-fun nameOf(node) {
+fun nameOf(node : Node?) {
   val found = node ?: return "nobody"
   return found.name
 }
-fun required(node) => node ?: throw Error("nothing there")
+fun required(node : Node?) => node ?: throw Error("nothing there")
 print(nameOf(a), nameOf(null), required(a).name)   // expect: a nobody a
 try { required(null) } catch (e) { print(e.message) }   // expect: nothing there
 
-fun describe(node) {
+fun describe(node : Node?) {
   val text = "node " + (node?.name ?: return "none") + "."
   return text
 }
@@ -97,7 +100,7 @@ while true {
 }
 print(sum, index)                           // expect: 300 2
 
-fun add(x, y, z) => x + y + z
+fun add(x : int, y : int, z : int) => x + y + z
 var total = 0
 for item in [1, 2, null, 4] {
   total += add(1, item ?: continue, 1)
@@ -115,7 +118,7 @@ for item in ["a", null, "c"] {
 print(readers.map { it() })                 // expect: ["a", "aa", null, "c", "cc"]
 
 // A variable whose own value mentions it, with a break in the same expression.
-fun onlyIf(value, callback) => value == null ? null : callback
+fun onlyIf(value : int?, callback : () -> string) => value == null ? null : callback
 val callbacks = []
 for item in [1, 2, null, 4] {
   val self = onlyIf(item, fun() => self == null ? "unset" : "set $item") ?: break
@@ -125,7 +128,7 @@ print(callbacks.map { it() })               // expect: ["set 1", "set 2"]
 
 // Leaving through a finally block from the middle of an expression.
 val log = []
-fun guarded(value) {
+fun guarded(value : int?) {
   try {
     val built = [1, 2, value ?: return "early"]
     return built.length
@@ -146,7 +149,7 @@ for item in [1, null, 3] {
 }
 print(log.slice(2))                         // expect: [1, "pass", "pass", 3, "pass"]
 
-fun firstGap(list) {
+fun firstGap(list : List<int?>) {
   for item in list {
     try {
       val pair = [item, item ?: break]
@@ -174,7 +177,7 @@ for item in [5, null, 6] {
 print(topLevel)                             // expect: 11
 
 // Many times over: nothing is left on the stack.
-fun pick(i) => i % 3 == 0 ? null : i
+fun pick(i : int) => i % 3 == 0 ? null : i
 var many = 0
 for i in 1..30000 {
   val kept = [i]

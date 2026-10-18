@@ -26,11 +26,11 @@ namespace {
 
 // Compiled into every program as module 0. Runtime errors are instances of Error.
 const char* const kPrelude = R"(class Error {
-  var message
-  fun init(message) {
+  var message : string
+  fun init(message : string) {
     this.message = message
   }
-  fun toString() {
+  fun toString() : string {
     return type(this) + ": " + str(this.message)
   }
 }
@@ -771,6 +771,8 @@ private:
                 cls = session_.vm_.intern(dot == std::string::npos ? type.className : type.className.substr(dot + 1));
             }
             proto.paramClasses.push_back(cls);
+            const bool function = i < fn.paramTypes.size() && fn.paramTypes[i].isFunction();
+            proto.paramCounts.push_back(static_cast<uint8_t>(function ? std::min<size_t>(fn.paramTypes[i].params.size() + 1, 255) : 0));
         }
     }
 
@@ -1419,7 +1421,7 @@ private:
     TypeSpec resolveType(const TypeAnnotation& s) {
         TypeSpec type;
         // `any` takes every value; `unit` is what a function that returns nothing is declared as.
-        if (!s.present() || s.typeParam || s.name == "any" || s.name == "unit") return type;
+        if (!s.present() || s.typeParam || s.name == "any" || s.name == "unit" || s.name == "nothing") return type;
 
         uint8_t id = builtinTypeId(s.name);
         if (id == 0) {
@@ -1957,6 +1959,19 @@ private:
         if (required < min || (max >= 0 && (most < 0 || most > max)))
             throw error(s, "the " + what + " takes " + counts(min, max) + " arguments in the C++; this declaration says " +
                                counts(required, most));
+        // Its parameters' names, for calls that name them (D116): handed to the VM as the
+        // standard library loads, so a built program has them too.
+        if (!fn.params.empty() && fn.varargIndex < 0) {
+            line_ = s.line;
+            emit(Op::GetGlobal, resolveGlobal("__nameParams", s)->slot);
+            emit(Op::Const, stringConstant(s.receiver));
+            emit(Op::Const, stringConstant(fn.name));
+            for (const std::string& p : fn.params) emit(Op::Const, stringConstant(p));
+            emit(Op::BuildList, static_cast<int>(fn.params.size()));
+            emit(Op::Call);
+            emitByte(3);
+            emit(Op::Pop);
+        }
         auto& cover = session_.externalForms_[what];
         if (cover.file.empty()) {
             cover = {min, max, required, most, file_, s.line, s.col};

@@ -6,7 +6,7 @@
 val arrived = {:}          // worker -> the messages that have come and not been looked at
 val awaited = {:}          // worker -> the continuation of a flow that is waiting for one
 
-fun listenTo(worker) {
+fun listenTo(worker : Worker) {
   arrived[worker] = Deque()
   worker.onMessage = { message ->
     val waiting = awaited.remove(worker)
@@ -15,13 +15,13 @@ fun listenTo(worker) {
   return worker
 }
 
-suspend fun next(worker) {
+suspend fun next(worker : Worker) {
   if (arrived[worker].isNotEmpty()) { return arrived[worker].removeFirst() }
   return suspendCoroutine { c -> awaited[worker] = c }
 }
 
-suspend fun failureOf(worker) => suspendCoroutine { c -> worker.onError = { text -> c.resume(text) } }
-suspend fun endOf(worker) {
+suspend fun failureOf(worker : Worker) => suspendCoroutine { c -> worker.onError = { text -> c.resume(text) } } as string
+suspend fun endOf(worker : Worker) {
   while (worker.isAlive) { delay(5) }
 }
 
@@ -57,7 +57,7 @@ startCoroutine {
   print(next(echo), original)                                // expect: 2 ["keep", 1, 2]
 
   // What cannot be copied is refused where it is sent.
-  class Point(val x, val y)
+  class Point(val x : int, val y : int)
   try { echo.post(Point(1, 2)) } catch (e) { print(e.message) }
   // expect: a message to or from a worker can hold numbers, strings, booleans, null, bytes, and lists and maps of those, not a value of type Point: the two share no objects
   try { echo.post([{ 1 }]) } catch (e) { print(e.message.endsWith("not a value of type Function: the two share no objects")) }   // expect: true

@@ -1,122 +1,124 @@
 // ---- Strings ----
-// The methods a string has besides the built-in ones. A character is a string of length one,
+// The methods a string has besides the built-in ones. A character is a string of size one,
 // so the methods Kotlin has for a Char are here too.
 
 // -- Parts of the text --
 
-fun string.take(count) {
+fun string.take(count : int) : string {
   if (count < 0) { throw Error("take(" + str(count) + "): the count cannot be negative") }
-  return count >= this.length ? this : this.substring(0, count)
+  return count >= this.size ? this : this.substring(0, count)
 }
 
-fun string.takeLast(count) {
+fun string.takeLast(count : int) : string {
   if (count < 0) { throw Error("takeLast(" + str(count) + "): the count cannot be negative") }
-  return count >= this.length ? this : this.substring(this.length - count)
+  return count >= this.size ? this : this.substring(this.size - count)
 }
 
-fun string.drop(count) {
+fun string.drop(count : int) : string {
   if (count < 0) { throw Error("drop(" + str(count) + "): the count cannot be negative") }
-  return count >= this.length ? "" : this.substring(count)
+  return count >= this.size ? "" : this.substring(count)
 }
 
-fun string.dropLast(count) {
+fun string.dropLast(count : int) : string {
   if (count < 0) { throw Error("dropLast(" + str(count) + "): the count cannot be negative") }
-  return count >= this.length ? "" : this.substring(0, this.length - count)
+  return count >= this.size ? "" : this.substring(0, this.size - count)
 }
 
-fun string.takeWhile(predicate) {
+fun string.takeWhile(predicate : (string) -> bool) : string {
   var index = 0
-  while (index < this.length and predicate(this[index])) { index += 1 }
+  while (index < this.size and predicate(this[index])) { index += 1 }
   return this.substring(0, index)
 }
 
-fun string.dropWhile(predicate) {
+fun string.dropWhile(predicate : (string) -> bool) : string {
   var index = 0
-  while (index < this.length and predicate(this[index])) { index += 1 }
+  while (index < this.size and predicate(this[index])) { index += 1 }
   return this.substring(index)
 }
 
 // What comes before or after a delimiter. If the delimiter is not there, the whole string,
 // or `missingDelimiterValue` when one is given.
-fun string.substringBefore(delimiter, missingDelimiterValue = null) {
+fun string.substringBefore(delimiter : string, missingDelimiterValue : string? = null) : string {
   val at = this.indexOf(delimiter)
   if (at < 0) { return missingDelimiterValue == null ? this : missingDelimiterValue }
   return this.substring(0, at)
 }
 
-fun string.substringAfter(delimiter, missingDelimiterValue = null) {
+fun string.substringAfter(delimiter : string, missingDelimiterValue : string? = null) : string {
   val at = this.indexOf(delimiter)
   if (at < 0) { return missingDelimiterValue == null ? this : missingDelimiterValue }
-  return this.substring(at + delimiter.length)
+  return this.substring(at + delimiter.size)
 }
 
-fun string.substringBeforeLast(delimiter, missingDelimiterValue = null) {
+fun string.substringBeforeLast(delimiter : string, missingDelimiterValue : string? = null) : string {
   val at = this.lastIndexOf(delimiter)
   if (at < 0) { return missingDelimiterValue == null ? this : missingDelimiterValue }
   return this.substring(0, at)
 }
 
-fun string.substringAfterLast(delimiter, missingDelimiterValue = null) {
+fun string.substringAfterLast(delimiter : string, missingDelimiterValue : string? = null) : string {
   val at = this.lastIndexOf(delimiter)
   if (at < 0) { return missingDelimiterValue == null ? this : missingDelimiterValue }
-  return this.substring(at + delimiter.length)
+  return this.substring(at + delimiter.size)
 }
 
-fun string.removePrefix(prefix) => this.startsWith(prefix) ? this.substring(prefix.length) : this
-fun string.removeSuffix(suffix) => this.endsWith(suffix) ? this.substring(0, this.length - suffix.length) : this
+fun string.removePrefix(prefix : string) : string => this.startsWith(prefix) ? this.substring(prefix.size) : this
+fun string.removeSuffix(suffix : string) : string => this.endsWith(suffix) ? this.substring(0, this.size - suffix.size) : this
 
-fun string.removeSurrounding(prefix, suffix = prefix) {
-  if (this.length >= prefix.length + suffix.length and this.startsWith(prefix) and this.endsWith(suffix)) {
-    return this.substring(prefix.length, this.length - suffix.length)
+fun string.removeSurrounding(prefix : string, suffix : string = prefix) : string {
+  if (this.size >= prefix.size + suffix.size and this.startsWith(prefix) and this.endsWith(suffix)) {
+    return this.substring(prefix.size, this.size - suffix.size)
   }
   return this
 }
 
 // The text in pieces of `size` characters; the last may be shorter.
-fun string.chunked(size) {
+fun string.chunked(size : int) : List<string> {
   if (size < 1) { throw Error("chunked(" + str(size) + "): the size has to be at least 1") }
-  val out = []
+  val out : List<string> = []
   var start = 0
-  while (start < this.length) {
+  while (start < this.size) {
     out.add(this.slice(start, start + size))
     start += size
   }
   return out
 }
 
-fun string.replaceFirst(oldValue, newValue) {
+fun string.replaceFirst(oldValue : string, newValue : string) : string {
   val at = this.indexOf(oldValue)
-  return at < 0 ? this : this.substring(0, at) + newValue + this.substring(at + oldValue.length)
+  return at < 0 ? this : this.substring(0, at) + newValue + this.substring(at + oldValue.size)
 }
 
 // The text with its first character put through a function: name.replaceFirstChar { it.uppercase() }
-fun string.replaceFirstChar(transform) => this.length == 0 ? this : str(transform(this[0])) + this.substring(1)
+fun string.replaceFirstChar(transform : (string) -> any?) : string => this.size == 0 ? this : str(transform(this[0])) + this.substring(1)
 
-fun string.commonPrefixWith(other) {
+fun string.commonPrefixWith(other : string) : string {
   var index = 0
-  while (index < this.length and index < other.length and this[index] == other[index]) { index += 1 }
+  while (index < this.size and index < other.size and this[index] == other[index]) { index += 1 }
   return this.substring(0, index)
 }
 
 // -- Characters --
 
-fun string.first(predicate = null) {
-  if (predicate == null) {
-    if (this.length == 0) { throw Error("first() of an empty string") }
-    return this[0]
-  }
+fun string.first() : string {
+  if (this.size == 0) { throw Error("first() of an empty string") }
+  return this[0]
+}
+
+fun string.first(predicate : (string) -> bool) : string {
   for character in this {
     if (predicate(character)) { return character }
   }
   throw Error("first(): no character of the string meets the condition")
 }
 
-fun string.last(predicate = null) {
-  if (predicate == null) {
-    if (this.length == 0) { throw Error("last() of an empty string") }
-    return this[this.length - 1]
-  }
-  var index = this.length - 1
+fun string.last() : string {
+  if (this.size == 0) { throw Error("last() of an empty string") }
+  return this[this.size - 1]
+}
+
+fun string.last(predicate : (string) -> bool) : string {
+  var index = this.size - 1
   while (index >= 0) {
     if (predicate(this[index])) { return this[index] }
     index -= 1
@@ -124,17 +126,19 @@ fun string.last(predicate = null) {
   throw Error("last(): no character of the string meets the condition")
 }
 
-fun string.firstOrNull(predicate = null) {
-  if (predicate == null) { return this.length == 0 ? null : this[0] }
+fun string.firstOrNull() : string? => this.size == 0 ? null : this[0]
+
+fun string.firstOrNull(predicate : (string) -> bool) : string? {
   for character in this {
     if (predicate(character)) { return character }
   }
   return null
 }
 
-fun string.lastOrNull(predicate = null) {
-  if (predicate == null) { return this.length == 0 ? null : this[this.length - 1] }
-  var index = this.length - 1
+fun string.lastOrNull() : string? => this.size == 0 ? null : this[this.size - 1]
+
+fun string.lastOrNull(predicate : (string) -> bool) : string? {
+  var index = this.size - 1
   while (index >= 0) {
     if (predicate(this[index])) { return this[index] }
     index -= 1
@@ -142,16 +146,16 @@ fun string.lastOrNull(predicate = null) {
   return null
 }
 
-fun string.get(index) {
-  if (index < 0 or index >= this.length) {
-    throw Error("get: index " + str(index) + " is out of range (length " + str(this.length) + ")")
+fun string.get(index : int) : string {
+  if (index < 0 or index >= this.size) {
+    throw Error("get: index " + str(index) + " is out of range (length " + str(this.size) + ")")
   }
   return this[index]
 }
 
-fun string.getOrNull(index) => index >= 0 and index < this.length ? this[index] : null
+fun string.getOrNull(index : int) : string? => index >= 0 and index < this.size ? this[index] : null
 
-fun string.indexOfFirst(predicate) {
+fun string.indexOfFirst(predicate : (string) -> bool) : int {
   var index = 0
   for character in this {
     if (predicate(character)) { return index }
@@ -160,8 +164,8 @@ fun string.indexOfFirst(predicate) {
   return -1
 }
 
-fun string.indexOfLast(predicate) {
-  var index = this.length - 1
+fun string.indexOfLast(predicate : (string) -> bool) : int {
+  var index = this.size - 1
   while (index >= 0) {
     if (predicate(this[index])) { return index }
     index -= 1
@@ -169,11 +173,11 @@ fun string.indexOfLast(predicate) {
   return -1
 }
 
-fun string.forEach(action) {
+fun string.forEach(action : (string) -> unit) {
   for character in this { action(character) }
 }
 
-fun string.forEachIndexed(action) {
+fun string.forEachIndexed(action : (int, string) -> unit) {
   var index = 0
   for character in this {
     action(index, character)
@@ -181,31 +185,34 @@ fun string.forEachIndexed(action) {
   }
 }
 
-fun string.any(predicate = null) {
-  if (predicate == null) { return this.length > 0 }
+fun string.any() : bool => this.size > 0
+
+fun string.any(predicate : (string) -> bool) : bool {
   for character in this {
     if (predicate(character)) { return true }
   }
   return false
 }
 
-fun string.all(predicate) {
+fun string.all(predicate : (string) -> bool) : bool {
   for character in this {
     if (!predicate(character)) { return false }
   }
   return true
 }
 
-fun string.none(predicate = null) {
-  if (predicate == null) { return this.length == 0 }
+fun string.none() : bool => this.size == 0
+
+fun string.none(predicate : (string) -> bool) : bool {
   for character in this {
     if (predicate(character)) { return false }
   }
   return true
 }
 
-fun string.count(predicate = null) {
-  if (predicate == null) { return this.length }
+fun string.count() : int => this.size
+
+fun string.count(predicate : (string) -> bool) : int {
   var total = 0
   for character in this {
     if (predicate(character)) { total += 1 }
@@ -214,50 +221,50 @@ fun string.count(predicate = null) {
 }
 
 // A list of what the function gives for each character.
-fun string.map(transform) {
-  val out = []
+fun <R> string.map(transform : (string) -> R) : List<R> {
+  val out : List<R> = []
   for character in this { out.add(transform(character)) }
   return out
 }
 
 // The characters that meet the condition, as a string.
-fun string.filter(predicate) {
-  val out = []
+fun string.filter(predicate : (string) -> bool) : string {
+  val out : List<string> = []
   for character in this {
     if (predicate(character)) { out.add(character) }
   }
   return out.join("")
 }
 
-fun string.filterNot(predicate) {
-  val out = []
+fun string.filterNot(predicate : (string) -> bool) : string {
+  val out : List<string> = []
   for character in this {
     if (!predicate(character)) { out.add(character) }
   }
   return out.join("")
 }
 
-// The characters, as a list of strings of length one.
-fun string.toList() {
-  val out = []
+// The characters, as a list of strings of size one.
+fun string.toList() : List<string> {
+  val out : List<string> = []
   for character in this { out.add(character) }
   return out
 }
 
-fun string.toMutableList() => this.toList()
-fun string.toCharArray() => this.toList()
-fun string.toSet() => Set(this)
+fun string.toMutableList() : List<string> => this.toList()
+fun string.toCharArray() : List<string> => this.toList()
+fun string.toSet() : Set<string> => Set(this)
 
-fun string.uppercaseChar() => this.uppercase()
-fun string.lowercaseChar() => this.lowercase()
+fun string.uppercaseChar() : string => this.uppercase()
+fun string.lowercaseChar() : string => this.lowercase()
 
 // The number a digit stands for: "7".digitToInt() is 7.
-fun string.digitToIntOrNull() {
-  val digit = this.length == 1 ? "0123456789".indexOf(this) : -1
+fun string.digitToIntOrNull() : int? {
+  val digit = this.size == 1 ? "0123456789".indexOf(this) : -1
   return digit < 0 ? null : digit
 }
 
-fun string.digitToInt() {
+fun string.digitToInt() : int {
   val digit = this.digitToIntOrNull()
   if (digit == null) { throw Error("\"" + this + "\" is not a digit") }
   return digit
@@ -265,19 +272,19 @@ fun string.digitToInt() {
 
 // -- Empty and missing text --
 
-fun string?.isNullOrBlank() => this == null or this.isBlank()
-fun string?.orEmpty() => this == null ? "" : this
-fun string.ifEmpty(defaultValue) => this.length == 0 ? defaultValue() : this
-fun string.ifBlank(defaultValue) => this.isBlank() ? defaultValue() : this
+fun string?.isNullOrBlank() : bool => this == null or this.isBlank()
+fun string?.orEmpty() : string => this == null ? "" : this
+fun string.ifEmpty(defaultValue : () -> string) : string => this.size == 0 ? defaultValue() : this
+fun string.ifBlank(defaultValue : () -> string) : string => this.isBlank() ? defaultValue() : this
 
 // -- To other types --
 // toInt, toIntOrNull, toDouble and toDoubleOrNull are built in. Astra has one type for whole
 // numbers and one for fractions, so Kotlin's other names mean the same.
 
-fun string.toLong(radix = 10) => this.toInt(radix)
-fun string.toLongOrNull(radix = 10) => this.toIntOrNull(radix)
-fun string.toFloat() => this.toDouble()
-fun string.toFloatOrNull() => this.toDoubleOrNull()
-fun string.toBoolean() => this.lowercase() == "true"
-fun string.encodeToByteArray() => this.toBytes()
-fun string.plus(other) => this + str(other)
+fun string.toLong(radix : int = 10) : int => this.toInt(radix)
+fun string.toLongOrNull(radix : int = 10) : int? => this.toIntOrNull(radix)
+fun string.toFloat() : float => this.toDouble()
+fun string.toFloatOrNull() : float? => this.toDoubleOrNull()
+fun string.toBoolean() : bool => this.lowercase() == "true"
+fun string.encodeToByteArray() : Bytes => this.toBytes()
+fun string.plus(other : any?) : string => this + str(other)

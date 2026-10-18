@@ -26,8 +26,8 @@ val ages = { "Ann": 9, bob: 10, 3: "three", [1 + 1]: "two" }
 print(ages["Ann"], ages["bob"], ages[3], ages[2]) // expect: 9 10 three two
 
 // Trailing lambdas: after the ')' and with no parentheses at all.
-fun twice(f) { f(); f() }
-fun apply3(x, f) => f(x)
+fun twice(f : () -> unit) { f(); f() }
+fun apply3(x : int, f : (int) -> int) => f(x)
 var count = 0
 twice { count += 1 }
 twice() { count += 10 }

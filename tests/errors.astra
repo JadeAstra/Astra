@@ -11,13 +11,13 @@ try {
 }
 
 class ValidationError : Error {
-  val field
-  fun init(field, message) {
+  val field : string
+  fun init(field : string, message : string) {
     super.init(message)
     this.field = field
   }
 }
-fun validate(age) {
+fun validate(age : int) {
   if age < 0 { throw ValidationError("age", "must not be negative") }
   return age
 }
@@ -28,7 +28,10 @@ try {
 }
 
 // runtime errors are Error instances
-fun attempt(f) {
+// A value whose type the checker does not see, for testing the checks made when running.
+val unknown = { value -> value }
+
+fun attempt(f : () -> any?) {
   try {
     return f()
   } catch (e) {
@@ -38,11 +41,11 @@ fun attempt(f) {
 print(attempt(fun() => 1 / 0))                // expect: error: division by zero
 print(attempt(fun() => nope))                 // expect: error: undefined variable 'nope'
 print(attempt(fun() => null.x))               // expect: error: undefined property 'x' on a value of type null
-print(attempt(fun() => 5()))                  // expect: error: cannot call a value of type int
-print(attempt(fun() => "a" - 1))              // expect: error: unsupported operand types for '-': string and int
-print(attempt(fun() => [] < 1))               // expect: error: cannot compare List and int with '<'
-print(attempt(fun(a) => a))                   // expect: error: <lambda>() expects 1 argument(s) but got 0
-print(attempt(fun() => Error("x").missing())) // expect: error: undefined method 'missing' on Error
+print(attempt(fun() => unknown(5)()))                  // expect: error: cannot call a value of type int
+print(attempt(fun() => "a" - unknown(1)))              // expect: error: unsupported operand types for '-': string and int
+print(attempt(fun() => [] < unknown(1)))               // expect: error: cannot compare List and int with '<'
+print(attempt(unknown(fun(a) => a)))                   // expect: error: <lambda>() expects 1 argument(s) but got 0
+print(attempt(fun() => unknown(Error("x")).missing())) // expect: error: undefined method 'missing' on Error
 print(attempt(fun() => assert(1 == 2, "math is broken")))   // expect: error: math is broken
 print(attempt(fun() => int("abc")))           // expect: error: cannot convert "abc" to an int
 val notAType = 2
@@ -64,7 +67,7 @@ fun nested() {
 print(nested())                              // expect: outer from inner
 
 // errors unwind through calls and through native callbacks
-fun deep(n) {
+fun deep(n : int) {
   if n == 0 { throw Error("bottom") }
   return deep(n - 1)
 }
@@ -111,12 +114,12 @@ try { throw 1 } catch { print("ignored") }              // expect: ignored
 
 // a closure created before the throw keeps its variable
 fun capture() {
-  var saved = null
+  var saved : (() -> string)? = null
   try {
     var local = "kept"
     saved = fun() => local
     throw Error("x")
   } catch (e) { }
-  return saved()
+  return saved!!()
 }
 print(capture())                             // expect: kept

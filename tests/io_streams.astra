@@ -43,10 +43,10 @@ try { File("no-such-file.txt").readText() } catch (e : IOException) { print(e.me
 
 // ---- A process, read to its end ----
 val listing = ProcessBuilder("cmd", "/c", "echo out& echo err 1>&2").start()
-print(listing.inputStream.readLines(), listing.errorStream.readText().trim(), listing.waitFor(), listing.isAlive, listing.exitValue())   // expect: ["out"] err 0 false 0
+print(listing.inputStream!!.readLines(), listing.errorStream!!.readText().trim(), listing.waitFor(), listing.isAlive, listing.exitValue())   // expect: ["out"] err 0 false 0
 // Its error output can go the same way as its ordinary output, or nowhere.
 val merged = ProcessBuilder(["cmd", "/c", "echo out& echo err 1>&2"]).redirectErrorStream(true).start()
-print(merged.inputStream.readLines().map { it.trim() }, merged.errorStream)   // expect: ["out", "err"] null
+print(merged.inputStream!!.readLines().map { it.trim() }, merged.errorStream)   // expect: ["out", "err"] null
 val quiet = ProcessBuilder("cmd", "/c", "echo out& echo err 1>&2").redirectError(ProcessBuilder.discard).redirectOutput(ProcessBuilder.discard).start()
 print(quiet.inputStream, quiet.errorStream, quiet.waitFor())   // expect: null null 0
 // The exit code, the folder it starts in, and its environment.
@@ -54,34 +54,34 @@ print(ProcessBuilder("cmd", "/c", "exit 3").start().waitFor())   // expect: 3
 val folder = File("io streams folder")
 folder.mkdirs()
 val inFolder = ProcessBuilder("cmd", "/c", "cd").directory(folder).start()
-print(inFolder.inputStream.readText().trim().endsWith("io streams folder"), folder.delete())   // expect: true true
+print(inFolder.inputStream!!.readText().trim().endsWith("io streams folder"), folder.delete())   // expect: true true
 val builder = ProcessBuilder("cmd", "/c", "echo %ASTRA_TEST_VALUE%")
 builder.environment()["ASTRA_TEST_VALUE"] = "from the parent"
-print(builder.start().inputStream.readText().trim())         // expect: from the parent
+print(builder.start().inputStream!!.readText().trim())         // expect: from the parent
 // To and from a file.
 val saved = File("io-streams-out.txt")
 ProcessBuilder("cmd", "/c", "echo kept").redirectOutput(saved).start().waitFor()
 val finder = ProcessBuilder("cmd", "/c", "findstr k").redirectInput(saved).start()
-print(saved.readText().trim(), finder.inputStream.readText().trim(), finder.waitFor())   // expect: kept kept 0
+print(saved.readText().trim(), finder.inputStream!!.readText().trim(), finder.waitFor())   // expect: kept kept 0
 print(saved.delete())                                        // expect: true
 try { ProcessBuilder("no-such-program-xyz").start() } catch (e : IOException) { print(e.message.startsWith("cannot start 'no-such-program-xyz'")) }   // expect: true
 
 // ---- A conversation over a process's pipes ----
 val echo = ProcessBuilder(Process.currentCommand() + ["echo"]).start()
-print(echo.inputStream.readLine(), echo.isAlive, echo.pid() != Process.currentPid())   // expect: ready true true
+print(echo.inputStream!!.readLine(), echo.isAlive, echo.pid() != Process.currentPid())   // expect: ready true true
 for word in ["hello", "naïve café", "with \"quotes\" and  spaces"] {
-  echo.outputStream.println(word)
-  print(echo.inputStream.readLine())
+  echo.outputStream!!.println(word)
+  print(echo.inputStream!!.readLine())
 }
 // expect: echo: HELLO
 // expect: echo: NAÏVE CAFÉ
 // expect: echo: WITH "QUOTES" AND  SPACES
 print(echo.waitFor(20, TimeUnit.milliseconds), echo.isAlive)   // expect: false true
-echo.outputStream.println("quit")
-print(echo.waitFor(), echo.inputStream.readLine(), echo.isAlive)   // expect: 7 null false
+echo.outputStream!!.println("quit")
+print(echo.waitFor(), echo.inputStream!!.readLine(), echo.isAlive)   // expect: 7 null false
 // A process that will not end by itself is ended.
 val endless = ProcessBuilder(Process.currentCommand() + ["echo"]).start()
-endless.inputStream.readLine()
+endless.inputStream!!.readLine()
 endless.destroy()
 print(endless.waitFor(5, TimeUnit.seconds), endless.isAlive)   // expect: true false
 
@@ -123,7 +123,7 @@ try { Socket("127.0.0.1", port) } catch (e : IOException) { print(e.message.star
 try { Socket().inputStream } catch (e : IOException) { print(e.message) }   // expect: the socket is not connected
 // Closing a socket that a thread is waiting on gets the thread out.
 val idle = ServerSocket(0, bindAddress = "127.0.0.1")
-var acceptError = null
+var acceptError : string? = null
 val accepting = thread { try { idle.accept() } catch (e : IOException) { acceptError = e.message } }
 Thread.sleep(30)
 idle.close()
@@ -145,7 +145,7 @@ val ticker = EventLoop.every(5) { ticks += 1 }
 startCoroutine {
   val slow = ProcessBuilder(Process.currentCommand() + ["slow"]).start()
   val before = ticks
-  val lines = [slow.inputStream.readLine(), slow.inputStream.readLine(), slow.inputStream.readLine()]
+  val lines = [slow.inputStream!!.readLine(), slow.inputStream!!.readLine(), slow.inputStream!!.readLine()]
   print(lines, "the loop went on:", ticks - before > 3, "exit code", slow.waitFor())
   val note = File("io-streams-flow.txt")
   note.writeText("written and read in a flow")

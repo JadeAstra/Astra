@@ -1,15 +1,15 @@
-fun add(a, b) { return a + b }
-fun square(x) => x * x
+fun add(a : int, b : int) { return a + b }
+fun square(x : int) => x * x
 print(add(2, 3), square(7))             // expect: 5 49
 
 fun noReturn() { }
 print(noReturn())                       // expect: null
 
-fun fact(n) { return n <= 1 ? 1 : n * fact(n - 1) }
+fun fact(n : int) { return n <= 1 ? 1 : n * fact(n - 1) }
 print(fact(10))                         // expect: 3628800
 
-fun isEven(n) { return n == 0 ? true : isOdd(n - 1) }
-fun isOdd(n) { return n == 0 ? false : isEven(n - 1) }
+fun isEven(n : int) { return n == 0 ? true : isOdd(n - 1) }
+fun isOdd(n : int) { return n == 0 ? false : isEven(n - 1) }
 print(isEven(10), isOdd(7))             // expect: true true
 
 fun makeCounter() {
@@ -20,12 +20,12 @@ fun makeCounter() {
   }
 }
 var c = makeCounter()
-c["inc"](); c["inc"]()
-print(c["get"]())                       // expect: 2
+c["inc"]!!(); c["inc"]!!()
+print(c["get"]!!())                       // expect: 2
 var c2 = makeCounter()
-print(c2["inc"](), c["get"]())          // expect: 1 2
+print(c2["inc"]!!(), c["get"]!!())          // expect: 1 2
 
-fun compose(f, g) => fun(x) => f(g(x))
+fun compose(f : (int) -> int, g : (int) -> int) => fun(x) => f(g(x))
 var incThenDouble = compose(fun(x) => x * 2, fun(x) => x + 1)
 print(incThenDouble(5))                 // expect: 12
 
@@ -48,12 +48,12 @@ print(print, [].push)                   // expect: <native fun print> <native fu
 
 // a local function can call itself
 fun run() {
-  fun loop(n, acc) { return n == 0 ? acc : loop(n - 1, acc + n) }
+  fun loop(n : int, acc : int) { return n == 0 ? acc : loop(n - 1, acc + n) }
   return loop(100, 0)
 }
 print(run())                            // expect: 5050
 
-fun depth(n) => n == 0 ? 0 : 1 + depth(n - 1)
+fun depth(n : int) => n == 0 ? 0 : 1 + depth(n - 1)
 print(depth(5000))                      // expect: 5000
 
 // two closures share one captured variable

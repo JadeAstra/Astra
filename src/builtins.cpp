@@ -191,6 +191,20 @@ namespace {
 // ---- Global functions ----
 
 void registerGlobals(VM& vm) {
+    // __nameParams(type, name, params): what a built-in's parameters are called, from its
+    // declaration in src/std/builtins.astra. The standard library calls it as it loads; the
+    // type is "" for a function.
+    vm.defineNative("__nameParams", 3, 3, [](VM& vm, int, Value* args) -> Value {
+        if (!args[0].isString() || !args[1].isString() || !args[2].isObjType(ObjType::List)) throw vm.runtimeError("__nameParams: bad arguments");
+        std::vector<std::string> params;
+        for (const Value& p : asList(args[2])->items)
+            if (p.isString()) params.push_back(asString(p)->chars);
+        const std::string& type = asString(args[0])->chars;
+        BuiltinType builtin;
+        if (type.empty()) vm.nameFunctionParams(asString(args[1])->chars, params);
+        else if (VM::builtinTypeNamed(type, builtin)) vm.nameParams(builtin, asString(args[1])->chars, params);
+        return Value::null();
+    });
     vm.defineNative("print", 0, -1, [](VM& vm, int argc, Value* args) -> Value {
         for (int i = 0; i < argc; i++) {
             if (i > 0) *vm.output << ' ';

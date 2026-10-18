@@ -2,11 +2,12 @@ import "strutil"
 
 val TAU = 6.28
 
-fun double(x) => x * 2
+fun double(x : int) => x * 2
 
 class Pile {
+  var items : List<int> = []
   fun init() { this.items = [] }
-  fun add(x) { this.items.push(x); return this }
+  fun add(x : int) { this.items.push(x); return this }
   fun take() { return this.items.pop() }
   fun size() => this.items.length
 }

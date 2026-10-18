@@ -1,16 +1,17 @@
 val PI_ISH = 3
 var created = 0
 
-class Shape(val name) {
-  fun init(name) {
+class Shape(val name : string) {
+  fun init(name : string) {
     this.name = name
     created += 1
   }
   fun area() => 0
+  fun describe() : string => label(this)
 }
 
-fun label(shape) => "<" + shape.name + ">"
-fun largest(shapes) {
+fun label(shape : Shape) => "<" + shape.name + ">"
+fun largest(shapes : List<Shape>) {
   var best = shapes[0]
   for shape in shapes { if shape.area() > best.area() { best = shape } }
   return best
@@ -21,11 +22,11 @@ private fun hidden() => "not for others"
 fun shapeSecret() => secret + ", " + hidden()
 
 internal val registry = []
-internal fun register(shape) {
+internal fun <T : Shape> register(shape : T) : T {
   registry.push(shape.name)
   return shape
 }
 
 enum Fill { NONE, SOLID }
-fun fillOf(shape, fill : Fill = NONE) => shape.name + ":" + fill
+fun fillOf(shape : Shape, fill : Fill = NONE) => shape.name + ":" + fill
 val title = "shapes"

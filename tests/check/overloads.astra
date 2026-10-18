@@ -4,7 +4,7 @@
 fun area(r : float) : float => 3.0 * r * r
 fun area(w : float, h : float) : float => w * h
 fun describe(x : int) : string => "an int"
-fun describe(x) : string => "something"
+fun describe(x : any?) : string => "something"
 fun pair(a : int, b : Number) : string => "int first"
 fun pair(a : Number, b : int) : string => "int second"
 fun run(block : () -> int) : int => block()

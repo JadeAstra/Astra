@@ -1,7 +1,7 @@
 // object : Type { ... } where a value is expected: a class with no name and its one object.
 
 interface Listener {
-  fun onClick(x)
+  fun onClick(x : int)
   fun describe() => "a listener"
 }
 abstract class Renderer(val name : string) {
@@ -11,10 +11,10 @@ abstract class Renderer(val name : string) {
 
 // It implements an interface, sees the variables around it, and is a value like any other.
 val log = []
-fun makeListener(prefix) {
+fun makeListener(prefix : string) {
   var count = 0
   return object : Listener {
-    override fun onClick(x) {
+    override fun onClick(x : int) {
       count += 1
       log.push("$prefix $x #$count")
     }
@@ -34,7 +34,7 @@ val r = object : Renderer("gl"), Listener {
     frames += 1
     return label() + " frame " + frames
   }
-  override fun onClick(x) { frames = x }
+  override fun onClick(x : int) { frames = x }
 }
 r.draw()
 r.onClick(10)
@@ -49,12 +49,12 @@ val point = object {
 print(point.x, point.length(), type(point))   // expect: 3 7 object
 
 // Passed straight to a function, and several made in a loop.
-fun fire(listener : Listener, times) {
+fun fire(listener : Listener, times : int) {
   for i in 1..times { listener.onClick(i) }
 }
 var total = 0
-fire(object : Listener { override fun onClick(x) { total += x } }, 4)
-val listeners = [1, 2, 3].map { n -> object : Listener { override fun onClick(x) { total += n * x } } }
+fire(object : Listener { override fun onClick(x : int) { total += x } }, 4)
+val listeners = [1, 2, 3].map { n -> object : Listener { override fun onClick(x : int) { total += n * x } } }
 for l in listeners { l.onClick(100) }
 print(total)                                // expect: 610
 
@@ -66,7 +66,7 @@ class Counter {
   fun bump() { clicks += 1 }
   fun listener() => object : Listener {
     val own = "listener"
-    override fun onClick(x) {
+    override fun onClick(x : int) {
       bump()                                 // the Counter's method
       clicks += x                            // and its field
     }

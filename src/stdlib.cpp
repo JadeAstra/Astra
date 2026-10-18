@@ -313,7 +313,6 @@ void registerStringMethods(VM& vm) {
         if (flag(argc, args, 1)) return Value::boolean(fold(s).find(fold(other)) != std::string::npos);
         return Value::boolean(s.find(other) != std::string::npos);
     });
-    vm.nameParams(T, "contains", {"other", "ignoreCase"});
 
     vm.defineMethod(T, "startsWith", 1, 2, [](VM& vm, Value self, int argc, Value* args) -> Value {
         const std::string& prefix = vm.toStr(args[0], "prefix");
@@ -323,7 +322,6 @@ void registerStringMethods(VM& vm) {
         }
         return Value::boolean(asString(self)->chars.compare(0, prefix.size(), prefix) == 0);
     });
-    vm.nameParams(T, "startsWith", {"prefix", "ignoreCase"});
 
     vm.defineMethod(T, "endsWith", 1, 2, [](VM& vm, Value self, int argc, Value* args) -> Value {
         const bool ignoreCase = flag(argc, args, 1);
@@ -331,7 +329,6 @@ void registerStringMethods(VM& vm) {
         const std::string suffix = ignoreCase ? fold(vm.toStr(args[0], "suffix")) : vm.toStr(args[0], "suffix");
         return Value::boolean(s.size() >= suffix.size() && s.compare(s.size() - suffix.size(), suffix.size(), suffix) == 0);
     });
-    vm.nameParams(T, "endsWith", {"suffix", "ignoreCase"});
 
     // Where `other` first appears at or after `startIndex`, or -1.
     vm.defineMethod(T, "indexOf", 1, 3, [](VM& vm, Value self, int argc, Value* args) -> Value {
@@ -347,7 +344,6 @@ void registerStringMethods(VM& vm) {
         const size_t at = text->chars.find(other, text->byteAt(start));
         return Value::integer(at == std::string::npos ? -1 : static_cast<int64_t>(text->charAt(at)));
     });
-    vm.nameParams(T, "indexOf", {"other", "startIndex", "ignoreCase"});
 
     // Where `other` last appears, starting at or before `startIndex`, or -1.
     vm.defineMethod(T, "lastIndexOf", 1, 3, [](VM& vm, Value self, int argc, Value* args) -> Value {
@@ -364,7 +360,6 @@ void registerStringMethods(VM& vm) {
         const size_t at = text->chars.rfind(other, text->byteAt(from));
         return Value::integer(at == std::string::npos ? -1 : static_cast<int64_t>(text->charAt(at)));
     });
-    vm.nameParams(T, "lastIndexOf", {"other", "startIndex", "ignoreCase"});
 
     vm.defineMethod(T, "replace", 2, 3, [](VM& vm, Value self, int argc, Value* args) -> Value {
         const ObjString* text = asString(self);
@@ -403,21 +398,18 @@ void registerStringMethods(VM& vm) {
         result.append(s, begin, std::string::npos);
         return vm.str(std::move(result));
     });
-    vm.nameParams(T, "replace", {"oldValue", "newValue", "ignoreCase"});
 
     vm.defineMethod(T, "equals", 1, 2, [](VM&, Value self, int argc, Value* args) -> Value {
         if (!args[0].isString()) return Value::boolean(false);
         if (flag(argc, args, 1)) return Value::boolean(fold(asString(self)->chars) == fold(asString(args[0])->chars));
         return Value::boolean(asString(self)->chars == asString(args[0])->chars);
     });
-    vm.nameParams(T, "equals", {"other", "ignoreCase"});
 
     vm.defineMethod(T, "compareTo", 1, 2, [](VM& vm, Value self, int argc, Value* args) -> Value {
         const std::string& other = vm.toStr(args[0], "text to compare with");
         const int order = flag(argc, args, 1) ? fold(asString(self)->chars).compare(fold(other)) : asString(self)->chars.compare(other);
         return Value::integer((order > 0) - (order < 0));
     });
-    vm.nameParams(T, "compareTo", {"other", "ignoreCase"});
 
     // substring(start, end) or substring(range). Unlike slice, a position outside the text is an error.
     vm.defineMethod(T, "substring", 1, 2, [](VM& vm, Value self, int argc, Value* args) -> Value {
@@ -439,7 +431,6 @@ void registerStringMethods(VM& vm) {
         const size_t from = text->byteAt(static_cast<size_t>(begin));
         return vm.str(text->chars.substr(from, text->byteAt(static_cast<size_t>(end)) - from));
     });
-    vm.nameParams(T, "substring", {"startIndex", "endIndex"});
 
     vm.defineMethod(T, "lowercase", 0, 0, [](VM& vm, Value self, int, Value*) -> Value {
         return vm.str(changeCase(asString(self)->chars, false));
@@ -500,11 +491,9 @@ void registerStringMethods(VM& vm) {
     vm.defineMethod(T, "padStart", 1, 2, [](VM& vm, Value self, int argc, Value* args) -> Value {
         return padText(vm, self, argc, args, true);
     });
-    vm.nameParams(T, "padStart", {"length", "padChar"});
     vm.defineMethod(T, "padEnd", 1, 2, [](VM& vm, Value self, int argc, Value* args) -> Value {
         return padText(vm, self, argc, args, false);
     });
-    vm.nameParams(T, "padEnd", {"length", "padChar"});
 
     // The characters in the opposite order.
     vm.defineMethod(T, "reversed", 0, 0, [](VM& vm, Value self, int, Value*) -> Value {
@@ -576,7 +565,6 @@ void registerNumberMethods(VM& vm) {
         if (compareNumbers(self, high) > 0) return high;
         return self;
     });
-    vm.nameParams(T, "coerceIn", {"minimumValue", "maximumValue"});
 
     vm.defineMethod(T, "coerceAtLeast", 1, 1, [](VM& vm, Value self, int, Value* args) -> Value {
         vm.toNumber(args[0], "minimum");
@@ -805,7 +793,6 @@ void registerListMethods(VM& vm) {
         return Value::object(newList(vm, std::vector<Value>(items.begin() + static_cast<std::ptrdiff_t>(from),
                                                               items.begin() + static_cast<std::ptrdiff_t>(to))));
     });
-    vm.nameParams(T, "subList", {"fromIndex", "toIndex"});
 
     // A new list in the opposite order; reverse() turns the list itself round.
     vm.defineMethod(T, "reversed", 0, 0, [](VM& vm, Value self, int, Value*) -> Value {

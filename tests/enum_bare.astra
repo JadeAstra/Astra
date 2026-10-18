@@ -4,6 +4,9 @@ enum Way { up, down, left, right }
 enum Fill { NONE, HORIZONTAL, VERTICAL, BOTH }
 enum Side { left, right }                     // shares names with Way
 
+// A value whose type the checker does not see, for testing the checks made when running.
+val unknown = { value -> value }
+
 // A variable: declared, then assigned.
 var t : Way = up
 print(t, t === Way.up)                      // expect: up true
@@ -42,7 +45,7 @@ fun arrow(way : Way) => when (way) {
 print(arrow(up), arrow(Way.down), arrow(left), arrow(right))   // expect: ^ v - -
 
 // Fields: an initial value, the header, assignment, and a method's parameters.
-class Cell(val content, var fill : Fill = NONE, var anchor : Way = up) {
+class Cell(val content : string, var fill : Fill = NONE, var anchor : Way = up) {
   var last : Fill = BOTH
   var stretch : Fill? = null
   static var standard : Fill = HORIZONTAL
@@ -70,11 +73,11 @@ print(Cell.standard)                        // expect: BOTH
 // Methods called on an object, where only the call tells which method it is.
 class Grid {
   val cells = []
-  fun cell(content, fill : Fill = NONE, anchor : Way = up) {
+  fun cell(content : string, fill : Fill = NONE, anchor : Way = up) {
     cells.push(Cell(content, fill, anchor))
     return this
   }
-  fun add(vararg contents, fill : Fill = NONE) {
+  fun add(vararg contents : string, fill : Fill = NONE) {
     for content in contents { cell(content, fill) }
     return this
   }
@@ -92,17 +95,17 @@ print(pick(right), name(BOTH), [1].map { step(left, HORIZONTAL) })   // expect: 
 enum Tone { soft, loud }
 val loud = "the global loud"
 fun describeTone(tone : Tone) => "$tone"
-fun shadowed(up) {
+fun shadowed(up : Way) {
   val way : Way = Way.down
   val copy : Way = up                         // the parameter, not the entry
   return [copy, way]
 }
 print(loud, shadowed(Way.left))             // expect: the global loud [left, down]
-try { describeTone(loud) } catch (e) { print(e.message) }   // expect: argument 'tone' of describeTone() must be Tone, got string
+try { describeTone(unknown(loud)) } catch (e) { print(e.message) }   // expect: argument 'tone' of describeTone() must be Tone, got string
 print(describeTone(Tone.loud), describeTone(soft))   // expect: loud soft
 
 // With no enum-typed destination the full name is needed.
-fun untyped(x) => x
+fun untyped(x : any?) => x
 fun typedOther(n : int) => n
 fun takesShape(s : Cell) => s
 try { untyped(up) } catch (e) { print(e.message) }       // expect: undefined variable 'up'
@@ -113,8 +116,8 @@ try { takesShape(up) } catch (e) { print(e.message) }    // expect: undefined va
 try { step(sideways) } catch (e) { print(e.message) }    // expect: 'sideways' is not an entry of enum Way
 try { step(up, left) } catch (e) { print(e.message) }    // expect: 'left' is not an entry of enum Fill
 try { Cell("z", up) } catch (e) { print(e.message) }     // expect: 'up' is not an entry of enum Fill
-try { untyped(1, up) } catch (e) { print(e.message) }    // expect: untyped() expects 1 argument(s) but got 2
-fun many(vararg ways) => ways
+try { unknown(untyped)(1, up) } catch (e) { print(e.message) }    // expect: untyped() expects 1 argument(s) but got 2
+fun many(vararg ways : any) => ways
 try { many(up, down) } catch (e) { print(e.message) }    // expect: undefined variable 'up'
 print(many(Way.up, Way.down))               // expect: [up, down]
 

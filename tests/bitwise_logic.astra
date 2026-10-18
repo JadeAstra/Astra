@@ -1,3 +1,6 @@
+// A value whose type the checker does not see, for testing the checks made when running.
+val unknown = { value -> value }
+
 // & | ^ ~ work on the bits of ints.
 print(12 & 10, 12 | 10, 12 ^ 10, ~12, ~0, ~-1)   // expect: 8 14 6 -13 -1 0
 print(0xFF & 0x0F, 0xF0 | 0x0F, 0xFF ^ 0x0F)     // expect: 15 255 240
@@ -36,15 +39,15 @@ register.bits |= 0b1000
 register.bits ^= 0b0001
 print(masks, register.bits)                      // expect: [8] 8
 
-fun attempt(f) {
+fun attempt(f : Function) {
   try { return f() } catch (e) { return e.message }
 }
 
 // ints only
-print(attempt(fun() => 1.5 & 1))                 // expect: unsupported operand types for '&': float and int
-print(attempt(fun() => true | false))            // expect: unsupported operand types for '|': bool and bool
-print(attempt(fun() => 1 ^ "1"))                 // expect: unsupported operand types for '^': int and string
-print(attempt(fun() => ~"x"))                    // expect: cannot apply '~' to a value of type string
+print(attempt(fun() => 1.5 & unknown(1)))        // expect: unsupported operand types for '&': float and int
+print(attempt(fun() => true | unknown(false)))   // expect: unsupported operand types for '|': bool and bool
+print(attempt(fun() => 1 ^ unknown("1")))        // expect: unsupported operand types for '^': int and string
+print(attempt(fun() => ~unknown("x")))           // expect: cannot apply '~' to a value of type string
 
 // classes can define them
 class Flags(val bits : int) {
@@ -66,9 +69,9 @@ print(attempt(fun() => ~Plain()))                // expect: Plain does not defin
 
 // logical and / or are words. They stop as soon as the answer is known and give back one
 // of their operands.
-print(true and false, true or false, null or "default", 1 and 2)   // expect: false true default 2
+print(true and false, true or false, unknown(null) or unknown("default"), unknown(1) and unknown(2))   // expect: false true default 2
 var calls = []
-fun loud(label, value) {
+fun loud(label : string, value : bool) {
   calls.push(label)
   return value
 }

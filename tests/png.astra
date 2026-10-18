@@ -1,6 +1,6 @@
 // PNG pictures, read and written by Astra's own code.
 
-fun fromHex(text) {
+fun fromHex(text : string) {
   val out = Bytes(text.length / 2)
   for (i in 0..<out.size) { out[i] = text.substring(i * 2, i * 2 + 2).toInt(16) }
   return out
@@ -39,7 +39,7 @@ File("png_test_out.png").delete()
 // palette, colour, with and without alpha, 1 to 16 bits, interlaced and not.
 var read = 0
 val wrong = []
-fun check(name, colorType, depth, interlaced, png, pixels) {
+fun check(name : string, colorType : int, depth : int, interlaced : int, png : string, pixels : string) {
   val data = fromHex(png)
   if (data[25] != colorType or data[24] != depth or data[28] != interlaced) { wrong.add(name + " (not the kind it says)") }
   val picture = Picture.load(data)
@@ -127,7 +127,7 @@ check("palette1-interlaced", 0, 1, 1,
 print(read, "pictures read,", wrong.size, "wrong", wrong)   // expect: 26 pictures read, 0 wrong []
 
 // -- What is not a picture --
-fun attempt(block) {
+fun attempt(block : () -> unit) {
   try { block(); return "no error" } catch (e) { return (e is IOException ? "IOException: " : "Error: ") + e.message }
 }
 print(attempt { Picture.load(Bytes([1, 2, 3])) })          // expect: IOException: not a PNG picture

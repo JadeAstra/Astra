@@ -26,7 +26,7 @@ import Jade.*
 
 // ---- What is on the screen ----
 
-class Dot(var x : Number, var y : Number, var radius : Number, val color) {
+class Dot(var x : Number, var y : Number, var radius : Number, val color : Color) {
   var alpha = 1.0                // 0 when it has faded away
   var deadline = 0.0             // when its time runs out, by clock()
   var timeLimit = 1.0            // how long it was given, in seconds
@@ -34,7 +34,7 @@ class Dot(var x : Number, var y : Number, var radius : Number, val color) {
   fun contains(px : Number, py : Number) => (px - x) * (px - x) + (py - y) * (py - y) <= radius * radius
 }
 
-class Spark(var x : Number, var y : Number, val dx : Number, val dy : Number, val color) {
+class Spark(var x : Number, var y : Number, val dx : Number, val dy : Number, val color : Color) {
   var life = 1.0                 // 1 when it flies out, 0 when it is gone
 }
 
@@ -43,8 +43,8 @@ val sparks = []
 var message = ""
 var score = 0
 var misses = 0
-var width = 780.0
-var height = 580.0
+var width : Number = 780.0
+var height : Number = 580.0
 val palette = [Color(0xE5484D), Color(0x3E9BF4), Color(0x46A758), Color(0xF5A524), Color(0x8E4EC6), Color(0x12A594)]
 
 // ---- Waiting, as functions a flow simply calls ----
@@ -70,9 +70,9 @@ suspend fun waitForClick() => suspendCoroutine { continuation ->
 
 // Waits for a click on the dot, for at most `millis` milliseconds: true if the click came in
 // time, false if the time ran out first. Two things race, and whichever comes first answers.
-suspend fun clickOn(dot : Dot, millis : Number) => suspendCoroutine { continuation ->
+suspend fun clickOn(dot : Dot, millis : int) : bool => suspendCoroutine { continuation ->
   var done = false
-  dot.timeLimit = millis / 1000
+  dot.timeLimit = millis / 1000.0
   dot.deadline = clock() + dot.timeLimit
   val timer = EventLoop.after(millis) {
     if (!done) {
@@ -88,11 +88,11 @@ suspend fun clickOn(dot : Dot, millis : Number) => suspendCoroutine { continuati
     }
     done                         // finished with, one way or the other
   })
-}
+} as bool
 
 // Runs `step` once a frame for `millis` milliseconds, giving it how far along it is, from 0
 // to 1. Waits until it has run to the end.
-suspend fun animate(millis : Number, step) {
+suspend fun animate(millis : Number, step : (float) -> unit) {
   val start = clock()
   while (true) {
     val t = Math.min((clock() - start) * 1000 / millis, 1.0)

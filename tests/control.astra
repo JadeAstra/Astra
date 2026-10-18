@@ -1,4 +1,4 @@
-fun classify(n) {
+fun classify(n : int) {
   if n < 0 {
     return "negative"
   } else if n == 0 {

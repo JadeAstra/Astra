@@ -20,9 +20,9 @@ print({"a": 1} == {"a": 1, "b": 2}, [1] == {"a": 1}, [1] == "1", [1] == null)   
 print(1..3 == 1..3, 1..3 == 1..<4, (1..3).toList() == (1..<4).toList())   // expect: true false true
 
 // Objects: only to themselves, unless their class says what == means.
-class Plain(val n)
-class Point(val x, val y) {
-  op ==(o) => o is Point and this.x == o.x and this.y == o.y
+class Plain(val n : int)
+class Point(val x : int, val y : int) {
+  op ==(o : any?) => o is Point and this.x == o.x and this.y == o.y
 }
 val p = Plain(1)
 print(p == p, Plain(1) == Plain(1), Point(1, 2) == Point(1, 2), Point(1, 2) === Point(1, 2))   // expect: true false true false
@@ -44,9 +44,9 @@ print(rows.contains([3, 4]), rows.indexOf([5, 6]), rows.indexOf([7, 8]), rows.re
 print([Point(1, 1), Point(2, 2)].indexOf(Point(2, 2)))   // expect: 1
 
 // A list that contains itself is equal to itself, and comparing two such lists ends.
-val loop = [1]
+val loop : List<any?> = [1]
 loop.push(loop)
-val other = [1]
+val other : List<any?> = [1]
 other.push(other)
 print(loop == loop, loop == other)                       // expect: true false
 

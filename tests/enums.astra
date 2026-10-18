@@ -1,5 +1,8 @@
 // Enums: a type with a fixed set of values.
 
+// A value whose type the checker does not see, for testing the checks made when running.
+val unknown = { value -> value }
+
 enum Way { up, down, left, right }
 
 val w = Way.left
@@ -16,7 +19,7 @@ fun turn(way : Way) : Way => when (way) {
   else -> Way.up
 }
 print(turn(Way.up), turn(turn(Way.up)), turn(Way.left))   // expect: right down up
-try { turn("up") } catch (e) { print(e.message) }   // expect: argument 'way' of turn() must be Way, got string
+try { turn(unknown("up")) } catch (e) { print(e.message) }   // expect: argument 'way' of turn() must be Way, got string
 var current : Way = Way.up
 current = Way.down
 print(current, Way.entries.indexOf(current), Way.entries.contains(Way.left))   // expect: down 1 true
@@ -50,7 +53,7 @@ enum Planet(val mass : float, val radius : float) {
 
   var visits = 0
   get gravity() => G * mass / (radius * radius)
-  fun heavierThan(other) => mass > other.mass
+  fun heavierThan(other : Planet) => mass > other.mass
   fun visit() {
     visits += 1
     return "$name visited $visits time(s), entry $ordinal of ${entries.length}"
@@ -67,7 +70,7 @@ enum Level(val label : string, val weight : int = 1) {
   HIGH("high", 10),
 
   fun describe() => "$label ($weight)"
-  static fun of(weight) {
+  static fun of(weight : int) {
     for level in entries { if level.weight >= weight { return level } }
     return HIGH
   }
@@ -137,7 +140,7 @@ print(Shown.entries, Shown.first.name, Shown.second.ordinal, Shown.first)   // e
 class Journal {
   val entries = []
   static val ordinal = 1
-  fun add(entry) {
+  fun add(entry : string) {
     entries.push(entry)
     return this
   }

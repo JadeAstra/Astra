@@ -27,7 +27,7 @@ print(a)                                    // expect: 11
 val (first, second, third) = ["a", "b", "c", "d"]
 val (_, middle) = [1, 2, 3]
 print(first, second, third, middle)         // expect: a b c 2
-fun minMax(items) {
+fun minMax(items : List<int>) {
   var low = items[0]
   var high = items[0]
   for item in items {
@@ -40,7 +40,7 @@ val (low, high) = minMax([3, 9, 1, 4])
 print(low, high)                            // expect: 1 9
 
 // In a function, with the names captured, and in a loop.
-fun spread(point) {
+fun spread(point : any) {
   val (x, y) = point
   val sum = fun() => x + y
   return [y, x, sum()]
@@ -63,7 +63,7 @@ print(closures.map { it() })                // expect: ["one", "two", "three"]
 try { val (x, y, z) = p } catch (e) { print(e.message) }   // expect: cannot take a third part from Point, which has 2
 try { val (x, y) = [1] } catch (e) { print(e.message) }    // expect: cannot take a second part from a list of 1
 try { val (x, y) = 5 } catch (e) { print(e.message) }      // expect: cannot take apart a value of type int: only a list or a data object has parts
-class Plain(val x, val y)
+class Plain(val x : int, val y : int)
 try { val (x, y) = Plain(1, 2) } catch (e) { print(e.message) }
 // expect: cannot take apart a value of type Plain: only a list or a data object has parts
 print(Plain(1, 2) == Plain(1, 2))           // expect: false
@@ -74,7 +74,7 @@ data Rect(val w : int, val h : int = 1, var label : string = "rect") : Shape {
   static val UNIT = Rect(1)
   val made = "made"                           // not in the header: no part of equality or printing
   override fun area() => w * h
-  fun scaled(by) => copy(w = w * by, h = h * by)
+  fun scaled(by : int) => copy(w = w * by, h = h * by)
 }
 val r = Rect(2, 3)
 r.label = "mine"
@@ -86,9 +86,9 @@ print(w, h, label)                          // expect: 2 3 mine
 
 // Its own ==, toString or copy takes the place of the given one.
 data Version(val major : int, val minor : int, val note : string = "") {
-  op ==(other) => other is Version and major == other.major and minor == other.minor
+  op ==(other : any?) => other is Version and major == other.major and minor == other.minor
   fun toString() => "v$major.$minor"
-  fun copy(major = this.major) => Version(major, 0)
+  fun copy(major : int = this.major) => Version(major, 0)
 }
 print(Version(1, 2, "a") == Version(1, 2, "b"), Version(1, 2), Version(1, 2).copy(3))   // expect: true v1.2 v3.0
 
@@ -103,11 +103,11 @@ print(from, tx + ty)                        // expect: Point(x=0, y=0) 2
 
 // Inside a class, and in a function.
 class Shapes {
-  data Size(val w, val h)
-  static fun square(n) => Size(n, n)
+  data Size(val w : int, val h : int)
+  static fun square(n : int) => Size(n, n)
 }
 fun local() {
-  data Pair(val left, val right)
+  data Pair(val left : any, val right : any)
   val (l, r) = Pair("L", "R").copy(right = "r")
   return [l, r, Pair(1, 2) == Pair(1, 2)]
 }

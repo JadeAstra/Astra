@@ -1,5 +1,8 @@
 // Extension functions: a function added to a type from outside. `this` is the value it runs on.
 
+// A value whose type the checker does not see, for testing the checks made when running.
+val unknown = { value -> value }
+
 class Shape(val name : string, val w : int, val h : int) {
   fun area() => w * h
 }
@@ -15,13 +18,13 @@ print(Square(2).describe(), Square(2).scaled(5).area())   // expect: square of a
 
 // As a value it is a function bound to the object, and ?. works on it.
 val bound = s.describe
-val missing = null
+val missing : nothing? = null       // a value that is only ever null
 print(bound(), missing?.describe(), [s, Square(1)].map { it.describe() })   // expect: rect of area 6 null ["rect of area 6", "square of area 1"]
 
 // On the built-in types.
 fun string.shout() => upper() + "!"                    // upper() is the string's own
 fun string.words() => split(" ")
-fun string.isLong(limit = 5) => length > limit
+fun string.isLong(limit : int = 5) => length > limit
 fun int.double() => this * 2
 fun int.isEven() => this % 2 == 0
 fun Number.half() => this / 2
@@ -35,7 +38,7 @@ fun List<int>.total() : int {
 }
 fun Map.keyCount() => keys().length
 fun Range.middle() => (start + end) / 2
-fun Function.twice(x) => this(this(x))
+fun Function.twice(x : int) => this(this(x))
 print("hi".shout(), "a b c".words(), "hello!".isLong(), "hey".isLong(2), 21.double(), 3.isEven(), 4.isEven())   // expect: HI! ["a", "b", "c"] true true 42 false true
 print(9.half(), 9.0.half(), 2.6.rounded(), true.toInt(), [1, 2, 3].second(), [1, 2, 3].total(), {"a": 1, "b": 2}.keyCount(), (0..10).middle())   // expect: 4 4.5 3 1 2 6 2 5
 print({ it + 1 }.twice(5), "x".shout().shout(), [3, 4].total().double())   // expect: 7 X!! 14
@@ -47,12 +50,12 @@ fun string?.isBlank() => this == null or this.trim().length == 0
 print(5.tag(), "x".tag(), [1].tag(), s.name.tag(), missing.orNothing().length, "kept".orNothing(), missing.isBlank(), " ".isBlank(), "a".isBlank())   // expect: <5> <x> <[1]> <rect> 0 kept true true false
 
 // On an interface, an enum, and a class declared inside another.
-interface Named { val name }
-class Pet(override val name) : Named
+interface Named { val name : string }
+class Pet(override val name : string) : Named
 fun Named.greeting() => "hello, $name"
 enum Way { up, down }
 fun Way.opposite() : Way => this == up ? down : up
-class Event { class Click(val x) }
+class Event { class Click(val x : int) }
 fun Event.Click.where() => "at $x"
 print(Pet("Rex").greeting(), Way.up.opposite(), Way.down.opposite().name, Event.Click(4).where())   // expect: hello, Rex down up at 4
 
@@ -67,16 +70,16 @@ print(Canvas().draw(), Canvas().viaReceiver())   // expect: [dot] dot of area 1 
 
 // Declared further down the file than where it is used; named and extra arguments.
 print("abc".padded(6), "abc".padded(width = 5, fill = "*"), 7.clamp(0, 5), 7.clamp(low = 8, high = 9))   // expect: abc... abc** 5 8
-fun string.padded(width, fill = ".") {
+fun string.padded(width : int, fill : string = ".") {
   var out = this
   while out.length < width { out += fill }
   return out
 }
-fun int.clamp(low, high) => this < low ? low : this > high ? high : this
+fun int.clamp(low : int, high : int) => this < low ? low : this > high ? high : this
 
 // What has no such function says so.
-try { 5.shout() } catch (e) { print(e.message) }   // expect: undefined method 'shout' on a value of type int
-try { s.total() } catch (e) { print(e.message) }   // expect: undefined method 'total' on Shape
+try { unknown(5).shout() } catch (e) { print(e.message) }   // expect: undefined method 'shout' on a value of type int
+try { unknown(s).total() } catch (e) { print(e.message) }   // expect: undefined method 'total' on Shape
 
 // Many calls.
 var sum = 0

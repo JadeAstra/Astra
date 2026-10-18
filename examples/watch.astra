@@ -37,7 +37,7 @@ startCoroutine {
 
   // readLine() sets this flow aside until a line arrives. The loop and the thread go on.
   while (true) {
-    val line = worker.inputStream.readLine()
+    val line = worker.inputStream!!.readLine()
     if (line == null) { break }
     val soFar = synchronized(lock) { checks }
     print("  %-12s (%d ticks, %d checks so far)".format(line, ticks, soFar))

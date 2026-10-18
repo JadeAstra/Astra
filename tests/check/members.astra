@@ -63,8 +63,8 @@ object Registry {
 Registry.add("x")
 Registry.add(1)               // check: Registry.add(...) takes a string for 'name', not an int
 
-// A class that declares no fields stays open: its members are made by assignment
+// Every field is declared (R24): a class that declares none has none
 class Loose {
-  fun init() { this.anything = 1 }
+  fun init() { this.anything = 1 }   // check: Loose has no field 'anything'; fields must be declared in the class with val or var
 }
-Loose().whatever
+Loose().whatever                     // check: Loose has no member 'whatever'

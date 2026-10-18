@@ -8,17 +8,17 @@
 
 // The time handed to a frame hook: seconds since the first frame, seconds since the last,
 // and how many frames there have been.
-class FrameTime(val time, val delta, val frame)
+class FrameTime(val time : float, val delta : float, val frame : int)
 
 object Jade {
   // Runs a task after a delay, in milliseconds. The window that is in front sets it.
-  var scheduler = null
+  var scheduler : ((int, () -> unit) -> unit)? = null
 
   // How many of the screen's pixels there are to a layout unit where text is now being
   // measured for layout: the scale of the window being laid out or painted, which sets it.
   // Text is measured in the screen's own pixels and the result rounded up to units, so
   // what a widget asks for is room its text really fits in on that screen.
-  var layoutScale = 1
+  var layoutScale : Number = 1
 
   // Whether the key that commands go with (Ctrl) is held: a link shows a hand only then.
   var shortcutDown = false
@@ -36,10 +36,10 @@ object Jade {
   private val repaintHooks = []
   private val layoutHooks = []
 
-  fun onRepaintNeeded(hook) {
+  fun onRepaintNeeded(hook : () -> unit) {
     repaintHooks.add(hook)
   }
-  fun removeRepaintHook(hook) {
+  fun removeRepaintHook(hook : () -> unit) {
     repaintHooks.remove(hook)
   }
   // Has every window draw a frame soon.
@@ -47,10 +47,10 @@ object Jade {
     for (hook in repaintHooks.toList()) { hook() }
   }
 
-  fun onLayoutNeeded(hook) {
+  fun onLayoutNeeded(hook : () -> unit) {
     layoutHooks.add(hook)
   }
-  fun removeLayoutHook(hook) {
+  fun removeLayoutHook(hook : () -> unit) {
     layoutHooks.remove(hook)
   }
   // Has every window lay its tree out again before its next frame.
@@ -70,10 +70,13 @@ object Jade {
 
   // What turns a Window into a window on the screen when it is shown. A test puts another
   // here: HiddenWindowOpener, or one of its own that makes nothing and records what it was asked.
-  private var opener = null
-  get windowOpener() {
-    if (opener == null) { opener = NativeWindowOpener() }
-    return opener
+  private var opener : WindowOpener? = null
+  get windowOpener() : WindowOpener {
+    val kept = opener
+    if (kept != null) { return kept }
+    val made = NativeWindowOpener()
+    opener = made
+    return made
   }
   set windowOpener(value) {
     opener = value
@@ -87,10 +90,10 @@ object Jade {
   private var lastFrameAt = 0
   private var frameCount = 0
 
-  fun onFrameNeeded(hook) {
+  fun onFrameNeeded(hook : () -> unit) {
     frameNeededHooks.add(hook)
   }
-  fun removeFrameNeededHook(hook) {
+  fun removeFrameNeededHook(hook : () -> unit) {
     frameNeededHooks.remove(hook)
   }
   fun requestFrame() {
@@ -98,16 +101,16 @@ object Jade {
   }
 
   // Calls the hook before every frame from now on, with a FrameTime: for an animation.
-  fun onFrame(hook) {
+  fun onFrame(hook : (FrameTime) -> unit) {
     frameHooks.add(hook)
     requestFrame()
   }
-  fun removeFrameHook(hook) {
+  fun removeFrameHook(hook : (FrameTime) -> unit) {
     frameHooks.remove(hook)
   }
-  get wantsFrames() => !frameHooks.isEmpty()
+  get wantsFrames() : bool => !frameHooks.isEmpty()
 
-  fun runFrameHooks(nowNanos) {
+  fun runFrameHooks(nowNanos : int) {
     if (frameHooks.isEmpty()) { return }
     if (clockStart == 0) { clockStart = nowNanos }
     if (lastFrameAt != 0 and nowNanos - lastFrameAt < 1000000) { return }
@@ -121,55 +124,59 @@ object Jade {
   // ---- The pointer ----
 
   // What the back and forward buttons of a mouse do.
-  var navigate = null
+  var navigate : ((bool) -> unit)? = null
 
   private val pressListeners = []
-  fun onPointerPressed(listener) {
+  fun onPointerPressed(listener : (int, int) -> unit) {
     pressListeners.add(listener)
   }
-  fun removePointerPressed(listener) {
+  fun removePointerPressed(listener : (int, int) -> unit) {
     pressListeners.remove(listener)
   }
-  fun pointerPressed(x, y) {
+  fun pointerPressed(x : int, y : int) {
     for (listener in pressListeners.toList()) { listener(x, y) }
   }
 
-  private var pointerExitHook = null
-  fun onPointerExit(hook) {
+  private var pointerExitHook : (() -> unit)? = null
+  fun onPointerExit(hook : () -> unit) {
     pointerExitHook = hook
   }
   fun pointerExited() {
-    if (pointerExitHook != null) { pointerExitHook() }
+    val hook = pointerExitHook
+    if (hook != null) { hook() }
   }
 
   // ---- Things shown over the window ----
 
-  private var overlayHook = null
-  fun onOverlayNeeded(hook) {
+  private var overlayHook : ((Component?, int, int) -> unit)? = null
+  fun onOverlayNeeded(hook : (Component?, int, int) -> unit) {
     overlayHook = hook
   }
-  fun showOverlay(comp, x = 0, y = 0) {
-    if (overlayHook != null) { overlayHook(comp, x, y) }
+  fun showOverlay(comp : Component?, x : int = 0, y : int = 0) {
+    val hook = overlayHook
+    if (hook != null) { hook(comp, x, y) }
   }
 
-  private var tipHook = null
-  fun onTipNeeded(hook) {
+  private var tipHook : ((Component?, int, int) -> unit)? = null
+  fun onTipNeeded(hook : (Component?, int, int) -> unit) {
     tipHook = hook
   }
-  fun showTip(comp, x = 0, y = 0) {
-    if (tipHook != null) { tipHook(comp, x, y) }
+  fun showTip(comp : Component?, x : int = 0, y : int = 0) {
+    val hook = tipHook
+    if (hook != null) { hook(comp, x, y) }
   }
 
   // ---- The keyboard ----
 
-  private var focusHook = null
-  fun onFocusRequested(hook) {
+  private var focusHook : ((Component) -> unit)? = null
+  fun onFocusRequested(hook : (Component) -> unit) {
     focusHook = hook
   }
   // Gives a component the keyboard.
-  fun requestFocus(comp) {
-    if (focusHook != null) {
-      focusHook(comp)
+  fun requestFocus(comp : Component) {
+    val hook = focusHook
+    if (hook != null) {
+      hook(comp)
       return
     }
     val c = comp.content
@@ -179,8 +186,8 @@ object Jade {
   // ---- Grids by name ----
 
   private val registry = {:}
-  fun register(id, grid) {
+  fun register(id : string, grid : Grid) {
     registry[id] = grid
   }
-  fun registeredGrids() => registry.values.toList()
+  fun registeredGrids() : List<Grid> => registry.values.toList()
 }

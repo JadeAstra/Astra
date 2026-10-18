@@ -5,21 +5,21 @@ import Jade.*
 
 val failed = []
 var checks = 0
-fun same(what, got, want) {
+fun same(what : string, got : any?, want : any?) {
   checks += 1
   if (!(got == want)) { failed.add("$what: got $got, wanted $want") }
 }
-fun yes(what, condition) {
+fun yes(what : string, condition : bool) {
   checks += 1
   if (!condition) { failed.add(what) }
 }
 
-fun fixed(w, h) => label("x").preferredSize(Dimension(w, h)).minimumSize(Dimension(w, h))
+fun fixed(w : int, h : int) => label("x").preferredSize(Dimension(w, h)).minimumSize(Dimension(w, h))
 
 // Takes whatever room it is given: no size of its own to speak of.
 class Stretchy : Content {
   override fun sizes() => Sizes(Dimension(4, 4), Dimension(4, 4), Dimension(100000, 100000))
-  override fun paint(canvas) {}
+  override fun paint(canvas : Canvas) {}
 }
 
 // -- JadeGridLayoutTest --
@@ -162,7 +162,7 @@ print(anchored(Anchor.center), anchored(Anchor.northwest), anchored(Anchor.north
 print(anchored(west), anchored(south))   // expect: [0, 25] [45, 50]
 
 // Fill: across, down, both, and never more than the widget may be.
-fun filled(fill : Fill, max = null) {
+fun filled(fill : Fill, max : Dimension? = null) {
   val item = fixed(10, 10)
   item.maximumSize(max ?: Dimension(1000, 1000))
   val g = Grid()
@@ -212,7 +212,7 @@ val nested = grid("outer") {
   row { cell(grid("middle") { insets = Insets(3, 4, 0, 0); row { cell(inner) } }) }
 }
 nested.layout(300, 200)
-print(inner.parent.id, inner.parent.parent.id, nested.parent, inner.windowPosition(), nested.find("inner") === inner, nested.find("nothing"))   // expect: middle outer null Point(24, 13) true null
+print(inner.parent!!.id, inner.parent!!.parent!!.id, nested.parent, inner.windowPosition(), nested.find("inner") === inner, nested.find("nothing"))   // expect: middle outer null Point(24, 13) true null
 print(nested.descendants().map { it.id ?: it.content.className }, nested.content.viewId, Jade.registeredGrids().size >= 2)   // expect: ["outer", "middle", "inner"] outer true
 print(checks, failed)   // expect: 17 []
 
@@ -222,4 +222,4 @@ try { inner.adopt(nested) } catch (e) { print(e.message) }   // expect: 'adopt' 
 try { inner.parent = null } catch (e) { print(e.message) }   // expect: 'parent' cannot be assigned here: its setter is private in class Component, so only code written in that class can assign to it
 try { print(inner.overlayDescendants) } catch (e) { print(e.message) }   // expect: 'overlayDescendants' is internal in class Component: only code of the library it belongs to can use it
 try { Jade.renderGeneration = 0 } catch (e) { print(e.message) }   // expect: 'renderGeneration' cannot be assigned here: its setter is private in class Jade, so only code written in that class can assign to it
-print(inner.parent.id, Jade.renderGeneration >= 0)   // expect: middle true
+print(inner.parent!!.id, Jade.renderGeneration >= 0)   // expect: middle true

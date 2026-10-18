@@ -863,7 +863,7 @@ void disassemble(const Program& program, std::ostream& out) {
 namespace {
 
 const char kMagic[4] = {'A', 'S', 'T', 'R'};
-const uint8_t kFormatVersion = 6;
+const uint8_t kFormatVersion = 7;
 const int kMaxProtoNesting = 200;
 
 enum ConstantTag : uint8_t { TagInt = 0, TagFloat = 1, TagString = 2 };
@@ -913,6 +913,7 @@ struct Writer {
         for (size_t i = 0; i < f.paramTypes.size(); i++) {
             u8(f.paramTypes[i]);
             str(i < f.paramClasses.size() && f.paramClasses[i] != nullptr ? f.paramClasses[i]->chars : std::string());
+            u8(i < f.paramCounts.size() ? f.paramCounts[i] : 0);
         }
 
         u32(static_cast<uint32_t>(f.code.size()));
@@ -1030,6 +1031,7 @@ struct Reader {
             f->paramTypes.push_back(u8());
             const std::string cls = str();
             f->paramClasses.push_back(cls.empty() ? nullptr : vm.intern(cls));
+            f->paramCounts.push_back(u8());
         }
 
         uint32_t codeSize = count(1);

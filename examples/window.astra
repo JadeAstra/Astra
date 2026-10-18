@@ -25,7 +25,7 @@ val faint = Color(0x6A737D)
 val accent = Color(0x2F81F7)
 
 // The whole picture, on whatever canvas it is given: a window's or a surface's.
-fun paint(canvas) {
+fun paint(canvas : Canvas) {
   val w = canvas.width
   val h = canvas.height
   canvas.color = paper
@@ -99,7 +99,7 @@ fun paint(canvas) {
   canvas.drawOval(pointerX - 7, pointerY - 7, 14, 14)
 }
 
-fun note(text) {
+fun note(text : string) {
   events.add(text)
   while (events.size > 11) { events.removeFirst() }
 }

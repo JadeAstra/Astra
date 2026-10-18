@@ -5,15 +5,15 @@ class Insets(val top : int, val left : int, val bottom : int, val right : int) {
   fun toString() => "Insets(${this.top}, ${this.left}, ${this.bottom}, ${this.right})"
 }
 
-class Component(val content) {
-  var tip = null
-  fun tooltip(text) { this.tip = text; return this }
+class Component(val content : string) {
+  var tip : string? = null
+  fun tooltip(text : string) { this.tip = text; return this }
   fun toString() => this.tip == null ? "${this.content}" : "${this.content} [tip: ${this.tip}]"
 }
 
-class RowScope(val grid, val row : int) {
+class RowScope(val grid : Grid, val row : int) {
   var col = 0
-  fun cell(component, colSpan = 1, fill = "NONE", weightX = 0.0) {
+  fun cell(component : Component, colSpan : int = 1, fill : string = "NONE", weightX : float = 0.0) {
     this.grid.add(component, this.row, this.col, fill, weightX)
     this.col += colSpan
     return component
@@ -28,31 +28,31 @@ class Grid {
   var nextRow = 0
 
   // A property with a setter, to show that assignment through a block reaches it.
-  var _id = null
+  var _id : string? = null
   get viewId() => this._id
   set viewId(value) { this._id = "view:" + value }
 
-  fun add(component, row, col, fill, weightX) {
+  fun add(component : Component, row : int, col : int, fill : string, weightX : float) {
     this.cells.push("r${row}c${col} ${component} fill=${fill} weightX=${weightX}")
     return component
   }
-  fun row(build) {
+  fun row(build : RowScope.() -> unit) {
     with(RowScope(this, this.nextRow), build)
     this.nextRow += 1
   }
 }
 
 // The Kotlin signature is grid(id: String? = null, build: JadeGrid.() -> Unit).
-fun grid(id = null, build : Grid.() -> Unit) {
+fun grid(id : string? = null, build : Grid.() -> unit) {
   val g = Grid()
   if id != null { g.viewId = id }
   g.apply(build)
   return g
 }
 
-fun label(text) => Component("label '${text}'")
-fun button(text, onClick = {}) => Component("button '${text}'")
-fun textField(text = "") => Component("textField '${text}'")
+fun label(text : string) => Component("label '${text}'")
+fun button(text : string, onClick : () -> unit = {}) => Component("button '${text}'")
+fun textField(text : string = "") => Component("textField '${text}'")
 
 // ---- The names in a block are the object's -----------------------------------------------
 

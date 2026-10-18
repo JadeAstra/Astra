@@ -10,88 +10,89 @@
 //
 // buildString { append("a"); append(1) } does the same in one expression.
 class StringBuilder {
-  private val parts = []
+  private val parts : List<string> = []
   private var count = 0
 
-  fun init(initial = "") {
+  fun init(initial : any? = "") {
     // Kotlin's StringBuilder(capacity) takes a number; there is nothing to do with one here.
-    if (initial is string and initial.length > 0) {
+    if (initial is string and initial.size > 0) {
       parts.add(initial)
-      count = initial.length
+      count = initial.size
     }
   }
 
   // In characters.
-  get length() => count
-  get lastIndex() => count - 1
-  fun isEmpty() => count == 0
-  fun isNotEmpty() => count != 0
+  get size() : int => count
+  get length() : int => count
+  get lastIndex() : int => count - 1
+  fun isEmpty() : bool => count == 0
+  fun isNotEmpty() : bool => count != 0
 
   // Adds a value as print would show it. Gives the builder, so that calls can be chained.
-  fun append(value) {
+  fun append(value : any?) : StringBuilder {
     val text = str(value)
     parts.add(text)
-    count += text.length
+    count += text.size
     return this
   }
 
-  fun appendLine(value = "") {
+  fun appendLine(value : any? = "") : StringBuilder {
     append(value)
     return append("\n")
   }
 
-  fun toString() {
-    if (parts.length == 0) { return "" }
-    if (parts.length > 1) { replaceWith(parts.join("")) }
+  fun toString() : string {
+    if (parts.size == 0) { return "" }
+    if (parts.size > 1) { replaceWith(parts.join("")) }
     return parts[0]
   }
 
-  private fun replaceWith(text) {
+  private fun replaceWith(text : string) {
     parts.clear()
     parts.add(text)
-    count = text.length
+    count = text.size
   }
 
-  fun clear() {
+  fun clear() : StringBuilder {
     parts.clear()
     count = 0
     return this
   }
 
   // Positions count characters, as in a string.
-  fun insert(index, value) {
+  fun insert(index : int, value : any?) : StringBuilder {
     val text = toString()
     replaceWith(text.substring(0, index) + str(value) + text.substring(index))
     return this
   }
 
-  fun deleteRange(startIndex, endIndex) {
+  fun deleteRange(startIndex : int, endIndex : int) : StringBuilder {
     val text = toString()
-    val end = endIndex > text.length ? text.length : endIndex
+    val end = endIndex > text.size ? text.size : endIndex
     replaceWith(text.substring(0, startIndex) + text.substring(end))
     return this
   }
 
-  fun delete(startIndex, endIndex) => deleteRange(startIndex, endIndex)
-  fun deleteAt(index) => deleteRange(index, index + 1)
-  fun deleteCharAt(index) => deleteRange(index, index + 1)
+  fun delete(startIndex : int, endIndex : int) : StringBuilder => deleteRange(startIndex, endIndex)
+  fun deleteAt(index : int) : StringBuilder => deleteRange(index, index + 1)
+  fun deleteCharAt(index : int) : StringBuilder => deleteRange(index, index + 1)
 
   // Cuts the text down to `newLength` characters; a longer length leaves it as it is.
-  fun setLength(newLength) {
+  fun setLength(newLength : int) {
     if (newLength < count) { replaceWith(toString().substring(0, newLength)) }
   }
 
-  fun reverse() {
+  fun reverse() : StringBuilder {
     replaceWith(toString().reversed())
     return this
   }
 
-  fun get(index) => toString().get(index)
-  op [](index) => toString().get(index)
-  fun substring(startIndex, endIndex = null) => toString().substring(startIndex, endIndex == null ? count : endIndex)
-  fun indexOf(text, startIndex = 0) => toString().indexOf(text, startIndex)
-  fun lastIndexOf(text) => toString().lastIndexOf(text)
-  fun contains(text) => toString().contains(text)
-  fun startsWith(prefix) => toString().startsWith(prefix)
-  fun endsWith(suffix) => toString().endsWith(suffix)
+  fun get(index : int) : string => toString().get(index)
+  op [](index : int) : string => toString().get(index)
+  fun substring(startIndex : int, endIndex : int? = null) : string => toString().substring(startIndex, endIndex == null ? count : endIndex)
+  fun indexOf(text : string, startIndex : int = 0) : int => toString().indexOf(text, startIndex)
+  fun lastIndexOf(text : string) : int => toString().lastIndexOf(text)
+  fun contains(text : string) : bool => toString().contains(text)
+  fun startsWith(prefix : string) : bool => toString().startsWith(prefix)
+  fun endsWith(suffix : string) : bool => toString().endsWith(suffix)
 }

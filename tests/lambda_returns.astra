@@ -1,26 +1,26 @@
 // let, also and takeIf compiled in place; return and return@name in lambdas; parameters that
 // wrap over lines or come apart.
 
-class Node(val name, val children = []) {
+class Node(val name : string, val children : List<Node> = []) {
   var hidden = false
 }
 val tree = Node("root", [Node("a", [Node("a1"), Node("a2")]), Node("b")])
 
 // let: the value becomes `it`, or a name of your choosing, and the block's value is the result.
 print(5.let { it + 1 }, "abc".let { text -> text.upper() }, [1, 2].let { it.length })   // expect: 6 ABC 2
-val none = null
+val none : int? = null
 var ran = 0
 print(none?.let { ran += 1; "ran" }, tree.name?.let { it + "!" }, ran)   // expect: null root! 0
 
 // A return inside it leaves the function it is written in.
-fun find(node, name) {
+fun find(node : Node, name : string) : Node? {
   if node.name == name { return node }
   for child in node.children { find(child, name)?.let { return it } }
   return null
 }
 print(find(tree, "a2")?.name, find(tree, "b")?.name, find(tree, "zzz"))   // expect: a2 b null
 
-fun firstLong(words) {
+fun firstLong(words : List<string>) {
   for word in words {
     word.takeIf { it.length > 3 }?.let { return "found " + it }
   }
@@ -46,7 +46,7 @@ print(made, log, 7.takeIf { it > 5 }, 3.takeIf { it > 5 }, "x".takeIf { false } 
 print(none?.also { log.push("never") }, none?.takeIf { true }, log.length)   // expect: null null 1
 
 // In the middle of an expression, with variables of its own, and one inside another.
-fun describe(node) => "node " + node.name.let {
+fun describe(node : Node) => "node " + node.name.let {
   val upper = it.upper()
   val count = node.children.length
   "$upper($count)"
@@ -64,13 +64,13 @@ for n in [1, 2, 3] {
 print(readers.map { it() })                 // expect: [100, 2, 200, 4, 300, 6]
 
 // return@let ends just the block, with a value if one is given.
-fun grade(score) => score.let {
+fun grade(score : int) => score.let {
   if it < 0 { return@let "invalid" }
   if it >= 90 { return@let "A" }
   "other"
 }
 print(grade(-1), grade(95), grade(50))      // expect: invalid A other
-fun checked(items) {
+fun checked(items : List<int?>) {
   val seen = []
   for item in items {
     item.also {
@@ -84,7 +84,7 @@ print(checked([1, null, 2]))                // expect: [1, 2]
 
 // With try and finally inside the block.
 val order = []
-fun guarded(value) {
+fun guarded(value : int) {
   val result = value.let {
     try {
       if it == 0 { return@let "zero" }
@@ -105,7 +105,7 @@ val labels = [1, 2, 3].map { if it == 2 { return@map "two" }; "n$it" }
 val shown = []
 [1, 2, 3, 4].each { if it == 3 { return@each }; shown.push(it) }
 val pick = chosen@ { a, b -> if a > b { return@chosen a }; b }
-fun apply2(f, x, y) => f(x, y)
+fun apply2(f : (int, int) -> string, x : int, y : int) => f(x, y)
 print(evens, labels, shown, pick(3, 9), pick(8, 2), apply2({ a, b -> if a == b { return@apply2 "same" }; "different" }, 1, 1))
 // expect: [2, 4] ["n1", "two", "n3"] [1, 2, 4] 9 8 same
 
@@ -119,7 +119,7 @@ val sum3 = { first,
              third ->
   first + second + third
 }
-fun combine(a, b, f) => f(a, b, a + b)
+fun combine(a : int, b : int, f : (int, int, int) -> string) => f(a, b, a + b)
 print(sum3(1, 2, 3), combine(10, 20) { x : int,
                                        y : int,
                                        total ->
@@ -128,9 +128,9 @@ print(sum3(1, 2, 3), combine(10, 20) { x : int,
 
 // A parameter written (a, b) comes apart.
 val pairs = [["one", 1], ["two", 2]]
-data Point(val x, val y)
+data Point(val x : int, val y : int)
 print(pairs.map { (name, n) -> name + n }, pairs.filter { (_, n) -> n > 1 }, [Point(1, 2)].map { (x, y) -> x + y })   // expect: ["one1", "two2"] [["two", 2]] [3]
-fun fold(items, start, step) {
+fun <T, R> fold(items : List<T>, start : R, step : (R, T) -> R) : R {
   var acc = start
   for item in items { acc = step(acc, item) }
   return acc
@@ -140,12 +140,12 @@ print(fold(pairs, 0) { total, (_, n) -> total + n }, [3, 4].let { (a, b) -> a * 
 // A value with a method of its own called let is still taken as the scope function when a
 // lambda follows; called with ordinary arguments it is the method.
 class Lender {
-  fun let(amount) => "lent $amount"
+  fun let(amount : int) => "lent $amount"
 }
 print(Lender().let(5), Lender().let { "the scope function" })   // expect: lent 5 the scope function
 
 // A function passed by name is called in the ordinary way.
-fun double(n) => n * 2
+fun double(n : int) => n * 2
 print(5.let(double), 5.also(double), 5.takeIf(fun(n) => n > 9))   // expect: 10 5 null
 
 // Many times over: nothing is left on the stack.

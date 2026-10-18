@@ -1,8 +1,8 @@
 // Declares two names that NsShapes declares too.
 val title = "text"
-fun label(s) => "[" + s + "]"
-fun words(s) => s.split(" ")
-class Block(val content) {
+fun label(s : string) => "[" + s + "]"
+fun words(s : string) => s.split(" ")
+class Block(val content : string) {
   fun describe() => "text block: " + content
 }
 

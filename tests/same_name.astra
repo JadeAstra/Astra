@@ -1,6 +1,9 @@
 // A field or property and a method may share a name: reading it gives the value, calling it
 // runs the method.
 
+// A value whose type the checker does not see, for testing the checks made when running.
+val unknown = { value -> value }
+
 class Component {
   var tooltip : string? = null
   var background = "white"
@@ -11,7 +14,7 @@ class Component {
     changes += 1
     return this
   }
-  fun background(colour) {
+  fun background(colour : string) {
     background = colour
     return this
   }
@@ -28,11 +31,11 @@ class Label {
   var colours = []
   get foreground() => colours.length > 0 ? colours[colours.length - 1] : "black"
   set foreground(colour) { colours.push(colour) }
-  fun foreground(colour) {
+  fun foreground(colour : string) {
     foreground = colour
     return this
   }
-  fun text(value) {
+  fun text(value : string) {
     text = value
     return this
   }
@@ -44,7 +47,7 @@ print(label.foreground, label.colours, label.text, label.foreground("green").for
 // In a subclass, and through an interface.
 interface Styled {
   var style
-  fun style(value) {
+  fun style(value : string) {
     style = value
     return this
   }
@@ -56,20 +59,20 @@ class Button : Component, Styled {
     return this
   }
 }
-val button = Button().tooltip("Click").style("bold").background("blue")
+val button = (Button().tooltip("Click").style("bold") as Button).background("blue") as Button   // each method gives the type it is declared in
 print(button.tooltip, button.style, button.background, button.changes)   // expect: Click! bold blue 1
 
 // A field that holds a function is still called through its name when there is no method.
 class Holder {
   var action = fun(n) => n + 1
   var label = "holder"
-  fun run(n) => action(n)
+  fun run(n : int) => action(n)
 }
 val holder = Holder()
 print(holder.action(1), holder.run(2))      // expect: 2 3
 holder.action = fun(n) => n * 10
 print(holder.action(1), holder.run(2))      // expect: 10 20
-try { holder.label(1) } catch (e) { print(e.message) }   // expect: cannot call a value of type string
+try { unknown(holder).label(1) } catch (e) { print(e.message) }   // expect: cannot call a value of type string
 
 // super reaches a superclass's property as well as its methods.
 class Base(val id : int) {

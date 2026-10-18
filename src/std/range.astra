@@ -2,18 +2,18 @@
 // A range can be looped over, and has the methods of a list that only read: each makes a
 // list of its numbers where it needs one.
 
-fun Range.forEach(action) {
+fun Range.forEach(action : (int) -> unit) {
   for number in this { action(number) }
 }
 
-fun Range.map(transform) {
-  val out = []
+fun <R> Range.map(transform : (int) -> R) : List<R> {
+  val out : List<R> = []
   for number in this { out.add(transform(number)) }
   return out
 }
 
-fun Range.mapNotNull(transform) {
-  val out = []
+fun <R> Range.mapNotNull(transform : (int) -> R?) : List<R> {
+  val out : List<R> = []
   for number in this {
     val made = transform(number)
     if (made != null) { out.add(made) }
@@ -21,45 +21,48 @@ fun Range.mapNotNull(transform) {
   return out
 }
 
-fun Range.flatMap(transform) {
-  val out = []
+fun <R> Range.flatMap(transform : (int) -> List<R>) : List<R> {
+  val out : List<R> = []
   for number in this { out.addAll(transform(number)) }
   return out
 }
 
-fun Range.filter(predicate) {
-  val out = []
+fun Range.filter(predicate : (int) -> bool) : List<int> {
+  val out : List<int> = []
   for number in this {
     if (predicate(number)) { out.add(number) }
   }
   return out
 }
 
-fun Range.any(predicate = null) {
-  if (predicate == null) { return this.length > 0 }
+fun Range.any() : bool => this.size > 0
+
+fun Range.any(predicate : (int) -> bool) : bool {
   for number in this {
     if (predicate(number)) { return true }
   }
   return false
 }
 
-fun Range.all(predicate) {
+fun Range.all(predicate : (int) -> bool) : bool {
   for number in this {
     if (!predicate(number)) { return false }
   }
   return true
 }
 
-fun Range.none(predicate = null) {
-  if (predicate == null) { return this.length == 0 }
+fun Range.none() : bool => this.size == 0
+
+fun Range.none(predicate : (int) -> bool) : bool {
   for number in this {
     if (predicate(number)) { return false }
   }
   return true
 }
 
-fun Range.count(predicate = null) {
-  if (predicate == null) { return this.length }
+fun Range.count() : int => this.size
+
+fun Range.count(predicate : (int) -> bool) : int {
   var total = 0
   for number in this {
     if (predicate(number)) { total += 1 }
@@ -67,43 +70,46 @@ fun Range.count(predicate = null) {
   return total
 }
 
-fun Range.firstOrNull(predicate = null) {
+fun Range.firstOrNull() : int? => this.size == 0 ? null : this.start
+
+fun Range.firstOrNull(predicate : (int) -> bool) : int? {
   for number in this {
-    if (predicate == null or predicate(number)) { return number }
+    if (predicate(number)) { return number }
   }
   return null
 }
 
-fun Range.find(predicate) => this.firstOrNull(predicate)
+fun Range.find(predicate : (int) -> bool) : int? => this.firstOrNull(predicate)
 
-fun Range.sum() {
+fun Range.sum() : int {
   var total = 0
   for number in this { total += number }
   return total
 }
 
-fun Range.sumOf(selector) {
-  var total = 0
+fun <R : Number> Range.sumOf(selector : (int) -> R) : R {
+  var total : Number = 0
   for number in this { total += selector(number) }
-  return total
+  return total as R
 }
 
-fun Range.associateWith(valueSelector) {
-  val out = {:}
+fun <V> Range.associateWith(valueSelector : (int) -> V) : Map<int, V> {
+  val out : Map<int, V> = {:}
   for number in this { out[number] = valueSelector(number) }
   return out
 }
 
-fun Range.isNotEmpty() => this.length > 0
-fun Range.reversed() => this.toList().reversed()
-fun Range.toMutableList() => this.toList()
-fun Range.toSet() => Set(this)
+fun Range.isNotEmpty() : bool => this.size > 0
+fun Range.reversed() : List<int> => this.toList().reversed()
+fun Range.toMutableList() : List<int> => this.toList()
+fun Range.toSet() : Set<int> => Set(this)
 
-fun Range.random() {
-  if (this.length == 0) { throw Error("random() of an empty range") }
-  return this.start + Math.randomInt(0, this.length - 1) * this.step
+fun Range.random() : int {
+  if (this.size == 0) { throw Error("random() of an empty range") }
+  return this.start + Math.randomInt(0, this.size - 1) * this.step
 }
 
-fun Range.joinToString(separator = ", ", prefix = "", postfix = "", limit = -1, truncated = "...", transform = null) {
+fun Range.joinToString(separator : string = ", ", prefix : string = "", postfix : string = "", limit : int = -1,
+                       truncated : string = "...", transform : ((int) -> any?)? = null) : string {
   return this.toList().joinToString(separator, prefix, postfix, limit, truncated, transform)
 }

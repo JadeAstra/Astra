@@ -16,54 +16,55 @@ class Color {
   val blue
   val alpha
 
-  fun init(r, g = null, b = null, a = null) {
+  fun init(r : Number, g : any? = null, b : Number? = null, a : Number? = null) {
     if (g == null or g is bool) {
       // One number, 0xRRGGBB, or 0xAARRGGBB if its alpha counts.
-      red = (r >> 16) & 255
-      green = (r >> 8) & 255
-      blue = r & 255
-      alpha = g == true ? (r >> 24) & 255 : 255
+      val rgb = r as int
+      red = (rgb >> 16) & 255
+      green = (rgb >> 8) & 255
+      blue = rgb & 255
+      alpha = g == true ? (rgb >> 24) & 255 : 255
     } else if (r is float or g is float or b is float) {
       red = Color.part(r * 255)
-      green = Color.part(g * 255)
-      blue = Color.part(b * 255)
+      green = Color.part((g as Number) * 255)
+      blue = Color.part((b as Number) * 255)
       alpha = a == null ? 255 : Color.part(a * 255)
     } else {
       red = Color.part(r)
-      green = Color.part(g)
-      blue = Color.part(b)
+      green = Color.part(g as Number)
+      blue = Color.part(b as Number)
       alpha = a == null ? 255 : Color.part(a)
     }
   }
 
-  private static fun part(value) {
+  private static fun part(value : Number) : int {
     val whole = int(Math.round(value))
     return whole < 0 ? 0 : (whole > 255 ? 255 : whole)
   }
 
   // The colour as one number, 0xAARRGGBB.
   get rgb() => (alpha << 24) | (red << 16) | (green << 8) | blue
-  fun getRGB() => rgb
-  fun getRed() => red
-  fun getGreen() => green
-  fun getBlue() => blue
-  fun getAlpha() => alpha
+  fun getRGB() : int => rgb
+  fun getRed() : int => red
+  fun getGreen() : int => green
+  fun getBlue() : int => blue
+  fun getAlpha() : int => alpha
 
   // A lighter and a darker shade, by the steps Java takes.
-  fun brighter() {
+  fun brighter() : Color {
     val least = 3
     if (red == 0 and green == 0 and blue == 0) { return Color(least, least, least, alpha) }
     val up = { v -> Math.min(int((v > 0 and v < least ? least : v) / 0.7), 255) }
     return Color(up(red), up(green), up(blue), alpha)
   }
-  fun darker() => Color(int(red * 0.7), int(green * 0.7), int(blue * 0.7), alpha)
+  fun darker() : Color => Color(int(red * 0.7), int(green * 0.7), int(blue * 0.7), alpha)
 
   // The same colour, as see-through as `alpha` says.
-  fun withAlpha(alpha) => Color(red, green, blue, alpha)
+  fun withAlpha(alpha : int) : Color => Color(red, green, blue, alpha)
 
-  op ==(other) => other is Color and other.rgb == rgb
-  fun hashCode() => rgb
-  override fun toString() => alpha == 255 ? "Color($red, $green, $blue)" : "Color($red, $green, $blue, $alpha)"
+  op ==(other : any?) : bool => other is Color and other.rgb == rgb
+  fun hashCode() : int => rgb
+  override fun toString() : string => alpha == 255 ? "Color($red, $green, $blue)" : "Color($red, $green, $blue, $alpha)"
 
   static val white = Color(255, 255, 255)
   static val lightGray = Color(192, 192, 192)
@@ -80,13 +81,13 @@ class Color {
   static val blue = Color(0, 0, 255)
 
   // "#RRGGBB" or "0xRRGGBB".
-  static fun decode(text) {
+  static fun decode(text : string) : Color {
     val digits = text.startsWith("#") ? text.substring(1) : (text.startsWith("0x") or text.startsWith("0X") ? text.substring(2) : text)
     return Color(digits.toInt(16))
   }
 
   // From hue, saturation and brightness, each from 0.0 to 1.0, as one number (0xFFRRGGBB).
-  static fun HSBtoRGB(hue, saturation, brightness) {
+  static fun HSBtoRGB(hue : float, saturation : float, brightness : float) : int {
     var r = brightness
     var g = brightness
     var b = brightness
@@ -106,11 +107,11 @@ class Color {
     }
     return 0xFF000000 | (int(r * 255 + 0.5) << 16) | (int(g * 255 + 0.5) << 8) | int(b * 255 + 0.5)
   }
-  static fun getHSBColor(hue, saturation, brightness) => Color(Color.HSBtoRGB(hue, saturation, brightness))
+  static fun getHSBColor(hue : float, saturation : float, brightness : float) : Color => Color(Color.HSBtoRGB(hue, saturation, brightness))
 
   // The other way: [hue, saturation, brightness]. (Java fills an array given to it; here
   // the list is the result, and a list given as the fourth argument is filled as well.)
-  static fun RGBtoHSB(r, g, b, into = null) {
+  static fun RGBtoHSB(r : int, g : int, b : int, into : List<float>? = null) : List<float> {
     val most = Math.max(r, Math.max(g, b))
     val least = Math.min(r, Math.min(g, b))
     val brightness = most / 255.0
@@ -154,39 +155,39 @@ class Font {
   val style
   val size
 
-  fun init(name, style = 0, size = 12) {
+  fun init(name : string?, style : int = 0, size : Number = 12) {
     this.name = name ?: "Dialog"
     this.style = style & 3
     this.size = size
   }
 
-  get isPlain() => style == 0
-  get isBold() => style & 1 != 0
-  get isItalic() => style & 2 != 0
-  get size2D() => float(size)
-  fun getSize() => size
-  fun getStyle() => style
-  fun getName() => name
+  get isPlain() : bool => style == 0
+  get isBold() : bool => style & 1 != 0
+  get isItalic() : bool => style & 2 != 0
+  get size2D() : float => float(size)
+  fun getSize() : Number => size
+  fun getStyle() : int => style
+  fun getName() : string => name
 
   // The family actually used: the one asked for if it is installed, the system's if not.
-  get family() => textFont(1).family
-  get fontName() => textFont(1).typeface.fullName
+  get family() : string => textFont(1).family
+  get fontName() : string => textFont(1).typeface.fullName
 
   // The same font in another style or size: deriveFont(Font.bold), deriveFont(14.0),
   // deriveFont(Font.bold, 14.0). A whole number alone is a style and a decimal one a size,
   // as in Java, where the two are told apart by int and float.
-  fun deriveFont(first, second = null) {
-    if (second != null) { return Font(name, first, second) }
-    return first is float ? Font(name, style, first) : Font(name, first, size)
+  fun deriveFont(first : Number, second : Number? = null) : Font {
+    if (second != null) { return Font(name, first as int, second) }
+    return first is float ? Font(name, style, first) : Font(name, first as int, size)
   }
 
-  op ==(other) => other is Font and other.name == name and other.style == style and other.size == size
-  fun hashCode() => name.hashCode() * 31 + style * 7 + int(size * 16)
-  override fun toString() => "Font($name, ${isBold ? (isItalic ? "bolditalic" : "bold") : (isItalic ? "italic" : "plain")}, $size)"
+  op ==(other : any?) : bool => other is Font and other.name == name and other.style == style and other.size == size
+  fun hashCode() : int => name.hashCode() * 31 + style * 7 + int(size * 16)
+  override fun toString() : string => "Font($name, ${isBold ? (isItalic ? "bolditalic" : "bold") : (isItalic ? "italic" : "plain")}, $size)"
 
   // The engine's font for this one on a screen of some scale: what measures and draws it.
   private static val made = {:}
-  fun textFont(scale = 1) {
+  fun textFont(scale : Number = 1) : TextFont {
     val key = "$name|$style|$size|$scale"
     var found = Font.made[key]
     if (found == null) {
@@ -205,31 +206,31 @@ class FontMetrics {
   val scale
   private val engine
 
-  fun init(font, scale = 1) {
+  fun init(font : Font, scale : Number = 1) {
     this.font = font
     this.scale = scale
     this.engine = font.textFont(scale)
   }
 
-  private fun units(device) => scale == 1 ? device : int(Math.ceil(device / float(scale)))
+  private fun units(device : int) : int => scale == 1 ? device : int(Math.ceil(device / float(scale)))
 
-  get ascent() => units(engine.ascent)
-  get descent() => units(engine.descent)
-  get leading() => units(engine.leading)
-  get height() => units(engine.ascent) + units(engine.descent) + units(engine.leading)
-  get maxAscent() => ascent
-  get maxDescent() => descent
-  fun stringWidth(text) => units(engine.width(text))
-  fun charWidth(character) => units(engine.charWidth(character))
-  fun getAscent() => ascent
-  fun getDescent() => descent
-  fun getLeading() => leading
-  fun getHeight() => height
-  fun getFont() => font
+  get ascent() : int => units(engine.ascent)
+  get descent() : int => units(engine.descent)
+  get leading() : int => units(engine.leading)
+  get height() : int => units(engine.ascent) + units(engine.descent) + units(engine.leading)
+  get maxAscent() : int => ascent
+  get maxDescent() : int => descent
+  fun stringWidth(text : string) : int => units(engine.width(text))
+  fun charWidth(character : string) : int => units(engine.charWidth(character))
+  fun getAscent() : int => ascent
+  fun getDescent() : int => descent
+  fun getLeading() : int => leading
+  fun getHeight() : int => height
+  fun getFont() : Font => font
 
   // The widths in the screen's own pixels, which add up exactly.
-  fun deviceWidth(text) => engine.width(text)
-  fun deviceOffsets(text) => engine.offsets(text)
+  fun deviceWidth(text : string) : int => engine.width(text)
+  fun deviceOffsets(text : string) : List<int> => engine.offsets(text)
 }
 
 // ---- Geometry ----
@@ -237,39 +238,39 @@ class FontMetrics {
 class Dimension {
   var width
   var height
-  fun init(width = 0, height = 0) {
+  fun init(width : int = 0, height : int = 0) {
     this.width = width
     this.height = height
   }
-  fun getWidth() => width
-  fun getHeight() => height
-  fun setSize(width, height) {
+  fun getWidth() : int => width
+  fun getHeight() : int => height
+  fun setSize(width : int, height : int) {
     this.width = width
     this.height = height
   }
-  op ==(other) => other is Dimension and other.width == width and other.height == height
-  fun hashCode() => width * 31 + height
-  override fun toString() => "Dimension($width x $height)"
+  op ==(other : any?) : bool => other is Dimension and other.width == width and other.height == height
+  fun hashCode() : int => width * 31 + height
+  override fun toString() : string => "Dimension($width x $height)"
 }
 
 class Point {
   var x
   var y
-  fun init(x = 0, y = 0) {
+  fun init(x : int = 0, y : int = 0) {
     this.x = x
     this.y = y
   }
-  fun translate(dx, dy) {
+  fun translate(dx : int, dy : int) {
     x += dx
     y += dy
   }
-  fun setLocation(x, y) {
+  fun setLocation(x : int, y : int) {
     this.x = x
     this.y = y
   }
-  op ==(other) => other is Point and other.x == x and other.y == y
-  fun hashCode() => x * 31 + y
-  override fun toString() => "Point($x, $y)"
+  op ==(other : any?) : bool => other is Point and other.x == x and other.y == y
+  fun hashCode() : int => x * 31 + y
+  override fun toString() : string => "Point($x, $y)"
 }
 
 // Top, left, bottom, right: the order Java gives them in.
@@ -278,15 +279,15 @@ class Insets {
   var left
   var bottom
   var right
-  fun init(top = 0, left = 0, bottom = 0, right = 0) {
+  fun init(top : int = 0, left : int = 0, bottom : int = 0, right : int = 0) {
     this.top = top
     this.left = left
     this.bottom = bottom
     this.right = right
   }
-  op ==(other) => other is Insets and other.top == top and other.left == left and other.bottom == bottom and other.right == right
-  fun hashCode() => ((top * 31 + left) * 31 + bottom) * 31 + right
-  override fun toString() => "Insets(top=$top, left=$left, bottom=$bottom, right=$right)"
+  op ==(other : any?) : bool => other is Insets and other.top == top and other.left == left and other.bottom == bottom and other.right == right
+  fun hashCode() : int => ((top * 31 + left) * 31 + bottom) * 31 + right
+  override fun toString() : string => "Insets(top=$top, left=$left, bottom=$bottom, right=$right)"
 }
 
 // A rectangle: its top left corner and its size. Rectangle(), Rectangle(width, height),
@@ -297,7 +298,7 @@ class Rectangle {
   var width
   var height
 
-  fun init(x = 0, y = 0, width = null, height = null) {
+  fun init(x : any = 0, y : int = 0, width : int? = null, height : int? = null) {
     if (x is Rectangle) {
       this.x = x.x; this.y = x.y; this.width = x.width; this.height = x.height
     } else if (width == null) {
@@ -307,31 +308,33 @@ class Rectangle {
     }
   }
 
-  get isEmpty() => width <= 0 or height <= 0
-  get location() => Point(x, y)
-  get size() => Dimension(width, height)
-  get bounds() => Rectangle(this)
-  get minX() => x
-  get minY() => y
-  get maxX() => x + width
-  get maxY() => y + height
-  get centerX() => x + width / 2.0
-  get centerY() => y + height / 2.0
+  get isEmpty() : bool => width <= 0 or height <= 0
+  get location() : Point => Point(x, y)
+  get size() : Dimension => Dimension(width, height)
+  get bounds() : Rectangle => Rectangle(this)
+  get minX() : int => x
+  get minY() : int => y
+  get maxX() : int => x + width
+  get maxY() : int => y + height
+  get centerX() : float => x + width / 2.0
+  get centerY() : float => y + height / 2.0
 
   // Whether a point, or the whole of another rectangle, is inside.
-  fun contains(px, py = null, w = null, h = null) {
+  fun contains(px : any, py : int? = null, w : int? = null, h : int? = null) : bool {
     if (px is Point) { return contains(px.x, px.y) }
     if (px is Rectangle) { return contains(px.x, px.y, px.width, px.height) }
     if (width <= 0 or height <= 0) { return false }
-    if (w == null) { return px >= x and py >= y and px < x + width and py < y + height }
-    return w > 0 and h > 0 and px >= x and py >= y and px + w <= x + width and py + h <= y + height
+    val cx = px as int
+    val cy = py as int
+    if (w == null or h == null) { return cx >= x and cy >= y and cx < x + width and cy < y + height }
+    return w > 0 and h > 0 and cx >= x and cy >= y and cx + w <= x + width and cy + h <= y + height
   }
-  fun intersects(other) =>
+  fun intersects(other : Rectangle) : bool =>
     other.width > 0 and other.height > 0 and width > 0 and height > 0 and
     other.x < x + width and other.x + other.width > x and other.y < y + height and other.y + other.height > y
 
   // The part two rectangles share; an empty one if they share none.
-  fun intersection(other) {
+  fun intersection(other : Rectangle) : Rectangle {
     val left = Math.max(x, other.x)
     val top = Math.max(y, other.y)
     val right = Math.min(x + width, other.x + other.width)
@@ -339,7 +342,7 @@ class Rectangle {
     return Rectangle(left, top, right - left, bottom - top)
   }
   // The smallest rectangle holding both.
-  fun union(other) {
+  fun union(other : Rectangle) : Rectangle {
     val left = Math.min(x, other.x)
     val top = Math.min(y, other.y)
     val right = Math.max(x + width, other.x + other.width)
@@ -347,35 +350,35 @@ class Rectangle {
     return Rectangle(left, top, right - left, bottom - top)
   }
 
-  fun translate(dx, dy) {
+  fun translate(dx : int, dy : int) {
     x += dx
     y += dy
   }
-  fun grow(horizontal, vertical) {
+  fun grow(horizontal : int, vertical : int) {
     x -= horizontal
     y -= vertical
     width += 2 * horizontal
     height += 2 * vertical
   }
-  fun setBounds(x, y = null, width = null, height = null) {
+  fun setBounds(x : any, y : int? = null, width : int? = null, height : int? = null) {
     if (x is Rectangle) {
       this.x = x.x; this.y = x.y; this.width = x.width; this.height = x.height
     } else {
       this.x = x; this.y = y; this.width = width; this.height = height
     }
   }
-  fun setLocation(x, y) {
+  fun setLocation(x : int, y : int) {
     this.x = x
     this.y = y
   }
-  fun setSize(width, height) {
+  fun setSize(width : int, height : int) {
     this.width = width
     this.height = height
   }
 
-  op ==(other) => other is Rectangle and other.x == x and other.y == y and other.width == width and other.height == height
-  fun hashCode() => ((x * 31 + y) * 31 + width) * 31 + height
-  override fun toString() => "Rectangle($x, $y, $width x $height)"
+  op ==(other : any?) : bool => other is Rectangle and other.x == x and other.y == y and other.width == width and other.height == height
+  fun hashCode() : int => ((x * 31 + y) * 31 + width) * 31 + height
+  override fun toString() : string => "Rectangle($x, $y, $width x $height)"
 }
 
 // ---- BufferedImage ----
@@ -396,11 +399,11 @@ class BufferedImage {
   val height
   val type
   private var held             // the pixels in memory, as a Picture
-  private var card = null      // the same on the graphics card, as a Surface, once wanted
+  private var card : Surface? = null      // the same on the graphics card, as a Surface, once wanted
   private var memoryNewer = true
   private var cardNewer = false
 
-  fun init(width, height, type = 2, picture = null) {
+  fun init(width : int, height : int, type : int = 2, picture : Picture? = null) {
     if (width < 1 or height < 1) { throw Error("a BufferedImage is at least 1 pixel each way, not $width by $height") }
     this.width = width
     this.height = height
@@ -409,18 +412,18 @@ class BufferedImage {
   }
 
   // From and to the engine's own kind of picture (a PNG file read with Picture.load, say).
-  static fun fromPicture(picture) => BufferedImage(picture.width, picture.height, 2, picture.copy())
-  fun toPicture() => memory().copy()
+  static fun fromPicture(picture : Picture) : BufferedImage => BufferedImage(picture.width, picture.height, 2, picture.copy())
+  fun toPicture() : Picture => memory().copy()
 
-  fun getWidth() => width
-  fun getHeight() => height
-  fun getType() => type
+  fun getWidth() : int => width
+  fun getHeight() : int => height
+  fun getType() : int => type
 
-  fun getRGB(x, y) {
+  fun getRGB(x : int, y : int) : int {
     if (x < 0 or y < 0 or x >= width or y >= height) { throw Error("pixel ($x, $y) is outside the picture, which is $width by $height") }
     return memory().get(x, y)
   }
-  fun setRGB(x, y, color) {
+  fun setRGB(x : int, y : int, color : int) {
     if (x < 0 or y < 0 or x >= width or y >= height) { throw Error("pixel ($x, $y) is outside the picture, which is $width by $height") }
     memory().set(x, y, type == 1 ? color | 0xFF000000 : color)
     memoryNewer = true
@@ -428,23 +431,24 @@ class BufferedImage {
 
   // A copy of a part of it. (In Java the part shares its pixels with the whole; here it
   // is a picture of its own.)
-  fun getSubimage(x, y, w, h) => BufferedImage(w, h, type, memory().crop(x, y, w, h))
+  fun getSubimage(x : int, y : int, w : int, h : int) : BufferedImage => BufferedImage(w, h, type, memory().crop(x, y, w, h))
 
   // Something to draw on it with: the canvas of the toolkit, one unit to the pixel.
   fun canvas() => onCard().canvas(this)
 
   // The same for a picture that stands for `width` by `height` units, at `scale` of its
   // pixels to the unit: what a window's picture is on a dense screen.
-  fun canvasAt(width, height, scale) => onCard().canvasAt(width, height, scale, this)
+  fun canvasAt(width : int, height : int, scale : Number) => onCard().canvasAt(width, height, scale, this)
 
-  fun save(path) {
+  fun save(path : any) {
     memory().save(path)
   }
 
   // The pixels in memory, brought up to date if the picture has been drawn on since.
-  private fun memory() {
-    if (cardNewer) {
-      held = card.toPicture()
+  private fun memory() : Picture {
+    val c = card
+    if (cardNewer and c != null) {
+      held = c.toPicture()
       cardNewer = false
     }
     return held
@@ -453,23 +457,25 @@ class BufferedImage {
   // Called by a canvas each time it draws on the picture: pixels set since the card last
   // had them go there first, and from then on the card's is the newer.
   fun drawnOn() {
-    if (memoryNewer and !cardNewer and card != null) { card.upload(held) }
+    val c = card
+    if (memoryNewer and !cardNewer and c != null) { c.upload(held) }
     memoryNewer = false
     cardNewer = true
   }
 
   // The picture on the graphics card, brought up to date if pixels have been set since.
-  fun onCard() {
+  fun onCard() : Surface {
+    val c = card ?: Surface(width, height)
     if (card == null) {
-      card = Surface(width, height)
+      card = c
       memoryNewer = true
     }
     if (memoryNewer and !cardNewer) {
-      card.upload(held)
+      c.upload(held)
     }
     memoryNewer = false
-    return card
+    return c
   }
 
-  override fun toString() => "BufferedImage($width x $height)"
+  override fun toString() : string => "BufferedImage($width x $height)"
 }

@@ -1,5 +1,5 @@
-class Square(val side) : Shape("square") {
+class Square(val side : int) : Shape("square") {
   override fun area() => side * side
-  fun describe() => label(this) + " side=$side"
+  override fun describe() : string => label(this) + " side=$side"
 }
 fun unit() => register(Square(1))

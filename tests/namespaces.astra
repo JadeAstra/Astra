@@ -4,6 +4,9 @@ import NsShapes.*
 import NsText                          // NsText.Block, NsText.words
 import NsText as text                  // or under a name of the importer's choosing
 
+// A value whose type the checker does not see, for testing the checks made when running.
+val unknown = { value -> value }
+
 val shapes = [Circle(1), Square(3), unit()]
 print(shapes.map { it.describe() })     // expect: ["<circle> r=1", "<square> side=3", "<square> side=1"]
 print(largest(shapes).name, created, PI_ISH, fillOf(shapes[0]), fillOf(shapes[1], SOLID))   // expect: square 3 3 circle:NONE square:SOLID
@@ -20,7 +23,7 @@ print(secret)                           // expect: the test's own
 print(registry.length, register(Circle(9)).r, registry)  // expect: 1 9 ["square", "circle"]
 
 // This file's own names come before imported ones.
-class Block(val n) {
+class Block(val n : int) {
   fun describe() => "my block $n"
 }
 print(Block(1).describe())              // expect: my block 1
@@ -32,10 +35,10 @@ val made : text.Block = NsText.Block("typed")
 print(made is text.Block, made is NsText.Block, made is Block, Block(2) is text.Block)   // expect: true true false false
 fun show(block : NsText.Block) => block.content
 print(show(made), [1].map { text.label("x") })   // expect: typed ["[x]"]
-try { show(Block(3)) } catch (e) { print(e.message) }   // expect: argument 'block' of show() must be Block, got Block
+try { show(unknown(Block(3))) } catch (e) { print(e.message) }   // expect: argument 'block' of show() must be Block, got Block
 
 // A variable called like an import comes first, as a variable does everywhere.
-fun shadowed(text) => text.length
+fun shadowed(text : string) => text.length
 print(shadowed("four"))                 // expect: 4
 
 // Importing a folder again, or a file of a folder already loaded, loads nothing again.

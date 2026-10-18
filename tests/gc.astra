@@ -1,6 +1,8 @@
 // Allocation-heavy code: every result here has to survive many garbage collections.
 class Node {
-  fun init(value, next) { this.value = value; this.next = next }
+  val value : int
+  var next : Node? = null
+  fun init(value : int, next : Node?) { this.value = value; this.next = next }
 }
 
 // lots of short-lived garbage
@@ -13,7 +15,7 @@ for i in 0..<300000 {
 print(total)                            // expect: 0
 
 // a long-lived structure built while garbage is being produced
-var head = null
+var head : Node? = null
 for i in 0..<200000 {
   head = Node(i, head)
   var junk = "junk" + i
@@ -54,7 +56,8 @@ print(folded)                           // expect: 50000
 
 // objects reachable only through a method running on them
 class Chain {
-  fun init(n) { this.n = n }
+  val n : int
+  fun init(n : int) { this.n = n }
   fun build() {
     var all = []
     for i in 0..<this.n { all.push(Chain(i)) }

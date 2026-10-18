@@ -13,7 +13,7 @@ import Jade.*
 val startingBalls = 50000
 val threadCount = 4
 
-class Ball(var x : Number, var y : Number, var dx : Number, var dy : Number, val radius : Number, val color) {
+class Ball(var x : Number, var y : Number, var dx : Number, var dy : Number, val radius : Number, val color : Color) {
   // Moves on by `steps` sixtieths of a second, turning back at the edges.
   fun move(width : Number, height : Number, steps : Number) {
     x += dx * steps
@@ -31,8 +31,8 @@ val palette = [Color.red, Color.blue, Color.green, Color.orange, Color(160, 60, 
 // half changed, so a ball can be added to a group while its thread is going through it.
 val groups = List(threadCount) { [] }
 var ballCount = 0
-@Volatile var width = 760.0
-@Volatile var height = 520.0
+@Volatile var width : Number = 760.0
+@Volatile var height : Number = 520.0
 @Volatile var paused = false
 val steps = AtomicInteger()          // how many times a group has been moved, for the status line
 

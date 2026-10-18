@@ -7,12 +7,12 @@ class RenderLoop {
   private var lastW = -1
   private var lastH = -1
   private var dirty = true
-  private var damage = null      // the part that has changed, if it is known to be only a part
+  private var damage : Rectangle? = null   // the part that has changed, if it is known to be only a part
 
   // One frame's plan: whether the tree is laid out first, and the part to draw (null: all).
-  class Frame(val layout, val partial)
+  class Frame(val layout : bool, val partial : Rectangle?)
 
-  get isDirty() => dirty
+  get isDirty() : bool => dirty
 
   fun requestLayout() {
     needsLayout = true
@@ -26,16 +26,16 @@ class RenderLoop {
 
   // Only a rectangle has changed. Several add up to the rectangle that holds them all; a
   // markDirty before or after makes it everything.
-  fun markDamage(r) {
+  fun markDamage(r : Rectangle) {
     if (dirty and damage == null) { return }
-    damage = damage == null ? Rectangle(r) : damage.union(r)
+    damage = damage?.union(r) ?: Rectangle(r)
     dirty = true
   }
 
-  fun layoutDue(w, h) => needsLayout or w != lastW or h != lastH
+  fun layoutDue(w : int, h : int) : bool => needsLayout or w != lastW or h != lastH
 
   // Lays the tree out if its size has changed or something asked for it.
-  fun ensureLayout(root, w, h) {
+  fun ensureLayout(root : Component, w : int, h : int) {
     if (w <= 0 or h <= 0 or !layoutDue(w, h)) { return }
     root.layout(w, h)
     laidOut(w, h)
@@ -43,35 +43,36 @@ class RenderLoop {
 
   // What the next frame has to do. Only a part is drawn if only a part was damaged and
   // nothing else forces a whole frame: a layout, or a picture of another size.
-  fun plan(w, h, buffersResized) {
+  fun plan(w : int, h : int, buffersResized : bool) : Frame {
     val layout = layoutDue(w, h)
-    var partial = null
-    if (damage != null and !layout and !buffersResized) {
-      val within = damage.intersection(Rectangle(0, 0, w, h))
+    var partial : Rectangle? = null
+    val d = damage
+    if (d != null and !layout and !buffersResized) {
+      val within = d.intersection(Rectangle(0, 0, w, h))
       if (!within.isEmpty) { partial = within }
     }
     return Frame(layout, partial)
   }
 
   // The frame that was planned has been drawn.
-  fun drawn(frame, w, h) {
+  fun drawn(frame : Frame, w : int, h : int) {
     if (frame.layout) { laidOut(w, h) }
     dirty = false
     damage = null
   }
 
   // Whether there is nothing to do until something happens.
-  fun mayIdle(holding) => !dirty and !holding
+  fun mayIdle(holding : bool) : bool => !dirty and !holding
 
   // Plans a frame, paints the tree into a picture, and notes it as drawn.
-  fun renderFrame(root, buf, w, h, sx = 1.0, sy = 1.0) {
+  fun renderFrame(root : Component, buf : BufferedImage, w : int, h : int, sx : float = 1.0, sy : float = 1.0) : Frame {
     val frame = plan(w, h, false)
     root.renderInto(buf, w, h, sx, sy, frame.layout, frame.partial)
     drawn(frame, w, h)
     return frame
   }
 
-  private fun laidOut(w, h) {
+  private fun laidOut(w : int, h : int) {
     lastW = w
     lastH = h
     needsLayout = false

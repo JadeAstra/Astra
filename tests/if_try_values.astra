@@ -1,6 +1,6 @@
 // if and try where a value is expected: the value of the block that ran.
 
-fun size(n) => if n > 100 { "big" } else if n > 10 { "medium" } else { "small" }
+fun size(n : int) => if n > 100 { "big" } else if n > 10 { "medium" } else { "small" }
 print(size(500), size(50), size(5))         // expect: big medium small
 
 val wide = true
@@ -9,7 +9,7 @@ var label = "w" + if width > 150 { "ide" } else { "narrow" } + "!"
 print(width, label, if false { 1 }, [1, if wide { 2 } else { 0 }, 3])   // expect: 200 wide! null [1, 2, 3]
 
 // A block can do more before giving its value, and has its own variables.
-fun describe(items) {
+fun describe(items : List<string>) {
   return if items.length == 0 {
     "nothing"
   } else {
@@ -22,8 +22,8 @@ print(describe([]), describe(["a", "b", "c"]))   // expect: nothing a and 2 more
 
 // try gives the value of its block, or of the catch that ran; finally still runs.
 val log = []
-fun parse(text) => try { int(text) } catch (e) { -1 }
-fun guarded(text) {
+fun parse(text : string) => try { int(text) } catch (e) { -1 }
+fun guarded(text : string) {
   val n = 10 + try {
     val parsed = int(text)
     parsed * 2
@@ -38,7 +38,7 @@ fun guarded(text) {
 print(parse("42"), parse("x"), guarded("4"), guarded("y"), log)   // expect: 42 -1 18 10 ["checked 4", "bad y", "checked y"]
 
 class Missing : Error { fun init() { super.init("missing") } }
-fun lookup(table, key) => try {
+fun lookup(table : Map<string, int>, key : string) => try {
   table[key] ?: throw Missing()
 } catch (e : Missing) {
   "default"
@@ -49,13 +49,13 @@ try { print(try { throw "inner" } finally { log.push("finally") }) } catch (e) {
 // As the last thing in a lambda, in a when branch, and with jumps inside.
 val grades = [95, 72, 40].map { if it >= 90 { "A" } else if it >= 60 { "C" } else { "F" } }
 val parsed = ["1", "x", "3"].map { try { int(it) } catch (e) { 0 } }
-fun kind(x) => when (x) {
+fun kind(x : any?) => when (x) {
   null -> "none"
   else -> if x is string { "text" } else { "other" }
 }
 print(grades, parsed, kind(null), kind("s"), kind(1))   // expect: ["A", "C", "F"] [1, 0, 3] none text other
 
-fun firstPositive(items) {
+fun firstPositive(items : List<int?>) {
   for item in items {
     val checked = if item == null { continue } else if item < 0 { 0 } else { return item }
     log.push(checked)

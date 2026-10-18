@@ -19,62 +19,68 @@
 // The section itself is an ordinary call, which returns when every core has finished.
 // The work is done by the built-in __parallel (parallel.cpp).
 
-class ParallelStream {
-  private val items
+class ParallelStream<T> {
+  private val items : List<T>
 
-  fun init(source) {
-    this.items = source is List ? source : source.toList()
+  fun init(source : List<T>) {
+    this.items = source
   }
 
   // Runs the action on every item, the items dealt out to the cores.
-  fun forEach(action) {
+  fun forEach(action : (T) -> unit) {
     __parallel.run(items, action, false)
   }
 
   // What the function gives for each item, in the order of the items, as a stream to go on from.
-  fun map(transform) => ParallelStream(__parallel.run(items, transform, true))
+  fun <R> map(transform : (T) -> R) : ParallelStream<R> => ParallelStream<R>(__parallel.run(items, transform, true))
 
-  fun mapNotNull(transform) => ParallelStream(__parallel.run(items, transform, true).filterNotNull())
+  fun <R> mapNotNull(transform : (T) -> R?) : ParallelStream<R> {
+    val made : List<R?> = __parallel.run(items, transform, true)
+    return ParallelStream(made.filterNotNull())
+  }
 
   // The items for which the condition holds.
-  fun filter(predicate) {
-    val keep = __parallel.run(items, predicate, true)
-    val out = []
+  fun filter(predicate : (T) -> bool) : ParallelStream<T> {
+    val keep : List<bool> = __parallel.run(items, predicate, true)
+    val out : List<T> = []
     for index in 0..<items.size {
       if (keep[index]) { out.add(items[index]) }
     }
     return ParallelStream(out)
   }
 
-  fun count(predicate = null) => predicate == null ? items.size : __parallel.run(items, predicate, true).count { it }
-  fun any(predicate) => __parallel.run(items, predicate, true).any { it }
-  fun all(predicate) => __parallel.run(items, predicate, true).all { it }
-  fun none(predicate) => !__parallel.run(items, predicate, true).any { it }
+  fun count() : int => items.size
+  fun count(predicate : (T) -> bool) : int => tests(predicate).count { it }
+  fun any(predicate : (T) -> bool) : bool => tests(predicate).any { it }
+  fun all(predicate : (T) -> bool) : bool => tests(predicate).all { it }
+  fun none(predicate : (T) -> bool) : bool => !tests(predicate).any { it }
 
-  fun sumOf(selector) => __parallel.run(items, selector, true).sum()
-  fun maxOf(selector) => __parallel.run(items, selector, true).max()
-  fun minOf(selector) => __parallel.run(items, selector, true).min()
-  fun sum() => items.sum()
-  fun max() => items.max()
-  fun min() => items.min()
+  private fun tests(predicate : (T) -> bool) : List<bool> => __parallel.run(items, predicate, true)
+
+  fun <R : Number> sumOf(selector : (T) -> R) : R => (__parallel.run(items, selector, true) as List<R>).sum()
+  fun <R> maxOf(selector : (T) -> R) : R => (__parallel.run(items, selector, true) as List<R>).max()
+  fun <R> minOf(selector : (T) -> R) : R => (__parallel.run(items, selector, true) as List<R>).min()
+  fun sum() : any? => (items as List<Number>).sum()
+  fun max() : T => items.max()
+  fun min() : T => items.min()
 
   // The items as a list: after map or filter, what they came to.
-  fun toList() => items.toList()
-  fun toSet() => Set(items)
-  fun sorted() => items.sorted()
-  fun joinToString(separator = ", ") => items.joinToString(separator)
+  fun toList() : List<T> => items.toList()
+  fun toSet() : Set<T> => Set(items)
+  fun sorted() : List<T> => items.sorted()
+  fun joinToString(separator : string = ", ") : string => items.joinToString(separator)
 }
 
-fun List.parallelStream() => ParallelStream(this)
-fun Range.parallelStream() => ParallelStream(this)
+fun <T> List<T>.parallelStream() : ParallelStream<T> => ParallelStream(this)
+fun Range.parallelStream() : ParallelStream<int> => ParallelStream(this.toList())
 
 // The buffer in as many parts as there are cores, each core given the positions of one part:
 // it may write those and no others.
 //
 //   pixels.parallelChunks { positions -> for i in positions { pixels[i] = shade(i) } }
-fun Bytes.parallelChunks(action) {
+fun Bytes.parallelChunks(action : (Range) -> unit) {
   __parallel.chunks(this, action)
 }
 
 // How many cores a parallel section uses on this machine.
-fun availableProcessors() => __parallel.cores()
+fun availableProcessors() : int => __parallel.cores()

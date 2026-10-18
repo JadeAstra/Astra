@@ -8,73 +8,80 @@
 // ---- Small values that functions hand out ----
 
 // Two values, made with `a to b` or Pair(a, b).
-data Pair(val first, val second) {
-  fun toList() => [first, second]
+data Pair<A, B>(val first : A, val second : B) {
+  fun toList() : List<any?> => [first, second]
 }
 
-data Triple(val first, val second, val third) {
-  fun toList() => [first, second, third]
+data Triple<A, B, C>(val first : A, val second : B, val third : C) {
+  fun toList() : List<any?> => [first, second, third]
 }
 
 // One key of a map with its value: what map.entries holds.
-data MapEntry(val key, val value) {
-  fun toPair() => Pair(key, value)
+data MapEntry<K, V>(val key : K, val value : V) {
+  fun toPair() : Pair<K, V> => Pair(key, value)
 }
 
 // An item with its position: what withIndex() gives.
-data IndexedValue(val index, val value)
+data IndexedValue<T>(val index : int, val value : T)
 
 // Thrown when the system cannot give the program the memory it asks for: a list, a string or
 // a buffer too large. Like any error, it can be caught.
-class OutOfMemoryError(message = "out of memory") : Error(message)
+class OutOfMemoryError(message : string = "out of memory") : Error(message)
 
 // ---- Checks ----
 
 // Each throws an Error unless the condition holds. The message is a function, so that it is
 // only worked out when it is needed: require(n > 0) { "n is $n" }
-fun require(condition, lazyMessage = null) {
+fun require(condition : bool, lazyMessage : (() -> any?)? = null) {
   if (!condition) { throw Error(lazyMessage == null ? "Failed requirement." : str(lazyMessage())) }
 }
 
-fun check(condition, lazyMessage = null) {
+fun check(condition : bool, lazyMessage : (() -> any?)? = null) {
   if (!condition) { throw Error(lazyMessage == null ? "Check failed." : str(lazyMessage())) }
 }
 
-fun requireNotNull(value, lazyMessage = null) {
+fun <T> requireNotNull(value : T?, lazyMessage : (() -> any?)? = null) : T {
   if (value == null) { throw Error(lazyMessage == null ? "Required value was null." : str(lazyMessage())) }
   return value
 }
 
-fun checkNotNull(value, lazyMessage = null) {
+fun <T> checkNotNull(value : T?, lazyMessage : (() -> any?)? = null) : T {
   if (value == null) { throw Error(lazyMessage == null ? "Required value was null." : str(lazyMessage())) }
   return value
 }
 
-fun error(message) {
+fun error(message : any?) : nothing {
   throw Error(str(message))
 }
 
 // Runs `action` that many times, giving it 0, 1, 2 and so on.
-fun repeat(times, action) {
+fun repeat(times : int, action : (int) -> unit) {
   for index in 0..<times { action(index) }
 }
 
 // ---- Every value ----
 
-fun any?.toString() => str(this)
-fun any?.equals(other) => this == other
-fun any.compareTo(other) => compareValues(this, other)
-fun any?.takeIf(predicate) => predicate(this) ? this : null
-fun any?.takeUnless(predicate) => predicate(this) ? null : this
+fun any?.toString() : string => str(this)
+fun any?.equals(other : any?) : bool => this == other
+fun any.compareTo(other : any?) : int => compareValues(this, other)
+fun <T> T.takeIf(predicate : (T) -> bool) : T? => predicate(this) ? this : null
+fun <T> T.takeUnless(predicate : (T) -> bool) : T? => predicate(this) ? null : this
 
 // For a string, a list, a map or a set that may be null. It is one function for all of them,
 // since null does not say which of them it would have been.
-fun any?.isNullOrEmpty() => this == null or this.isEmpty()
+fun any?.isNullOrEmpty() : bool {
+  if (this == null) { return true }
+  if (this is string) { return this.isEmpty() }
+  if (this is List) { return this.isEmpty() }
+  if (this is Map) { return this.isEmpty() }
+  if (this is Set) { return this.isEmpty() }
+  return false
+}
 
 // ---- Functions ----
 
 // callback.invoke(a, b) is callback(a, b); with ?. it calls a function that may be null.
-fun Function.invoke(vararg arguments) {
+fun Function.invoke(vararg arguments : any?) : any? {
   val callee = this
   return callee(*arguments)
 }
@@ -84,7 +91,7 @@ fun Function.invoke(vararg arguments) {
 // one. sort, sortedWith and the like take one.
 
 // Orders by what each selector gives, the first that tells two values apart deciding.
-fun compareBy(vararg selectors) {
+fun <T> compareBy(vararg selectors : (T) -> any?) : (T, T) -> int {
   return { a, b ->
     var order = 0
     for selector in selectors {
@@ -95,102 +102,102 @@ fun compareBy(vararg selectors) {
   }
 }
 
-fun compareByDescending(selector) => { a, b -> compareValues(selector(b), selector(a)) }
-fun naturalOrder() => { a, b -> compareValues(a, b) }
-fun reverseOrder() => { a, b -> compareValues(b, a) }
+fun <T> compareByDescending(selector : (T) -> any?) : (T, T) -> int => { a, b -> compareValues(selector(b), selector(a)) }
+fun <T> naturalOrder() : (T, T) -> int => { a, b -> compareValues(a, b) }
+fun <T> reverseOrder() : (T, T) -> int => { a, b -> compareValues(b, a) }
 
-fun Function.compare(a, b) {
+fun Function.compare(a : any?, b : any?) : int {
   val comparator = this
   return comparator(a, b)
 }
 
 // A comparator that falls back on a selector, or on another comparator, where this one
 // finds two values equal.
-fun Function.thenBy(selector) {
+fun <T> Function.thenBy(selector : (T) -> any?) : (T, T) -> int {
   val first = this
   return { a, b ->
-    val order = first(a, b)
+    val order : int = first(a, b)
     order != 0 ? order : compareValues(selector(a), selector(b))
   }
 }
 
-fun Function.thenByDescending(selector) {
+fun <T> Function.thenByDescending(selector : (T) -> any?) : (T, T) -> int {
   val first = this
   return { a, b ->
-    val order = first(a, b)
+    val order : int = first(a, b)
     order != 0 ? order : compareValues(selector(b), selector(a))
   }
 }
 
-fun Function.then(comparator) {
+fun <T> Function.then(comparator : (T, T) -> int) : (T, T) -> int {
   val first = this
   return { a, b ->
-    val order = first(a, b)
+    val order : int = first(a, b)
     order != 0 ? order : comparator(a, b)
   }
 }
 
-fun Function.reversed() {
+fun <T> Function.reversed() : (T, T) -> int {
   val comparator = this
   return { a, b -> comparator(b, a) }
 }
 
 // ---- Making collections ----
 
-fun listOf(vararg items) => items
-fun mutableListOf(vararg items) => items
-fun arrayListOf(vararg items) => items
-fun emptyList() => []
-fun listOfNotNull(vararg items) => items.filter { it != null }
+fun <T> listOf(vararg items : T) : List<T> => items
+fun <T> mutableListOf(vararg items : T) : List<T> => items
+fun <T> arrayListOf(vararg items : T) : List<T> => items
+fun <T> emptyList() : List<T> => []
+fun <T> listOfNotNull(vararg items : T?) : List<T> => items.filterNotNull()
 
 // List(3) { it * 2 } is [0, 2, 4]: `size` items, each worked out from its position.
-fun List(size, init) {
-  val out = []
+fun <T> List(size : int, init : (int) -> T) : List<T> {
+  val out : List<T> = []
   for index in 0..<size { out.add(init(index)) }
   return out
 }
 
-fun MutableList(size, init) => List(size, init)
+fun <T> MutableList(size : int, init : (int) -> T) : List<T> => List(size, init)
 
 // mapOf("a" to 1, "b" to 2)
-fun mapOf(vararg pairs) {
-  val out = {:}
+fun <K, V> mapOf(vararg pairs : Pair<K, V>) : Map<K, V> {
+  val out : Map<K, V> = {:}
   for (key, value) in pairs { out[key] = value }
   return out
 }
 
-fun mutableMapOf(vararg pairs) => mapOf(*pairs)
-fun hashMapOf(vararg pairs) => mapOf(*pairs)
-fun linkedMapOf(vararg pairs) => mapOf(*pairs)
-fun emptyMap() => {:}
+fun <K, V> mutableMapOf(vararg pairs : Pair<K, V>) : Map<K, V> => mapOf(*pairs)
+fun <K, V> hashMapOf(vararg pairs : Pair<K, V>) : Map<K, V> => mapOf(*pairs)
+fun <K, V> linkedMapOf(vararg pairs : Pair<K, V>) : Map<K, V> => mapOf(*pairs)
+fun <K, V> emptyMap() : Map<K, V> => {:}
 
-fun setOf(vararg items) => Set(items)
-fun mutableSetOf(vararg items) => Set(items)
-fun hashSetOf(vararg items) => Set(items)
-fun linkedSetOf(vararg items) => Set(items)
-fun emptySet() => Set()
+fun <T> setOf(vararg items : T) : Set<T> => Set(items)
+fun <T> mutableSetOf(vararg items : T) : Set<T> => Set(items)
+fun <T> hashSetOf(vararg items : T) : Set<T> => Set(items)
+fun <T> linkedSetOf(vararg items : T) : Set<T> => Set(items)
+fun <T> emptySet() : Set<T> => Set()
 
 // Each runs the lambda on a new collection, so that add(...), put(...) or append(...) inside
 // it fill that collection, and gives what was built.
-fun buildList(builder) {
-  val out = []
+fun <T> buildList(builder : List<T>.() -> unit) : List<T> {
+  val out : List<T> = []
   with(out, builder)
   return out
 }
 
-fun buildMap(builder) {
-  val out = {:}
+fun <K, V> buildMap(builder : Map<K, V>.() -> unit) : Map<K, V> {
+  val out : Map<K, V> = {:}
   with(out, builder)
   return out
 }
 
-fun buildSet(builder) {
-  val out = Set()
+fun <T> buildSet(builder : Set<T>.() -> unit) : Set<T> {
+  val out : Set<T> = Set()
   with(out, builder)
   return out
 }
 
-fun buildString(builder) {
+fun buildString(builder : StringBuilder.() -> unit) : string {
   val out = StringBuilder()
   with(out, builder)
   return out.toString()

@@ -13,17 +13,17 @@
 
 // What an opener gives back for a window it has opened: the few things the Window passes on.
 interface WindowHandle {
-  fun setTitle(text)
+  fun setTitle(text : string)
   fun toFront()
   fun close()
   fun fitToContent()
   fun requestRepaint()
-  fun rootChanged(root)
+  fun rootChanged(root : Component)
 }
 
 // Turns a Window into a window. Jade.windowOpener is one.
 interface WindowOpener {
-  fun open(window)
+  fun open(window : Window) : WindowHandle?
 }
 
 class Window {
@@ -46,7 +46,7 @@ class Window {
   private var currentRoot
   private var currentTitle
   // What the opener gave back once the window was shown; null before, and after it is closed.
-  var handle = null
+  var handle : WindowHandle? = null
 
   // `root` is the component the window shows. After the settings JadeUI's host takes come,
   // by name, the ones for a window that belongs to another: `owner`, `focus` (the component
@@ -55,9 +55,10 @@ class Window {
   //
   // A window with no owner ends the program when it is closed, and one with an owner does
   // not, unless `exitOnClose` says otherwise.
-  fun init(root, title = "Jade", initialWidth = 900, initialHeight = 640, exitOnClose = null, menuBar = null, onClose = {},
-           onFilesDropped = {}, onFilesDroppedAt = null, icons = null, onFront = {},
-           owner = null, focus = null, dialog = false, sizeToContent = false, centerOnOwner = false, resizable = true, keyFilter = null) {
+  fun init(root : Component, title : string = "Jade", initialWidth : int = 900, initialHeight : int = 640, exitOnClose : bool? = null, menuBar : any? = null,
+           onClose : () -> unit = {}, onFilesDropped : (List<File>) -> unit = {}, onFilesDroppedAt : ((List<File>, int, int) -> bool)? = null,
+           icons : List<BufferedImage>? = null, onFront : () -> unit = {}, owner : Window? = null, focus : Component? = null, dialog : bool = false,
+           sizeToContent : bool = false, centerOnOwner : bool = false, resizable : bool = true, keyFilter : ((Event.KeyPress, Component?) -> bool)? = null) {
     this.currentRoot = root
     this.currentTitle = title
     this.initialWidth = initialWidth
@@ -78,27 +79,28 @@ class Window {
     this.keyFilter = keyFilter
   }
 
-  get root() => currentRoot
+  get root() : Component => currentRoot
   set root(value) {
     currentRoot = value
     handle?.rootChanged(value)
   }
 
-  get title() => currentTitle
+  get title() : string => currentTitle
   set title(text) {
     currentTitle = text
     handle?.setTitle(text)
   }
-  fun setTitle(text) {
+  fun setTitle(text : string) {
     title = text
   }
 
-  get isShowing() => handle != null
+  get isShowing() : bool => handle != null
 
   // Opens the window, or brings it to the front if it is open already.
   fun show() {
-    if (handle != null) {
-      handle.toFront()
+    val open = handle
+    if (open != null) {
+      open.toFront()
       return
     }
     handle = Jade.windowOpener.open(this)
@@ -130,12 +132,12 @@ class Window {
     handle?.toFront()
   }
 
-  override fun toString() => "Window($currentTitle)"
+  override fun toString() : string => "Window($currentTitle)"
 }
 
 // The opener that makes real windows.
 class NativeWindowOpener : WindowOpener {
-  override fun open(window) {
+  override fun open(window : Window) : WindowHandle? {
     val host = WindowHost(window, false, null)
     host.start()
     return host
@@ -149,11 +151,11 @@ class HiddenWindowOpener : WindowOpener {
   private val scale
   val opened = []
 
-  fun init(scale = 1) {
+  fun init(scale : Number = 1) {
     this.scale = scale
   }
 
-  override fun open(window) {
+  override fun open(window : Window) : WindowHandle? {
     val host = WindowHost(window, true, scale)
     host.start()
     opened.add(host)
@@ -166,18 +168,19 @@ internal class ClickCounter {
   private val intervalNanos
   private val slop
   private var lastButton = -1
-  private var lastAt = null
+  private var lastAt : int? = null
   private var lastX = 0
   private var lastY = 0
   private var count = 0
 
-  fun init(intervalNanos = 500000000, slop = 4) {
+  fun init(intervalNanos : int = 500000000, slop : int = 4) {
     this.intervalNanos = intervalNanos
     this.slop = slop
   }
 
-  fun press(button, x, y, nowNanos) {
-    val continues = button == lastButton and lastAt != null and nowNanos - lastAt <= intervalNanos and
+  fun press(button : int, x : int, y : int, nowNanos : int) : int {
+    val at = lastAt
+    val continues = button == lastButton and at != null and nowNanos - at <= intervalNanos and
                     Math.abs(x - lastX) <= slop and Math.abs(y - lastY) <= slop
     count = continues ? count + 1 : 1
     lastButton = button
@@ -209,21 +212,21 @@ class WindowHost : WindowHandle {
   private var disposed = false
 
   // The keyboard.
-  private var focusedComponent = null
-  private var focusedAware = null
+  private var focusedComponent : Component? = null
+  private var focusedAware : FocusAware? = null
   private var keyboardFocus = true
   private var shiftHeld = false
   private var ctrlHeld = false
   private val consumedKeys = mutableSetOf()
 
   // The pointer.
-  private var captured = null        // what the main button was pressed on, which gets the drag and the release
-  private var rightCaptured = null   // the same for the other button
+  private var captured : CapturedTarget? = null        // what the main button was pressed on, which gets the drag and the release
+  private var rightCaptured : CapturedTarget? = null   // the same for the other button
   private var rightMoved = false
-  private var lastHovered = null
+  private var lastHovered : Component? = null
   private var pressedMask = 0
   private var pointerInside = false
-  private var lastPointer = null
+  private var lastPointer : Point? = null
   private var lastX = 0
   private var lastY = 0
   private val clicks
@@ -234,7 +237,7 @@ class WindowHost : WindowHandle {
   private val frameHook
   private val themeHook
 
-  fun init(window, hidden, scale) {
+  fun init(window : Window, hidden : bool, scale : Number?) {
     this.window = window
     this.hidden = hidden
     this.tree = window.root
@@ -260,7 +263,7 @@ class WindowHost : WindowHandle {
 
   // Text is measured for this window's screen from here on. If that is another scale than
   // the last thing measured for, what widgets asked for is asked again.
-  private fun useScale(scale) {
+  private fun useScale(scale : Number) {
     if (Jade.layoutScale == scale) { return }
     Jade.layoutScale = scale
     Jade.invalidateRenderCaches()
@@ -316,13 +319,13 @@ class WindowHost : WindowHandle {
     (window.onFront)()
   }
 
-  get focused() => focusedComponent
+  get focused() : Component? => focusedComponent
   get cursor() : CursorKind => currentCursor
-  get shownTree() => tree
+  get shownTree() : Component => tree
 
   // ---- The handle ----
 
-  override fun setTitle(text) {
+  override fun setTitle(text : string) {
     native.title = text
   }
   override fun toFront() {
@@ -337,7 +340,7 @@ class WindowHost : WindowHandle {
     val pref = tree.prefSize()
     native.setSize(pref.width, pref.height)
   }
-  override fun rootChanged(root) {
+  override fun rootChanged(root : Component) {
     tree = root
     captured = null
     rightCaptured = null
@@ -411,19 +414,19 @@ class WindowHost : WindowHandle {
   }
 
   // The window's picture as it now is.
-  fun snapshot() {
+  fun snapshot() : Picture {
     frame()
     return native.snapshot()
   }
 
   // Sends the window an event the way the system would: for tests.
-  fun send(event) {
+  fun send(event : RawInput) {
     native.send(event)
   }
 
   // ---- Raw input, turned into what widgets are told ----
 
-  private fun onInput(event) {
+  private fun onInput(event : RawInput) {
     if (disposed) { return }
     useScale(native.scale)
     when (event) {
@@ -447,9 +450,9 @@ class WindowHost : WindowHandle {
     scheduleFrame()
   }
 
-  private fun contains(x, y) => x >= 0 and y >= 0 and x < native.width and y < native.height
+  private fun contains(x : int, y : int) : bool => x >= 0 and y >= 0 and x < native.width and y < native.height
 
-  private fun pointerMoved(x, y) {
+  private fun pointerMoved(x : int, y : int) {
     lastX = x
     lastY = y
     if (pressedMask != 0) {
@@ -478,7 +481,7 @@ class WindowHost : WindowHandle {
     hover(x, y)
   }
 
-  private fun pointerDown(event) {
+  private fun pointerDown(event : RawInput.PointerDown) {
     val m = event.mods
     shiftHeld = m.shift
     ctrlHeld = m.shortcut
@@ -495,7 +498,7 @@ class WindowHost : WindowHandle {
     press(event.button, event.x, event.y, clickCount, m)
   }
 
-  private fun pointerUp(event) {
+  private fun pointerUp(event : RawInput.PointerUp) {
     val bit = 1 << event.button.ordinal
     if (pressedMask & bit == 0) { return }
     pressedMask = pressedMask & ~bit
@@ -503,10 +506,11 @@ class WindowHost : WindowHandle {
     release(event.button, event.x, event.y, event.mods)
   }
 
-  private fun press(button, x, y, clickCount, m) {
+  private fun press(button : PointerButton, x : int, y : int, clickCount : int, m : Modifiers) {
     Jade.pointerPressed(x, y)
     if (button == PointerButton.back or button == PointerButton.forward) {
-      if (Jade.navigate != null) { (Jade.navigate)(button == PointerButton.forward) }
+      val navigate = Jade.navigate
+      if (navigate != null) { navigate(button == PointerButton.forward) }
       loop.markDirty()
       return
     }
@@ -528,7 +532,7 @@ class WindowHost : WindowHandle {
     }
   }
 
-  private fun release(button, x, y, m) {
+  private fun release(button : PointerButton, x : int, y : int, m : Modifiers) {
     if (button == PointerButton.right) {
       val rc = rightCaptured
       if (rc == null) { return }
@@ -544,7 +548,7 @@ class WindowHost : WindowHandle {
     }
   }
 
-  private fun hover(mx, my) {
+  private fun hover(mx : int, my : int) {
     ensureLayout()
     lastPointer = Point(mx, my)
     val path = tree.componentPathAt(mx, my)
@@ -585,7 +589,7 @@ class WindowHost : WindowHandle {
     loop.markDirty()
   }
 
-  private fun cursorFor(path, mx, my) : CursorKind {
+  private fun cursorFor(path : CapturedTarget?, mx : int, my : int) : CursorKind {
     if (path == null) { return CursorKind.default }
     val c = path.component.content
     return c is CursorProvider ? c.cursorAt(mx - path.offsetX, my - path.offsetY) : CursorKind.default
@@ -597,7 +601,7 @@ class WindowHost : WindowHandle {
     native.cursor = kind
   }
 
-  private fun wheel(event) {
+  private fun wheel(event : RawInput.Wheel) {
     if (!contains(event.x, event.y)) { return }
     ensureLayout()
     noteInput(false, true)
@@ -615,7 +619,7 @@ class WindowHost : WindowHandle {
 
   private static val modifierKeys = [KeyCode.shiftLeft, KeyCode.shiftRight, KeyCode.controlLeft, KeyCode.controlRight,
                                      KeyCode.altLeft, KeyCode.altRight, KeyCode.metaLeft, KeyCode.metaRight]
-  private static fun isModifier(key) => WindowHost.modifierKeys.contains(key)
+  private static fun isModifier(key : KeyCode) : bool => WindowHost.modifierKeys.contains(key)
 
   // The keys a widget is told of by name.
   private static val namedKeys = {
@@ -623,24 +627,24 @@ class WindowHost : WindowHandle {
     "home": Key.home, "end": Key.end, "backspace": Key.backspace, "delete": Key.delete, "enter": Key.enter,
     "numpadEnter": Key.enter, "escape": Key.escape, "tab": Key.tab, "f2": Key.f2, "f5": Key.f5, "f10": Key.f10, "f11": Key.f11
   }
-  private static fun keyFor(key) => WindowHost.namedKeys[key.name]
+  private static fun keyFor(key : KeyCode) : Key? => WindowHost.namedKeys[key.name]
 
   private static val navKeys = [KeyCode.left, KeyCode.right, KeyCode.up, KeyCode.down, KeyCode.home, KeyCode.end, KeyCode.pageUp, KeyCode.pageDown]
-  private static fun isNavKey(key) => WindowHost.navKeys.contains(key)
+  private static fun isNavKey(key : KeyCode) : bool => WindowHost.navKeys.contains(key)
 
   // What a key does with Ctrl held: by the letter the keyboard's layout gives it.
   private static val editCommands = {
     "Y": EditCommand.redo, "C": EditCommand.copy, "X": EditCommand.cut, "V": EditCommand.paste,
     "A": EditCommand.selectAll, "D": EditCommand.fillDown, "R": EditCommand.fillRight
   }
-  private static fun editCommandFor(key, letter, shift) {
+  private static fun editCommandFor(key : KeyCode, letter : string?, shift : bool) : EditCommand? {
     if (key == KeyCode.space) { return EditCommand.complete }
     if (letter == "Z") { return shift ? EditCommand.redo : EditCommand.undo }
     return letter == null ? null : WindowHost.editCommands[letter]
   }
 
   // The letter or digit of a key: what the layout says, or failing that where the key is.
-  private static fun letterFor(event) {
+  private static fun letterFor(event : RawInput.KeyDown) : string? {
     if (event.letter != null) { return event.letter }
     val name = event.key.name
     if (name.length == 1) { return name.uppercase() }
@@ -651,7 +655,7 @@ class WindowHost : WindowHandle {
     return null
   }
 
-  private fun keyDown(event) {
+  private fun keyDown(event : RawInput.KeyDown) {
     val key = event.key
     val m = event.mods
     if (WindowHost.isModifier(key)) {
@@ -693,7 +697,7 @@ class WindowHost : WindowHandle {
     if (key == KeyCode.tab) {
       val f = focusedComponent
       val c = f?.content
-      if (c is TabAware and c.acceptsTab()) {
+      if (f != null and c is TabAware and c.acceptsTab()) {
         f.dispatch(Event.KeyPress(Key.tab, m.shift))      // it uses Tab itself
       } else {
         traverseFocus(!m.shift)
@@ -703,7 +707,7 @@ class WindowHost : WindowHandle {
     if (named != null) { (focusedComponent ?: tree).dispatch(Event.KeyPress(named, m.shift, word)) }
   }
 
-  private fun keyUp(event) {
+  private fun keyUp(event : RawInput.KeyUp) {
     val key = event.key
     if (WindowHost.isModifier(key)) {
       if (key == KeyCode.shiftLeft or key == KeyCode.shiftRight) {
@@ -720,12 +724,12 @@ class WindowHost : WindowHandle {
     if (consumedKeys.remove(key)) { noteInput() }
   }
 
-  private fun typed(text) {
+  private fun typed(text : string) {
     noteInput()
     (focusedComponent ?: tree).dispatch(Event.KeyType(text))
   }
 
-  private fun windowFocus(focused) {
+  private fun windowFocus(focused : bool) {
     if (focused) {
       takeGlobals()
       return
@@ -740,30 +744,30 @@ class WindowHost : WindowHandle {
 
   // ---- Who has the keyboard ----
 
-  private fun traverseFocus(forward) {
+  private fun traverseFocus(forward : bool) {
     ensureLayout()
     val next = nextFocus(tree.focusables(), focusedComponent, forward)
     if (next != null) { setFocus(next) }
   }
 
-  private fun setFocus(comp) {
+  private fun setFocus(comp : Component) {
     focusedComponent = comp
     updateTextFocus(comp)
   }
 
   // Tells the content that has the keyboard, and the one that had it.
-  private fun updateTextFocus(comp) {
+  private fun updateTextFocus(comp : Component?) {
     val c = keyboardFocus ? comp : null
     val content = c?.content
     val aware = content is FocusAware ? content : null
     if (aware !== focusedAware) {
-      if (focusedAware != null) { focusedAware.setFocused(false) }
+      focusedAware?.setFocused(false)
       focusedAware = aware
       if (aware != null) { aware.setFocused(true) }
     }
   }
 
-  private fun setKeyboardFocus(on) {
+  private fun setKeyboardFocus(on : bool) {
     if (keyboardFocus == on) { return }
     keyboardFocus = on
     updateTextFocus(focusedComponent)
@@ -775,13 +779,13 @@ class WindowHost : WindowHandle {
 
   // Something happened: a frame is needed, and unless it was only the pointer moving, the
   // wheel, or a caret, every widget's kept picture may be out of date.
-  private fun noteInput(pointerMotion = false, scroll = false, caretNav = false, damage = null) {
+  private fun noteInput(pointerMotion : bool = false, scroll : bool = false, caretNav : bool = false, damage : Rectangle? = null) {
     if (damage != null) { loop.markDamage(damage) } else { loop.markDirty() }
-    val caretOnlyNav = caretNav and focusedComponent != null and focusedComponent.content is OverlayContent
+    val caretOnlyNav = caretNav and focusedComponent?.content is OverlayContent
     if (!caretOnlyNav and !scroll and !pointerMotion) { Jade.invalidateRenderCaches() }
   }
 
-  private fun capturedRect() {
+  private fun capturedRect() : Rectangle? {
     val c = captured
     if (c == null) { return null }
     val b = c.component.bounds

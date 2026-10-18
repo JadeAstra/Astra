@@ -1,7 +1,7 @@
 // Measuring text: one rule. A character's width is a whole number of pixels, a text's
 // width is the sum of its characters' widths, and that is where the text ends when drawn.
 
-fun attempt(block) {
+fun attempt(block : Function) {
   try { block(); return "no error" } catch (e) { return "Error: " + e.message }
 }
 
@@ -77,7 +77,7 @@ val missing = TextFont("No Such Family", 12)
 print(missing.family == TextFont("SansSerif", 12).family, missing.width("abc") == TextFont("SansSerif", 12).width("abc"))   // expect: true true
 
 // -- From a typeface --
-val face = Fonts.find("Arial")
+val face = Fonts.find("Arial")!!
 val fromFace = TextFont(face, 15)
 print(fromFace.typeface == face, face.font(15).width("abc") == fromFace.width("abc"), TextFont("Arial", 15).width("abc") == fromFace.width("abc"))   // expect: true true true
 print(TextFont(face, 15, bold = true).isBold, TextFont(face, 15, bold = true).width("abc") > fromFace.width("abc"))   // expect: true true
@@ -85,8 +85,8 @@ val bigger = font.derive(20)
 print(bigger.size, bigger.typeface == font.typeface, bigger.width("abc") > font.width("abc"), font.derive().width("abc") == font.width("abc"))   // expect: 20 true true true
 
 // -- Characters the font lacks come from one that has them --
-print(font.typefaceFor("a") == font.typeface, font.typefaceFor("中") != font.typeface, font.typefaceFor("中").has("中"), font.charWidth("中") > 0)   // expect: true true true true
-print(font.typefaceFor("😀").hasColor, font.glyphBox("😀")[4], font.glyphBox("a")[4], font.typefaceFor("\u{10FFFD}"))   // expect: true true false null
+print(font.typefaceFor("a") == font.typeface, font.typefaceFor("中") != font.typeface, font.typefaceFor("中")!!.has("中"), font.charWidth("中") > 0)   // expect: true true true true
+print(font.typefaceFor("😀")!!.hasColor, font.glyphBox("😀")!![4], font.glyphBox("a")!![4], font.typefaceFor("\u{10FFFD}"))   // expect: true true false null
 // One no font has is the font's own "missing" box, still measured and drawn by the rule.
 print(font.width("a\u{10FFFD}b") == font.width("a") + font.charWidth("\u{10FFFD}") + font.width("b"), font.charWidth("\u{10FFFD}") >= 0)   // expect: true true
 
@@ -99,7 +99,7 @@ print(dense.scale, dense.size, dense.ascent == large.ascent, dense.descent == la
 // a quarter of a pixel each; rounding in the layout's units would be twice as loose.
 val plain = TextFont("Segoe UI", 12)
 val line = "The quick brown fox jumps over the lazy dog"
-var exact = 0.0
+var exact : Number = 0.0
 for (c in line) { exact += plain.typeface.advance(plain.typeface.glyph(c)) * 12 / plain.typeface.unitsPerEm }
 val at2 = Math.abs(dense.width(line) / 2.0 - exact)
 print(at2 <= line.length * 0.25, Math.abs(plain.width(line) - exact) <= line.length * 0.5)   // expect: true true

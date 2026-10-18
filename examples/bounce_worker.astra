@@ -19,14 +19,14 @@ class Ball(var x : Number, var y : Number, var dx : Number, var dy : Number, val
 }
 
 val balls = []
-var width = 760.0
-var height = 520.0
+var width : Number = 760.0
+var height : Number = 520.0
 var paused = false
 var moves = 0          // how often the balls have been moved since the program last asked
 
 // Makes `count` balls at (x, y), or anywhere if no place is given, and tells the program how
 // big each one is. Where they are it hears when it asks.
-fun add(count : int, x, y) {
+fun add(count : int, x : Number?, y : Number?) {
   val radii = []
   repeat(count) {
     val speed = 1 + Math.random() * 3
@@ -35,24 +35,27 @@ fun add(count : int, x, y) {
     balls.add(Ball(x ?: Math.random() * width, y ?: Math.random() * height, Math.cos(angle) * speed, Math.sin(angle) * speed, radius))
     radii.add(radius)
   }
-  Worker.parent.post({"added": radii})
+  Worker.parent!!.post({"added": radii})
 }
 
-Worker.parent.onMessage = { message ->
-  if (message.containsKey("size")) {
-    width = message["size"][0]
-    height = message["size"][1]
+Worker.parent!!.onMessage = { message ->
+  // What a message holds is the program's to say: here a map from names to values.
+  val got = message as Map<string, any?>
+  if (got.containsKey("size")) {
+    val size = got["size"] as List<Number>
+    width = size[0]
+    height = size[1]
   }
-  if (message.containsKey("paused")) { paused = message["paused"] }
-  if (message.containsKey("add")) { add(message["add"], message["x"], message["y"]) }
-  if (message.containsKey("where")) {
+  if (got.containsKey("paused")) { paused = got["paused"] as bool }
+  if (got.containsKey("add")) { add(got["add"] as int, got["x"] as Number?, got["y"] as Number?) }
+  if (got.containsKey("where")) {
     // All the places in one list, x then y for each ball.
     val places = []
     for ball in balls {
       places.add(ball.x)
       places.add(ball.y)
     }
-    Worker.parent.post({"at": places, "moves": moves})
+    Worker.parent!!.post({"at": places, "moves": moves})
     moves = 0
   }
 }

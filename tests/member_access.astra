@@ -17,12 +17,12 @@ class Box {
   // Code written in the class finds them, in a lambda too, and on another object of the class.
   fun inLambda() => [1, 2].map { it + secret }
   fun callsHelper() => [1].map { helper() }[0]
-  fun of(other) {
-    var seen = null
+  fun of(other : Box) {
+    var seen : any? = null
     other.apply { seen = [secret, helper()] }
     return seen
   }
-  fun setsIn(other) {
+  fun setsIn(other : Box) {
     other.apply { count = 5; level = 4 }
   }
 }
@@ -32,7 +32,7 @@ val secret = "the program's secret"
 var count = 100
 
 val box = Box()
-var seen = null
+var seen : any? = null
 box.apply { seen = secret }
 print(seen)                      // expect: the program's secret
 box.apply { seen = helper() }
@@ -49,7 +49,7 @@ box.setsIn(other)
 print(other.reveal())            // expect: [42, 5, 8]
 
 // With no such name in the program, the error says what the name is.
-fun tell(block) {
+fun tell(block : () -> unit) {
   try { block() } catch (e) { print(e.message) }
 }
 tell { box.apply { seen = level } }       // expect: 'level' is private in class Box: only code written in that class can use it
@@ -57,7 +57,7 @@ tell { box.apply { level = 1 } }          // expect: 'level' is private in class
 print(box.reveal())                       // expect: [42, 0, 7]
 
 // A field of the header.
-class Pair(private val left, val right) {
+class Pair(private val left : int, val right : int) {
   fun both() => [left, right]
 }
 val left = "outside"
@@ -68,7 +68,7 @@ print(seen, pair.both())                  // expect: ["outside", 2] [1, 2]
 // A builder: what it keeps to itself does not hide the program's functions inside its block.
 class Rows {
   private val grid = []
-  fun row(text) { grid.add(text) }
+  fun row(text : string) { grid.add(text) }
   fun result() => grid
 }
 fun rows(build : Rows.() -> unit) {
@@ -83,8 +83,8 @@ print(rows { row("one"); row(grid()) })   // expect: ["one", "a grid of the prog
 class Outer {
   private val key = "outer key"
   class Inner {
-    fun peek(outer) {
-      var found = null
+    fun peek(outer : Outer) {
+      var found : string? = null
       outer.apply { found = key }
       return found
     }
@@ -111,7 +111,7 @@ class Shape {
   private fun area() => 0
   fun describe() => "area " + area()
 }
-class Square(val side) : Shape() {
+class Square(val side : int) : Shape() {
   override fun area() => side * side
 }
 fun area() => "the program's area"
@@ -133,15 +133,15 @@ tell { val f = box.helper; print(f()) }   // expect: 'helper' is private in clas
 print(box.open, pair.right, box.reveal()) // expect: 1 2 [42, 0, 7]
 
 // The class's own code reaches it on any object of the class; a class inside it does too.
-class Account(private var balance) {
-  fun moveTo(other, amount) {
+class Account(private var balance : int) {
+  fun moveTo(other : Account, amount : int) {
     this.balance -= amount
     other.balance += amount
   }
-  fun same(other) => this.balance == other.balance
+  fun same(other : Account) => this.balance == other.balance
   fun text() => "Account($balance)"
   class Auditor {
-    fun read(account) => account.balance
+    fun read(account : Account) => account.balance
   }
 }
 val a = Account(10)
@@ -153,7 +153,7 @@ print(a.text(), b.text(), a.same(b), Account.Auditor().read(b))   // expect: Acc
 class Probe : Base() {
   fun byThis() => this.own()
   fun bySuper() => super.own()
-  fun onBase(base) => base.mark
+  fun onBase(base : Base) => base.mark
 }
 tell { print(Probe().byThis()) }          // expect: 'own' is private in class Base: only code written in that class can use it
 tell { print(Probe().bySuper()) }         // expect: 'own' is private in class Base: only code written in that class can use it
@@ -165,7 +165,7 @@ class Figure {
   private val kind = "figure"
   fun describe() => kind + " of area " + area()
 }
-class Circle(val r) : Figure() {
+class Circle(val r : int) : Figure() {
   private override fun area() => 3 * r * r
   private override val kind = "circle"
   fun doubled() => area() * 2
@@ -203,7 +203,7 @@ class Counter {
     }
   }
   private static val step = 5
-  private class Secret(val word)
+  private class Secret(val word : string)
   fun steps() => Counter.step + step
   fun whisper() => Secret("hush").word
 }
@@ -216,7 +216,7 @@ tell { print(Counter.Secret("x").word) }  // expect: 'Secret' is private in clas
 print(Counter.next())                     // expect: 3
 
 // A data object is still printed, compared and taken apart with all its fields.
-data Point(private val x, val y) {
+data Point(private val x : int, val y : int) {
   fun shifted() => Point(x + 1, y)
 }
 val (px, py) = Point(1, 2)
@@ -226,7 +226,7 @@ tell { print(Point(1, 2).x) }             // expect: 'x' is private in class Poi
 // An object declared by name keeps things to itself as a class does.
 object Registry {
   private val names = []
-  fun add(name) { names.add(name); return names.size }
+  fun add(name : string) { names.add(name); return names.size }
 }
 print(Registry.add("a"), Registry.add("b"))   // expect: 1 2
 tell { print(Registry.names) }            // expect: 'names' is private in class Registry: only code written in that class can use it
@@ -238,7 +238,7 @@ class Widget {
   protected fun paint() => "paint " + state
   protected static val limit = 3
   fun show() => paint()
-  fun sameAs(other) => state == other.state      // on another object, a subclass's too
+  fun sameAs(other : Widget) => state == other.state      // on another object, a subclass's too
 }
 class Knob : Widget() {
   override fun paint() => "knob " + state         // `override` alone: protected as above
@@ -248,7 +248,7 @@ class Knob : Widget() {
   }
   fun viaThis() => this.paint() + ", " + super.paint()
   fun inLambda() => [1].map { paint() }[0]
-  fun peek(other) => other.state
+  fun peek(other : Widget) => other.state
   fun cap() => Widget.limit
 }
 class Dial : Knob() {
@@ -292,7 +292,7 @@ abstract class Job {
   protected abstract fun work()
   fun run() => "ran " + work()
 }
-class Sum(val a, val b) : Job() {
+class Sum(val a : int, val b : int) : Job() {
   override fun work() => a + b
 }
 print(Sum(2, 3).run())                    // expect: ran 5
@@ -312,7 +312,7 @@ class Meter {
     total = 2
     return this
   }
-  fun copyTo(other) { other.reading = reading }
+  fun copyTo(other : Meter) { other.reading = reading }
 }
 class FineMeter : Meter() {
   fun raise() {

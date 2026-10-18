@@ -47,8 +47,8 @@ try {
 
 // An abstract class that only its subclasses stand for.
 abstract class Event {
-  class Click(val x) : Event()
-  class Key(val code) : Event()
+  class Click(val x : int) : Event()
+  class Key(val code : int) : Event()
 }
 print(Event.Click(1) is Event, Event.Key(13).code)   // expect: true 13
 try { Event() } catch (e) { print(e.message) }   // expect: Event is abstract and cannot be created; create a class that extends it

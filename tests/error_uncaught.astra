@@ -1,4 +1,4 @@
-fun fail(n) {
+fun fail(n : int) {
   if n == 0 { throw Error("boom") }
   return fail(n - 1)
 }

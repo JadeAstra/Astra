@@ -329,6 +329,9 @@ struct ObjNative final : Obj {
     // False for a function that waits, or works on something there is one of for the whole
     // program: it is not called from a parallel section.
     bool parallelSafe = true;
+    // What its parameters are called, from its declaration (src/std/builtins.astra), for a
+    // call that names them; empty for one that takes none by name.
+    std::vector<std::string> params;
     ObjNative(std::string n, int min, int max, NativeFn f)
         : Obj(ObjType::Native), name(std::move(n)), minArgs(min), maxArgs(max), fn(f) {}
 };

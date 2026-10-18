@@ -23,29 +23,29 @@
 
 // One axis a variable font can be varied along: "wght" (weight), "wdth" (width), "opsz"
 // (the size it is to be read at) and so on.
-data FontAxis(val tag, val minimum, val defaultValue, val maximum)
+data FontAxis(val tag : string, val minimum : Number, val defaultValue : Number, val maximum : Number)
 
 // One font out of a font file: a family in one style, at no particular size.
 class Typeface {
-  val handle          // the engine's number for it
-  val path
-  val index
-  val family          // "Segoe UI"
-  val style           // "Bold Italic"
-  val fullName        // "Segoe UI Bold Italic"
-  val legacyFamily    // the family as programs that know four styles see it: "Segoe UI Semibold"
-  val weight          // 100 to 900: 400 is regular, 700 bold
-  val stretch         // 1 to 9: 5 is the normal width
-  val isItalic
-  val isMonospace
-  val isSymbol        // a symbol font: its characters are not letters
-  val isVariable      // one file holding every weight
-  val hasCubicOutlines  // the .otf kind of outline
-  val hasColor        // has colour glyphs (emoji)
-  val glyphCount
-  val unitsPerEm
+  val handle : int            // the engine's number for it
+  val path : string
+  val index : int
+  val family : string          // "Segoe UI"
+  val style : string           // "Bold Italic"
+  val fullName : string        // "Segoe UI Bold Italic"
+  val legacyFamily : string    // the family as programs that know four styles see it: "Segoe UI Semibold"
+  val weight : Number          // 100 to 900: 400 is regular, 700 bold
+  val stretch : int            // 1 to 9: 5 is the normal width
+  val isItalic : bool
+  val isMonospace : bool
+  val isSymbol : bool          // a symbol font: its characters are not letters
+  val isVariable : bool        // one file holding every weight
+  val hasCubicOutlines : bool  // the .otf kind of outline
+  val hasColor : bool          // has colour glyphs (emoji)
+  val glyphCount : int
+  val unitsPerEm : int
 
-  fun init(handle) {
+  fun init(handle : int) {
     this.handle = handle
     val info = __text.faceInfo(handle)
     path = info[0]; index = info[1]; family = info[2]; style = info[3]; fullName = info[4]
@@ -55,61 +55,62 @@ class Typeface {
   }
 
   // The axes of a variable font; none for any other.
-  get axes() => __text.faceAxes(handle).map { FontAxis(it[0], it[1], it[2], it[3]) }
+  get axes() : List<FontAxis> => __text.faceAxes(handle).map { FontAxis(it[0], it[1], it[2], it[3]) }
 
   // Whether the font has a character: a one-character string, or its number.
-  fun has(character) => __text.faceGlyph(handle, character) != 0
+  fun has(character : any) : bool => __text.faceGlyph(handle, character) != 0
 
   // The number of the glyph for a character; 0, the "missing" glyph, if it has none.
-  fun glyph(character) => __text.faceGlyph(handle, character)
+  fun glyph(character : any) : int => __text.faceGlyph(handle, character)
 
   // This typeface at a size. See TextFont.
-  fun font(size, bold = false, italic = false, weight = null, scale = 1, hinting = true) => TextFont(this, size, bold, italic, weight, scale, hinting)
+  fun font(size : Number, bold : bool = false, italic : bool = false, weight : Number? = null, scale : Number = 1, hinting : bool = true) : TextFont =>
+    TextFont(this, size, bold, italic, weight, scale, hinting)
 
   // In the font's own units, for a weight (which only a variable font has more than one of).
-  fun advance(glyph, weight = null) => __text.faceAdvance(handle, glyph, weight ?: this.weight)
+  fun advance(glyph : int, weight : Number? = null) : Number => __text.faceAdvance(handle, glyph, weight ?: this.weight)
 
   // A glyph's outline as a list: "M" x y, "L" x y, "Q" cx cy x y, "C" c1x c1y c2x c2y x y,
   // "Z". In the font's units with y upwards; empty for a glyph that draws nothing.
-  fun outline(glyph, weight = null) => __text.faceOutline(handle, glyph, weight ?: this.weight)
+  fun outline(glyph : int, weight : Number? = null) : List<any?> => __text.faceOutline(handle, glyph, weight ?: this.weight)
 
   // Reads every `step`th glyph's outline, to test the reader:
   // [how many have one, how many points, how many are damaged].
-  fun check(step = 1, weight = null) => __text.faceCheck(handle, 0, step, weight ?: this.weight)
+  fun check(step : int = 1, weight : Number? = null) : List<int> => __text.faceCheck(handle, 0, step, weight ?: this.weight)
 
-  op ==(other) => other is Typeface and other.handle == handle
-  fun hashCode() => handle
-  override fun toString() => "Typeface($fullName)"
+  op ==(other : any?) : bool => other is Typeface and other.handle == handle
+  fun hashCode() : int => handle
+  override fun toString() : string => "Typeface($fullName)"
 }
 
 // The fonts installed on this machine.
 object Fonts {
   // Every family's name, in alphabetical order.
-  fun families() => __text.families()
+  fun families() : List<string> => __text.families()
 
   // Whether a family is installed. "SansSerif", "Serif" and "Monospaced" always are, if
   // any font is: they are the system's own font of each kind.
-  fun has(family) => __text.hasFamily(family)
+  fun has(family : string) : bool => __text.hasFamily(family)
 
   // The typefaces of a family, or every one installed.
-  fun typefaces(family = null) => __text.typefaces(family).map { Typeface(it) }
+  fun typefaces(family : string? = null) : List<Typeface> => __text.typefaces(family).map { Typeface(it) }
 
   // The typeface of a family nearest to a weight and style; null if it is not installed.
-  fun find(family, weight = 400, italic = false) {
+  fun find(family : string, weight : Number = 400, italic : bool = false) : Typeface? {
     val found = __text.find(family, weight, italic)
     return found == null ? null : Typeface(found[0])
   }
 
   // A typeface that has a character, for text in a font that lacks it; null if none has.
-  fun fallback(character, weight = 400, italic = false) {
+  fun fallback(character : any, weight : Number = 400, italic : bool = false) : Typeface? {
     val found = __text.fallback(character, weight, italic)
     return found == null ? null : Typeface(found[0])
   }
 
   // A font from a file that is not installed, or from the bytes of one. A collection
   // (.ttc) holds several: `count` says how many, `index` picks one.
-  fun load(path, index = 0) => Typeface(path is Bytes ? __text.fromBytes(path, index) : __text.load(path is File ? path.path : path, index))
-  fun count(path) => __text.countIn(path is File ? path.path : path)
+  fun load(path : any, index : int = 0) : Typeface => Typeface(path is Bytes ? __text.fromBytes(path, index) : __text.load(path is File ? path.path : str(path), index))
+  fun count(path : any) : int => __text.countIn(path is File ? path.path : str(path))
 }
 
 // A typeface at a size: what text is measured and drawn with.
@@ -124,77 +125,78 @@ object Fonts {
 // was used. A style the family lacks is made up, a bold by thickening and an italic by
 // slanting. Every number is in pixels of the picture or screen drawn on.
 class TextFont {
-  val handle       // the engine's number for it
-  val typeface
-  val size
-  val scale
-  val weight
-  val isBold
-  val isItalic
-  val ascent       // from the baseline up to the top of the line
-  val descent      // from the baseline down to its bottom
-  val leading      // extra room between one line and the next
-  val xHeight      // the height of a small letter such as x
-  val capHeight    // the height of a capital
+  val handle : int           // the engine's number for it
+  val typeface : Typeface
+  val size : Number
+  val scale : Number
+  val weight : Number
+  val isBold : bool
+  val isItalic : bool
+  val ascent : int           // from the baseline up to the top of the line
+  val descent : int          // from the baseline down to its bottom
+  val leading : int          // extra room between one line and the next
+  val xHeight : int          // the height of a small letter such as x
+  val capHeight : int        // the height of a capital
 
-  fun init(family, size, bold = false, italic = false, weight = null, scale = 1, hinting = true) {
+  // The family is a name or a Typeface.
+  fun init(family : any, size : Number, bold : bool = false, italic : bool = false, weight : Number? = null, scale : Number = 1,
+           hinting : bool = true) {
     val wanted = weight ?: (bold ? 700 : 400)
-    var face = family
     var set = wanted
     var fakeBold = false
     var fakeItalic = false
     if (family is Typeface) {
       // The typeface as it is, set to the weight if it is variable.
+      this.typeface = family
       set = weight ?: (bold ? Math.max(700, family.weight) : family.weight)
       fakeBold = bold and !family.isVariable and family.weight <= 500
       fakeItalic = italic and !family.isItalic
     } else {
       val found = __text.find(str(family), wanted, italic) ?: __text.find("SansSerif", wanted, italic)
       if (found == null) { throw Error("no fonts are installed") }
-      face = Typeface(found[0])
+      this.typeface = Typeface(found[0])
       set = found[1]
       fakeBold = found[2]
       fakeItalic = found[3]
     }
-    this.typeface = face
     this.size = size
     this.scale = scale
-    this.handle = __text.font(face.handle, size, scale, set, fakeBold, fakeItalic, hinting)
+    this.handle = __text.font(typeface.handle, size, scale, set, fakeBold, fakeItalic, hinting)
     val info = __text.fontInfo(handle)
     ascent = info[0]; descent = info[1]; leading = info[2]; xHeight = info[3]; capHeight = info[4]
     this.weight = info[5]
     this.isBold = this.weight >= 600 or fakeBold
-    this.isItalic = face.isItalic or fakeItalic
+    this.isItalic = typeface.isItalic or fakeItalic
   }
 
-  get family() => typeface.family
+  get family() : string => typeface.family
 
   // The height of a line: ascent, descent and leading.
-  get height() => ascent + descent + leading
+  get height() : int => ascent + descent + leading
 
   // A text's width: the sum of its characters' widths, and where it ends when drawn.
-  fun width(text) => __text.width(handle, text)
-  fun charWidth(character) => __text.charWidth(handle, character)
+  fun width(text : any?) : int => __text.width(handle, text)
+  fun charWidth(character : any) : int => __text.charWidth(handle, character)
 
   // Where each character of a text starts and where the last one ends: one more number
   // than the text has characters. offsets("abc") is [0, width("a"), width("ab"), width("abc")].
-  fun offsets(text) => __text.offsets(handle, text)
+  fun offsets(text : any?) : List<int> => __text.offsets(handle, text)
 
   // The typeface a character is drawn from: this font's own, or another one that has the
   // character when this one does not. Null if no installed font has it.
-  fun typefaceFor(character) {
-    val found = __text.faceFor(handle, character)
+  fun typefaceFor(character : any) : Typeface? {
+    val found : int? = __text.faceFor(handle, character)
     return found == null ? null : Typeface(found)
   }
 
   // What a character's drawn shape takes up, as [left, top, width, height, isColor, advance]:
   // `left` from where the character starts, `top` above the baseline. Null if it draws nothing.
-  fun glyphBox(character) => __text.glyphBox(handle, character)
+  fun glyphBox(character : any) : List<any?>? => __text.glyphBox(handle, character)
 
   // The same font at another size or scale.
-  fun derive(size = null, scale = null) => TextFont(typeface, size ?: this.size, isBold, isItalic, weight, scale ?: this.scale)
+  fun derive(size : Number? = null, scale : Number? = null) : TextFont => TextFont(typeface, size ?: this.size, isBold, isItalic, weight, scale ?: this.scale)
 
-  override fun toString() => "TextFont(${typeface.fullName}, $size)"
+  override fun toString() : string => "TextFont(${typeface.fullName}, $size)"
 }
 
 // A picture: `width` by `height` pixels, each a colour that may be see-through.
@@ -205,18 +207,18 @@ class TextFont {
 // `pixels` is the picture itself as bytes, four for each pixel (red, green, blue, alpha),
 // top row first: pixel (x, y) starts at (y * width + x) * 4.
 class Picture {
-  val width
-  val height
-  val pixels
+  val width : int
+  val height : int
+  val pixels : Bytes
 
   static val black = 0xFF000000
   static val white = 0xFFFFFFFF
   static val clear = 0
 
-  static fun rgb(red, green, blue, alpha = 255) => (alpha << 24) | (red << 16) | (green << 8) | blue
+  static fun rgb(red : int, green : int, blue : int, alpha : int = 255) : int => (alpha << 24) | (red << 16) | (green << 8) | blue
 
   // A picture of one colour: clear, unless another is given.
-  fun init(width, height, color = 0, pixels = null) {
+  fun init(width : int, height : int, color : int = 0, pixels : Bytes? = null) {
     if (width < 0 or height < 0 or width > 32768 or height > 32768) { throw Error("a picture is from 0 to 32768 pixels each way, not $width by $height") }
     this.width = width
     this.height = height
@@ -230,28 +232,28 @@ class Picture {
   }
 
   // Reads a PNG file, or the bytes of one.
-  static fun load(source) {
+  static fun load(source : any) : Picture {
     val data = source is Bytes ? source : (source is File ? source : File(source)).readBytes()
     val read = __text.decodePng(data)
     return Picture(read[0], read[1], 0, read[2])
   }
 
   // Writes the picture as a PNG file. Nothing is lost: loading it gives the same pixels.
-  fun save(path) {
+  fun save(path : any) {
     (path is File ? path : File(path)).writeBytes(__text.encodePng(pixels, width, height))
   }
 
   // The bytes of the PNG file that save() would write.
-  fun toPng() => __text.encodePng(pixels, width, height)
+  fun toPng() : Bytes => __text.encodePng(pixels, width, height)
 
   // The colour of a pixel; clear outside the picture.
-  fun get(x, y) {
+  fun get(x : int, y : int) : int {
     if (x < 0 or y < 0 or x >= width or y >= height) { return 0 }
     val at = (y * width + x) * 4
     return (pixels[at + 3] << 24) | (pixels[at] << 16) | (pixels[at + 1] << 8) | pixels[at + 2]
   }
 
-  fun set(x, y, color) {
+  fun set(x : int, y : int, color : int) {
     if (x < 0 or y < 0 or x >= width or y >= height) { return }
     val at = (y * width + x) * 4
     pixels[at] = (color >> 16) & 255
@@ -261,31 +263,31 @@ class Picture {
   }
 
   // Sets every pixel, or every pixel of a rectangle, to a colour.
-  fun fill(color) {
+  fun fill(color : int) {
     __text.fill(pixels, width, height, 0, 0, width, height, color)
   }
 
-  fun fillRect(x, y, w, h, color) {
+  fun fillRect(x : int, y : int, w : int, h : int, color : int) {
     __text.fill(pixels, width, height, x, y, w, h, color)
   }
 
   // Lays a colour over a rectangle: what is underneath shows through a see-through colour.
-  fun blendRect(x, y, w, h, color) {
+  fun blendRect(x : int, y : int, w : int, h : int, color : int) {
     __text.blend(pixels, width, height, x, y, w, h, color)
   }
 
   // Draws a line of text starting at x, with its baseline at y: letters sit on that row
   // and tails hang below it. (For text whose top is at `top`, the baseline is
   // top + font.ascent.) Returns the text's width, which is font.width(text).
-  fun drawText(text, x, y, font, color = 0xFF000000) => __text.drawText(pixels, width, height, font.handle, str(text), x, y, color)
+  fun drawText(text : any?, x : int, y : int, font : TextFont, color : int = 0xFF000000) : int => __text.drawText(pixels, width, height, font.handle, str(text), x, y, color)
 
   // Lays another picture over this one, its top-left corner at (x, y).
-  fun draw(other, x, y) {
+  fun draw(other : Picture, x : int, y : int) {
     __text.draw(pixels, width, height, other.pixels, other.width, other.height, x, y)
   }
 
   // A part of the picture as a picture of its own.
-  fun crop(x, y, w, h) {
+  fun crop(x : int, y : int, w : int, h : int) : Picture {
     val out = Picture(Math.max(w, 0), Math.max(h, 0))
     for (row in 0..<out.height) {
       for (col in 0..<out.width) { out.set(col, row, get(x + col, y + row)) }
@@ -293,14 +295,14 @@ class Picture {
     return out
   }
 
-  fun copy() => Picture(width, height, 0, Bytes(pixels))
+  fun copy() : Picture => Picture(width, height, 0, Bytes(pixels))
 
   // The same size and the same pixels.
-  op ==(other) => other is Picture and other.width == width and other.height == height and other.pixels == pixels
+  op ==(other : any?) : bool => other is Picture and other.width == width and other.height == height and other.pixels == pixels
 
   // The smallest rectangle outside which every pixel is `background`, as [x, y, width,
   // height]; null if the whole picture is.
-  fun inkBox(background = 0) {
+  fun inkBox(background : int = 0) : List<int>? {
     var minX = width
     var minY = height
     var maxX = -1
@@ -318,5 +320,5 @@ class Picture {
     return maxX < 0 ? null : [minX, minY, maxX - minX + 1, maxY - minY + 1]
   }
 
-  override fun toString() => "Picture($width x $height)"
+  override fun toString() : string => "Picture($width x $height)"
 }

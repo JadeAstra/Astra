@@ -53,6 +53,7 @@ external fun string.split(delimiter : string = " ") : List<string>
 external fun string.lines() : List<string>
 external fun string.slice(start : int, end : int = 0) : string
 external fun string.substring(startIndex : int, endIndex : int = 0) : string
+external fun string.substring(range : Range) : string
 external fun string.repeat(times : int) : string
 external fun string.reversed() : string
 external fun string.contains(other : string, ignoreCase : bool = false) : bool
@@ -127,10 +128,10 @@ external val Map.size : int
 external val Map.length : int
 external val <K, V> Map<K, V>.keys : List<K>
 external val <K, V> Map<K, V>.values : List<V>
-external val Map.entries : List<MapEntry>
+external val <K, V> Map<K, V>.entries : List<MapEntry<K, V>>
 external fun <K, V> Map<K, V>.keys() : List<K>
 external fun <K, V> Map<K, V>.values() : List<V>
-external fun <K, V> Map<K, V>.entries() : List<MapEntry>
+external fun <K, V> Map<K, V>.entries() : List<MapEntry<K, V>>
 external fun <K, V> Map<K, V>.has(key : any?) : bool
 external fun <K, V> Map<K, V>.contains(key : any?) : bool
 external fun <K, V> Map<K, V>.containsKey(key : any?) : bool
@@ -149,6 +150,11 @@ external fun <K, V> Map<K, V>.toMutableMap() : Map<K, V>
 
 // -- Range --
 
+external val Range.size : int
+external val Range.length : int
+external val Range.start : int
+external val Range.end : int
+external val Range.step : int
 external fun Range.toList() : List<int>
 external fun Range.contains(value : any?) : bool
 external fun Range.first() : int
@@ -157,6 +163,8 @@ external fun Range.isEmpty() : bool
 
 // -- Bytes --
 
+external val Bytes.size : int
+external val Bytes.length : int
 external fun Bytes.slice(start : int = 0, end : int = 0) : Bytes
 external fun Bytes.toList() : List<int>
 external fun Bytes.decodeToString() : string

@@ -1,5 +1,8 @@
 // Interfaces: what a class promises to have, and what it gets for promising.
 
+// A value whose type the checker does not see, for testing the checks made when running.
+val unknown = { value -> value }
+
 interface Shape {
   fun area()                                 // for the class to write
   fun name() : string
@@ -16,7 +19,7 @@ class Circle(val r : int) : Shape, Drawable, Marker {
   override fun area() => 3 * r * r
   override fun name() : string => "circle"
 }
-class Square(val side : int, override val colour = "blue") : Shape, Drawable {
+class Square(val side : int, override val colour : string = "blue") : Shape, Drawable {
   override fun area() => side * side
   override fun name() : string => "square"
   override fun describe() => "a square, " + area()    // its own replaces the interface's
@@ -38,7 +41,7 @@ fun total(shapes : List) {
 fun paint(what : Drawable) : string => what.draw()
 val first : Shape = square
 print(total([circle, square]), paint(circle), first.name())   // expect: 21 drawing in red square
-try { paint(5) } catch (e) { print(e.message) }   // expect: argument 'what' of paint() must be Drawable, got int
+try { paint(unknown(5)) } catch (e) { print(e.message) }   // expect: argument 'what' of paint() must be Drawable, got int
 print(when (circle) { is Marker -> "marked"; else -> "plain" }, when (square) { is Marker -> "marked"; is Shape -> "a shape"; else -> "?" })   // expect: marked a shape
 
 // A superclass and interfaces together, in either order.
@@ -51,7 +54,7 @@ interface Named {
   fun describe() => "named"                  // the superclass's comes first
   fun title() => "<" + label() + ">"
 }
-class Child(id : int, val extra) : Base(id), Named, Marker
+class Child(id : int, val extra : string) : Base(id), Named, Marker
 class Other(id : int) : Marker, Named, Base(id) {
   override fun describe() => "other, then " + super.describe()
 }
@@ -78,7 +81,7 @@ interface Control : Clickable, Focusable {
     return press() + (focused ? " (focused)" : "")
   }
 }
-class Button(val text) : Control {
+class Button(val text : string) : Control {
   override var focused = false
   override fun click() => "click $text"
 }
@@ -92,7 +95,7 @@ interface Sized {
   get area() => width * height
   get wide() => width > height
 }
-class Rect(override val width, override val height) : Sized
+class Rect(override val width : int, override val height : int) : Sized
 class Wide : Sized {
   override get width() => 10                          // a getter satisfies a required property
   override val height = 2
@@ -102,11 +105,11 @@ print(Rect(2, 5).area, Rect(2, 5).wide, Wide().area, Wide().wide)   // expect: 1
 // Static members, and an object that implements an interface.
 interface Codec {
   static val VERSION = 3
-  static fun describe(codec) => "codec v$VERSION: " + codec.encode("x")
-  fun encode(text)
+  static fun describe(codec : Codec) => "codec v$VERSION: " + codec.encode("x")
+  fun encode(text : string)
 }
 object Upper : Codec {
-  override fun encode(text) => text.upper()
+  override fun encode(text : string) => text.upper()
 }
 print(Codec.VERSION, Codec.describe(Upper), Upper is Codec)   // expect: 3 codec v3: X true
 

@@ -1,18 +1,23 @@
+// A value whose type the checker does not see, for testing the checks made when running.
+val unknown = { value -> value }
+
 class Vec {
-  fun init(x, y) { this.x = x; this.y = y }
-  op +(o) { return Vec(this.x + o.x, this.y + o.y) }
-  op -(o) { return Vec(this.x - o.x, this.y - o.y) }
-  op *(k) { return Vec(this.x * k, this.y * k) }
-  op /(k) { return Vec(this.x / k, this.y / k) }
-  op %(k) { return Vec(this.x % k, this.y % k) }
+  var x : int
+  var y : int
+  fun init(x : int, y : int) { this.x = x; this.y = y }
+  op +(o : Vec) { return Vec(this.x + o.x, this.y + o.y) }
+  op -(o : Vec) { return Vec(this.x - o.x, this.y - o.y) }
+  op *(k : int) { return Vec(this.x * k, this.y * k) }
+  op /(k : int) { return Vec(this.x / k, this.y / k) }
+  op %(k : int) { return Vec(this.x % k, this.y % k) }
   op -() { return Vec(-this.x, -this.y) }
-  op ==(o) { return o is Vec and this.x == o.x and this.y == o.y }
-  op <(o) { return this.len2() < o.len2() }
-  op <=(o) { return this.len2() <= o.len2() }
-  op >(o) { return this.len2() > o.len2() }
-  op >=(o) { return this.len2() >= o.len2() }
-  op [](i) { return i == 0 ? this.x : this.y }
-  op []=(i, v) { if i == 0 { this.x = v } else { this.y = v } }
+  op ==(o : any?) { return o is Vec and this.x == o.x and this.y == o.y }
+  op <(o : Vec) { return this.len2() < o.len2() }
+  op <=(o : Vec) { return this.len2() <= o.len2() }
+  op >(o : Vec) { return this.len2() > o.len2() }
+  op >=(o : Vec) { return this.len2() >= o.len2() }
+  op [](i : int) { return i == 0 ? this.x : this.y }
+  op []=(i : int, v : int) { if i == 0 { this.x = v } else { this.y = v } }
   fun len2() { return this.x * this.x + this.y * this.y }
   fun toString() { return "(${this.x}, ${this.y})" }
 }
@@ -35,6 +40,6 @@ var p1 = Plain()
 var p2 = p1
 print(p1 == p2, p1 == Plain())                  // expect: true false
 
-try { print(Plain() + 1) } catch (e) { print(e.message) }   // expect: Plain does not define operator '+'
-try { print(-Plain()) } catch (e) { print(e.message) }      // expect: Plain does not define operator '-'
-try { print(1 + Plain()) } catch (e) { print(e.message) }   // expect: unsupported operand types for '+': int and Plain
+try { print(unknown(Plain()) + 1) } catch (e) { print(e.message) }   // expect: Plain does not define operator '+'
+try { print(-unknown(Plain())) } catch (e) { print(e.message) }      // expect: Plain does not define operator '-'
+try { print(1 + unknown(Plain())) } catch (e) { print(e.message) }   // expect: unsupported operand types for '+': int and Plain

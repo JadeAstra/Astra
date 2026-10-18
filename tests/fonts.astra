@@ -2,7 +2,7 @@
 // (Uses fonts every Windows since 10 has: Segoe UI, Arial, Consolas, Times New Roman, Cambria,
 // Bahnschrift, Segoe UI Emoji.)
 
-fun attempt(block) {
+fun attempt(block : () -> any?) : string {
   try { block(); return "no error" } catch (e) { return (e is IOException ? "IOException: " : "Error: ") + e.message }
 }
 
@@ -13,27 +13,27 @@ print(Fonts.has("Segoe UI"), Fonts.has("segoe ui"), Fonts.has("No Such Family"))
 print(Fonts.has("SansSerif"), Fonts.has("Serif"), Fonts.has("Monospaced"), Fonts.has("Dialog"))   // expect: true true true true
 
 // -- A family's styles, and the nearest to what is asked for --
-val regular = Fonts.find("Segoe UI")
+val regular = Fonts.find("Segoe UI")!!
 print(regular, regular.family, regular.style, regular.weight, regular.stretch, regular.isItalic)   // expect: Typeface(Segoe UI) Segoe UI Regular 400 5 false
 print(regular.isMonospace, regular.isSymbol, regular.isVariable, regular.hasCubicOutlines, regular.hasColor, regular.unitsPerEm, regular.glyphCount > 1000)   // expect: false false false false false 2048 true
-val bold = Fonts.find("Segoe UI", 700)
-val boldItalic = Fonts.find("Segoe UI", 700, true)
-print(bold.fullName, bold.weight, boldItalic.fullName, boldItalic.isItalic, Fonts.find("Segoe UI", italic = true).style)   // expect: Segoe UI Bold 700 Segoe UI Bold Italic true Italic
-print(Fonts.find("Segoe UI", 600).style, Fonts.find("Segoe UI", 300).style, Fonts.find("Segoe UI", 100).weight <= 300, Fonts.find("Segoe UI", 900).weight >= 700)   // expect: Semibold Light true true
+val bold = Fonts.find("Segoe UI", 700)!!
+val boldItalic = Fonts.find("Segoe UI", 700, true)!!
+print(bold.fullName, bold.weight, boldItalic.fullName, boldItalic.isItalic, Fonts.find("Segoe UI", italic = true)!!.style)   // expect: Segoe UI Bold 700 Segoe UI Bold Italic true Italic
+print(Fonts.find("Segoe UI", 600)!!.style, Fonts.find("Segoe UI", 300)!!.style, Fonts.find("Segoe UI", 100)!!.weight <= 300, Fonts.find("Segoe UI", 900)!!.weight >= 700)   // expect: Semibold Light true true
 // Just above regular there is nothing, so regular it is; just below bold, bold.
-print(Fonts.find("Segoe UI", 450).weight, Fonts.find("Segoe UI", 500).weight, Fonts.find("Arial", 600).weight)   // expect: 400 400 700
+print(Fonts.find("Segoe UI", 450)!!.weight, Fonts.find("Segoe UI", 500)!!.weight, Fonts.find("Arial", 600)!!.weight)   // expect: 400 400 700
 
 // A family by the name it has for programs that know four styles.
-val semibold = Fonts.find("Segoe UI Semibold")
+val semibold = Fonts.find("Segoe UI Semibold")!!
 print(semibold.family, semibold.legacyFamily, semibold.weight, semibold.fullName)   // expect: Segoe UI Segoe UI Semibold 600 Segoe UI Semibold
-print(Fonts.find("Arial Black").weight >= 800, Fonts.find("Arial Black").family, Fonts.find("arial black", 400).weight >= 800)   // expect: true Arial true
+print(Fonts.find("Arial Black")!!.weight >= 800, Fonts.find("Arial Black")!!.family, Fonts.find("arial black", 400)!!.weight >= 800)   // expect: true Arial true
 
 // Several families: the first that is installed. One that is not: nothing.
-print(Fonts.find("No Such Font, Consolas, Arial").family, Fonts.find("'Arial', sans-serif").family, Fonts.find("No Such Font"))   // expect: Consolas Arial null
+print(Fonts.find("No Such Font, Consolas, Arial")!!.family, Fonts.find("'Arial', sans-serif")!!.family, Fonts.find("No Such Font"))   // expect: Consolas Arial null
 
 // The system's own font of each kind.
-val mono = Fonts.find("Monospaced")
-print(mono.isMonospace, Fonts.find("monospace") == mono, Fonts.find("Serif").family != Fonts.find("SansSerif").family, Fonts.find("Dialog") == Fonts.find("SansSerif"))   // expect: true true true true
+val mono = Fonts.find("Monospaced")!!
+print(mono.isMonospace, Fonts.find("monospace") == mono, Fonts.find("Serif")!!.family != Fonts.find("SansSerif")!!.family, Fonts.find("Dialog") == Fonts.find("SansSerif"))   // expect: true true true true
 
 // -- The typefaces of a family --
 val arial = Fonts.typefaces("Arial")
@@ -48,7 +48,7 @@ print(attempt { regular.has("") }, "|", attempt { regular.has(-1) })   // expect
 // A font for a character another lacks.
 val cjk = Fonts.fallback("中")
 val emoji = Fonts.fallback("😀")
-print(cjk != null, cjk.has("中"), emoji.has("😀"), emoji.hasColor, Fonts.fallback(0x10FFFD))   // expect: true true true true null
+print(cjk != null, cjk!!.has("中"), emoji!!.has("😀"), emoji!!.hasColor, Fonts.fallback(0x10FFFD))   // expect: true true true true null
 
 // -- Equality: a typeface is itself however it was found --
 print(Fonts.find("Segoe UI") == regular, regular == bold, regular != bold, [regular, bold].contains(Fonts.find("segoe ui", 700)), regular == "Segoe UI")   // expect: true false true true false
@@ -56,10 +56,10 @@ print(Fonts.find("Segoe UI") == regular, regular == bold, regular != bold, [regu
 // -- Font files --
 val again = Fonts.load(regular.path, regular.index)
 print(again.fullName, again.glyphCount == regular.glyphCount, Fonts.count(regular.path), Fonts.load(File(regular.path)).family)   // expect: Segoe UI true 1 Segoe UI
-val fromBytes = Fonts.load(File(Fonts.find("Consolas").path).readBytes())
+val fromBytes = Fonts.load(File(Fonts.find("Consolas")!!.path).readBytes())
 print(fromBytes.family, fromBytes.isMonospace, fromBytes.has("a"))   // expect: Consolas true true
 // A collection holds several fonts.
-val math = Fonts.find("Cambria Math")
+val math = Fonts.find("Cambria Math")!!
 print(Fonts.count(math.path) >= 2, math.index, Fonts.load(math.path, 0).family, Fonts.load(math.path, 1).family)   // expect: true 1 Cambria Cambria Math
 print(attempt { Fonts.load(math.path, 7) }.endsWith("no such font in the collection"), attempt { Fonts.load(regular.path, 1) }.endsWith("the file holds one font"))   // expect: true true
 print(attempt { Fonts.load("no_such_font.ttf") })       // expect: IOException: cannot read no_such_font.ttf
@@ -79,7 +79,7 @@ for (keep in [12, 100, 1000, 5000, 20000, 100000]) {
 print(survived)   // expect: 6
 
 // -- A variable font: one file, every weight --
-val bahn = Fonts.find("Bahnschrift")
+val bahn = Fonts.find("Bahnschrift")!!
 val axes = bahn.axes
 print(bahn.isVariable, axes.map { it.tag }, axes[0].minimum, axes[0].defaultValue, axes[0].maximum, regular.axes)   // expect: true ["wght", "wdth"] 300.0 400.0 700.0 []
 print(Fonts.find("Bahnschrift", 700) == bahn, Fonts.find("Bahnschrift", 300, true) == bahn)   // expect: true true
@@ -95,7 +95,7 @@ print(regular.advance(regular.glyph("W")) > regular.advance(regular.glyph("i")),
 print(mono.advance(mono.glyph("W")) == mono.advance(mono.glyph("i")))   // expect: true
 
 // The other kind of outline, cubic curves, where a font with them is installed.
-var cubic = null
+var cubic : Typeface? = null
 for (face in Fonts.typefaces()) {
   if (cubic == null and face.hasCubicOutlines and face.has("o")) { cubic = face }
 }

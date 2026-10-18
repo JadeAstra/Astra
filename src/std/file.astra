@@ -9,70 +9,70 @@
 //
 // The work itself is done by the built-in __file, which only the standard library can name.
 class File {
-  val path
+  val path : string
 
   // File(path), or File(folder, name) for something inside a folder. The folder may be a
   // File or a path.
-  fun init(path, child = null) {
+  fun init(path : any, child : any? = null) {
     val base = path is File ? path.path : str(path)
     this.path = child == null ? base : __file.join(base, child is File ? child.path : str(child))
   }
 
   // By path, without making a File: File.read("a.txt")
-  static fun read(path) => __file.read(path)
-  static fun write(path, text) { __file.write(path, text) }
-  static fun append(path, text) { __file.append(path, text) }
-  static fun exists(path) => __file.exists(path)
-  static val separator = __file.separator
+  static fun read(path : string) : string => __file.read(path)
+  static fun write(path : string, text : string) { __file.write(path, text) }
+  static fun append(path : string, text : string) { __file.append(path, text) }
+  static fun exists(path : string) : bool => __file.exists(path)
+  static val separator : string = __file.separator
 
   // -- What the path says --
 
   // The last name in the path: File("a/b.txt").name is "b.txt".
-  get name() => __file.name(this.path)
+  get name() : string => __file.name(this.path)
 
   // What follows the last dot of the name, without the dot; "" if there is none.
-  get extension() {
-    val whole = __file.name(this.path)
+  get extension() : string {
+    val whole : string = __file.name(this.path)
     val dot = whole.lastIndexOf(".")
     return dot < 0 ? "" : whole.substring(dot + 1)
   }
 
-  get nameWithoutExtension() {
-    val whole = __file.name(this.path)
+  get nameWithoutExtension() : string {
+    val whole : string = __file.name(this.path)
     val dot = whole.lastIndexOf(".")
     return dot < 0 ? whole : whole.substring(0, dot)
   }
 
   // The folder it is in, as a path and as a File; null if the path names none.
-  get parent() => __file.parent(this.path)
+  get parent() : string? => __file.parent(this.path)
 
-  get parentFile() {
-    val folder = __file.parent(this.path)
+  get parentFile() : File? {
+    val folder : string? = __file.parent(this.path)
     return folder == null ? null : File(folder)
   }
 
-  get absolutePath() => __file.absolute(this.path)
-  get absoluteFile() => File(__file.absolute(this.path))
+  get absolutePath() : string => __file.absolute(this.path)
+  get absoluteFile() : File => File(__file.absolute(this.path))
 
   // Something inside this folder: File("a").resolve("b.txt") is a/b.txt.
-  fun resolve(child) => File(this.path, child)
+  fun resolve(child : any) : File => File(this.path, child)
 
   // -- What is on disk --
 
-  fun exists() => __file.exists(this.path)
-  get isFile() => __file.isFile(this.path)
-  get isDirectory() => __file.isDirectory(this.path)
+  fun exists() : bool => __file.exists(this.path)
+  get isFile() : bool => __file.isFile(this.path)
+  get isDirectory() : bool => __file.isDirectory(this.path)
 
   // The size in bytes, and when it was last written in milliseconds since the start of
   // 1970. Both are 0 for a file that is not there.
-  fun length() => __file.size(this.path)
-  fun lastModified() => __file.lastModified(this.path)
+  fun length() : int => __file.size(this.path)
+  fun lastModified() : int => __file.lastModified(this.path)
 
   // The names in a folder, in order, and the same as Files. Null if it is not a folder.
-  fun list() => __file.list(this.path)
+  fun list() : List<string>? => __file.list(this.path)
 
-  fun listFiles() {
-    val names = __file.list(this.path)
+  fun listFiles() : List<File>? {
+    val names : List<string>? = __file.list(this.path)
     if (names == null) { return null }
     val folder = this.path
     return names.map { File(folder, it) }
@@ -81,57 +81,58 @@ class File {
   // -- Reading and writing --
   // Text is UTF-8. Each call reads or writes the whole file.
 
-  fun readText() => __file.read(this.path)
+  fun readText() : string => __file.read(this.path)
 
   // The lines of the file, without their line ends.
-  fun readLines() {
-    val lines = __file.read(this.path).lines()
+  fun readLines() : List<string> {
+    val text : string = __file.read(this.path)
+    val lines = text.lines()
     // A file that ends in a line end has no empty last line.
-    if (lines.length > 0 and lines[lines.length - 1] == "") { lines.removeLast() }
+    if (lines.size > 0 and lines[lines.size - 1] == "") { lines.removeLast() }
     return lines
   }
 
-  fun forEachLine(action) {
+  fun forEachLine(action : (string) -> unit) {
     for line in readLines() { action(line) }
   }
 
-  fun readBytes() => __file.readBytes(this.path)
+  fun readBytes() : Bytes => __file.readBytes(this.path)
 
   // A piece at a time: a stream to read the file from, and one to write it to. Close each
   // when it is done with, or let use { } do it: file.inputStream().use { it.readLine() }
-  fun inputStream() => InputStream(__io.open(this.path, "r"))
-  fun outputStream(append = false) => OutputStream(__io.open(this.path, append ? "a" : "w"))
-  fun bufferedReader(charset = null) => inputStream()
-  fun reader(charset = null) => inputStream()
-  fun bufferedWriter(charset = null) => outputStream()
-  fun writer(charset = null) => outputStream()
-  fun printWriter(charset = null) => outputStream()
+  fun inputStream() : InputStream => InputStream(__io.open(this.path, "r"))
+  fun outputStream(append : bool = false) : OutputStream => OutputStream(__io.open(this.path, append ? "a" : "w"))
+  fun bufferedReader(charset : any? = null) : InputStream => inputStream()
+  fun reader(charset : any? = null) : InputStream => inputStream()
+  fun bufferedWriter(charset : any? = null) : OutputStream => outputStream()
+  fun writer(charset : any? = null) : OutputStream => outputStream()
+  fun printWriter(charset : any? = null) : OutputStream => outputStream()
 
   // Runs the block on the file's lines.
-  fun useLines(block) => block(readLines())
+  fun <R> useLines(block : (List<string>) -> R) : R => block(readLines())
 
-  fun writeText(text) { __file.write(this.path, text) }
-  fun appendText(text) { __file.append(this.path, text) }
-  fun writeBytes(data) { __file.writeBytes(this.path, data) }
-  fun appendBytes(data) { __file.appendBytes(this.path, data) }
+  fun writeText(text : string) { __file.write(this.path, text) }
+  fun appendText(text : string) { __file.append(this.path, text) }
+  fun writeBytes(data : Bytes) { __file.writeBytes(this.path, data) }
+  fun appendBytes(data : Bytes) { __file.appendBytes(this.path, data) }
 
   // -- Changing what is on disk --
 
   // Each gives true if it did what was asked. delete() takes a file or an empty folder.
-  fun delete() => __file.delete(this.path)
-  fun deleteRecursively() => __file.deleteRecursively(this.path)
-  fun mkdirs() => __file.mkdirs(this.path)
-  fun mkdir() => __file.mkdirs(this.path)
-  fun renameTo(target) => __file.rename(this.path, target is File ? target.path : str(target))
+  fun delete() : bool => __file.delete(this.path)
+  fun deleteRecursively() : bool => __file.deleteRecursively(this.path)
+  fun mkdirs() : bool => __file.mkdirs(this.path)
+  fun mkdir() : bool => __file.mkdirs(this.path)
+  fun renameTo(target : any) : bool => __file.rename(this.path, target is File ? target.path : str(target))
 
   // Gives the File it was copied to. It is an error if that is there already, unless
   // `overwrite` is true.
-  fun copyTo(target, overwrite = false) {
+  fun copyTo(target : any, overwrite : bool = false) : File {
     val to = target is File ? target : File(target)
     __file.copy(this.path, to.path, overwrite)
     return to
   }
 
-  op ==(other) => other is File and other.path == this.path
-  fun toString() => this.path
+  op ==(other : any?) : bool => other is File and other.path == this.path
+  fun toString() : string => this.path
 }

@@ -1,17 +1,17 @@
 // Parallel sections: the items of a list worked on by several cores at once, each core
 // allowed to change its own items and what it makes, and to read everything else.
 
-class Ball(var x, var y, var dx, var dy) {
+class Ball(var x : Number, var y : Number, var dx : Number, var dy : Number) {
   var trail = []
-  fun move(width, height, steps) {
+  fun move(width : int, height : int, steps : int) {
     x += dx * steps
     y += dy * steps
     if x < 0 or x > width { dx = -dx }
     if y < 0 or y > height { dy = -dy }
   }
 }
-fun balls(count) => List(count) { n -> Ball(n % 70, n % 50, 1.5, -2.5) }
-fun places(list) => list.map { [it.x, it.y, it.dx, it.dy] }
+fun balls(count : int) => List(count) { n -> Ball(n % 70, n % 50, 1.5, -2.5) }
+fun places(list : List<Ball>) => list.map { [it.x, it.y, it.dx, it.dy] }
 
 print(availableProcessors() >= 1)                            // expect: true
 
@@ -37,7 +37,7 @@ print(numbers.parallelStream().maxOf { -it }, numbers.parallelStream().minOf { i
 print([].parallelStream().map { it }.toList(), ["only"].parallelStream().map { it + "!" }.toList(), [].parallelStream().forEach { 1 })   // expect: [] ["only!"] null
 
 // A core may make whatever it likes, and what it makes is the program's afterwards.
-class Report(val name, val parts)
+class Report(val name : string, val parts : List)
 val reports = numbers.parallelStream().map { n -> Report("r$n", [n, [n + 1], {"n": n, "text": "é" + n}]) }.toList()
 print(reports.size, reports[0].name, reports[999].parts, reports[499].parts[2]["text"][0])   // expect: 1000 r1 [1000, [1001], {"n": 1000, "text": "é1000"}] é
 // ...and is still there after the collector has been through.
@@ -55,12 +55,12 @@ print(names.parallelStream().map { name -> names.count { it == name } }.toList()
 
 // Asking which object something is needs no looking into it, so a core can find its item in
 // a list of everyone's. Comparing by contents does look, and is refused for another core's.
-class Plain(val n)
-data Pair2(val n)
+class Plain(val n : int)
+data Pair2(val n : int)
 val plains = List(500) { Plain(it) }
 val pairs = List(500) { Pair2(it % 7) }
 print(plains.parallelStream().map { plains.indexOf(it) }.toList() == (0..<500).toList(), plains.parallelStream().all { it in plains })   // expect: true true
-print(availableProcessors() > 1 ? runCatching { pairs.parallelStream().map { pairs.indexOf(it) }.toList() }.exceptionOrNull()?.message
+print(availableProcessors() > 1 ? (runCatching { pairs.parallelStream().map { pairs.indexOf(it) }.toList() }.exceptionOrNull() as Error?)?.message
                                 : "this Pair2 is another core's item in this parallel section: a core looks only into its own items and into what is shared")
 // expect: this Pair2 is another core's item in this parallel section: a core looks only into its own items and into what is shared
 // The library's own functions run inside a section as anywhere, on what the core may read.
@@ -70,7 +70,7 @@ print([1, 2, 3].parallelStream().map { n -> var t = 0; prices.forEach { name, pr
 val rows = List(200) { n -> [n] }
 rows.parallelStream().forEach { row -> row.add(row[0] * 2); row[0] = -row[0]; row.sort() }
 val tallies = List(50) { n -> mapOf("n" to n) }
-tallies.parallelStream().forEach { it["square"] = it["n"] * it["n"]; it.remove("n") }
+tallies.parallelStream().forEach { it["square"] = it["n"]!! * it["n"]!!; it.remove("n") }
 print(rows[3], rows[199], tallies[7], tallies.all { it.size == 1 })   // expect: [-3, 6] [-199, 398] {"square": 49} true
 // What an item holds can be replaced, by something the core made.
 shared.parallelStream().forEach { it.trail = [it.x, it.y] }
@@ -78,7 +78,7 @@ print(shared.all { it.trail.size == 2 }, shared[5].trail == [shared[5].x, shared
 
 // ---- What a section may not do ----
 // Each of these is an error where it is tried, and nothing is damaged.
-fun refused(action) {
+fun refused(action : (Ball) -> unit) {
   try {
     shared.parallelStream().forEach(action)
     print("not refused")
@@ -162,7 +162,7 @@ try { buffer.parallelChunks { buffer.fill(0) } } catch (e) { print(e.message) }
 // expect: a parallel section changes only the item it was given and what it makes itself: this Bytes is shared with the other cores, so here it can be read and not changed
 
 // ---- From a thread, and from a flow ----
-var fromThread = null
+var fromThread : int? = null
 thread { fromThread = numbers.parallelStream().sumOf { it } }.join()
 startCoroutine {
   delay(1)

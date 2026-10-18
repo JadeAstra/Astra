@@ -10,7 +10,8 @@ The implementation is C++20 with no dependencies beyond the standard library.
 
 ```astra
 class Animal {
-  fun init(name) {
+  val name : string
+  fun init(name : string) {
     this.name = name
   }
   fun speak() => "${this.name} makes a sound"
@@ -174,8 +175,8 @@ of an argument, and as a key in a map.
 
 ```astra
 enum Key { if, else, in, class }
-class Token(val class : string, var in = 0) {
-  fun is(other) => this.class == other.class
+class Token(val class : string, var in : int = 0) {
+  fun is(other : Token) : bool => this.class == other.class
 }
 
 Key.if        token.class        token.is(other)        Token(class = "word")        {in: 1}
@@ -391,9 +392,9 @@ rows@ for row in grid {                  // a name for the loop
 ### Functions
 
 ```astra
-fun add(a, b) { return a + b }
-fun square(x) => x * x                    // expression body
-val twice = fun(f) => fun(v) => f(f(v))    // anonymous functions and closures
+fun add(a : int, b : int) : int { return a + b }
+fun square(x : float) : float => x * x     // expression body
+val twice = fun(f : (int) -> int) => fun(v : int) => f(f(v))    // anonymous functions and closures
 ```
 
 Functions are values, capture variables from enclosing scopes, and must be called with
@@ -429,7 +430,9 @@ fun connect(host : string, port : int, secure : bool) { ... }
 connect("example.org", secure = true, port = 443)
 ```
 
-This works for functions, lambdas, methods and constructors, but not for built-in functions.
+This works for functions, lambdas, methods and constructors, and for the built-in functions
+(`"abc".padStart(length = 5, padChar = ".")`), whose parameters are named in their
+declarations in the standard library.
 Because `name = value` inside a call now means a named argument, an assignment used as an
 argument needs its own parentheses: `f((x = 1))`.
 
@@ -463,7 +466,7 @@ val more = [4, 5]
 total(1, *more, 6)                // 16
 print(*more)                      // 4 5
 
-fun chart(vararg series, title = "") { ... }
+fun chart(vararg series : List<float>, title : string = "") { ... }
 chart(a, b, title = "Sales")      // what comes after a vararg parameter is passed by name
 ```
 
@@ -490,7 +493,7 @@ fun area(w : float, h : float) : float => w * h
 
 fun describe(x : int) => "an int"
 fun describe(x : string) => "a string"
-fun describe(x) => "something"    // takes anything, so it is chosen last
+fun describe(x : any?) => "something"   // takes anything, so it is chosen last
 
 area(2.0)                         // the first form
 area(2.0, 3.0)                    // the second
@@ -532,15 +535,16 @@ pairs.map { (name, score) -> "$name: $score" }    // (a, b) takes an argument ap
 
 A lambda written after a call goes to the function's last parameter, whatever came before it,
 and the parameters in between take their defaults: `names.joinToString { it.upper() }` leaves
-the separator alone. This holds for functions, methods and extension functions alike. One
-case is different, so that a function can have optional parameters after a function
-parameter: when every parameter that has to be given is there but the last of them, the
-lambda is that one.
+the separator alone. This holds for functions, methods and extension functions alike, as in
+Kotlin. A function that can be given one lambda or two has a form for each (see "A name with
+several forms"), so that the lambda after the call is always the last parameter of the form
+it means:
 
 ```astra
-fun List.groupBy(keySelector, valueTransform = null) { ... }
-words.groupBy { it.length }                      // the lambda is keySelector
-words.groupBy({ it.length }) { it.upper() }      // keySelector, then valueTransform
+fun <T, K> List<T>.groupBy(keySelector : (T) -> K) : Map<K, List<T>> { ... }
+fun <T, K, V> List<T>.groupBy(keySelector : (T) -> K, valueTransform : (T) -> V) : Map<K, List<V>> { ... }
+words.groupBy { it.size }                        // the lambda is keySelector
+words.groupBy({ it.size }) { it.upper() }        // keySelector, then valueTransform
 ```
 
 In the condition of an `if`, `while` or `for` a `{` opens the body, so a call there that takes
@@ -582,7 +586,7 @@ place, as part of the function they are in. A `return` there leaves that functio
 `break` and `continue` reach a loop around them:
 
 ```astra
-fun find(node, name) {
+fun find(node : Node, name : string) : Node? {
   for child in node.children { child.find(name)?.let { return it } }   // leaves find()
   return null
 }
@@ -689,14 +693,12 @@ account.owner = "eve"      // error: cannot assign to val field 'owner' of Accou
   by `init` or be listed in the class header; leaving such a field unset is an error.
 - A subclass cannot redeclare a field of its superclass.
 
-A class that declares fields has exactly those fields. Assigning to any other name is an
-error (`Account has no field 'balanse'`), which catches misspellings; inside the class's own
-methods it is reported when the program is compiled. Subclasses inherit the restriction and
-add fields by declaring them.
-
-A class with no field declarations, and none in its superclasses, stays open: assigning
-`this.x = 1` in `init` simply creates the field. The built-in `Error` class declares
-`message`, so an error class that carries more data declares it:
+Every field is declared, in the header or the body (R24). A class has exactly the fields it
+and its superclasses declare, and assigning to any other name is an error, reported when the
+program is compiled (`Account has no field 'balanse'; fields must be declared in the class
+with val or var`), which catches misspellings; a class that declares none has none.
+Subclasses add fields by declaring them. The built-in `Error` class declares `message`, so an
+error class that carries more data declares it:
 
 ```astra
 class HttpError : Error {
@@ -716,9 +718,11 @@ A `toString()` method controls how an instance prints. Classes can overload oper
 
 ```astra
 class Vec {
-  fun init(x, y) { this.x = x; this.y = y }
-  op +(o) => Vec(this.x + o.x, this.y + o.y)
-  op ==(o) => o is Vec and this.x == o.x and this.y == o.y
+  val x : float
+  val y : float
+  fun init(x : float, y : float) { this.x = x; this.y = y }
+  op +(o : Vec) : Vec => Vec(this.x + o.x, this.y + o.y)
+  op ==(o : any?) : bool => o is Vec and this.x == o.x and this.y == o.y
   op -() => Vec(-this.x, -this.y)             // unary minus
   op [](i) => i == 0 ? this.x : this.y
 }
@@ -774,15 +778,15 @@ globals:
 
 ```astra
 class Account(val owner : string, var balance : int = 0) {
-  val history = []
+  val history : List<int> = []
 
-  fun deposit(amount) {
+  fun deposit(amount : int) : string {
     balance += amount                   // this.balance
     history.push(amount)                // this.history
     return describe()                   // this.describe()
   }
   fun describe() => "$owner has $balance"
-  fun rename(owner) { this.owner = owner }   // the parameter hides the field: say this.
+  fun rename(owner : string) { this.owner = owner }   // the parameter hides the field: say this.
 }
 ```
 
@@ -924,11 +928,11 @@ class. `static` goes in front of a single member, or a `static { }` block holds 
 class Color(val r : int, val g : int, val b : int) {
   static val black = Color(0, 0, 0)        // may be an instance of the class itself
   static var created : int = 0
-  static fun gray(level) => Color(level, level, level)
+  static fun gray(level : int) : Color => Color(level, level, level)
 
   static {                                  // the same, without the word on each line
     val max = 255
-    fun clamp(n) => n < 0 ? 0 : n > max ? max : n
+    fun clamp(n : int) : int => n < 0 ? 0 : n > max ? max : n
     get count() => Color.created            // a static property
   }
 }
@@ -953,7 +957,7 @@ instance:
 object Settings {
   var volume = 5
   get loud() => this.volume > 7
-  fun raise(by = 1) { this.volume += by }
+  fun raise(by : int = 1) { this.volume += by }
 }
 
 Settings.raise(3)
@@ -969,7 +973,7 @@ variables around it, and inside a method the members of that method's object as 
 
 ```astra
 button.onClick(object : Listener {
-  override fun clicked(x, y) { count += 1 }
+  override fun clicked(x : int, y : int) { count += 1 }
 })
 val origin = object { val x = 0; val y = 0 }
 ```
@@ -987,7 +991,7 @@ interface Shape {
   fun describe() => "$name of area ${area()}"  // every Shape gets this
 }
 
-class Circle(val r) : Shape {
+class Circle(val r : float) : Shape {
   override val name = "circle"
   override fun area() => 3.14159 * r * r
 }
@@ -1010,9 +1014,9 @@ A class, enum, interface or object can be declared in the body of a class. It is
 member of that class and is reached through it:
 
 ```astra
-class Event(val source) {
-  class Click(source, val x, val y) : Event(source)   // may extend the class it is in
-  class Key(source, val code) : Event(source)
+class Event(val source : any) {
+  class Click(source : any, val x : int, val y : int) : Event(source)   // may extend the class it is in
+  class Key(source : any, val code : int) : Event(source)
   enum Phase { capture, target, bubble }
 }
 
@@ -1111,7 +1115,7 @@ enum Planet(val mass : float, val radius : float) {
   earth(5.976e24, 6.37814e6);
 
   get gravity() => 6.673e-11 * mass / (radius * radius)
-  fun heavierThan(other) => mass > other.mass
+  fun heavierThan(other : Planet) : bool => mass > other.mass
 }
 ```
 
@@ -1165,7 +1169,7 @@ that declares it has been loaded, every value of that type has it.
 
 ```astra
 class NotFound : Error {
-  fun init(what) { super.init(what + " not found") }
+  fun init(what : string) { super.init(what + " not found") }
 }
 
 try {
@@ -1187,7 +1191,7 @@ of them is for carries on outwards. A `finally` block runs however the `try` is 
 end, by an error, or by `return`, `break` or `continue`.
 
 ```astra
-fun load(path) {
+fun load(path : string) : Config {
   val file = open(path)
   try {
     return parse(file)
@@ -1372,13 +1376,13 @@ that grey by day and its counterpart by night.
 **A widget of your own** is a class with the three things a `Content` has:
 
 ```astra
-class Swatch(val color) : Content {
+class Swatch(val color : Color) : Content {
   override fun sizes() => Sizes(Dimension(16, 16), Dimension(48, 24), Dimension(1000, 1000))   // least, liked, most
-  override fun paint(canvas) {
+  override fun paint(canvas : Canvas) {
     canvas.color = color
     canvas.fillRoundRect(0, 0, canvas.width - 1, canvas.height - 1, 6, 6)
   }
-  override fun onEvent(event) {
+  override fun onEvent(event : Event) {
     if event is Event.Click { print("pressed at ${event.x}, ${event.y}") }
   }
 }
@@ -1672,7 +1676,7 @@ a data object by what it holds, so that an equal one finds the entry. Any other 
 key as itself.
 
 ```astra
-data Cell(val row, val column)
+data Cell(val row : int, val column : int)
 val colours = {:}
 colours[Cell(1, 2)] = "red"
 colours[Cell(1, 2)]                  // "red": an equal Cell is the same key
@@ -1861,9 +1865,9 @@ callback, reads from top to bottom:
 
 ```astra
 // Something that answers later: prompt returns at once, and calls back with the answer.
-suspend fun ask(question) => suspendCoroutine { continuation ->
+suspend fun ask(question : string) : string => suspendCoroutine { continuation ->
   dialog.prompt(question) { answer -> continuation.resume(answer) }
-}
+} as string
 
 startCoroutine {
   val name = ask("Name?")                 // the flow is set aside here until the answer comes

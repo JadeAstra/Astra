@@ -51,9 +51,4 @@ for move in [Vec2(1, 0), Vec2(0, 1), Vec2(-1, 0), Vec2(0, -1), Vec2(1, 0)] {
 }
 print("visited", visited.size, "squares:", visited.joinToString(" "), "- back at the start:", Vec2(0, 0) in visited)
 
-// Types are enforced: a vector cannot be added to a plain number.
-try {
-  print(a + 1)
-} catch (e) {
-  print("error:", e.message)
-}
+// Types are enforced when compiling: a + 1 is an error, since Vec2's + takes a Vec2.

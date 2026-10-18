@@ -1,5 +1,9 @@
 // A function written inside a variable's own initial value may refer to that variable.
-fun attempt(f) {
+
+// A value whose type the checker does not see, for testing the checks made when running.
+val unknown = { value -> value }
+
+fun attempt(f : Function) {
   try { return f() } catch (e) { return e.message }
 }
 
@@ -71,7 +75,7 @@ print(stepper())                                 // expect: ["first", "second"]
 
 // a typed variable is still checked once its value is known
 fun typed() {
-  val name : string = [fun() => name].length
+  val name : string = unknown([fun() => name].length)
   return name
 }
 print(attempt(typed))                            // expect: cannot assign a value of type int to 'name', which is declared as string

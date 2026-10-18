@@ -12,9 +12,9 @@ val counter = label("Pressed 0 times")
 val theme = button("Dark theme")
 val reset = button("Reset") { bump(-count) }
 
-fun bump(by) {
+fun bump(by : int) {
   count += by
-  counter.content.text = "Pressed $count time" + (count == 1 ? "" : "s")
+  (counter.content as Label).text = "Pressed $count time" + (count == 1 ? "" : "s")
 }
 
 val root = grid {
@@ -58,9 +58,9 @@ fun tint() {
 }
 tint()
 
-theme.content.onClick = {
+(theme.content as Button).onClick = {
   Palette.dark = !Palette.dark
-  theme.content.text = Palette.dark ? "Light theme" : "Dark theme"
+  (theme.content as Button).text = Palette.dark ? "Light theme" : "Dark theme"
   tint()
 }
 

@@ -1,5 +1,8 @@
 // The Kotlin names for strings. Every position counts characters.
 
+// A value whose type the checker does not see, for testing the checks made when running.
+val unknown = { value -> value }
+
 val s = "Hello, World"
 val accented = "naïve café"
 
@@ -25,7 +28,7 @@ print(s.contains("World"), s.contains("world"), s.contains("world", ignoreCase =
 print(s.startsWith("hello"), s.startsWith("hello", ignoreCase = true), s.endsWith("WORLD", true), s.endsWith("World"), "É".equals("é", ignoreCase = true))   // expect: false true true true true
 print("abc".equals("abc"), "abc".equals("ABC"), "abc".equals("ABC", ignoreCase = true), "abc".equals(5), "a".compareTo("b"), "b".compareTo("A", ignoreCase = true), "x".compareTo("x"))   // expect: true false true false -1 1 0
 print(s.indexOfFirst { it == "l" }, s.indexOfLast { it == "l" }, s.indexOfFirst { it.isDigit() })   // expect: 2 10 -1
-try { s.contains("x", wrong = true) } catch (e) { print(e.message) }   // expect: contains() has no parameter named 'wrong'
+try { unknown(s).contains("x", wrong = true) } catch (e) { print(e.message) }   // expect: contains() has no parameter named 'wrong'
 
 // Changing.
 print(s.lowercase(), s.uppercase(), accented.uppercase(), "ÉCOLE".lowercase())   // expect: hello, world HELLO, WORLD NAÏVE CAFÉ école
@@ -36,7 +39,7 @@ print("  both  ".trim() + "|", "  left".trimStart() + "|", "right  ".trimEnd() +
 
 // Empty and blank.
 print("".isEmpty(), " ".isEmpty(), "x".isNotEmpty(), " \t\n".isBlank(), " x ".isNotBlank(), "".isBlank())   // expect: true false true true true true
-val missing = null
+val missing : string? = null
 print(missing.isNullOrEmpty(), "".isNullOrEmpty(), "x".isNullOrEmpty(), missing.isNullOrBlank(), "  ".isNullOrBlank(), "x".orEmpty())   // expect: true true false true true x
 print("".ifEmpty { "none" }, "x".ifEmpty { "none" }, "  ".ifBlank { "blank" }, missing ?: "")   // expect: none x blank
 

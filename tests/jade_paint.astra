@@ -6,11 +6,11 @@ import Jade.*
 
 val failed = []
 var checks = 0
-fun same(what, got, want) {
+fun same(what : string, got : any?, want : any?) {
   checks += 1
   if (!(got == want)) { failed.add("$what: got $got, wanted $want") }
 }
-fun yes(what, condition) {
+fun yes(what : string, condition : bool) {
   checks += 1
   if (!condition) { failed.add(what) }
 }
@@ -58,22 +58,22 @@ print("RecordingCanvasTest:", checks, "checks,", failed)   // expect: RecordingC
 // -- PaintStyleTest --
 
 class Probe : Content {
-  var seen = null
+  var seen : Style? = null
   var paints = 0
   override fun sizes() => Sizes(Dimension(10, 10), Dimension(40, 20), Dimension(400, 200))
-  override fun paint(canvas) {
+  override fun paint(canvas : Canvas) {
     seen = canvas.style
     paints += 1
   }
 }
 
 // On a canvas that really draws, and on one that records.
-fun live(c, given) {
+fun live(c : Component, given : Style) {
   val image = BufferedImage(40, 20, BufferedImage.typeIntArgb)
   c.layout(40, 20)
   c.paintInto(image.canvas().withStyle(given))
 }
-fun recorded(c, given) {
+fun recorded(c : Component, given : Style) {
   c.layout(40, 20)
   c.paintInto(RecordingCanvas(40, 20, given, []))
 }
@@ -99,7 +99,7 @@ for (paint in [live, recorded]) {
 // aDisabledParentDisablesIt
 val disabledProbe = Probe()
 live(Component(disabledProbe), handed.copy(enabled = false))
-same("disabled from above", disabledProbe.seen.enabled, false)
+same("disabled from above", disabledProbe.seen!!.enabled, false)
 
 // anotherStyleHandedDownPaintsItAgain: the kept picture is good for the style it was
 // painted in, and no other.
@@ -110,7 +110,7 @@ live(styledComponent, handed)
 same("the same style: the kept picture", styled.paints, 1)
 live(styledComponent, handed.copy(framed = true))
 same("another style: painted again", styled.paints, 2)
-same("and it saw the new one", styled.seen.framed, true)
+same("and it saw the new one", styled.seen!!.framed, true)
 
 // tooBigToKeepStillPaintsInItsOwnStyle: past the size a picture is kept for, the content
 // is painted live, and in its own style, as when it is kept.
@@ -119,21 +119,21 @@ val big = Component(bigProbe)
 big.foreground = Color.blue
 big.layout(3000, 3000)
 big.paintInto(BufferedImage(40, 20, BufferedImage.typeIntArgb).canvas().withStyle(handed).sub(0, 0, 3000, 3000))
-same("too big to keep: its own foreground", bigProbe.seen.foreground, Color.blue)
+same("too big to keep: its own foreground", bigProbe.seen!!.foreground, Color.blue)
 
 // theOverlayIsPaintedInItsOwnStyleToo: the caret and selection are drawn live over the kept
 // picture, in the component's style, not its parent's.
 class OverlayProbe : Content, OverlayContent {
-  var seen = null
+  var seen : Style? = null
   override fun sizes() => Sizes(Dimension(10, 10), Dimension(40, 20), Dimension(400, 200))
-  override fun paint(canvas) {}
-  override fun paintOverlay(canvas) { seen = canvas.style }
+  override fun paint(canvas : Canvas) {}
+  override fun paintOverlay(canvas : Canvas) { seen = canvas.style }
 }
 val overlayProbe = OverlayProbe()
 val overlaid = Component(overlayProbe)
 overlaid.foreground = Color.blue
 live(overlaid, handed)
-same("the overlay over a kept picture: its own foreground", overlayProbe.seen.foreground, Color.blue)
+same("the overlay over a kept picture: its own foreground", overlayProbe.seen!!.foreground, Color.blue)
 print("PaintStyleTest:", checks, "checks,", failed)   // expect: PaintStyleTest: 17 checks, []
 
 // -- PaintCacheTest --
@@ -141,7 +141,7 @@ print("PaintStyleTest:", checks, "checks,", failed)   // expect: PaintStyleTest:
 class Counter : Content {
   var paints = 0
   override fun sizes() => Sizes(Dimension(50, 20), Dimension(50, 20), Dimension(50, 20))
-  override fun paint(canvas) {
+  override fun paint(canvas : Canvas) {
     paints += 1
     canvas.fillRect(0, 0, canvas.width, canvas.height)
   }
@@ -171,11 +171,11 @@ class OverlayLeaf : Content, OverlayContent {
   var contentPaints = 0
   var overlayPaints = 0
   override fun sizes() => Sizes(Dimension(50, 20), Dimension(50, 20), Dimension(50, 20))
-  override fun paint(canvas) {
+  override fun paint(canvas : Canvas) {
     contentPaints += 1
     canvas.fillRect(0, 0, canvas.width, canvas.height)
   }
-  override fun paintOverlay(canvas) {
+  override fun paintOverlay(canvas : Canvas) {
     overlayPaints += 1
     canvas.drawLine(0, 0, 0, 10)
   }
@@ -211,7 +211,7 @@ print("PaintCacheTest:", checks, "checks,", failed)   // expect: PaintCacheTest:
 
 // -- RenderIntoTest --
 
-fun pixels(image) => image.toPicture().pixels
+fun pixels(image : BufferedImage) => image.toPicture().pixels
 
 // reusedBufferMatchesAFreshRender: a picture used again is the same, pixel for pixel, as a new one.
 fun reusedBufferMatchesAFreshRender() {
@@ -240,13 +240,13 @@ print("RenderIntoTest:", checks, "checks,", failed)   // expect: RenderIntoTest:
 // A picture at a scale has that many pixels to the unit, and the same thing in them.
 val twice = button("Scale").renderToImage(80, 30, 2.0, 2.0)
 val once = button("Scale").renderToImage(80, 30)
-print(once, twice, twice.toPicture().inkBox()[2] > once.toPicture().inkBox()[2] * 2 - 4)   // expect: BufferedImage(80 x 30) BufferedImage(160 x 60) true
+print(once, twice, twice.toPicture().inkBox()!![2] > once.toPicture().inkBox()!![2] * 2 - 4)   // expect: BufferedImage(80 x 30) BufferedImage(160 x 60) true
 
 // Only a part is painted when only a part is asked for: the rest of the picture stays.
 val part = BufferedImage(100, 40, BufferedImage.typeIntArgb)
 class Blank : Content {
   override fun sizes() => Sizes(Dimension(1, 1), Dimension(1, 1), Dimension(1000, 1000))
-  override fun paint(canvas) {}
+  override fun paint(canvas : Canvas) {}
 }
 val filler = Component(Blank()).background(Color.red)
 filler.renderInto(part, 100, 40, 1.0, 1.0)

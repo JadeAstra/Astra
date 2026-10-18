@@ -1,5 +1,8 @@
 class Point {
-  fun init(x, y) {
+  var x : int
+  var y : int
+  var z : string? = null
+  fun init(x : int, y : int) {
     this.x = x
     this.y = y
   }
@@ -14,12 +17,15 @@ print(p.x, p.z)                         // expect: 10 new field
 print(type(p), p is Point, Point)       // expect: Point true <class Point>
 
 class Shape {
-  fun init(name) { this.name = name }
+  var name : string
+  fun init(name : string) { this.name = name }
   fun area() { return 0 }
   fun describe() { return "${this.name} with area ${this.area()}" }
 }
 class Rect : Shape {
-  fun init(w, h) {
+  val w : int
+  val h : int
+  fun init(w : int, h : int) {
     super.init("rect")
     this.w = w
     this.h = h
@@ -27,7 +33,7 @@ class Rect : Shape {
   override fun area() { return this.w * this.h }
 }
 class Square : Rect {
-  fun init(side) { super.init(side, side); this.name = "square" }
+  fun init(side : int) { super.init(side, side); this.name = "square" }
   override fun describe() { return "[" + super.describe() + "]" }
 }
 var shapes = [Shape("blob"), Rect(2, 3), Square(4)]
@@ -39,12 +45,12 @@ print(shapes[2] is Shape, shapes[2] is Rect, shapes[1] is Square, shapes[0] is R
 print(1 is Shape, null is Shape)        // expect: false false
 
 // an inherited initializer
-class Base { fun init(v) { this.v = v } }
+class Base { val v : int; fun init(v : int) { this.v = v } }
 class Derived : Base { fun get() { return this.v } }
 print(Derived(7).get())                 // expect: 7
 
 // a class with no initializer
-class Empty { }
+class Empty { var tag = 0 }
 var e = Empty()
 e.tag = 1
 print(e.tag, e)                         // expect: 1 <Empty instance>
@@ -71,13 +77,16 @@ print(describe())                       // expect: rect with area 6
 
 // functions stored in fields can be called like methods
 class Button {
+  val onClick : () -> string
   fun init() { this.onClick = fun() => "clicked" }
 }
 print(Button().onClick())               // expect: clicked
 
 // an initializer returns the instance, even after a bare return
 class Early {
-  fun init(flag) {
+  val flag : bool
+  var extra : bool? = null
+  fun init(flag : bool) {
     this.flag = flag
     if flag { return }
     this.extra = true
@@ -106,14 +115,15 @@ print(makeClass()().value())            // expect: 42
 
 // polymorphism through a shared interface
 class Stack {
+  var items : List<int> = []
   fun init() { this.items = [] }
-  fun add(x) { this.items.push(x); return this }
+  fun add(x : int) { this.items.push(x); return this }
   fun take() { return this.items.pop() }
 }
 class Queue : Stack {
   override fun take() { return this.items.removeAt(0) }
 }
-fun drain(box) {
+fun drain(box : Stack) {
   var seen = []
   seen.push(box.take()); seen.push(box.take())
   return seen

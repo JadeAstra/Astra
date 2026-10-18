@@ -10,10 +10,10 @@ EventLoop.post { log.add("posted 2") }
 EventLoop.after(30) { log.add("after 30") }
 EventLoop.after(5) { log.add("after 5") }
 var ticks = 0
-var ticker = null
+var ticker : Timer? = null
 ticker = EventLoop.every(4) {
   ticks += 1
-  if (ticks == 3) { ticker.cancel() }
+  if (ticks == 3) { ticker!!.cancel() }
 }
 val cancelled = EventLoop.after(1) { log.add("never") }
 cancelled.cancel()
@@ -33,13 +33,13 @@ print(log, worker.isAlive)                                   // expect: ["from t
 // ---- Flows ----
 // A question whose answer comes later, through a callback. Here a timer stands for the user.
 val questions = []
-fun ask(question, callback) {
+fun ask(question : string, callback : (string) -> unit) {
   questions.add(question)
   EventLoop.after(2) { callback(question.uppercase()) }
 }
 
 // The same question as a suspending function: it is called like any other.
-suspend fun answerTo(question) => suspendCoroutine { continuation -> ask(question) { continuation.resume(it) } }
+suspend fun answerTo(question : string) : string => suspendCoroutine { continuation -> ask(question) { continuation.resume(it) } } as string
 
 log.clear()
 startCoroutine {
@@ -63,17 +63,17 @@ startCoroutine {
 print(log)                                                   // expect: ["at once"]
 
 // How a flow turned out is told to a completion.
-var outcome = null
+var outcome : Result<any?>? = null
 val exclaim = { answerTo("x") + "!" }
 exclaim.startCoroutine(Continuation { result -> outcome = result })
 print(outcome)                                               // expect: null
 EventLoop.run()
-print(outcome, outcome.isSuccess, outcome.getOrNull(), outcome.exceptionOrNull())   // expect: Success(X!) true X! null
+print(outcome, outcome!!.isSuccess, outcome!!.getOrNull(), outcome!!.exceptionOrNull())   // expect: Success(X!) true X! null
 val failing = { answerTo("y"); throw Error("went wrong") }
 failing.startCoroutine(Continuation(EmptyCoroutineContext) { outcome = it })
 EventLoop.run()
-print(outcome.isFailure, outcome.exceptionOrNull().message, outcome.getOrNull(), outcome.getOrDefault(0), outcome.getOrElse { "else: " + it.message })   // expect: true went wrong null 0 else: went wrong
-try { outcome.getOrThrow() } catch (e) { print("rethrown:", e.message) }   // expect: rethrown: went wrong
+print(outcome!!.isFailure, (outcome!!.exceptionOrNull() as Error).message, outcome!!.getOrNull(), outcome!!.getOrDefault(0), outcome!!.getOrElse { "else: " + (it as Error).message })   // expect: true went wrong null 0 else: went wrong
+try { outcome!!.getOrThrow() } catch (e) { print("rethrown:", e.message) }   // expect: rethrown: went wrong
 print(runCatching { 6 * 7 }, runCatching { throw Error("no") }.isFailure, Result.success(1).onSuccess { log.add("ok") }.getOrThrow(), log.last())   // expect: Success(42) true 1 ok
 
 // A wait can be answered with an error, which the flow can catch.
@@ -91,25 +91,25 @@ print(log)                                                   // expect: ["caught
 
 // Without a completion, an error the flow does not catch goes to whoever was running it:
 // here the callback that brought the answer.
-var reached = null
-var held = null
+var reached : string? = null
+var held : Continuation? = null
 startCoroutine {
   suspendCoroutine { c -> held = c }
   throw Error("after the answer")
 }
-try { held.resume(1) } catch (e) { reached = e.message }
+try { held!!.resume(1) } catch (e) { reached = e.message }
 print(reached)                                               // expect: after the answer
 try { startCoroutine { throw Error("at once") } } catch (e) { print(e.message) }   // expect: at once
 
 // A continuation is resumed once.
 startCoroutine { suspendCoroutine { c -> held = c } }
-held.resume(1)
-try { held.resume(2) } catch (e) { print(e.message) }        // expect: this continuation has already been resumed
+held!!.resume(1)
+try { held!!.resume(2) } catch (e) { print(e.message) }        // expect: this continuation has already been resumed
 
 // A flow can be set aside inside a lambda given to a collection function, inside apply,
 // with, let and run, and several calls deep.
 class Form { var name = ""; var size = 0 }
-fun deeper(p) {
+fun deeper(p : string) {
   val inner = { q -> answerTo(p + q) }
   return inner("2")
 }
@@ -140,7 +140,7 @@ log.clear()
 startCoroutine {
   val future = Future.supplyAsync { Thread.sleep(10); "worked on " + (EventLoop.isLoopThread ? "the loop" : "a thread") }
   log.add(future.await() + ", back on the loop: ${EventLoop.isLoopThread}")
-  log.add(runCatching { Future.supplyAsync { throw Error("failed there") }.await() }.exceptionOrNull().message)
+  log.add((runCatching { Future.supplyAsync { throw Error("failed there") }.await() }.exceptionOrNull() as Error).message)
 }
 log.add("meanwhile")
 EventLoop.run()
@@ -159,7 +159,7 @@ EventLoop.run()
 print(log)                                                   // expect: ["outer 1", "inner 1", "outer 2", "inner 2", "outer 3"]
 
 // On a thread that is not running a flow, a suspending function waits on that thread.
-var onThread = null
+var onThread : any? = null
 thread { onThread = suspendCoroutine { c -> EventLoop.post { c.resume("answered from the loop") } } }
 EventLoop.run()
 print(onThread)                                              // expect: answered from the loop
@@ -180,7 +180,7 @@ fun flow(block : suspend () -> unit) {
   block.startCoroutine(Continuation(EmptyCoroutineContext) { r -> r.exceptionOrNull()?.let { throw it } })
 }
 
-fun flowNow(block : suspend () -> any) : any? {
+fun flowNow(block : suspend () -> any?) : any? {
   var out : Result? = null
   block.startCoroutine(Continuation(EmptyCoroutineContext) { out = it })
   return out?.getOrThrow()
@@ -191,13 +191,13 @@ suspend fun await(ask : ((any) -> unit) -> unit) => suspendCoroutine { c ->
   ask { if (!answered) { answered = true; c.resume(it) } }
 }
 
-fun answering(f) => { a, done -> done(f(a)) }
+fun answering(f : (string) -> string) => { a, done -> done(f(a)) }
 
 // A dialog that answers later, and a stub that answers at once, as a test would give.
 object dialog {
-  fun prompt(title, done) { EventLoop.after(1) { done("$title?"); done("ignored") } }
+  fun prompt(title : string, done : (string) -> unit) { EventLoop.after(1) { done("$title?"); done("ignored") } }
 }
-suspend fun askText(title) => await { dialog.prompt(title, it) }
+suspend fun askText(title : string) => await { dialog.prompt(title, it) }
 
 log.clear()
 flow {

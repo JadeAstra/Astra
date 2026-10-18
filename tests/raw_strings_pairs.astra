@@ -38,7 +38,7 @@ print(pair, pair.first, pair.second, pair == Pair("width", 200), pair is Pair)  
 val (key, value) = pair
 print(key, value, pair.toList(), pair.copy(second = 300).second)   // expect: width 200 ["width", 200] 300
 
-fun tabs(vararg items) => items.map { (title, content) -> "$title: $content" }
+fun tabs(vararg items : Pair<string, int>) => items.map { (title, content) -> "$title: $content" }
 print(tabs("A" to 1, "B" to 2))             // expect: ["A: 1", "B: 2"]
 val table = ["one" to 1, "two" to 2, "three" to 3]
 val names = []
@@ -51,7 +51,7 @@ val (a, b, c) = triple
 print(triple, a, b, c, triple.toList(), triple.third)   // expect: Triple(first="x", second=1, third=true) x 1 true ["x", 1, true] true
 
 // `to` is an ordinary name everywhere else.
-data Line(val from, val to)
+data Line(val from : int, val to : int)
 val line = Line(1, 9)
 val to = line.to
 print(to, line.to - line.from, Line(to = 4, from = 2).to)   // expect: 9 8 4

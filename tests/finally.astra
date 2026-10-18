@@ -107,12 +107,12 @@ print(scoped())                             // expect: try finally outer
 
 // Catches for particular classes of error.
 class NotFound : Error {
-  fun init(what) { super.init(what + " not found") }
+  fun init(what : string) { super.init(what + " not found") }
 }
 class Denied : Error {
   fun init() { super.init("denied") }
 }
-fun attempt(action) {
+fun attempt(action : () -> unit) {
   try {
     action()
     return "ok"
@@ -130,7 +130,7 @@ print(attempt(fun() { }), attempt(fun() { throw NotFound("key") }), attempt(fun(
 // expect: ok missing: key not found refused other: 42
 
 // With no catch for it, an error passes through.
-fun onlyNotFound(action) {
+fun onlyNotFound(action : () -> unit) {
   try { action() } catch (e : NotFound) { return "handled" }
   return "nothing thrown"
 }

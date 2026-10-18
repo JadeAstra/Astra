@@ -45,6 +45,13 @@ public:
 
     std::vector<CheckDiagnostic> diagnostics;
 
+    // Whether what is found in the standard library is reported too (`astra check --std`).
+    bool reportStandardLibrary = false;
+
+    // The rule of M6.5 part 3, step 5, before it is switched on (`astra check --typed`): a
+    // parameter of a named function, a method or a class header has a type written.
+    bool requireTypes = false;
+
     // For a call of a name with several forms (overloads, D56): the declaration of the form it
     // means, where that could be told; null otherwise, and the form is chosen when it runs.
     const FunctionDecl* chosenForm(const CallExpr& call) const;

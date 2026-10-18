@@ -14,7 +14,7 @@ interface Shape {
 }
 abstract class Tool { abstract fun use() }
 
-fun attempt(make) {
+fun attempt(make : () -> any?) {
   try { make() } catch (e) { return e.message }
   return "ok"
 }
@@ -41,12 +41,12 @@ print(attempt(fun() { class C : Shape { val name = "c"; override fun area() => 1
 // expect: 'name' in class C is what interface Shape asks for; write override in front of it
 print(attempt(fun() { class C : Shape { override val name = "c"; fun area() => 1 } }))
 // expect: 'area' in class C is what interface Shape asks for; write override in front of it
-print(attempt(fun() { class C(override val name) : Shape { override fun area() => 1; fun describe() => "mine" } }))
+print(attempt(fun() { class C(override val name : string) : Shape { override fun area() => 1; fun describe() => "mine" } }))
 // expect: 'describe' in class C takes the place of the one it inherits; write override in front of it
 print(attempt(fun() { class D : Tool { fun use() => 1 } }))
 // expect: 'use' in class D is what abstract class Tool asks for; write override in front of it
 print(attempt(fun() {
-  class C(override val name) : Shape {
+  class C(override val name : string) : Shape {
     override fun area() => 2
     override fun describe() => "my " + super.describe()
   }
@@ -55,18 +55,18 @@ print(attempt(fun() {
 
 // toString and == may always be written with it; init never needs it. A field and a method of
 // one name are different things, so neither replaces the other.
-class Point(val x, val y) {
+class Point(val x : int, val y : int) {
   override fun toString() => "($x, $y)"
-  override op ==(other) => other is Point and x == other.x and y == other.y
+  override op ==(other : any?) => other is Point and x == other.x and y == other.y
 }
 class Named : Base {
-  var extra = null
-  fun init(id, extra) {
+  var extra : string? = null
+  fun init(id : int, extra : string) {
     super.init(id)
     this.extra = extra
   }
   override fun toString() => "Named " + super.toString()
-  fun size(n) {
+  fun size(n : int) {
     size = n
     return this
   }

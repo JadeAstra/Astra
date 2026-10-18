@@ -22,45 +22,45 @@ class Worker {
   static val parent = __worker.inWorker() ? WorkerParent() : null
 
   // Called with each message the worker sends, on this program's event loop.
-  var onMessage = null
+  var onMessage : ((any?) -> unit)? = null
   // Called with a description of an error that ended the worker. Without one, it is reported
   // as an uncaught error is.
-  var onError = null
+  var onError : ((any?) -> unit)? = null
 
-  private var id
+  private var id : int
 
   // The path is written in the call itself, as a string: the script is then compiled into
   // the program, and a program built into an executable takes its workers with it.
   // A worker keeps the program alive until it ends, unless it is a daemon.
-  fun init(script, isDaemon = false) {
+  fun init(script : string, isDaemon : bool = false) {
     id = __worker.start(script, this, isDaemon)
   }
 
   // The script it runs, as the call named it.
-  get path() => __worker.path(id)
+  get path() : string => __worker.path(id)
 
   // Sends a copy of the message. False if the worker has ended.
-  fun post(message) => __worker.post(id, message)
+  fun post(message : any?) : bool => __worker.post(id, message)
 
   // Stops the worker, whatever it is doing: at its next call or loop round.
   fun terminate() {
     __worker.terminate(id)
   }
 
-  get isAlive() => __worker.isAlive(id)
+  get isAlive() : bool => __worker.isAlive(id)
 }
 
 // What a worker sees of the program that started it.
 class WorkerParent {
   // Called with each message the program sends, on the worker's event loop.
-  var onMessage = null
+  var onMessage : ((any?) -> unit)? = null
 
   fun init() {
     __worker.attach(this)
   }
 
   // Sends a copy of the message to the program.
-  fun post(message) {
+  fun post(message : any?) {
     __worker.send(message)
   }
 

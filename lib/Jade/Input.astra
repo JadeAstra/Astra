@@ -13,7 +13,7 @@ class Modifiers {
   val meta
   val shortcut
 
-  fun init(shift = false, ctrl = false, alt = false, meta = false, shortcut = null) {
+  fun init(shift : bool = false, ctrl : bool = false, alt : bool = false, meta : bool = false, shortcut : bool? = null) {
     this.shift = shift
     this.ctrl = ctrl
     this.alt = alt
@@ -24,12 +24,12 @@ class Modifiers {
   static val none = Modifiers()
 
   // As the native layer counts them: 1 shift, 2 ctrl, 4 alt, 8 meta.
-  static fun ofBits(bits) => bits == 0 ? Modifiers.none : Modifiers(bits & 1 != 0, bits & 2 != 0, bits & 4 != 0, bits & 8 != 0)
-  get bits() => (shift ? 1 : 0) | (ctrl ? 2 : 0) | (alt ? 4 : 0) | (meta ? 8 : 0)
+  static fun ofBits(bits : int) : Modifiers => bits == 0 ? Modifiers.none : Modifiers(bits & 1 != 0, bits & 2 != 0, bits & 4 != 0, bits & 8 != 0)
+  get bits() : int => (shift ? 1 : 0) | (ctrl ? 2 : 0) | (alt ? 4 : 0) | (meta ? 8 : 0)
 
-  op ==(other) => other is Modifiers and other.bits == bits and other.shortcut == shortcut
-  fun hashCode() => bits
-  override fun toString() {
+  op ==(other : any?) : bool => other is Modifiers and other.bits == bits and other.shortcut == shortcut
+  fun hashCode() : int => bits
+  override fun toString() : string {
     val held = []
     if (shift) { held.add("shift") }
     if (ctrl) { held.add("ctrl") }
@@ -56,7 +56,7 @@ enum KeyCode {
 
   private static val byName = {:}
   // The key the native layer calls by this name.
-  static fun named(name) {
+  static fun named(name : string) : KeyCode {
     if (KeyCode.byName.isEmpty()) {
       for (key in KeyCode.entries) { KeyCode.byName[key.name] = key }
     }
@@ -74,19 +74,19 @@ enum CursorMode { normal, hidden, locked }
 // One thing the keyboard or the pointer did. Positions are in layout units from the top
 // left corner of what the window draws on.
 interface RawInput {
-  data PointerDown(val x, val y, val button, val mods, val clicks = 1) : RawInput
-  data PointerUp(val x, val y, val button, val mods) : RawInput
+  data PointerDown(val x : int, val y : int, val button : PointerButton, val mods : Modifiers, val clicks : int = 1) : RawInput
+  data PointerUp(val x : int, val y : int, val button : PointerButton, val mods : Modifiers) : RawInput
   // `dx`, `dy`: how far it moved since the last time. `buttons`: the ones held, as a set.
-  data PointerMove(val x, val y, val dx, val dy, val buttons, val mods) : RawInput
+  data PointerMove(val x : int, val y : int, val dx : Number, val dy : Number, val buttons : Set<PointerButton>, val mods : Modifiers) : RawInput
   // One click of a wheel is 1.0; up and to the left are positive.
-  data Wheel(val x, val y, val dx, val dy, val mods) : RawInput
+  data Wheel(val x : int, val y : int, val dx : Number, val dy : Number, val mods : Modifiers) : RawInput
   // `letter`: what the key types in the layout in use, in upper case ("A", "7"), or null.
-  data KeyDown(val key, val mods, val repeat = false, val letter = null) : RawInput
-  data KeyUp(val key, val mods, val letter = null) : RawInput
+  data KeyDown(val key : KeyCode, val mods : Modifiers, val repeat : bool = false, val letter : string? = null) : RawInput
+  data KeyUp(val key : KeyCode, val mods : Modifiers, val letter : string? = null) : RawInput
   // What was typed, after the layout and any composing: one or more characters.
-  data Text(val text) : RawInput
+  data Text(val text : string) : RawInput
   // The pointer came over the window, or left it.
-  data Hover(val inside) : RawInput
+  data Hover(val inside : bool) : RawInput
   // The window has the keyboard, or has lost it.
-  data Focus(val focused) : RawInput
+  data Focus(val focused : bool) : RawInput
 }

@@ -5,13 +5,13 @@ print(early(2))                             // expect: 42
 val c = Later(3)
 print(c.describe(), c is Base, c is Api)    // expect: later3! true true
 
-class Later(val n) : Base("later"), Api {
+class Later(val n : int) : Base("later"), Api {
   fun describe() => name + n + mark()
   override fun call() => "called"
 }
-fun early(n) => n * factor()
+fun early(n : int) => n * factor()
 fun factor() => 21
-class Base(val name)
+class Base(val name : string)
 interface Api { fun call() }
 fun mark() => "!"
 
@@ -31,11 +31,11 @@ val seed = 5
 val order = []
 class Config {
   static val START = seed * 2
-  static val LOG = order.push("config") or order
+  static val LOG = order.also { it.push("config") }
 }
-enum Stage(val weight) {
+enum Stage(val weight : int) {
   one(seed), two(seed + 1)
-  fun init(weight) {
+  fun init(weight : int) {
     this.weight = weight
     order.push("stage " + weight)
   }

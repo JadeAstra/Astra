@@ -74,7 +74,7 @@ attempt("ada -> grace 30") { Bank.transfer("ada", "grace", 30) }
 attempt("grace -> ada 500") { Bank.transfer("grace", "ada", 500) }
 attempt("ada -> nobody 1") { Bank.transfer("ada", "nobody", 1) }
 attempt("deposit -5") { Bank.find("ada").deposit(-5) }
-attempt("deposit \"ten\"") { Bank.find("ada").deposit("ten") }
+// deposit("ten") is not tried: deposit takes a Number, which is checked when compiling.
 
 print(attempts, "attempts")
 for account in (Bank.accounts.values.sortedByDescending { it.balance }) {

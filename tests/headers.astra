@@ -12,19 +12,22 @@ val s = Student("Ann", 9)
 s.grade += 1
 print(s.name, s.grade, s is Student, type(s))    // expect: Ann 10 true Student
 
-fun attempt(f) {
+// A value whose type the checker does not see, for testing the checks made when running.
+val unknown = { value -> value }
+
+fun attempt(f : () -> any?) {
   try { return f() } catch (e) { return e.message }
 }
 
 // header fields are ordinary declared fields: typed, val or var, and nothing undeclared
-print(attempt(fun() => Student("Bob")))          // expect: Student.init() expects 2 argument(s) but got 1
-print(attempt(fun() => Student(7, 9)))           // expect: cannot assign a value of type int to field 'name' of Student, which is declared as string
-print(attempt(fun() { s.grade = "A" }))          // expect: cannot assign a value of type string to field 'grade' of Student, which is declared as int
+print(attempt(fun() => unknown(Student)("Bob")))          // expect: Student.init() expects 2 argument(s) but got 1
+print(attempt(fun() => Student(unknown(7), 9)))           // expect: cannot assign a value of type int to field 'name' of Student, which is declared as string
+print(attempt(fun() { s.grade = unknown("A") }))          // expect: cannot assign a value of type string to field 'grade' of Student, which is declared as int
 print(attempt(fun() { v.x = 0 }))                // expect: cannot assign to val field 'x' of Vec2
-print(attempt(fun() { s.nickname = "A" }))       // expect: Student has no field 'nickname'; fields must be declared in the class with val or var
+print(attempt(fun() { unknown(s).nickname = "A" }))       // expect: Student has no field 'nickname'; fields must be declared in the class with val or var
 
 // header and body fields together; untyped and nullable header fields
-class Order(val id : int, var note, var customer : string?) {
+class Order(val id : int, var note : any?, var customer : string?) {
   var items : List = []
   val created : string = "today"
   fun add(item : string) : Order { this.items.push(item); return this }
@@ -44,7 +47,7 @@ class Temperature(val celsius : Number, val label : string) {
   }
 }
 print(Temperature(30).label, Temperature(10).label)   // expect: warm cool
-print(attempt(fun() => Temperature(30, "x")))    // expect: Temperature.init() expects 1 argument(s) but got 2
+print(attempt(fun() => unknown(Temperature)(30, "x")))    // expect: Temperature.init() expects 1 argument(s) but got 2
 class Forgetful(val a : int, val b : int) {
   fun init(a : int) { this.a = a }
 }
@@ -63,8 +66,8 @@ class Snake(name : string) : Animal(name, 0)
 print(Dog("Rex", "collie").describe())           // expect: Rex has 4 legs and is a collie
 print(Puppy("Bit").describe(), "/", Snake("Sid").describe())   // expect: Bit has 4 legs and is a mutt / Sid has 0 legs
 print(Puppy("Bit") is Animal, Puppy("Bit").breed)    // expect: true mutt
-print(attempt(fun() => Dog(5, "x")))             // expect: argument 'name' of Dog.init() must be string, got int
-print(attempt(fun() => Dog("Rex", 5)))           // expect: cannot assign a value of type int to field 'breed' of Dog, which is declared as string
+print(attempt(fun() => Dog(unknown(5), "x")))             // expect: argument 'name' of Dog.init() must be string, got int
+print(attempt(fun() => Dog("Rex", unknown(5))))           // expect: cannot assign a value of type int to field 'breed' of Dog, which is declared as string
 print(attempt(fun() { Snake("Sid").name = "x" }))    // expect: cannot assign to val field 'name' of Snake
 
 // superclasses with a hand-written init, with no init at all, and one that needs arguments
@@ -81,8 +84,7 @@ class Child2(val n : int) : Plain()
 print(Child(1).on, Child2(2).n)                  // expect: true 2
 class NeedsArgs(val n : int) : Base
 print(attempt(fun() => NeedsArgs(1)))            // expect: Base.init() expects 1 argument(s) but got 0
-class TooMany(val n : int) : Plain(1)
-print(attempt(fun() => TooMany(1)))              // expect: Plain() takes no arguments but got 1
+// Arguments for a superclass that takes none are found when compiling (tests/check/calls.astra).
 
 // an empty header, a header spread over several lines, and a class with no body at all
 class Marker()
@@ -108,22 +110,22 @@ print(c0.host, c0.port, c0.tags)                 // expect: localhost 8080 []
 print(c1.host, c1.port, c2.port, c2.tags)        // expect: example.org 8080 443 ["tls"]
 c0.tags.push("x")
 print(c0.tags, c1.tags)                          // expect: ["x"] []
-print(attempt(fun() => Config("a", 1, [], 4)))   // expect: Config.init() expects 0 to 3 argument(s) but got 4
-print(attempt(fun() => Config("a", "80")))       // expect: cannot assign a value of type string to field 'port' of Config, which is declared as int
+print(attempt(fun() => unknown(Config)("a", 1, [], 4)))   // expect: Config.init() expects 0 to 3 argument(s) but got 4
+print(attempt(fun() => Config("a", unknown("80"))))       // expect: cannot assign a value of type string to field 'port' of Config, which is declared as int
 
 // required entries come first; a default can use the entries before it
 class Box(val width : Number, val height : Number = width, val label : string = "${width}x$height")
 print(Box(2).label, Box(2, 3).label, Box(2, 3, "custom").label)   // expect: 2x2 2x3 custom
-print(attempt(fun() => Box()))                   // expect: Box.init() expects 1 to 3 argument(s) but got 0
+print(attempt(fun() => unknown(Box)()))                   // expect: Box.init() expects 1 to 3 argument(s) but got 0
 
 // defaults for plain parameters, together with a superclass
 class Pet(name : string, sound : string = "...", val owner : string? = null) : Animal(name + " (" + sound + ")", 4)
 print(Pet("Tom").describe(), Pet("Tom", "meow", "Ann").owner)   // expect: Tom (...) has 4 legs Ann
-print(attempt(fun() => Pet("Tom", 5)))           // expect: argument 'sound' of Pet.init() must be string, got int
+print(attempt(fun() => Pet("Tom", unknown(5))))           // expect: argument 'sound' of Pet.init() must be string, got int
 
 // a default that is only known when the program runs is still type-checked
 var fallback = "eighty"
-class Server(val port : int = fallback)
+class Server(val port : int = unknown(fallback))
 print(attempt(fun() => Server()), Server(1).port)    // expect: cannot assign a value of type string to field 'port' of Server, which is declared as int 1
 
 // in a class with its own init, a header default is simply the field's initial value

@@ -291,6 +291,10 @@ struct FunctionProto {
     std::string signature;
     std::vector<uint8_t> paramTypes;
     std::vector<ObjString*> paramClasses;
+    // For a parameter of a function type, one more than the number of parameters that type
+    // has, so that a lambda taking two tells `forEach { k, v -> }` from `forEach { entry -> }`;
+    // 0 for any other.
+    std::vector<uint8_t> paramCounts;
 
     // The set of a name's forms, made by MakeForms: it has no code of its own; calling it
     // calls the form the arguments fit (VM::chooseForm).

@@ -15,7 +15,7 @@ val faint = 0xFF8A9199
 val rule = 0xFF2F81F7
 val paper = 0xFFFFFFFF
 
-fun px(n) => int(Math.round(n * scale))
+fun px(n : Number) : int => int(Math.round(n * scale))
 
 val page = Picture(px(900), px(1070), paper)
 var y = px(24)
@@ -23,7 +23,7 @@ var lines = 0
 var checked = 0
 
 // One line of text at the left margin, with its measured width ruled underneath.
-fun line(text, font, color = ink, note = null) {
+fun line(text : string, font : TextFont, color : int = ink, note : string? = null) {
   val x = px(28)
   y += font.ascent
   val drawn = page.drawText(text, x, y, font, color)
@@ -46,7 +46,7 @@ fun line(text, font, color = ink, note = null) {
   lines += 1
 }
 
-fun heading(text) {
+fun heading(text : string) {
   y += px(10)
   page.drawText(text, px(28), y + small.ascent, small, faint)
   y += small.height + px(4)
@@ -80,7 +80,7 @@ line("Segoe UI Variable, small: the cut made for small sizes is chosen by itself
 line("Segoe UI Variable, large: and the display cut here", TextFont("Segoe UI Variable", 26, scale = scale))
 
 heading("THE OTHER KIND OF OUTLINE (CUBIC CURVES, .OTF)")
-var cubic = null
+var cubic : Typeface? = null
 for (face in Fonts.typefaces()) {
   if (cubic == null and face.hasCubicOutlines and face.has("a") and !face.isItalic and face.weight <= 500) { cubic = face }
 }

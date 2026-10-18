@@ -166,9 +166,28 @@ bool VM::methodArity(BuiltinType type, const std::string& name, int& minArgs, in
     return true;
 }
 
-void VM::nameParams(BuiltinType type, const std::string& method, std::initializer_list<const char*> params) {
-    NativeMethod& native = methods_[static_cast<int>(type)].at(intern(method));
-    native.params.assign(params.begin(), params.end());
+void VM::nameParams(BuiltinType type, const std::string& method, const std::vector<std::string>& params) {
+    auto found = methods_[static_cast<int>(type)].find(intern(method));
+    if (found == methods_[static_cast<int>(type)].end()) return;
+    if (params.size() > found->second.params.size()) found->second.params = params;
+}
+
+void VM::nameFunctionParams(const std::string& function, const std::vector<std::string>& params) {
+    auto found = builtins_.find(function);
+    if (found == builtins_.end() || !found->second.isObjType(ObjType::Native)) return;
+    ObjNative* native = asNative(found->second);
+    if (params.size() > native->params.size()) native->params = params;
+}
+
+bool VM::builtinTypeNamed(const std::string& name, BuiltinType& type) {
+    if (name == "string") type = BuiltinType::String;
+    else if (name == "List") type = BuiltinType::List;
+    else if (name == "Map") type = BuiltinType::Map;
+    else if (name == "Range") type = BuiltinType::Range;
+    else if (name == "Bytes") type = BuiltinType::Bytes;
+    else if (name == "Number" || name == "int" || name == "float") type = BuiltinType::Number;
+    else return false;
+    return true;
 }
 
 void VM::collect(Value iterable, std::vector<Value>& out) {
@@ -793,7 +812,19 @@ bool VM::formTakes(const FunctionProto* proto, const Value* args, int positional
     const bool typed = proto->paramTypes.size() == static_cast<size_t>(arity);
     auto fit = [&](int param, Value v) {
         if (!typed || param == vararg) return 0;
-        return paramFit(v, proto->paramTypes[static_cast<size_t>(param)], proto->paramClasses[static_cast<size_t>(param)]);
+        const int f = paramFit(v, proto->paramTypes[static_cast<size_t>(param)], proto->paramClasses[static_cast<size_t>(param)]);
+        // A function written in Astra, given for a parameter of a function type: it has to
+        // take as many arguments as the type gives.
+        const size_t counted = proto->paramCounts.size() > static_cast<size_t>(param) ? proto->paramCounts[static_cast<size_t>(param)] : 0;
+        if (f >= 0 && counted > 0) {
+            const FunctionProto* given = v.isObjType(ObjType::Closure)       ? asClosure(v)->proto
+                                         : v.isObjType(ObjType::BoundMethod) ? asBoundMethod(v)->method->proto
+                                                                             : nullptr;
+            const int wanted = static_cast<int>(counted) - 1;
+            if (given != nullptr && !given->chooser && given->varargIndex < 0 && (wanted < given->requiredArgs() || wanted > given->arity))
+                return -1;
+        }
+        return f;
     };
     uint64_t given = 0;  // the parameters given a value (the first 64)
     auto give = [&](int param) {
@@ -816,7 +847,6 @@ bool VM::formTakes(const FunctionProto* proto, const Value* args, int positional
         if (name->chars.empty()) {
             if (arity == 0) return false;
             index = arity - 1;
-            if (vararg < 0 && required > 0 && positional == required - 1 && !isGiven(required - 1)) index = required - 1;
         } else {
             for (int p = 0; p < arity && index < 0; p++)
                 if (proto->paramNames.size() == static_cast<size_t>(arity) && proto->paramNames[static_cast<size_t>(p)] == name) index = p;
@@ -930,14 +960,9 @@ void VM::callClosure(ObjClosure* closure, int argc, bool packed) {
 }
 
 // A call whose last argument is a lambda written after the call, as in
-// `items.joinToString(", ") { it.name }`. The lambda belongs to the last parameter, so the
-// parameters between the other arguments and it are left to their defaults.
-//
-// One case is different, for functions that have optional parameters after a function
-// parameter, such as groupBy(keySelector, valueTransform = null). If the parameters that
-// have to be given are all there but the last of them, the lambda is that one:
-// `groupBy { it.size }` gives keySelector, and `groupBy({ it.size }) { it.name }` gives both.
-// (callNamed does the same for a call to a plain function.)
+// `items.joinToString(", ") { it.name }`. The lambda belongs to the last parameter, as in
+// Kotlin, so the parameters between the other arguments and it are left to their defaults; a
+// function that takes a lambda or not has a form for each (D56).
 void VM::callTrailing(ObjClosure* closure, int argc) {
     if (closure->proto->chooser) {
         if (emptyName_ == nullptr) emptyName_ = intern("");
@@ -956,10 +981,8 @@ void VM::callTrailing(ObjClosure* closure, int argc) {
     if (stackEnd_ - sp_ < arity + 1) throw runtimeError("stack overflow");
 
     int given = argc - 1;
-    int target = arity - 1;
-    if (vararg < 0 && given == proto->requiredArgs() - 1) {
-        target = given;
-    } else if (given < proto->requiredArgs()) {
+    const int target = arity - 1;
+    if (given < proto->requiredArgs()) {
         // The lambda may pass over parameters that have a default, and no others.
         if (proto->paramNames.size() != static_cast<size_t>(arity)) checkArity(proto->name, proto->requiredArgs(), arity, argc);
         throw runtimeError(proto->name + "() is missing argument '" + proto->paramNames[static_cast<size_t>(given)]->chars + "'");
@@ -1142,6 +1165,7 @@ bool VM::callNamed(int positional, int named) {
                 break;
             }
             case ObjType::Native:
+                if (!asNative(callee)->params.empty()) return callNativeNamed(positional, named);
                 throw runtimeError("built-in function " + asNative(callee)->name + "() does not take named arguments");
             case ObjType::BoundNative:
                 if (!asBoundNative(callee)->method->params.empty()) return callNativeNamed(positional, named);
@@ -1160,9 +1184,8 @@ bool VM::callNamed(int positional, int named) {
     if (positional > arity && vararg < 0) checkArity(display(), proto->requiredArgs(), arity, positional + named);
 
     // The common case of a lambda after the call: every parameter before the last was given,
-    // or all that have to be given but one, so the lambda is simply the next argument.
-    if (named == 1 && vararg < 0 && (positional + 1 == arity || positional == proto->requiredArgs() - 1) &&
-        asString(sp_[-2])->chars.empty()) {
+    // so the lambda is simply the next argument.
+    if (named == 1 && vararg < 0 && positional + 1 == arity && asString(sp_[-2])->chars.empty()) {
         sp_[-2] = sp_[-1];
         sp_--;
         return callValue(callee, positional + 1);
@@ -1189,14 +1212,9 @@ bool VM::callNamed(int positional, int named) {
 
         int index = -1;
         if (name->chars.empty()) {
-            // The lambda written after the call: it is the last parameter, or the last of
-            // those that have to be given if that is the only one still missing (see callTrailing).
+            // The lambda written after the call: it is the last parameter (see callTrailing).
             if (arity == 0) throw runtimeError(display() + "() takes no arguments, so no lambda can follow the call");
             index = arity - 1;
-            const int required = proto->requiredArgs();
-            if (vararg < 0 && required > 0 && positional == required - 1 &&
-                arranged[static_cast<size_t>(required - 1)].kind == ValueKind::Undefined)
-                index = required - 1;
             name = proto->paramNames[static_cast<size_t>(index)];
         }
         for (int p = 0; index < 0 && p < arity; p++) {
@@ -1235,7 +1253,18 @@ bool VM::callNamed(int positional, int named) {
 bool VM::callNativeNamed(int positional, int named) {
     Value* first = sp_ - positional - 2 * named;
     Value callee = first[-1];
-    const NativeMethod* method = asBoundNative(callee)->method;
+    // A built-in method of a value, or a built-in function: what it is called and takes.
+    struct Native {
+        const std::vector<std::string>& params;
+        const std::string& name;
+        int minArgs, maxArgs;
+    };
+    const Native native = callee.isObjType(ObjType::BoundNative)
+                              ? Native{asBoundNative(callee)->method->params, asBoundNative(callee)->method->name,
+                                       asBoundNative(callee)->method->minArgs, asBoundNative(callee)->method->maxArgs}
+                              : Native{asNative(callee)->params, asNative(callee)->name, asNative(callee)->minArgs,
+                                       asNative(callee)->maxArgs};
+    const Native* method = &native;
     const int count = static_cast<int>(method->params.size());
     if (positional > count) checkArity(method->name, method->minArgs, method->maxArgs, positional + named);
 
@@ -1794,7 +1823,7 @@ void VM::setProperty(Value obj, ObjString* name, Value value) {
         guardWrite(instance);
         if (instance->cls->isEnum && (name == names.name || name == names.ordinal))
             throw runtimeError("cannot assign to '" + name->chars + "' of an entry of enum " + instance->cls->name->chars);
-        if (!instance->cls->declared.empty()) checkFieldAssignment(instance, name, value);
+        checkFieldAssignment(instance, name, value);  // every field is declared (R24)
         instance->fields.set(name, value);
     } else if (obj.isObjType(ObjType::Class)) {
         assignStatic(asClass(obj), name, value);

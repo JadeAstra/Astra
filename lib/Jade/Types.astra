@@ -3,12 +3,12 @@
 // may also be able to do, and the colours of the theme. (JadeUI: Jade.kt.)
 
 // What a content says of its size: the least it can be, what it would like, and the most.
-data Sizes(val min, val pref, val max)
+data Sizes(val min : Dimension, val pref : Dimension, val max : Dimension)
 
 // How a widget is to draw itself, handed down from what it is in: a background and a
 // foreground to use where it has none of its own, whether it can be used, and whether it
 // should draw its own frame.
-data Style(val background, val foreground, val enabled, val framed = true)
+data Style(val background : Color?, val foreground : Color?, val enabled : bool, val framed : bool = true)
 
 // How a cell's widget takes up the room its cell has.
 enum Fill { none, horizontal, vertical, both }
@@ -24,27 +24,27 @@ enum EditCommand { undo, redo, copy, cut, paste, selectAll, fillDown, fillRight,
 // What a widget is told has happened. Positions are from the widget's own top left corner.
 interface Event {
   // A press of the main button. `clicks` is 2 for a double click.
-  data Click(val x, val y, val clicks = 1, val shift = false, val ctrl = false) : Event
+  data Click(val x : int, val y : int, val clicks : int = 1, val shift : bool = false, val ctrl : bool = false) : Event
   // Typed text.
-  data KeyType(val text) : Event
-  data KeyPress(val key, val shift = false, val ctrl = false) : Event
+  data KeyType(val text : string) : Event
+  data KeyPress(val key : Key, val shift : bool = false, val ctrl : bool = false) : Event
   // The pointer moved with the button held, and the button was let go.
-  data Drag(val x, val y, val shift = false) : Event
-  data Release(val x, val y, val shift = false) : Event
-  data Wheel(val x, val y, val deltaY, val shift = false, val deltaX = 0) : Event
-  data Shortcut(val command) : Event
+  data Drag(val x : int, val y : int, val shift : bool = false) : Event
+  data Release(val x : int, val y : int, val shift : bool = false) : Event
+  data Wheel(val x : int, val y : int, val deltaY : int, val shift : bool = false, val deltaX : int = 0) : Event
+  data Shortcut(val command : EditCommand) : Event
   // The other button: pressed, or (drag) moved while held.
-  data Context(val x, val y, val drag = false) : Event
+  data Context(val x : int, val y : int, val drag : bool = false) : Event
   // The pointer is over the widget; (-1, -1) once it has left.
-  data Hover(val x, val y, val shift = false, val ctrl = false) : Event
+  data Hover(val x : int, val y : int, val shift : bool = false, val ctrl : bool = false) : Event
 }
 
 // What a widget is made of: it says how large it is, paints itself, and hears of events.
 // A Component wraps one.
 interface Content {
-  fun sizes()
-  fun paint(canvas)
-  fun onEvent(event) {}
+  fun sizes() : Sizes
+  fun paint(canvas : Canvas)
+  fun onEvent(event : Event) {}
 }
 
 // ---- What a content may also be able to do ----
@@ -56,70 +56,70 @@ interface FocusTarget
 
 // Keeps the keyboard when something else is pressed, if it says so.
 interface FocusHolder {
-  fun holdsFocusOnPress(pressed, x, y)
+  fun holdsFocusOnPress(pressed : Component, x : int, y : int) : bool
 }
 
 // Is told when it gets and loses the keyboard, and may have a caret that blinks.
 interface FocusAware {
-  fun setFocused(focused)
-  fun blinkCaret() => false
-  fun caretGeneration() => 0
+  fun setFocused(focused : bool)
+  fun blinkCaret() : bool => false
+  fun caretGeneration() : int => 0
   fun showCaretSolid() {}
 }
 
 // Uses the Tab key itself, when it says so, instead of letting it move on to the next widget.
 interface TabAware {
-  fun acceptsTab()
+  fun acceptsTab() : bool
 }
 
 // Wants another pointer over parts of itself.
 interface CursorProvider {
-  fun cursorAt(x, y)
+  fun cursorAt(x : int, y : int) : CursorKind
 }
 
 interface TooltipProvider {
-  fun tooltipAt(x, y)
+  fun tooltipAt(x : int, y : int) : string?
 }
 
 // Has something drawn over it afresh every frame, never kept: a caret, a selection.
 interface OverlayContent {
-  fun paintOverlay(canvas)
+  fun paintOverlay(canvas : Canvas)
 }
 
 // Its height depends on the width it is given.
 interface HeightForWidth {
-  fun heightForWidth(width)
+  fun heightForWidth(width : int) : int
 }
 
 // Knows the Component it is in, to tell it that it has changed.
 interface OwnedContent {
-  var owner
+  var owner : Component?
 }
 
 interface BandAware {
-  var paintBand
+  var paintBand : Range?
 }
 
 // Opens a list of choices under itself when pressed.
 interface DropdownProvider {
-  val dropdownItems
-  val dropdownSelected
-  fun dropdownChoose(index)
-  fun isDropdownTrigger(x, y)
+  val dropdownItems : List<string>
+  val dropdownSelected : int
+  fun dropdownChoose(index : int)
+  fun isDropdownTrigger(x : int, y : int) : bool
 }
 
 interface EdgeEscape {
-  var onEscape
-  fun enterFromEdge(fromTop) {}
+  var onEscape : ((bool) -> bool)?
+  fun enterFromEdge(fromTop : bool) {}
 }
 
 interface TypesInPlace {
-  val takesTyping
+  val takesTyping : bool
 }
 
 // Takes the wheel itself; says whether it used it.
 interface WheelTarget {
-  fun wheel(event)
+  fun wheel(event : Event.Wheel) : bool
 }
 
 interface DragTarget
@@ -143,22 +143,22 @@ object Palette {
       }
     }
 
-  fun onThemeChange(hook) {
+  fun onThemeChange(hook : () -> unit) {
     listeners.add(hook)
   }
-  fun removeThemeHook(hook) {
+  fun removeThemeHook(hook : () -> unit) {
     listeners.remove(hook)
   }
 
   // A background, a foreground (text, marks) and a line (borders, rules). With `themed`
   // false the colour is the same in both themes.
-  fun bg(rgb, themed = true) => themed ? toned(rgb, 0) : Color(rgb & 0xFFFFFF)
-  fun fg(rgb, themed = true) => themed ? toned(rgb, 1) : Color(rgb & 0xFFFFFF)
-  fun line(rgb) => toned(rgb, 2)
+  fun bg(rgb : int, themed : bool = true) : Color => themed ? toned(rgb, 0) : Color(rgb & 0xFFFFFF)
+  fun fg(rgb : int, themed : bool = true) : Color => themed ? toned(rgb, 1) : Color(rgb & 0xFFFFFF)
+  fun line(rgb : int) : Color => toned(rgb, 2)
 
-  private fun clamp(value) => value < 0.0 ? 0.0 : (value > 1.0 ? 1.0 : value)
+  private fun clamp(value : float) : float => value < 0.0 ? 0.0 : (value > 1.0 ? 1.0 : value)
 
-  private fun toned(rgb, role) {
+  private fun toned(rgb : int, role : int) : Color {
     val key = (rgb & 0xFFFFFF) * 4 + role
     var made = memo[key]
     if (made != null) { return made }
@@ -182,15 +182,15 @@ object Palette {
     return made
   }
 
-  get surface() => bg(0xFFFFFF)
-  get border() => line(0x808080)
-  get headerBg() => bg(0xECECEC)
-  get ink() => fg(0x1a2420)
-  get disabled() => fg(0x909090)
-  get selection() => bg(0xADD8E6)
-  get accent() => fg(0x1565C0)
-  get selectBlue() => fg(0x2D6CDF)
-  get positive() => fg(0x0fa47f)
+  get surface() : Color => bg(0xFFFFFF)
+  get border() : Color => line(0x808080)
+  get headerBg() : Color => bg(0xECECEC)
+  get ink() : Color => fg(0x1a2420)
+  get disabled() : Color => fg(0x909090)
+  get selection() : Color => bg(0xADD8E6)
+  get accent() : Color => fg(0x1565C0)
+  get selectBlue() : Color => fg(0x2D6CDF)
+  get positive() : Color => fg(0x0fa47f)
 }
 
 // ---- Measuring text for layout ----
@@ -199,7 +199,7 @@ internal val jadeMetrics = {:}
 
 // The measurements of a font in layout units, for the screen being laid out for
 // (Jade.layoutScale), kept once made.
-internal fun metrics(font) {
+internal fun metrics(font : Font) : FontMetrics {
   val scale = Jade.layoutScale
   val key = "${font.name}|${font.style}|${font.size}|$scale"
   var found = jadeMetrics[key]
@@ -211,7 +211,7 @@ internal fun metrics(font) {
 }
 
 // A text cut short with "…" so that it fits a width; the whole text if it fits as it is.
-fun elide(text, font, maxWidth) {
+fun elide(text : string, font : Font, maxWidth : int) : string {
   if (maxWidth <= 0) { return "" }
   val fm = metrics(font)
   if (fm.stringWidth(text) <= maxWidth) { return text }

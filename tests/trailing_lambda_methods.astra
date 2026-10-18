@@ -1,8 +1,11 @@
 // A lambda written after a method call goes to the method's last parameter, as it does
 // after a call to a function. The parameters in between take their defaults.
 
-class Box(val items) {
-  fun show(separator = ", ", prefix = "", transform = null) {
+// A value whose type the checker does not see, for testing the checks made when running.
+val unknown = { value -> value }
+
+class Box(val items : List<int>) {
+  fun show(separator : string = ", ", prefix : string = "", transform : Function? = null) {
     var out = prefix
     for i in 0..<items.length {
       if (i > 0) { out += separator }
@@ -10,11 +13,11 @@ class Box(val items) {
     }
     return out
   }
-  fun each(vararg extra, action) {
+  fun each(vararg extra : string, action : Function) {
     for x in items { action(x, extra) }
   }
-  fun twice(a, b = a, block) => block(a, b)
-  static fun build(size = 2, make) => Box(Range(size).toList().map(make))
+  fun twice(a : int, b : int = a, block : Function) => block(a, b)
+  static fun build(size : int = 2, make : Function) => Box(Range(size).toList().map(make))
 }
 
 val box = Box([1, 2, 3])
@@ -38,7 +41,7 @@ print()                                         // expect: 12 22 32
 print(Box.build { it * it }.show())             // expect: 0, 1
 print(Box.build(4) { it }.show())               // expect: 0, 1, 2, 3
 
-fun List.joined(separator = "+", transform = null) {
+fun List.joined(separator : string = "+", transform : Function? = null) {
   var out = ""
   for i in 0..<length {
     if (i > 0) { out += separator }
@@ -49,7 +52,7 @@ fun List.joined(separator = "+", transform = null) {
 print([1, 2].joined())                          // expect: 1+2
 print([1, 2].joined { it * 2 })                 // expect: 2+4
 print([1, 2].joined("/") { it * 2 })            // expect: 2/4
-val maybe = null
+val maybe : List<int>? = null
 print(maybe?.joined { it })                     // expect: null
 
 class Holder {
@@ -61,40 +64,46 @@ print(Holder().action(3) { 7 })                 // expect: 21
 // A built-in method takes the lambda as its last argument, as before.
 print([3, 1, 2].map { it * 2 })                 // expect: [6, 2, 4]
 
-// Optional parameters may come after a function parameter. When every parameter that has to
-// be given is there but the last of them, the lambda is that one.
-fun List.grouped(keySelector, valueTransform = null) {
+// The lambda always goes to the last parameter, as in Kotlin. A function that takes one
+// lambda or two has a form for each (D56).
+fun List.grouped(keySelector : Function) => this.grouped(keySelector) { it }
+fun List.grouped(keySelector : Function, valueTransform : Function) {
   val out = {:}
   for item in this {
     val key = keySelector(item)
     if (out[key] == null) { out[key] = [] }
-    out[key].push(valueTransform == null ? item : valueTransform(item))
+    out[key].push(valueTransform(item))
   }
   return out
 }
 print([1, 2, 3].grouped { it % 2 })                       // expect: {1: [1, 3], 0: [2]}
 print([1, 2, 3].grouped({ it % 2 }) { it * 10 })          // expect: {1: [10, 30], 0: [20]}
-fun folded(items, initial, operation, label = "sum") {
+fun folded(items : List<int>, initial : int, operation : Function, label : string = "sum") {
   var result = initial
   for item in items { result = operation(result, item) }
   return "$label $result"
 }
-print(folded([1, 2], 10) { a, b -> a + b })               // expect: sum 13
-print(folded([1, 2], 10, label = "total") { a, b -> a + b })   // expect: total 13
+print(folded([1, 2], 10, { a, b -> a + b }))              // expect: sum 13
+print(folded([1, 2], 10, label = "total", operation = { a, b -> a + b }))   // expect: total 13
+try {
+  unknown(folded)([1, 2], 10) { a, b -> a + b }           // the lambda is `label`
+} catch (e) {
+  print(e.message)                                        // expect: folded() is missing argument 'operation'
+}
 
 // The same through super.
 class Base {
-  fun render(indent = ">", body) => indent + body()
+  fun render(indent : string = ">", body : Function) => indent + body()
 }
 class Derived : Base {
-  override fun render(indent = ">>", body) => super.render { "[" + body() + "]" } + super.render("-") { "x" }
+  override fun render(indent : string = ">>", body : Function) => super.render { "[" + body() + "]" } + super.render("-") { "x" }
 }
 print(Derived().render { "content" })                     // expect: >[content]-x
 
 // A parameter with no default that the lambda skipped over is reported.
-fun List.needs(count, block) => block(count)
+fun List.needs(count : int, block : Function) => block(count)
 try {
-  [1].needs { it }
+  unknown([1]).needs { it }
 } catch (e) {
   print(e.message)                              // expect: List.needs() is missing argument 'count'
 }

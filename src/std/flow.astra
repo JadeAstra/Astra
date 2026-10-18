@@ -9,17 +9,17 @@
 //   EventLoop.after(5500) { tick.cancel() }
 object EventLoop {
   // Runs the task on the main thread, soon. Safe to call from any thread.
-  fun post(task) {
+  fun post(task : () -> unit) {
     __loop.post(task)
   }
 
   // Runs the task once, `millis` from now, or again and again that far apart. Each gives a
   // Timer, whose cancel() calls it off.
-  fun after(millis, task) => Timer(__loop.timer(millis, task))
-  fun every(millis, task) => Timer(__loop.timer(millis, task, millis))
+  fun after(millis : int, task : () -> unit) : Timer => Timer(__loop.timer(millis, task))
+  fun every(millis : int, task : () -> unit) : Timer => Timer(__loop.timer(millis, task, millis))
 
   // Whether the code asking is running on the loop's thread.
-  get isLoopThread() => __loop.isLoopThread()
+  get isLoopThread() : bool => __loop.isLoopThread()
 
   // Runs the loop here until there is nothing left for it to wait for. A program need not
   // call this: the loop runs by itself when the script ends. It is for a script that has
@@ -29,7 +29,7 @@ object EventLoop {
   }
 }
 
-class Timer(private val id) {
+class Timer(private val id : int) {
   fun cancel() {
     __loop.cancel(id)
   }
@@ -52,45 +52,45 @@ class Timer(private val id) {
 // to the reader. The names are those of kotlin.coroutines.
 
 // How something turned out: a value, or the error that was thrown instead.
-class Result {
-  private val ok
-  private val held
+class Result<T> {
+  private val ok : bool
+  private val held : any?
 
-  fun init(ok, held) {
+  fun init(ok : bool, held : any?) {
     this.ok = ok
     this.held = held
   }
 
-  static fun success(value) => Result(true, value)
-  static fun failure(error) => Result(false, error)
+  static fun <T> success(value : T) : Result<T> => Result<T>(true, value)
+  static fun <T> failure(error : any?) : Result<T> => Result<T>(false, error)
 
-  get isSuccess() => ok
-  get isFailure() => !ok
-  fun getOrNull() => ok ? held : null
-  fun exceptionOrNull() => ok ? null : held
-  fun getOrDefault(defaultValue) => ok ? held : defaultValue
-  fun getOrElse(onFailure) => ok ? held : onFailure(held)
+  get isSuccess() : bool => ok
+  get isFailure() : bool => !ok
+  fun getOrNull() : T? => ok ? held as T : null
+  fun exceptionOrNull() : any? => ok ? null : held
+  fun getOrDefault(defaultValue : T) : T => ok ? held as T : defaultValue
+  fun getOrElse(onFailure : (any?) -> T) : T => ok ? held as T : onFailure(held)
 
-  fun getOrThrow() {
+  fun getOrThrow() : T {
     if (!ok) { throw held }
-    return held
+    return held as T
   }
 
-  fun onSuccess(action) {
-    if (ok) { action(held) }
+  fun onSuccess(action : (T) -> unit) : Result<T> {
+    if (ok) { action(held as T) }
     return this
   }
 
-  fun onFailure(action) {
+  fun onFailure(action : (any?) -> unit) : Result<T> {
     if (!ok) { action(held) }
     return this
   }
 
-  override fun toString() => ok ? "Success(" + str(held) + ")" : "Failure(" + str(held) + ")"
+  override fun toString() : string => ok ? "Success(" + str(held) + ")" : "Failure(" + str(held) + ")"
 }
 
 // Runs the block and gives its value, or the error it threw, as a Result.
-fun runCatching(block) {
+fun <T> runCatching(block : () -> T) : Result<T> {
   try {
     return Result.success(block())
   } catch (e) {
@@ -104,25 +104,25 @@ object EmptyCoroutineContext
 // Something to be told how a wait or a flow turned out. suspendCoroutine hands one to its
 // block; Continuation { result -> ... } makes one to give to startCoroutine.
 class Continuation {
-  val context
-  private val handler
+  val context : any?
+  private val handler : (Result<any?>) -> unit
 
   // Continuation { result -> ... }, or with Kotlin's context in front.
-  fun init(context = null, handler = null) {
+  fun init(context : any? = null, handler : ((Result<any?>) -> unit)? = null) {
     this.context = handler == null ? null : context
-    this.handler = handler == null ? context : handler
+    this.handler = (handler == null ? context : handler) as (Result<any?>) -> unit
   }
 
-  fun resumeWith(result) {
+  fun resumeWith(result : Result<any?>) {
     handler(result)
   }
 
-  fun resume(value) {
-    handler(Result.success(value))
+  fun resume(value : any?) {
+    handler(Result.success<any?>(value))
   }
 
-  fun resumeWithException(error) {
-    handler(Result.failure(error))
+  fun resumeWithException(error : any?) {
+    handler(Result.failure<any?>(error))
   }
 }
 
@@ -130,16 +130,21 @@ class Continuation {
 // first set itself aside. `completion` is told how it turned out, when it has. Without one,
 // an error the flow does not catch goes to whoever was running it at the time: the caller of
 // startCoroutine, or of the resume that took it up.
-fun Function.startCoroutine(completion = null) {
+fun Function.startCoroutine(completion : Continuation? = null) {
   val body = this
   __flow.start {
-    val result = runCatching(body)
+    val result = runCatching<any?>(body)
     if (completion != null) { completion.resumeWith(result) } else { result.getOrThrow() }
   }
 }
 
-// The same, with the function as an argument: startCoroutine { ... }
-fun startCoroutine(block, completion = null) {
+// The same, with the function as an argument: startCoroutine { ... }, or with what is to be
+// told how it turned out: startCoroutine({ ... }, completion).
+fun startCoroutine(block : () -> any?) {
+  block.startCoroutine()
+}
+
+fun startCoroutine(block : () -> any?, completion : Continuation) {
   block.startCoroutine(completion)
 }
 
@@ -148,14 +153,14 @@ fun startCoroutine(block, completion = null) {
 // thread, once; the flow goes on there and then.
 //
 // On a thread that is not running a flow, this waits on that thread instead.
-suspend fun suspendCoroutine(block) {
+suspend fun suspendCoroutine(block : (Continuation) -> unit) : any? {
   val flow = __flow.current()
   if (flow == null) {
     if (__loop.isLoopThread()) {
       throw Error("suspendCoroutine was called outside a flow on the main thread, which would stop the event loop that " +
                   "is to bring the answer; start a flow with startCoroutine { ... }")
     }
-    val answer = Future()
+    val answer = Future<Result<any?>>()
     block(Continuation { result -> answer.complete(result) })
     return answer.get().getOrThrow()
   }
@@ -168,7 +173,7 @@ suspend fun suspendCoroutine(block) {
 
 // Waits `millis` milliseconds. In a flow on the main thread the flow is set aside meanwhile
 // and the event loop goes on; anywhere else the thread sleeps.
-suspend fun delay(millis) {
+suspend fun delay(millis : int) {
   if (__flow.current() != null and __loop.isLoopThread()) {
     suspendCoroutine { continuation -> __loop.timer(millis, { continuation.resume(null) }) }
   } else {

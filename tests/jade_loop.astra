@@ -5,11 +5,11 @@ import Jade.*
 
 val failed = []
 var checks = 0
-fun same(what, got, want) {
+fun same(what : string, got : any?, want : any?) {
   checks += 1
   if (!(got == want)) { failed.add("$what: got $got, wanted $want") }
 }
-fun yes(what, condition) {
+fun yes(what : string, condition : bool) {
   checks += 1
   if (!condition) { failed.add(what) }
 }
@@ -116,8 +116,8 @@ print(first.layout, second.layout, looped.isDirty, shown.bounds, buffer.toPictur
 
 // -- PaletteThemeTest --
 
-fun luma(c) => 0.299 * c.red + 0.587 * c.green + 0.114 * c.blue
-fun hue(c) => Color.RGBtoHSB(c.red, c.green, c.blue)[0]
+fun luma(c : Color) => 0.299 * c.red + 0.587 * c.green + 0.114 * c.blue
+fun hue(c : Color) => Color.RGBtoHSB(c.red, c.green, c.blue)[0]
 
 // lightIsUnchanged
 same("the surface", Palette.surface, Color.white)
@@ -157,7 +157,7 @@ val byDay = button("Theme").renderToImage(80, 30).toPicture()
 Palette.dark = true
 val byNight = button("Theme").renderToImage(80, 30).toPicture()
 Palette.dark = false
-fun lumaAt(picture, x, y) {
+fun lumaAt(picture : Picture, x : int, y : int) {
   val c = picture.get(x, y)
   return 0.299 * ((c >> 16) & 255) + 0.587 * ((c >> 8) & 255) + 0.114 * (c & 255)
 }

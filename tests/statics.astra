@@ -1,5 +1,8 @@
 // Static members: fields, a static block, static properties; and `object` singletons.
 
+// A value whose type the checker does not see, for testing the checks made when running.
+val unknown = { value -> value }
+
 class Color(val r : int, val g : int, val b : int) {
   static val BLACK = Color(0, 0, 0)          // an instance of the class itself
   static val WHITE : Color = Color(255, 255, 255)
@@ -7,7 +10,7 @@ class Color(val r : int, val g : int, val b : int) {
   static var last : Color? = null
   static var label : string = "colour"
 
-  static fun gray(level) => Color(level, level, level)
+  static fun gray(level : int) => Color(level, level, level)
   fun toString() => "#${this.r},${this.g},${this.b}"
 }
 print(Color.BLACK, Color.WHITE, Color.gray(7), Color.made, Color.last, Color.label)   // expect: #0,0,0 #255,255,255 #7,7,7 0 null colour
@@ -18,16 +21,16 @@ Color.last = Color.WHITE
 Color.label = "color"
 print(Color.made, Color.last, Color.label)  // expect: 2 #255,255,255 color
 try { Color.BLACK = Color.WHITE } catch (e) { print(e.message) }   // expect: cannot assign to static val 'BLACK' of Color
-try { Color.label = 5 } catch (e) { print(e.message) }
+try { Color.label = unknown(5) } catch (e) { print(e.message) }
 // expect: cannot assign a value of type int to static field 'label' of Color, which is declared as string
-try { Color.last = "none" } catch (e) { print(e.message) }
+try { Color.last = unknown("none") } catch (e) { print(e.message) }
 // expect: cannot assign a value of type string to static field 'last' of Color, which is declared as Color?
 Color.last = null
 print(Color.last)                           // expect: null
 
 // Values are worked out once, in the order written, and may use what came before.
 val order = []
-fun note(label, value) {
+fun <T> note(label : string, value : T) : T {
   order.push(label)
   return value
 }
@@ -35,7 +38,7 @@ class Sizes {
   static val SMALL = note("small", 10)
   static val LARGE = note("large", Sizes.SMALL * 4)
   static val ALL = note("all", [Sizes.SMALL, Sizes.LARGE, Sizes.half(Sizes.LARGE)])
-  static fun half(n) => n / 2
+  static fun half(n : int) => n / 2
 }
 print(order, Sizes.ALL, Sizes.LARGE)        // expect: ["small", "large", "all"] [10, 40, 20] 40
 Sizes(); Sizes()
@@ -51,7 +54,7 @@ class Grid {
   }
   val cells = {:}
   fun init() { Grid.created += 1 }
-  fun put(row, col, value) { this.cells[Grid.key(row, col)] = value }
+  fun put(row : int, col : int, value : string) { this.cells[Grid.key(row, col)] = value }
 }
 val grid = Grid()
 grid.put(2, 3, "x")
@@ -108,11 +111,11 @@ Counter.note = "kept"
 print(Counter.note)                         // expect: kept
 
 // In a function, with a captured variable.
-fun makeClass(start) {
+fun makeClass(start : int) {
   class Local {
     static val START = start
     static var seen = [start]
-    static fun add(n) { Local.seen.push(n + Local.START) }
+    static fun add(n : int) { Local.seen.push(n + Local.START) }
   }
   return Local
 }
@@ -131,7 +134,7 @@ object Settings {
     this.volume = n
     this.changes += 1
   }
-  fun raise(by = 1) {
+  fun raise(by : int = 1) {
     this.volume += by
     return this
   }
@@ -148,7 +151,7 @@ same.volume = 9
 print(Settings.volume, same === Settings)   // expect: 9 true
 
 // An object can extend a class, run an init, and be declared inside a function.
-class Shape(val name) {
+class Shape(val name : string) {
   fun describe() => "a " + this.name
 }
 object Origin : Shape("point") {
@@ -160,14 +163,14 @@ print(Origin.describe(), Origin.x, Origin is Shape)   // expect: a point 0 true
 object Registry {
   val entries = []
   fun init() { this.entries.push("ready") }
-  fun add(entry) {
+  fun add(entry : string) {
     this.entries.push(entry)
     return this.entries.length
   }
 }
 print(Registry.entries.length, Registry.add("one"), Registry.entries)   // expect: 1 2 ["ready", "one"]
 
-fun scoped(seed) {
+fun scoped(seed : int) {
   object Local {
     var value = seed
     fun doubled() => this.value * 2

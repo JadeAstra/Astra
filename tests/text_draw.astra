@@ -3,14 +3,14 @@
 val font = TextFont("Segoe UI", 16)
 
 // How much is painted: the sum of every pixel's alpha.
-fun ink(picture) {
+fun ink(picture : Picture) {
   var total = 0
   var i = 3
   while (i < picture.pixels.size) { total += picture.pixels[i]; i += 4 }
   return total
 }
 
-fun drawn(text, f, color = Picture.black, width = 300, height = 60, x = 10, y = 40) {
+fun drawn(text : string, f : TextFont, color : int = Picture.black, width : int = 300, height : int = 60, x : int = 10, y : int = 40) {
   val picture = Picture(width, height)
   picture.drawText(text, x, y, f, color)
   return picture
@@ -20,7 +20,7 @@ fun drawn(text, f, color = Picture.black, width = 300, height = 60, x = 10, y = 
 // "H" stands on the baseline and reaches the capital height, both on pixel edges: its
 // picture is exactly that tall, and its top and bottom rows are as strong as the rows next to them.
 val h = drawn("H", font)
-val box = h.inkBox()
+val box = h.inkBox()!!
 print(box[1] == 40 - font.capHeight, box[1] + box[3] == 40, box[0] >= 10, box[0] + box[2] <= 10 + font.width("H"))   // expect: true true true true
 var sharpTop = true
 var sharpBottom = true
@@ -33,12 +33,12 @@ for (x in 0..<h.width) {
 }
 print(sharpTop, sharpBottom, stems >= 2, h.get(box[0], box[1] - 1), h.get(box[0], 40))   // expect: true true true 0 0
 // "x" reaches the x-height, and a "p" hangs below the baseline.
-val x = drawn("x", font).inkBox()
-val p = drawn("p", font).inkBox()
+val x = drawn("x", font).inkBox()!!
+val p = drawn("p", font).inkBox()!!
 print(x[1] == 40 - font.xHeight, x[1] + x[3] == 40, p[1] + p[3] > 40, p[1] + p[3] <= 40 + font.descent)   // expect: true true true true
 // glyphBox says the same without drawing: [left, top, width, height, isColor, advance].
-val hBox = font.glyphBox("H")
-print(hBox[1] == font.capHeight, hBox[3] == font.capHeight, hBox[4], hBox[5] == font.charWidth("H"), 10 + hBox[0] == box[0], hBox[2] == box[2], font.glyphBox(" "))   // expect: true true false true true true null
+val hBox = font.glyphBox("H")!!
+print(hBox[1] == font.capHeight, hBox[3] == font.capHeight, hBox[4], hBox[5] == font.charWidth("H"), 10 + (hBox[0] as int) == box[0], hBox[2] == box[2], font.glyphBox(" "))   // expect: true true false true true true null
 
 // -- The colour of the text --
 // On a clear picture every painted pixel is the text's colour, more or less see-through.
@@ -113,7 +113,7 @@ val upright = drawn("made up", TextFont("Bahnschrift", 24))
 val slanted = drawn("made up", TextFont("Bahnschrift", 24, italic = true))
 val plainEmoji = drawn("made up", TextFont("Segoe UI Emoji", 24))
 val thickened = drawn("made up", TextFont("Segoe UI Emoji", 24, bold = true))
-print(slanted != upright, slanted.inkBox()[3] == upright.inkBox()[3], ink(thickened) > ink(plainEmoji) * 11 / 10)   // expect: true true true
+print(slanted != upright, slanted.inkBox()!![3] == upright.inkBox()!![3], ink(thickened) > ink(plainEmoji) * 11 / 10)   // expect: true true true
 
 // -- Hinting: without it the top of an "x" need not be on a pixel edge --
 var crisp = 0
@@ -121,7 +121,7 @@ var sizes = 0
 for (size in 9..<20) {
   val f = TextFont("Segoe UI", size)
   val rows = drawn("xz", f)
-  val top = rows.inkBox()[1]
+  val top = rows.inkBox()!![1]
   // With hinting, the row above the x-height is empty and the letter starts at full strength.
   sizes += 1
   if (top == 40 - f.xHeight) { crisp += 1 }
@@ -129,14 +129,14 @@ for (size in 9..<20) {
 print(crisp == sizes, drawn("xz", TextFont("Segoe UI", 13, hinting = false)) != drawn("xz", TextFont("Segoe UI", 13)))   // expect: true true
 
 // -- The other kind of outline (cubic curves), where a font with them is installed --
-var cubic = null
+var cubic : Typeface? = null
 for (face in Fonts.typefaces()) {
   if (cubic == null and face.hasCubicOutlines and face.has("o")) { cubic = face }
 }
 if (cubic != null) {
   val f = TextFont(cubic, 30)
   val o = drawn("o", f)
-  val b = o.inkBox()
+  val b = o.inkBox()!!
   // An "o" has a hole: its middle is clear, its sides are not.
   val midY = b[1] + b[3] / 2
   print(ink(o) > 0, o.get(b[0] + b[2] / 2, midY) == 0, (o.get(b[0] + 1, midY) >> 24) > 100)   // expect: true true true
@@ -153,7 +153,7 @@ for (y in 0..<face.height) {
     if ((c >> 24) == 255) { colours[c & 0xF0F0F0] = true }
   }
 }
-val faceBox = face.inkBox()
+val faceBox = face.inkBox()!!
 print(colours.size > 4, faceBox[2] > 25, faceBox[3] > 25, face == drawn("😀", TextFont("Segoe UI", 40), 0xFF00FF00, 80, 60))   // expect: true true true true
 // A see-through text colour makes an emoji see-through too.
 print(ink(drawn("😀", TextFont("Segoe UI", 40), 0x40000000, 80, 60)) < ink(face) / 3)   // expect: true

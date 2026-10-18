@@ -14,14 +14,17 @@ t.fahrenheit += 18
 print(t.celsius, t.fahrenheit)                   // expect: 10 50
 print((t.fahrenheit = 212), t.celsius)           // expect: 212 100
 
-fun attempt(f) {
+// A value whose type the checker does not see, for testing the checks made when running.
+val unknown = { value -> value }
+
+fun attempt(f : () -> any?) {
   try { return f() } catch (e) { return e.message }
 }
 
 // a property with only a getter cannot be assigned, and its types are checked like a function's
 print(attempt(fun() { t.description = "x" }))    // expect: property 'description' of Temperature cannot be assigned: it has no setter
 print(attempt(fun() { t.description += "x" }))   // expect: property 'description' of Temperature cannot be assigned: it has no setter
-print(attempt(fun() { t.fahrenheit = "hot" }))   // expect: argument 'value' of Temperature.fahrenheit() must be Number, got string
+print(attempt(fun() { t.fahrenheit = unknown("hot") }))   // expect: argument 'value' of Temperature.fahrenheit() must be Number, got string
 
 // a setter can check and react before storing the value somewhere
 class Account {
@@ -74,9 +77,11 @@ loud.text = "hello"
 quiet.text = "hello"
 print(loud.text, quiet.text)                     // expect: HELLO! (hello)
 
-// a property works on classes that declare no fields, and alongside undeclared ones
+// a property alongside the fields it works on
 class Open {
-  fun init() { this.items = [] }
+  val items : List<any?> = []
+  var extra = false
+  fun init() { this.items.clear() }
   get count() => this.items.length
   get last() => this.items.length == 0 ? null : this.items[-1]
   set last(value) { this.items.push(value) }
@@ -98,8 +103,8 @@ print(handlers.increment(5), handlers.increment(2))   // expect: 5 7
 // `get` and `set` are only special at the start of a class member
 class Store {
   val data : Map = {:}
-  fun get(key) => this.data.get(key, "missing")
-  fun set(key, value) { this.data[key] = value }
+  fun get(key : string) => this.data.get(key, "missing")
+  fun set(key : string, value : int) { this.data[key] = value }
   get size() : int => this.data.length
 }
 val store = Store()

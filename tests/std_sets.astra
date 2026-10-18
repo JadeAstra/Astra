@@ -34,7 +34,7 @@ print(a, a.plus(5).size, a.minus(1).size, a.intersect([2, 3, 9]), a.union([0])) 
 print(setOf(1, 2) == setOf(2, 1), setOf(1, 2) == setOf(1, 2, 3), setOf(1) != setOf(2), setOf(1) == [1], a.toSet() == a, a.toSet() === a)   // expect: true false true false true false
 
 // Items are told apart as map keys are: by what they hold, for lists and data objects.
-data Point(val x, val y)
+data Point(val x : int, val y : int)
 val points = setOf(Point(1, 2), Point(1, 2), Point(2, 1), [1], [1])
 print(points.size, Point(1, 2) in points, [1] in points, Point(9, 9) in points, setOf("1", 1, 1.0).size)   // expect: 3 true true false 2
 

@@ -2,9 +2,12 @@
 // has its picture, its size and its events, and events made up here go the way real ones do.
 import Jade.*
 
-fun attempt(block) {
+fun attempt(block : () -> any?) {
   try { block(); return "no error" } catch (e) { return e.message }
 }
+
+// A value whose type the checker does not see, for testing the checks made when running.
+val unknown = { value -> value }
 
 // -- A window: its size is of what can be drawn on, in layout units --
 val window = NativeWindow("First", 320, 200, scale = 1)
@@ -25,7 +28,7 @@ canvas.font = Font("Segoe UI", Font.bold, 20)
 canvas.drawString("a window", 80, 40)
 window.present()                       // not showing: nothing to show it on, and no harm
 val shot = window.snapshot()
-print(shot, shot.get(10, 10) == 0xFFFF0000, shot.get(59, 49) == 0xFFFF0000, shot.get(60, 49) == 0xFFFFFFFF, shot.inkBox(0xFFFFFFFF)[0], shot.inkBox(0xFFFFFFFF)[2] > 100)   // expect: Picture(320 x 200) true true true 10 true
+print(shot, shot.get(10, 10) == 0xFFFF0000, shot.get(59, 49) == 0xFFFF0000, shot.get(60, 49) == 0xFFFFFFFF, shot.inkBox(0xFFFFFFFF)!![0], shot.inkBox(0xFFFFFFFF)!![2] > 100)   // expect: Picture(320 x 200) true true true 10 true
 // The picture is kept: another canvas draws over what is there.
 window.canvas().fillRect(0, 0, 2, 2)
 print(window.snapshot().get(1, 1) == 0xFF000000, window.snapshot().get(10, 10) == 0xFFFF0000)   // expect: true true
@@ -177,7 +180,7 @@ Native.useOwnClipboard()
 print(Native.clipboardText == "")   // expect: true
 Native.clipboardText = "copied: é 中 😀"
 print(Native.clipboardText, Native.clipboardText.length)   // expect: copied: é 中 😀 13
-Native.clipboardText = 42
+Native.clipboardText = unknown(42)
 print(Native.clipboardText)   // expect: 42
 
 // -- The clock, and what the system says of itself --
@@ -195,14 +198,14 @@ val dragged = NativeWindow("Dragged", 100, 80, scale = 1)
 var frame = 0
 var closeSeenAt = -1
 dragged.onCloseRequest = { closeSeenAt = frame }
-var animation = null
+var animation : Timer? = null
 animation = EventLoop.every(1) {
   frame += 1
   Thread.sleep(4)                                        // longer than the period
   if (frame == 3) { dragged.postForTest("moveBegan") }
   if (frame == 6) { dragged.postForTest("close") }
   if (frame == 40) {
-    animation.cancel()
+    animation!!.cancel()
     dragged.postForTest("moveEnded")
     print("the close request arrived during the drag:", closeSeenAt >= 6 and closeSeenAt < 20)   // expect: the close request arrived during the drag: true
     dragged.close()
@@ -214,11 +217,11 @@ animation = EventLoop.every(1) {
 // itself when the script is done: a window that was never shown keeps nothing going --
 var ticks = 0
 fun startLast() {
-  var timer = null
+  var timer : Timer? = null
   timer = EventLoop.every(5) {
     ticks += 1
     if (ticks == 3) {
-      timer.cancel()
+      timer!!.cancel()
       print("three ticks, and the window is still open:", window.isOpen)   // expect: three ticks, and the window is still open: true
       window.close()
       print("closed:", !window.isOpen)   // expect: closed: true

@@ -5,15 +5,15 @@ val cores = availableProcessors()
 print("this machine gives a parallel section $cores cores")
 print()
 
-fun timed(work) {
+fun <R> timed(work : () -> R) : Pair<R, float> {
   val started = clock()
   val result = work()
-  return [result, (clock() - started) * 1000]
+  return Pair(result, (clock() - started) * 1000)
 }
 
 // ---- Work that takes a while for each item ----
 // How many primes there are below a number, found the slow way.
-fun primesBelow(limit) {
+fun primesBelow(limit : int) : int {
   var found = 0
   for n in 2..<limit {
     var prime = true
@@ -36,9 +36,9 @@ print()
 
 // ---- Changing the items themselves ----
 // Each core changes its own share of the accounts. They are the program's accounts, not copies.
-class Account(val owner, var balance) {
+class Account(val owner : string, var balance : Number) {
   var history = []
-  fun addInterest(rate) {
+  fun addInterest(rate : Number) {
     val interest = balance * rate / 100
     balance += interest
     history = history + [interest]      // a list the core made, put in place of the old one

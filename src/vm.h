@@ -277,7 +277,11 @@ public:
     void defineNative(const std::string& name, int minArgs, int maxArgs, NativeFn fn);
     void defineMethod(BuiltinType type, const std::string& name, int minArgs, int maxArgs, NativeMethodFn fn);
     // Says what the parameters of a built-in method are called, so that it takes them by name.
-    void nameParams(BuiltinType type, const std::string& method, std::initializer_list<const char*> params);
+    // What a built-in method's or function's parameters are called, from its declaration in
+    // the standard library (D116). A name with several forms keeps the longest list.
+    void nameParams(BuiltinType type, const std::string& method, const std::vector<std::string>& params);
+    void nameFunctionParams(const std::string& function, const std::vector<std::string>& params);
+    static bool builtinTypeNamed(const std::string& name, BuiltinType& type);
     // Everything a list, map, string, range, bytes or object with an iterator() holds, in order.
     void collect(Value iterable, std::vector<Value>& out);
 

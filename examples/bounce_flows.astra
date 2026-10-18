@@ -25,7 +25,7 @@ import Jade.*
 val startingBalls = 50000
 val flowCount = 4
 
-class Ball(var x : Number, var y : Number, var dx : Number, var dy : Number, val radius : Number, val color) {
+class Ball(var x : Number, var y : Number, var dx : Number, var dy : Number, val radius : Number, val color : Color) {
   // Moves on by `steps` sixtieths of a second, turning back at the edges.
   fun move(width : Number, height : Number, steps : Number) {
     x += dx * steps
@@ -42,8 +42,8 @@ val palette = [Color.red, Color.blue, Color.green, Color.orange, Color(160, 60, 
 // Each flow moves the balls of one group. All of this lives on the main thread.
 val groups = List(flowCount) { [] }
 var ballCount = 0
-var width = 760.0
-var height = 520.0
+var width : Number = 760.0
+var height : Number = 520.0
 var paused = false
 var running = true                   // the flows go round until the window is closed
 var moves = 0                        // how many times a group has been moved, for the status line

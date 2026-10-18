@@ -41,7 +41,7 @@ print("$name_x")                                // expect: a longer name wins
 val count = 3
 val ratio = 0.5
 val items = [1, "two"]
-val nothing = null
+val nothing : string? = null
 print("$count $ratio $items $nothing $true $false $null")   // expect: 3 0.5 [1, "two"] null true false null
 print("${count + 1} ${count > 2 ? "many" : "few"} ${items.length} ${items.map(fun(x) => "<$x>")}")
 // expect: 4 many 2 ["<1>", "<two>"]

@@ -1,5 +1,5 @@
 // A plain return in a lambda would have to leave the function around it.
-fun firstEven(items) {
+fun firstEven(items : List<int>) {
   items.each { if it % 2 == 0 { return it } }
   return null
 }

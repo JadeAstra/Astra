@@ -1,3 +1,6 @@
+// A value whose type the checker does not see, for testing the checks made when running.
+val unknown = { value -> value }
+
 // val is immutable, var is mutable; the type after ':' is optional
 val greeting = "hi"
 var counter = 0
@@ -22,20 +25,20 @@ print(limit, ratio, label, flag, items, table, span, action(1), amount, anything
 // expect: 10 1.0 ab true [1, 2] {"k": 1} 0..<3 2 2.5 now a string
 
 // a typed var keeps its type for life; an untyped one takes anything
-fun attempt(f) {
+fun attempt(f : Function) {
   try { f(); return "ok" } catch (e) { return e.message }
 }
-print(attempt(fun() { counter = "text" }))     // expect: ok
-print(attempt(fun() { ratio = 1 }))            // expect: cannot assign a value of type int to 'ratio', which is declared as float
-print(attempt(fun() { label = null }))         // expect: cannot assign a value of type null to 'label', which is declared as string
-print(attempt(fun() { flag = 0 }))             // expect: cannot assign a value of type int to 'flag', which is declared as bool
-print(attempt(fun() { amount = "7" }))         // expect: cannot assign a value of type string to 'amount', which is declared as Number
-print(attempt(fun() { items = {:} }))           // expect: cannot assign a value of type Map to 'items', which is declared as List
+print(attempt(fun() { counter = unknown("text") }))     // expect: ok
+print(attempt(fun() { ratio = unknown(1) }))   // expect: cannot assign a value of type int to 'ratio', which is declared as float
+print(attempt(fun() { label = unknown(null) }))         // expect: cannot assign a value of type null to 'label', which is declared as string
+print(attempt(fun() { flag = unknown(0) }))    // expect: cannot assign a value of type int to 'flag', which is declared as bool
+print(attempt(fun() { amount = unknown("7") }))         // expect: cannot assign a value of type string to 'amount', which is declared as Number
+print(attempt(fun() { items = unknown({:}) }))  // expect: cannot assign a value of type Map to 'items', which is declared as List
 print(attempt(fun() { action = print }))       // expect: ok
 print(ratio, label, flag, amount)             // expect: 1.0 ab true 2.5
 
 // a function compiled before the variable it assigns to is still checked
-fun setLater() { later = "wrong" }
+fun setLater() { later = unknown("wrong") }
 var later : int = 1
 print(attempt(setLater), later)               // expect: cannot assign a value of type string to 'later', which is declared as int 1
 
@@ -47,18 +50,18 @@ var unset : string?
 print(maybe, unset)                     // expect: null null
 
 // a class type accepts instances of the class and of its subclasses
-class Animal { fun init(name) { this.name = name } }
+class Animal { val name : string; fun init(name : string) { this.name = name } }
 class Dog : Animal { }
 class Rock { }
 var pet : Animal = Dog("Rex")
 pet = Animal("Generic")
 print(pet.name)                         // expect: Generic
-print(attempt(fun() { pet = Rock() }))   // expect: cannot assign a value of type Rock to 'pet', which is declared as Animal
-print(attempt(fun() { pet = null }))     // expect: cannot assign a value of type null to 'pet', which is declared as Animal
+print(attempt(fun() { pet = unknown(Rock()) }))   // expect: cannot assign a value of type Rock to 'pet', which is declared as Animal
+print(attempt(fun() { pet = unknown(null) }))     // expect: cannot assign a value of type null to 'pet', which is declared as Animal
 var next : Dog? = null
 next = Dog("Fido")
-print(attempt(fun() { next = Animal("x") }))   // expect: cannot assign a value of type Animal to 'next', which is declared as Dog?
-print(next.name)                        // expect: Fido
+print(attempt(fun() { next = unknown(Animal("x")) }))   // expect: cannot assign a value of type Animal to 'next', which is declared as Dog?
+print(next!!.name)                      // expect: Fido
 
 // the same rules hold for local variables and for variables captured by closures
 fun locals() {
@@ -69,9 +72,9 @@ fun locals() {
   bump(5)
   owner = Dog("Local")
   val results = [total, owner.name]
-  results.push(attempt(fun() { total = total / 2.0 }))
-  results.push(attempt(fun() { owner = "nobody" }))
-  results.push(attempt(fun() { var bad : string = base }))
+  results.push(attempt(fun() { total = unknown(total / 2.0) }))
+  results.push(attempt(fun() { owner = unknown("nobody") }))
+  results.push(attempt(fun() { var bad : string = unknown(base) }))
   results.push(total)
   return results
 }
@@ -84,7 +87,7 @@ for line in locals() { print(line) }
 // expect: 15
 
 // an initializer whose type is only known at run time is checked then
-fun make(kind) => kind == "n" ? 1 : "one"
+fun make(kind : string) => kind == "n" ? 1 : "one"
 var parsed : int = make("n")
 print(parsed)                           // expect: 1
 print(attempt(fun() { var wrong : int = make("s") }))   // expect: cannot assign a value of type string to 'wrong', which is declared as int

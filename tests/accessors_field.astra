@@ -1,5 +1,8 @@
 // Accessors written under a property, Kotlin's way. In them `field` is the stored value.
 
+// A value whose type the checker does not see, for testing the checks made when running.
+val unknown = { value -> value }
+
 val log = []
 
 class Panel(val name : string) {
@@ -46,7 +49,7 @@ print(p.gap, log[log.length - 1])           // expect: 15 main gap=15
 
 // What the setter refuses is not stored; the declared type still holds for what is.
 try { p.gap = -1 } catch (e) { print(e.message, p.gap) }   // expect: gap cannot be negative 15
-try { p.gap = "wide" } catch (e) { print(e.message) }      // expect: argument 'value' of Panel.gap() must be int, got string
+try { p.gap = unknown("wide") } catch (e) { print(e.message) }      // expect: argument 'value' of Panel.gap() must be int, got string
 try { p.area = 3 } catch (e) { print(e.message) }          // expect: property 'area' of Panel cannot be assigned: it has no setter
 try { p.created = "later" } catch (e) { print(e.message) } // expect: property 'created' of Panel cannot be assigned: it has no setter
 
@@ -86,7 +89,7 @@ interface Sized {
   val wide : bool
     get() => width > height
 }
-class Box(override val width, override val height) : Sized
+class Box(override val width : int, override val height : int) : Sized
 print(Box(4, 3).area, Box(4, 3).wide, Box(1, 3).wide)   // expect: 12 true false
 
 // A function inside an accessor still means the same `field`.
@@ -106,6 +109,6 @@ print(counter.count, counter.history)       // expect: 7 [2, 4]
 
 // `field`, `get` and `set` are ordinary names everywhere else.
 val field = "a meadow"
-fun get(x) => x
-fun set(x) => x
+fun get(x : int) => x
+fun set(x : int) => x
 print(field, get(1), set(2))                // expect: a meadow 1 2

@@ -31,12 +31,12 @@ for (word, count) in ranked.take(4) {
 val byLength = words.distinct().groupBy { it.length }
 val longest = byLength.keys.max()
 print()
-print("longest (${longest} letters):", byLength[longest].sorted().joinToString())
+print("longest (${longest} letters):", byLength.getValue(longest).sorted().joinToString())
 print("average length: %.2f".format(words.sumOf { it.length }.toDouble() / words.size))
 print("with an accent:", words.filter { word -> word.any { it.code > 127 } }.distinct())
 
 // A set tells what has been seen; a list, a pair or a data object can be an item or a key.
-data Bigram(val first, val second)
+data Bigram(val first : string, val second : string)
 val pairs = Set()
 val repeated = Set()
 for (a, b) in words.zipWithNext() {

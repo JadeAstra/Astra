@@ -74,7 +74,10 @@ val bump = fun() { total++ }
 bump(); bump()
 print(total)                                     // expect: 12
 
-fun attempt(f) {
+// A value whose type the checker does not see, for testing the checks made when running.
+val unknown = { value -> value }
+
+fun attempt(f : () -> any?) {
   try { return f() } catch (e) { return e.message }
 }
 
@@ -82,7 +85,7 @@ fun attempt(f) {
 var typed : int = 1
 typed++
 print(typed)                                     // expect: 2
-var nothing = null
+var nothing = unknown(null)
 print(attempt(fun() { nothing++ }))              // expect: unsupported operand types for '+': null and int
 
 // << and >> shift the bits of an int
@@ -94,8 +97,8 @@ bits <<= 5
 bits >>= 2
 print(bits, 0xFF >> 4, 0b1 << 3)                 // expect: 8 15 8
 print(attempt(fun() => 1 << -1))                 // expect: cannot shift by a negative amount (-1)
-print(attempt(fun() => 1.5 << 1))                // expect: unsupported operand types for '<<': float and int
-print(attempt(fun() => 1 >> "2"))                // expect: unsupported operand types for '>>': int and string
+print(attempt(fun() => unknown(1.5) << 1))                // expect: unsupported operand types for '<<': float and int
+print(attempt(fun() => 1 >> unknown("2")))                // expect: unsupported operand types for '>>': int and string
 
 // classes can define them
 class Stream {

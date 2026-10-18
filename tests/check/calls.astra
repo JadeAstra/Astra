@@ -2,10 +2,10 @@
 // defaults, varargs, trailing lambdas, and their types; results worked out from bodies.
 
 fun add(a : int, b : int) : int => a + b
-fun greet(name : string, greeting = "Hello") => greeting + ", " + name
+fun greet(name : string, greeting : string = "Hello") => greeting + ", " + name
 fun total(vararg ns : int) : int => 0
 fun later(delay : int, action : () -> unit) { }
-fun repeat(times : int, action) { }
+fun repeat(times : int, action : (int) -> unit) { }
 
 val x : int = add(1, 2)
 add(1, "two")                 // check: add(...) takes an int for 'b', not a string
@@ -55,3 +55,6 @@ twice(2)
 twice("x")                    // check: 'twice' takes an int here, not a string
 val number = 5
 number()                      // check: 'number' is an int, which cannot be called
+
+class Plain
+class TooMany(val n : int) : Plain(1)   // check: Plain(...) takes no arguments

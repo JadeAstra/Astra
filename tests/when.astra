@@ -1,11 +1,11 @@
 // when: as a statement and as a value.
 
-class Shape(val name)
-class Circle(val radius) : Shape("circle")
-class Square(val side) : Shape("square")
+class Shape(val name : string)
+class Circle(val radius : int) : Shape("circle")
+class Square(val side : int) : Shape("square")
 
 // A subject compared with values; several values can share a branch.
-fun word(n) {
+fun word(n : int) {
   when (n) {
     0 -> return "zero"
     1, 2, 3 -> return "few"
@@ -15,7 +15,7 @@ fun word(n) {
 print(word(0), word(2), word(3), word(9))   // expect: zero few few many
 
 // As a value. Without parentheses too, like if.
-fun size(n) => when n {
+fun size(n : int) => when n {
   0 -> "none"
   1 -> "one"
   else -> "several"
@@ -23,7 +23,7 @@ fun size(n) => when n {
 print(size(0), size(1), size(5))            // expect: none one several
 
 // is, !is, in and !in test the subject.
-fun describe(x) => when (x) {
+fun describe(x : any?) => when (x) {
   null -> "nothing"
   is Circle -> "circle of " + x.radius
   is Shape -> "a " + x.name
@@ -35,7 +35,7 @@ fun describe(x) => when (x) {
 print(describe(Circle(2)), describe(Square(1)), describe(3), describe(2.5))   // expect: circle of 2 a square number number
 print(describe("yes"), describe([1]), describe("hello"), describe(null))      // expect: answer something else text nothing
 
-fun grade(score) => when (score) {
+fun grade(score : int) => when (score) {
   in 90..100 -> "A"
   in 80..<90 -> "B"
   !in 0..100 -> "invalid"
@@ -47,7 +47,7 @@ print(grade(95), grade(80), grade(89), grade(50), grade(101))   // expect: A B B
 print(when ([1, 2]) { [1] -> "one"; [1, 2] -> "pair"; else -> "other" })   // expect: pair
 
 // Without a subject each branch is a condition; the first true one wins.
-fun sign(n) => when {
+fun sign(n : int) => when {
   n < 0 -> "negative"
   n == 0 -> "zero"
   n > 100, n < 2 -> "extreme"
@@ -68,7 +68,7 @@ print(when (next()) { 5 -> "five"; 1 -> "one"; else -> "?" }, asked)   // expect
 
 // Conditions are only worked out until one matches.
 var tried = []
-fun probe(value) {
+fun probe(value : int) {
   tried.push(value)
   return value
 }
@@ -79,7 +79,7 @@ when (2) {
 print(tried)                                // expect: [1, 2, "hit"]
 
 // A branch can be a block: its last expression is the value, and it has its own variables.
-fun area(shape) => when (shape) {
+fun area(shape : Shape) => when (shape) {
   is Circle -> {
     val r = shape.radius
     val pi = 3
@@ -97,7 +97,7 @@ print(area(Circle(2)), area(Square(3)), area(Shape("blob")))   // expect: 12 9 0
 print(when (1) { 1 -> { } else -> 5 }, when (1) { 1 -> { var n = 1; n += 1 } })   // expect: null 2
 
 // Naming the subject.
-fun measure(text) => when (val n = text.length) {
+fun measure(text : string) => when (val n = text.length) {
   0 -> "empty"
   1 -> "a character"
   else -> "$n characters"
@@ -105,7 +105,7 @@ fun measure(text) => when (val n = text.length) {
 print(measure(""), measure("x"), measure("hello"))   // expect: empty a character 5 characters
 
 // In the middle of an expression, with variables declared in a branch.
-fun total(a, b, kind) => a + when (kind) {
+fun total(a : int, b : int, kind : string) => a + when (kind) {
   "double" -> {
     val twice = b * 2
     twice
@@ -122,7 +122,7 @@ print([1, when (2) { 2 -> { val x = 20; x + 2 } else -> 0 }, 3], "a" + when { tr
 // expect: [1, 22, 3] abbc
 
 // Nested, and inside a lambda.
-fun classify(x, y) => when (x) {
+fun classify(x : int, y : int) => when (x) {
   0 -> when (y) {
     0 -> "origin"
     else -> "on the y axis"
@@ -177,7 +177,7 @@ for n in [1, 2, 3, 4, 5, 6] {
 }
 print(picked)                               // expect: [[1, "one"], [2, "two"], [4, "one"]]
 
-fun firstBig(list) {
+fun firstBig(list : List<int>) {
   for n in list {
     val doubled = 2 * when {
       n > 10 -> return n
@@ -190,7 +190,7 @@ fun firstBig(list) {
 print(firstBig([1, 2, 30]), firstBig([1, 4, 30]), firstBig([1]))   // expect: 30 eight none
 
 // With ?: and jumps as branch values.
-fun lookup(table, key) {
+fun lookup(table : Map<string, int>, key : string) {
   val found = table[key] ?: when (key) {
     "missing" -> return "gave up"
     else -> "default"
@@ -201,7 +201,7 @@ print(lookup({"a": 1}, "a"), lookup({:}, "b"), lookup({:}, "missing"))   // expe
 
 // try and finally inside a branch.
 val log = []
-fun guarded(n) => 100 + when (n) {
+fun guarded(n : int) => 100 + when (n) {
   1 -> {
     try { throw "one" } catch (e) { log.push("caught " + e) } finally { log.push("finally") }
     10

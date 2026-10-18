@@ -3,7 +3,7 @@
 
 val scale = 10
 fun describe() => "the global describe"
-fun helper(n) => n + 1000
+fun helper(n : int) => n + 1000
 
 class Account(val owner : string, var balance : int = 0) {
   var history = []
@@ -12,12 +12,12 @@ class Account(val owner : string, var balance : int = 0) {
   get rich() => balance > 100
   set cash(amount) { balance = amount }
 
-  fun deposit(amount) {
+  fun deposit(amount : int) {
     balance += amount                 // a field
     history.push(amount)
     return this
   }
-  fun withdraw(amount) {
+  fun withdraw(amount : int) {
     if amount > limit { return "over the limit of $limit" }
     balance = balance - amount
     return balance
@@ -28,7 +28,7 @@ class Account(val owner : string, var balance : int = 0) {
     deposit(1).deposit(1)             // a method, called on this object
     return history.length
   }
-  fun shadow(balance) {
+  fun shadow(balance : int) {
     val owner = "local"
     return owner + " " + balance + " " + this.balance + " " + this.owner
   }
@@ -47,7 +47,7 @@ class Tally {
   var count = 0
   var total = 0.0
   var words = []
-  fun add(n) {
+  fun add(n : int) {
     count++
     total += n
     total *= 2
@@ -59,7 +59,7 @@ val tally = Tally().add(1).add(2)
 print(tally.count, tally.total, tally.words)   // expect: 2 8.0 ["n1", "n2"]
 
 // A field's initial value sees the header's entries and the fields above it.
-class Box(val width : int, val height : int, unit = "cm") {
+class Box(val width : int, val height : int, unit : string = "cm") {
   val area = width * height
   val label = "$area $unit"
   var corners = [[0, 0], [width, height]]
@@ -71,7 +71,7 @@ print(box.area, box.label, box.corners, Box(1, 1, "in").label)   // expect: 6 6 
 class Crate {
   var label = "crate"
   var size = 0
-  fun init(size, name = null) {
+  fun init(size : int, name : string? = null) {
     this.size = size
     if name != null { label = name }
   }
@@ -106,13 +106,13 @@ class Grid {
     val MAX = 100
     val LIMITS = [MAX, MAX * 2]
     var made = 0
-    fun key(row, col) => row * MAX + col
-    fun both(n) => [key(n, 0), key(0, n)]
+    fun key(row : int, col : int) => row * MAX + col
+    fun both(n : int) => [key(n, 0), key(0, n)]
     get count() => made
   }
   val id = key(1, made)
   fun init() { made += 1 }
-  fun cell(row, col) => "cell " + key(row, col) + " of " + LIMITS[1]
+  fun cell(row : int, col : int) => "cell " + key(row, col) + " of " + LIMITS[1]
 }
 val first = Grid()
 val second = Grid()
@@ -142,7 +142,7 @@ class Button(val text : string) {
     return clicks
   }
   fun counter() => { clicks += 10; clicks }
-  fun each(items) {
+  fun each(items : List<string>) {
     items.each { log.push(text + ":" + it) }
     return log
   }
@@ -165,12 +165,12 @@ class Panel {
   var title = "panel"
   var gap = 1
   var rows = []
-  fun row(name) { rows.push(name) }
+  fun row(name : string) { rows.push(name) }
 }
 class Screen {
   var title = "screen"
   var built = []
-  fun note(text) { built.push(text) }
+  fun note(text : string) { built.push(text) }
   fun build() {
     val panel = Panel()
     panel.apply {
@@ -192,7 +192,7 @@ object Clock {
     ticks += 1
     return names[ticks % 2]
   }
-  fun run(n) {
+  fun run(n : int) {
     var said = []
     for i in 1..n { said.push(tick()) }
     return said
@@ -200,10 +200,10 @@ object Clock {
 }
 print(Clock.run(3), Clock.ticks)            // expect: ["tock", "tick", "tock"] 3
 
-// A class with no declared fields makes them by assignment through this; afterwards the bare
-// name finds them.
+// A field given its value through this in init; afterwards the bare name finds it.
 class Legacy {
-  fun init(x) { this.x = x }
+  var x : int
+  fun init(x : int) { this.x = x }
   fun double() => x * 2
   fun grow() {
     x += 1
@@ -213,9 +213,9 @@ class Legacy {
 print(Legacy(4).grow().double())            // expect: 10
 
 // A field holding a function is called by its bare name.
-class Runner(val action) {
+class Runner(val action : (int) -> int) {
   var extra = fun(n) => n * 2
-  fun go(n) => action(n) + extra(n)
+  fun go(n : int) => action(n) + extra(n)
 }
 print(Runner(fun(n) => n + 1).go(5))        // expect: 16
 
@@ -235,7 +235,7 @@ try { LostChild().find() } catch (e) { print(e.message) }     // expect: undefin
 try { LostChild().assign() } catch (e) { print(e.message) }   // expect: undefined variable 'nowhereElse'
 
 // A class in a function, using that function's variables and its own members.
-fun make(step) {
+fun make(step : int) {
   class Stepper {
     var at = 0
     fun next() {
@@ -252,8 +252,8 @@ print(stepper.next())                       // expect: 10
 // Many times over.
 class Sum {
   var total = 0
-  fun add(n) { total += n }
-  fun run(count) {
+  fun add(n : int) { total += n }
+  fun run(count : int) {
     for i in 1..count { add(i) }
     return total
   }

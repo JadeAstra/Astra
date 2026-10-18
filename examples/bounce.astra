@@ -11,7 +11,7 @@ import Jade.*
 
 val startingBalls = 50000
 
-class Ball(var x : Number, var y : Number, var dx : Number, var dy : Number, val radius : Number, val color) {
+class Ball(var x : Number, var y : Number, var dx : Number, var dy : Number, val radius : Number, val color : Color) {
   // Moves on by `steps` sixtieths of a second, turning back at the edges.
   fun move(width : Number, height : Number, steps : Number) {
     x += dx * steps

@@ -4,36 +4,36 @@
 internal val defaultFont = Font(Font.sansSerif, Font.plain, 12)
 
 // A colour part of the way from one to another: a share of 0 is the first, of 1 the second.
-internal fun mixed(from, to, share) =>
+internal fun mixed(from : Color, to : Color, share : float) : Color =>
   Color(int(from.red + (to.red - from.red) * share), int(from.green + (to.green - from.green) * share),
         int(from.blue + (to.blue - from.blue) * share), from.alpha)
 
 // One line of text.
 class Label : Content, OwnedContent {
-  override var owner = null
-  var text = null
+  override var owner : Component? = null
+  var text : string = ""
     set(value) {
       field = value
       owner?.invalidateLayout()
     }
-  var font = null
+  var font : Font = defaultFont
     set(value) {
       field = value
       owner?.invalidateLayout()
     }
 
-  fun init(text, font = null) {
+  fun init(text : string, font : Font? = null) {
     this.text = text
     this.font = font ?: defaultFont
   }
 
-  override fun sizes() {
+  override fun sizes() : Sizes {
     val fm = metrics(font)
     val pref = Dimension(fm.stringWidth(text) + 8, fm.height + 4)
     return Sizes(pref, pref, Dimension(maxInt, pref.height))
   }
 
-  override fun paint(canvas) {
+  override fun paint(canvas : Canvas) {
     canvas.font = font
     canvas.color = canvas.style.foreground ?: Palette.ink
     val m = canvas.measure(text, font)
@@ -44,13 +44,13 @@ class Label : Content, OwnedContent {
 // Text that goes on to further lines when it reaches the width it is given, and whose
 // height therefore depends on that width.
 class WrappedLabel : Content, OwnedContent, HeightForWidth {
-  override var owner = null
-  var text = null
+  override var owner : Component? = null
+  var text : string = ""
     set(value) {
       field = value
       owner?.invalidateLayout()
     }
-  var font = null
+  var font : Font = defaultFont
     set(value) {
       field = value
       owner?.invalidateLayout()
@@ -63,18 +63,18 @@ class WrappedLabel : Content, OwnedContent, HeightForWidth {
     }
   private var lastWidth = -1
 
-  fun init(text, font = null) {
+  fun init(text : string, font : Font? = null) {
     this.text = text
     this.font = font ?: defaultFont
   }
 
   // The lines the text makes at a width: broken between words, a word too long for a
   // line left whole, and a line break in the text kept.
-  fun wrap(width) {
+  fun wrap(width : int) : List<string> {
     if (text.isEmpty()) { return [] }
     if (width <= 0) { return [text] }
     val fm = metrics(font)
-    val out = []
+    val out : List<string> = []
     for (paragraph in text.split("\n")) {
       if (paragraph.isEmpty()) {
         out.add("")
@@ -95,15 +95,15 @@ class WrappedLabel : Content, OwnedContent, HeightForWidth {
     return out
   }
 
-  override fun heightForWidth(width) => Math.max(wrap(width).size, 1) * metrics(font).height + 4
+  override fun heightForWidth(width : int) : int => Math.max(wrap(width).size, 1) * metrics(font).height + 4
 
-  override fun sizes() {
+  override fun sizes() : Sizes {
     val width = lastWidth > 0 ? lastWidth : preferredWidth
     val height = heightForWidth(width)
     return Sizes(Dimension(60, height), Dimension(width, height), Dimension(maxInt, maxInt))
   }
 
-  override fun paint(canvas) {
+  override fun paint(canvas : Canvas) {
     if (canvas.width != lastWidth and canvas.width > 0) {
       lastWidth = canvas.width
       owner?.invalidateLayout()
@@ -119,20 +119,20 @@ class WrappedLabel : Content, OwnedContent, HeightForWidth {
   }
 }
 
-fun wrappedLabel(text, font = null) => Component(WrappedLabel(text, font))
+fun wrappedLabel(text : string, font : Font? = null) : Component => Component(WrappedLabel(text, font))
 
 // A button: it does what `onClick` says when it is pressed and let go while the pointer is
 // still on it. While the pointer is over it, it is lit: its edge takes the accent colour
 // and its body a little of it. (JadeUI's button has no such look; its icon button has.)
 class Button : Content, OwnedContent {
-  override var owner = null
-  var onClick
-  var text = null
+  override var owner : Component? = null
+  var onClick : () -> unit
+  var text : string = ""
     set(value) {
       field = value
       owner?.invalidateLayout()
     }
-  var font = null
+  var font : Font = defaultFont
     set(value) {
       field = value
       owner?.invalidateLayout()
@@ -143,20 +143,20 @@ class Button : Content, OwnedContent {
   private var w = 0
   private var h = 0
 
-  fun init(text, onClick = {}, font = null) {
+  fun init(text : string, onClick : () -> unit = {}, font : Font? = null) {
     this.text = text
     this.onClick = onClick
     this.font = font ?: defaultFont
   }
 
-  override fun sizes() {
+  override fun sizes() : Sizes {
     val fm = metrics(font)
     val pref = Dimension(fm.stringWidth(text) + 24, fm.height + 12)
     val min = Dimension(fm.stringWidth(text) + 12, fm.height + 6)
     return Sizes(min, pref, Dimension(maxInt, pref.height))   // it may be made wider, not taller
   }
 
-  override fun paint(canvas) {
+  override fun paint(canvas : Canvas) {
     w = canvas.width
     h = canvas.height
     val base = canvas.style.background ?: Palette.bg(0xE0E0E0)
@@ -172,7 +172,7 @@ class Button : Content, OwnedContent {
     canvas.drawString(text, (canvas.width - m.width) / 2, (canvas.height - m.height) / 2 + m.ascent + down)
   }
 
-  override fun onEvent(event) {
+  override fun onEvent(event : Event) {
     if (event is Event.Click) {
       armed = true
       pressed = true
@@ -194,26 +194,26 @@ class Button : Content, OwnedContent {
 
   // The host repaints what the pointer comes onto and what it leaves; a button that learns
   // of it some other way asks for itself.
-  private fun setHovered(now) {
+  private fun setHovered(now : bool) {
     if (now != hovered) {
       hovered = now
       owner?.invalidate()
     }
   }
 
-  private fun isOver(x, y) => x >= 0 and x < w and y >= 0 and y < h
+  private fun isOver(x : int, y : int) : bool => x >= 0 and x < w and y >= 0 and y < h
 }
 
 // A button that shows a picture, for toolbars.
-class IconButton : Content, OwnedContent {
-  override var owner = null
-  var onClick
-  var image = null
+class IconButton(image : BufferedImage, onClick : () -> unit = {}, size : int = 30) : Content, OwnedContent {
+  override var owner : Component? = null
+  var onClick : () -> unit = onClick
+  var image : BufferedImage = image
     set(value) {
       field = value
       owner?.invalidate()
     }
-  var size = null
+  var size : int = size
     set(value) {
       field = value
       owner?.invalidateLayout()
@@ -232,21 +232,15 @@ class IconButton : Content, OwnedContent {
   private var hovered = false
   private var w = 0
   private var h = 0
-  private var fadedOf = null
-  private var fadedSource = null
+  private var fadedOf : BufferedImage? = null
+  private var fadedSource : BufferedImage? = null
 
-  fun init(image, onClick = {}, size = 30) {
-    this.image = image
-    this.onClick = onClick
-    this.size = size
-  }
-
-  override fun sizes() {
+  override fun sizes() : Sizes {
     val d = Dimension(size, size)
     return Sizes(d, d, Dimension(d.width, d.height))
   }
 
-  override fun paint(canvas) {
+  override fun paint(canvas : Canvas) {
     w = canvas.width
     h = canvas.height
     if (enabled and (pressed or hovered)) {
@@ -257,8 +251,8 @@ class IconButton : Content, OwnedContent {
   }
 
   // The picture as it looks when the button cannot be used: mostly see-through.
-  private fun faded(source) {
-    if (fadedSource === source) { return fadedOf }
+  private fun faded(source : BufferedImage) : BufferedImage {
+    if (fadedSource === source) { return fadedOf!! }
     val out = BufferedImage(source.width, source.height, BufferedImage.typeIntArgb)
     out.canvas().drawImage(source, 0, 0, null, null, 0.35)
     fadedSource = source
@@ -266,7 +260,7 @@ class IconButton : Content, OwnedContent {
     return out
   }
 
-  override fun onEvent(event) {
+  override fun onEvent(event : Event) {
     if (!enabled) { return }
     if (event is Event.Click) {
       armed = true
@@ -282,27 +276,27 @@ class IconButton : Content, OwnedContent {
     }
   }
 
-  private fun isOver(x, y) => x >= 0 and x < w and y >= 0 and y < h
+  private fun isOver(x : int, y : int) : bool => x >= 0 and x < w and y >= 0 and y < h
 }
 
-fun iconButton(image, onClick = {}) => Component(IconButton(image, onClick))
+fun iconButton(image : BufferedImage, onClick : () -> unit = {}) : Component => Component(IconButton(image, onClick))
 
 // The thin upright rule between groups of buttons in a toolbar.
 class ToolbarSeparator : Content {
-  private val color
-  private val height
+  private val color : Color?
+  private val height : int
 
-  fun init(color = null, height = 20) {
+  fun init(color : Color? = null, height : int = 20) {
     this.color = color
     this.height = height
   }
 
-  override fun sizes() {
+  override fun sizes() : Sizes {
     val d = Dimension(9, height)
     return Sizes(d, d, Dimension(d.width, maxInt))
   }
 
-  override fun paint(canvas) {
+  override fun paint(canvas : Canvas) {
     val h = Math.min(canvas.height, height)
     val top = (canvas.height - h) / 2
     canvas.color = color ?: Palette.line(0xC8CED4)
@@ -310,21 +304,21 @@ class ToolbarSeparator : Content {
   }
 }
 
-fun toolbarSeparator() => Component(ToolbarSeparator())
+fun toolbarSeparator() : Component => Component(ToolbarSeparator())
 
 // Takes up room and draws nothing but a background, if it is given one.
 internal class Spacer : Content {
-  private val w
-  private val h
+  private val w : int
+  private val h : int
 
-  fun init(w = 0, h = 0) {
+  fun init(w : int = 0, h : int = 0) {
     this.w = w
     this.h = h
   }
 
-  override fun sizes() => Sizes(Dimension(w, h), Dimension(w, h), Dimension(maxInt, maxInt))
+  override fun sizes() : Sizes => Sizes(Dimension(w, h), Dimension(w, h), Dimension(maxInt, maxInt))
 
-  override fun paint(canvas) {
+  override fun paint(canvas : Canvas) {
     val fill = canvas.style.background
     if (fill != null) {
       canvas.color = fill

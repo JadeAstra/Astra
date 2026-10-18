@@ -1,7 +1,7 @@
 // Asking for more memory than the system can give is an error like any other: an
 // OutOfMemoryError, which the program can catch and go on from.
 
-fun tryToMake(what, make) {
+fun tryToMake(what : string, make : () -> unit) {
   try {
     make()
     print(what + ": made")

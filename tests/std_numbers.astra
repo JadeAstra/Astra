@@ -1,11 +1,14 @@
 // Number helpers and constants, ranges, and the small functions of the standard library.
 
+// A value whose type the checker does not see, for testing the checks made when running.
+val unknown = { value -> value }
+
 // Keeping a number within bounds. The result is one of the three numbers, as it was.
 print(5.coerceIn(1, 10), (-3).coerceIn(1, 10), 99.coerceIn(1, 10), 5.coerceIn(1..3), 0.coerceIn(1..3))   // expect: 5 1 10 3 1
 print(2.5.coerceIn(0, 1), 0.5.coerceIn(0, 1), 7.coerceIn(0.5, 9.5), 5.coerceAtLeast(8), 5.coerceAtLeast(2), 5.coerceAtMost(3), 5.coerceAtMost(9.5))   // expect: 1 0.5 7 8 5 3 5
 print(5.coerceIn(minimumValue = 6, maximumValue = 8))        // expect: 6
 try { 5.coerceIn(10, 1) } catch (e) { print(e.message) }     // expect: coerceIn: the maximum 1 is less than the minimum 10
-try { 5.coerceAtLeast("x") } catch (e) { print(e.message) }  // expect: minimum must be a number, got string
+try { 5.coerceAtLeast(unknown("x")) } catch (e) { print(e.message) }  // expect: minimum must be a number, got string
 
 // Rounding and converting. A half rounds up; toInt drops what is after the point.
 print(2.4.roundToInt(), 2.5.roundToInt(), (-2.5).roundToInt(), (-2.6).roundToInt(), 7.roundToInt(), 1e10.roundToLong())   // expect: 2 3 -2 -3 7 10000000000
@@ -58,5 +61,5 @@ try { requireNotNull(null) { "nothing there" } } catch (e) { print(e.message) } 
 print(5.toString() + "!", true.toString(), "s".toString(), [1, 2].toString(), {"a": 1}.toString(), null.toString())   // expect: 5! true s [1, 2] {"a": 1} null
 print(5.equals(5), 5.equals(6), null.equals(null), [1].equals([1]), 5.takeUnless { it > 3 }, 5.takeUnless { it > 9 }, "b".compareTo("a"), true.compareTo(false))   // expect: true false true true null 5 1 1
 val double = { n -> n * 2 }
-val maybe = null
+val maybe : Function? = null
 print(double.invoke(4), double?.invoke(5), maybe?.invoke(6))   // expect: 8 10 null
