@@ -26,6 +26,8 @@ namespace fs = std::filesystem;
 // The standard library past the prelude: src/std/*.astra, packed into the executable by the build.
 extern const unsigned char kStdSource[];
 extern const size_t kStdSourceSize;
+extern const size_t kStdFileEnds[];
+extern const size_t kStdFileCount;
 
 namespace {
 
@@ -4056,6 +4058,7 @@ static std::vector<fs::path> folderFiles(const std::string& folder) {
 }
 
 CompileTimes compileTimes;
+bool compilingPrelude = false;
 
 namespace {
 // Adds the time from here to the end of the scope to one part of CompileTimes.
@@ -4135,9 +4138,13 @@ CompilerSession::CompilerSession(VM& vm, Checker* given) : checker(given), vm_(v
     builtins->library = "<builtin>";
     builtins_ = builtins.get();
     namespaces_["<builtin>"] = std::move(builtins);
-    // The standard library is part of the prelude: every program starts with it loaded.
-    std::string prelude = kPrelude;
-    prelude.append(reinterpret_cast<const char*>(kStdSource), kStdSourceSize);
+    // The standard library is part of the prelude: every program starts with it loaded. It
+    // comes compiled with astra.exe, unless its own mistakes are to be listed (`astra check
+    // --std`) or astra.exe is making that compiled copy.
+    const std::string prelude = preludeSource();
+    std::string attached;
+    if (!checker->reportStandardLibrary && !compilingPrelude && attachedPrelude(attached) && usePrelude(prelude, attached))
+        return;
     program.modules.push_back(compileUnit(prelude, "<std>", "<builtin>", "<prelude>", false));
     noteModule(0, "<prelude>");
     for (const auto& [what, cover] : externalForms_) {
@@ -4356,8 +4363,18 @@ int CompilerSession::reuseUnit(const std::string& unit, const std::vector<std::s
     if (plannedUnit == planned_.end()) return 0;
     KeptUnit kept = std::move(plannedUnit->second);
     planned_.erase(plannedUnit);
+    const int reused = putBack(kept.image, files, modules, statements, names, directory, ns);
+    if (reused == 1) compileTimes.unitsReused++;
+    return reused;
+}
+
+// Puts a unit's kept code back as modules `modules` of the program: what compiling its files
+// would have noted for the rest is noted, and its code given this compile's numbers.
+int CompilerSession::putBack(const std::string& data, const std::vector<std::string>& files, const std::vector<int>& modules,
+                             const std::vector<const std::vector<StmtPtr>*>& statements, const std::vector<std::string>& names,
+                             const std::string& directory, Namespace* ns) {
     UnitImage image;
-    if (!readImage(kept.image, image) || image.own.size() != modules.size()) return 0;
+    if (!readImage(data, image) || image.own.size() != modules.size()) return 0;
     for (size_t i = 0; i < modules.size(); i++)
         if (image.own[i] != moduleKeys_[static_cast<size_t>(modules[i])]) return 0;
     std::vector<FunctionProto*> protos;
@@ -4416,7 +4433,6 @@ int CompilerSession::reuseUnit(const std::string& unit, const std::vector<std::s
         return 2;
     }
     for (size_t i = 0; i < modules.size(); i++) program.modules[static_cast<size_t>(modules[i])] = protos[i];
-    compileTimes.unitsReused++;
     return 1;
 }
 
@@ -4497,9 +4513,8 @@ void CompilerSession::checkSkipped(const std::vector<std::string>& files) {
 
 // Keeps the units compiled this time, once the whole program has been: their code's numbers
 // listed now, their code written by the cache's own thread as the program runs.
-void CompilerSession::keepUnits() {
-    if (toKeep_.empty()) return;
-    std::unordered_map<int, std::string> slotKeys;
+// What each global's slot and each library's number stand for, for the images of units.
+void CompilerSession::numberNames(std::unordered_map<int, std::string>& slotKeys, std::unordered_map<int, std::string>& libraries) const {
     for (const auto& [nsKey, ns] : namespaces_)
         for (const auto& [name, entry] : ns->names) {
             const std::string key = std::string("n") + kKeyPart + nsKey + kKeyPart + name;
@@ -4512,51 +4527,68 @@ void CompilerSession::keepUnits() {
             if (entry.slot >= 0) slotKeys[entry.slot] = key;
             for (const auto& [signature, slot] : entry.forms) slotKeys[slot] = key + kKeyPart + signature;
         }
-    std::unordered_map<int, std::string> libraries;
     for (const auto& [library, number] : libraryIds_) libraries[number] = library;
+}
 
+// A unit's image: what its code's numbers stand for, and what the checker learned of its
+// functions (`head`), and its modules (`protos`, written after the head). False if something
+// in it cannot be named again, and it is to be compiled each time.
+bool CompilerSession::unitImage(const ToKeep& unit, const std::unordered_map<int, std::string>& slotKeys,
+                                const std::unordered_map<int, std::string>& libraries, std::string& head,
+                                std::vector<const FunctionProto*>& protos) {
+    std::set<int> globals, modules, numbers;
+    const Renumbering listed{[&](int v) { globals.insert(v); return v; }, [&](int v) { modules.insert(v); return v; },
+                             [&](int v) { numbers.insert(v); return v; }};
+    bool whole = true;
+    for (int index : unit.modules) {
+        FunctionProto* proto = program.modules[static_cast<size_t>(index)];
+        if (proto == nullptr) {
+            whole = false;
+        } else {
+            renumber(*proto, listed, vm_);
+            protos.push_back(proto);
+        }
+    }
+    putU32(head, static_cast<uint32_t>(unit.modules.size()));
+    for (int index : unit.modules) putText(head, moduleKeys_[static_cast<size_t>(index)]);
+    putU32(head, static_cast<uint32_t>(globals.size()));
+    for (int slot : globals) {
+        auto key = slotKeys.find(slot);
+        if (key == slotKeys.end()) whole = false;
+        putU32(head, static_cast<uint32_t>(slot));
+        putText(head, key == slotKeys.end() ? std::string() : key->second);
+    }
+    putU32(head, static_cast<uint32_t>(modules.size()));
+    for (int index : modules) {
+        const bool known = static_cast<size_t>(index) < moduleKeys_.size() && !moduleKeys_[static_cast<size_t>(index)].empty();
+        if (!known) whole = false;
+        putU32(head, static_cast<uint32_t>(index));
+        putText(head, known ? moduleKeys_[static_cast<size_t>(index)] : std::string());
+    }
+    putU32(head, static_cast<uint32_t>(numbers.size()));
+    for (int number : numbers) {
+        auto library = libraries.find(number);
+        putU32(head, static_cast<uint32_t>(number));
+        putText(head, library == libraries.end() ? std::string("own") : "lib:" + library->second);
+    }
+    putU32(head, static_cast<uint32_t>(unit.files.size()));
+    for (const std::string& file : unit.files) {
+        putText(head, file);
+        putText(head, checker->inPlaceFacts(file));
+    }
+    return whole;
+}
+
+// Keeps the units compiled this time, once the whole program has been: their code's numbers
+// listed now, their code written by the cache's own thread as the program runs.
+void CompilerSession::keepUnits() {
+    if (toKeep_.empty()) return;
+    std::unordered_map<int, std::string> slotKeys, libraries;
+    numberNames(slotKeys, libraries);
     for (const ToKeep& unit : toKeep_) {
-        std::set<int> globals, modules, numbers;
-        const Renumbering listed{[&](int v) { globals.insert(v); return v; }, [&](int v) { modules.insert(v); return v; },
-                                 [&](int v) { numbers.insert(v); return v; }};
-        std::vector<const FunctionProto*> protos;
-        bool whole = true;
-        for (int index : unit.modules) {
-            FunctionProto* proto = program.modules[static_cast<size_t>(index)];
-            if (proto == nullptr) whole = false;
-            else {
-                renumber(*proto, listed, vm_);
-                protos.push_back(proto);
-            }
-        }
         std::string head;
-        putU32(head, static_cast<uint32_t>(unit.modules.size()));
-        for (int index : unit.modules) putText(head, moduleKeys_[static_cast<size_t>(index)]);
-        putU32(head, static_cast<uint32_t>(globals.size()));
-        for (int slot : globals) {
-            auto key = slotKeys.find(slot);
-            if (key == slotKeys.end()) whole = false;
-            putU32(head, static_cast<uint32_t>(slot));
-            putText(head, key == slotKeys.end() ? std::string() : key->second);
-        }
-        putU32(head, static_cast<uint32_t>(modules.size()));
-        for (int index : modules) {
-            const bool known = static_cast<size_t>(index) < moduleKeys_.size() && !moduleKeys_[static_cast<size_t>(index)].empty();
-            if (!known) whole = false;
-            putU32(head, static_cast<uint32_t>(index));
-            putText(head, known ? moduleKeys_[static_cast<size_t>(index)] : std::string());
-        }
-        putU32(head, static_cast<uint32_t>(numbers.size()));
-        for (int number : numbers) {
-            auto library = libraries.find(number);
-            putU32(head, static_cast<uint32_t>(number));
-            putText(head, library == libraries.end() ? std::string("own") : "lib:" + library->second);
-        }
-        putU32(head, static_cast<uint32_t>(unit.files.size()));
-        for (const std::string& file : unit.files) {
-            putText(head, file);
-            putText(head, checker->inPlaceFacts(file));
-        }
+        std::vector<const FunctionProto*> protos;
+        bool whole = unitImage(unit, slotKeys, libraries, head, protos);
         KeptUnit kept;
         std::vector<std::string> own(unit.files.begin(), unit.files.end());
         std::sort(own.begin(), own.end());
@@ -4578,6 +4610,102 @@ void CompilerSession::keepUnits() {
         });
     }
     toKeep_.clear();
+}
+
+// ---- The standard library, compiled when astra.exe is built (D145, point 3) ----
+//
+// The build compiles the prelude once, as astra.exe's last step, and attaches its image to the
+// file. A session then puts it back as it would a kept unit: the prelude is read, for what it
+// declares, but its bodies are not checked and nothing of it is compiled. The image is of this
+// very file's prelude, so only a hash of the prelude's text is checked against it.
+
+std::string CompilerSession::preludeImage() {
+    std::unordered_map<int, std::string> slotKeys, libraries;
+    numberNames(slotKeys, libraries);
+    std::string head;
+    std::vector<const FunctionProto*> protos;
+    if (!unitImage(ToKeep{"<prelude>", {"<prelude>"}, {0}}, slotKeys, libraries, head, protos)) return {};
+    std::string image;
+    putU32(image, 1);  // the form of what follows
+    image += std::to_string(textHash(preludeSource())) + "\n";
+    std::ostringstream code;
+    writeModules(protos, code);
+    return image + head + code.str();
+}
+
+// The prelude, the same as parseSource gives it, but parsed a file at a time on threads.
+static std::vector<StmtPtr> parsePrelude(const std::string& prelude) {
+    PartTimer timed(compileTimes.parse);
+    const size_t base = prelude.size() - kStdSourceSize;  // what comes before the standard library's files
+    std::vector<std::pair<size_t, size_t>> parts{{0, base}};
+    size_t from = base;
+    for (size_t i = 0; i < kStdFileCount; i++) {
+        parts.emplace_back(from, base + kStdFileEnds[i]);
+        from = base + kStdFileEnds[i];
+    }
+    std::vector<int> lines;
+    int line = 1;
+    size_t counted = 0;
+    for (const auto& [start, end] : parts) {
+        line += static_cast<int>(std::count(prelude.begin() + static_cast<std::ptrdiff_t>(counted),
+                                            prelude.begin() + static_cast<std::ptrdiff_t>(start), '\n'));
+        counted = start;
+        lines.push_back(line);
+    }
+    std::vector<std::vector<StmtPtr>> parsed(parts.size());
+    std::vector<std::unique_ptr<CompileError>> errors(parts.size());
+    std::atomic<size_t> next{0};
+    auto work = [&] {
+        for (size_t i = next++; i < parts.size(); i = next++) {
+            try {
+                Lexer lexer(prelude, "<std>", parts[i].first, parts[i].second, lines[i]);
+                std::vector<Token> tokens = lexer.scan();
+                Parser parser(tokens, "<std>");
+                parsed[i] = parser.parseProgram();
+            } catch (const CompileError& e) {
+                errors[i] = std::make_unique<CompileError>(e);
+            }
+        }
+    };
+    const size_t cores = std::max(1u, std::thread::hardware_concurrency());
+    std::vector<std::thread> threads;
+    for (size_t i = 0; i + 1 < std::min<size_t>({parts.size(), cores, 8}); i++) threads.emplace_back(work);
+    work();
+    for (std::thread& t : threads) t.join();
+    std::vector<StmtPtr> statements;
+    for (size_t i = 0; i < parts.size(); i++) {
+        if (errors[i]) throw CompileError(*errors[i]);
+        for (StmtPtr& s : parsed[i]) statements.push_back(std::move(s));
+    }
+    return statements;
+}
+
+std::string CompilerSession::preludeSource() {
+    std::string prelude = kPrelude;
+    prelude.append(reinterpret_cast<const char*>(kStdSource), kStdSourceSize);
+    return prelude;
+}
+
+bool CompilerSession::usePrelude(const std::string& prelude, const std::string& image) {
+    if (image.size() < 4 || image[0] != 1 || image[1] != 0 || image[2] != 0 || image[3] != 0) return false;
+    const size_t line = image.find('\n', 4);
+    if (line == std::string::npos || image.substr(4, line - 4) != std::to_string(textHash(prelude))) return false;
+    const std::string kept = image.substr(line + 1);
+    UnitImage parts;
+    if (!readImage(kept, parts) || parts.own.size() != 1) return false;
+    // Read for what it declares; its bodies are as they were when astra.exe was built. Its files
+    // are parsed apart, a few at a time, each at its own lines, and joined in order.
+    sources_.push_back(std::make_unique<std::vector<StmtPtr>>(parsePrelude(prelude)));
+    const std::vector<StmtPtr>& statements = *sources_.back();
+    gather("<prelude>", "<std>", "<builtin>", statements, builtins_, true);
+    checker->skipBodiesOf("<prelude>", parts.facts["<prelude>"]);
+    check();
+    program.modules.push_back(nullptr);
+    noteModule(0, "<prelude>");
+    if (putBack(kept, {"<prelude>"}, {0}, {&statements}, {"<std>"}, "", builtins_) != 1)
+        throw CompileError("<std>", 1, 1, "the standard library attached to astra.exe could not be put back; build astra.exe again");
+    compileTimes.preludeAttached = true;
+    return true;
 }
 
 int CompilerSession::compileSource(const std::string& source, const std::string& name,

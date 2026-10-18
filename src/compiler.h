@@ -63,8 +63,13 @@ struct CompileTimes {
     double parse = 0, check = 0, compile = 0;
     double cacheCheck = 0, cacheRead = 0;  // a kept program: its files looked at, and it read in
     int unitsReused = 0, unitsCompiled = 0;  // units of the program put back from the cache, and compiled
+    bool preludeAttached = false;            // the standard library came compiled with astra.exe
 };
 extern CompileTimes compileTimes;
+
+// Set by `astra --attach-prelude`, which compiles the standard library to attach to astra.exe:
+// the copy already attached, if any, is not used for that.
+extern bool compilingPrelude;
 
 // Reads a whole file; returns false if it cannot be opened. Strips a UTF-8 byte order mark.
 bool readFile(const std::string& path, std::string& out);
@@ -97,6 +102,10 @@ public:
 
     // Compiles a file and everything it imports. Returns the entry module index.
     int compileFile(const std::string& path);
+
+    // The standard library compiled, as its image to be attached to astra.exe (D145, point 3);
+    // empty if it cannot be made.
+    std::string preludeImage();
 
     // Compiles source text as a new module. In shell mode a trailing expression becomes the
     // module's result.
@@ -189,6 +198,15 @@ private:
     int reuseUnit(const std::string& unit, const std::vector<std::string>& files, const std::vector<int>& modules,
                   const std::vector<const std::vector<StmtPtr>*>& statements, const std::vector<std::string>& names,
                   const std::string& directory, Namespace* ns);
+    int putBack(const std::string& image, const std::vector<std::string>& files, const std::vector<int>& modules,
+                const std::vector<const std::vector<StmtPtr>*>& statements, const std::vector<std::string>& names,
+                const std::string& directory, Namespace* ns);
+    void numberNames(std::unordered_map<int, std::string>& slotKeys, std::unordered_map<int, std::string>& libraries) const;
+    bool unitImage(const ToKeep& unit, const std::unordered_map<int, std::string>& slotKeys,
+                   const std::unordered_map<int, std::string>& libraries, std::string& head,
+                   std::vector<const FunctionProto*>& protos);
+    static std::string preludeSource();
+    bool usePrelude(const std::string& prelude, const std::string& image);
     void keepUnits();
     int slotFor(const std::string& key);
     // Before checking: the units whose code will be put back, whose bodies are then not checked

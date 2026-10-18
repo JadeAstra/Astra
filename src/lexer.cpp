@@ -55,6 +55,9 @@ std::string CompileError::format() const {
 Lexer::Lexer(const std::string& source, std::string file)
     : src_(source), file_(std::move(file)), pos_(0), end_(source.size()), line_(1), lineStart_(0) {}
 
+Lexer::Lexer(const std::string& source, std::string file, size_t start, size_t end, int line)
+    : src_(source), file_(std::move(file)), pos_(start), end_(end), line_(line), lineStart_(start) {}
+
 Lexer::Lexer(const std::string& source, std::string file, size_t start, size_t end, int line, size_t lineStart)
     : src_(source), file_(std::move(file)), pos_(start), end_(end), line_(line), lineStart_(lineStart) {
     // An interpolated expression behaves as if it were parenthesized.

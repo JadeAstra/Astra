@@ -411,9 +411,9 @@ static void showTimes(const char* what) {
                      "it read in %.1f\n", what, ready, compileTimes.cacheCheck, compileTimes.cacheRead);
     else
         std::fprintf(stderr, "astra: %s %.1f ms after astra.exe started its work: parsing %.1f, checking %.1f, compiling %.1f "
-                     "(units put back %d, compiled %d)\n",
+                     "(units put back %d, compiled %d; the standard library %s)\n",
                      what, ready, compileTimes.parse, compileTimes.check, compileTimes.compile, compileTimes.unitsReused,
-                     compileTimes.unitsCompiled);
+                     compileTimes.unitsCompiled, compileTimes.preludeAttached ? "attached" : "compiled");
 }
 
 int runFile(const std::string& path, std::vector<std::string> scriptArgs) {
@@ -518,6 +518,7 @@ int buildFile(const std::string& path, std::string outPath, bool asExecutable, b
     }
     int64_t existing = bundledProgramSize(image);
     if (existing >= 0) image.resize(image.size() - kBundleTrailer - static_cast<size_t>(existing));
+    stripPrelude(image);  // the program carries its own compiled copy of what it uses
 
     if (windowed) {
 #ifdef _WIN32
@@ -695,6 +696,26 @@ int dispatch(const std::vector<std::string>& args) {
         // Asking for an .exe by name is asking for a program.
         if (std::filesystem::path(output).extension() == ".exe") asExecutable = true;
         return buildFile(input, output, asExecutable, windowed, icon);
+    }
+
+    if (command == "--attach-prelude" && args.size() == 2) {
+        // The build's last step: a copy of this executable with the standard library compiled
+        // and attached (D145, point 3), which the build then puts in its place.
+        compilingPrelude = true;
+        VM vm;
+        std::string image;
+        try {
+            CompilerSession session(vm);
+            image = session.preludeImage();
+        } catch (const CompileError& e) {
+            std::cerr << e.format() << "\n";
+            return kExitCompileError;
+        }
+        if (image.empty() || !attachPrelude(args[1], image)) {
+            std::cerr << "astra: cannot attach the standard library to " << args[1] << "\n";
+            return kExitCannotWrite;
+        }
+        return 0;
     }
 
     if (command == "check") {

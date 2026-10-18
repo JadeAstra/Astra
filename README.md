@@ -74,7 +74,8 @@ files learn from its function bodies (a result type not written; whether a lambd
 runs there and then). Another file is compiled again only if it changed itself or a summary it
 depends on did, so an edit inside a function's body compiles that file alone, and the bodies
 of what is put back are not checked again. Files are parsed a few at a time, on threads of
-their own.
+their own. The standard library is compiled when `astra.exe` is built, as the build's last
+step, and carried in it: no run compiles or checks it.
 
 ### Standalone programs
 

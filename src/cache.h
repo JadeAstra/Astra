@@ -21,6 +21,14 @@ namespace astra {
 // Reads a whole file into `out`, in one read. False if it cannot be read.
 bool readWholeFile(const std::filesystem::path& path, std::string& out);
 
+// The standard library compiled when astra.exe was built (D145, point 3), attached to the end
+// of the file with its size and a marker: read from there without reading the rest, made into
+// a copy of the file with it attached, and taken off a file's image (for a built program,
+// which carries what it needs of it in its own code).
+bool attachedPrelude(std::string& image);
+bool attachPrelude(const std::filesystem::path& copy, const std::string& image);
+void stripPrelude(std::string& file);
+
 // A file a program was compiled from: its text's hash, size and time when it was read.
 struct SourceRead {
     std::string path;

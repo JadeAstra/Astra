@@ -91,3 +91,14 @@ if(MSVC)
 else()
   target_compile_options(astra PRIVATE -Wall -Wextra)
 endif()
+
+# The standard library, compiled once as the build's last step and attached to astra.exe, so
+# that no script compiles it or checks it again (D145). Off, astra compiles it at each start.
+option(ASTRA_ATTACH_PRELUDE "Attach the compiled standard library to astra.exe" ON)
+if(ASTRA_ATTACH_PRELUDE)
+  add_custom_command(TARGET astra POST_BUILD
+    COMMAND $<TARGET_FILE:astra> --attach-prelude $<TARGET_FILE_DIR:astra>/astra-attached.exe
+    COMMAND ${CMAKE_COMMAND} -E rename $<TARGET_FILE_DIR:astra>/astra-attached.exe $<TARGET_FILE:astra>
+    COMMENT "Attaching the compiled standard library"
+    VERBATIM)
+endif()

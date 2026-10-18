@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cstring>
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
@@ -185,6 +186,63 @@ void startKeeping() {
 }  // namespace
 
 bool fileStamp(const std::string& path, uintmax_t& size, long long& time) { return stamp(path, size, time); }
+
+namespace {
+const char kPreludeMarker[8] = {'A', 'S', 'T', 'R', 'A', 'S', 'T', 'D'};
+const size_t kPreludeTrailer = 8 + sizeof kPreludeMarker;  // the image's size, then the marker
+
+uint64_t trailerSize(const char* trailer) {
+    uint64_t size = 0;
+    for (int i = 0; i < 8; i++) size |= static_cast<uint64_t>(static_cast<unsigned char>(trailer[i])) << (8 * i);
+    return size;
+}
+}  // namespace
+
+bool attachedPrelude(std::string& image) {
+#ifdef _WIN32
+    std::FILE* file = _wfopen(executable().c_str(), L"rb");
+#else
+    std::FILE* file = std::fopen(executable().c_str(), "rb");
+#endif
+    if (file == nullptr) return false;
+    bool found = false;
+    char trailer[kPreludeTrailer];
+    if (std::fseek(file, 0, SEEK_END) == 0) {
+        const long size = std::ftell(file);
+        if (size > static_cast<long>(kPreludeTrailer) && std::fseek(file, size - static_cast<long>(kPreludeTrailer), SEEK_SET) == 0 &&
+            std::fread(trailer, 1, sizeof trailer, file) == sizeof trailer &&
+            std::memcmp(trailer + 8, kPreludeMarker, sizeof kPreludeMarker) == 0) {
+            const uint64_t length = trailerSize(trailer);
+            if (length <= static_cast<uint64_t>(size) - kPreludeTrailer &&
+                std::fseek(file, size - static_cast<long>(kPreludeTrailer) - static_cast<long>(length), SEEK_SET) == 0) {
+                image.resize(static_cast<size_t>(length));
+                found = std::fread(image.data(), 1, image.size(), file) == image.size();
+            }
+        }
+    }
+    std::fclose(file);
+    return found;
+}
+
+void stripPrelude(std::string& file) {
+    if (file.size() < kPreludeTrailer) return;
+    const char* trailer = file.data() + file.size() - kPreludeTrailer;
+    if (std::memcmp(trailer + 8, kPreludeMarker, sizeof kPreludeMarker) != 0) return;
+    const uint64_t length = trailerSize(trailer);
+    if (length <= file.size() - kPreludeTrailer) file.resize(file.size() - kPreludeTrailer - static_cast<size_t>(length));
+}
+
+bool attachPrelude(const fs::path& copy, const std::string& image) {
+    std::string file;
+    if (!readWholeFile(executable(), file)) return false;
+    stripPrelude(file);
+    file += image;
+    for (int i = 0; i < 8; i++) file.push_back(static_cast<char>((static_cast<uint64_t>(image.size()) >> (8 * i)) & 0xFF));
+    file.append(kPreludeMarker, sizeof kPreludeMarker);
+    std::ofstream out(copy, std::ios::binary | std::ios::trunc);
+    out.write(file.data(), static_cast<std::streamsize>(file.size()));
+    return static_cast<bool>(out);
+}
 
 bool readWholeFile(const fs::path& path, std::string& out) {
 #ifdef _WIN32

@@ -83,6 +83,9 @@ class Lexer {
 public:
     // `source` must outlive the lexer.
     Lexer(const std::string& source, std::string file);
+    // A part of `source`, from `start`, where a line begins, to `end`: positions are those in
+    // the whole of it, the part's first line being `line`.
+    Lexer(const std::string& source, std::string file, size_t start, size_t end, int line);
     std::vector<Token> scan();
 
 private:
