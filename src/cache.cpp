@@ -17,6 +17,7 @@
 #include <unistd.h>
 #endif
 
+#include "compiler.h"
 #include "section_compiler.h"  // last: this file's own code goes in its section (D161)
 
 namespace astra {
@@ -40,7 +41,7 @@ Writing& writing() {
     return made;
 }
 
-fs::path cacheDirectory() {
+fs::path cacheRoot() {
     if (const char* chosen = std::getenv("ASTRA_CACHE"); chosen != nullptr && *chosen != '\0') return fs::path(chosen);
 #ifdef _WIN32
     if (const char* local = std::getenv("LOCALAPPDATA"); local != nullptr && *local != '\0')
@@ -50,6 +51,14 @@ fs::path cacheDirectory() {
     if (const char* home = std::getenv("HOME"); home != nullptr && *home != '\0') return fs::path(home) / ".cache" / "astra";
 #endif
     return {};
+}
+
+// Where compiled programs are kept; those compiled to check what the C++ functions give
+// (ASTRA_CHECK_NATIVE_RESULTS) apart from the others.
+fs::path cacheDirectory() {
+    fs::path root = cacheRoot();
+    if (!root.empty() && checkingNativeResults()) root /= "checked";
+    return root;
 }
 
 fs::path executable() {

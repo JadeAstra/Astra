@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -188,6 +189,9 @@ struct FunctionState {
 
     int caches = 0;  // how many places to remember a field the function's code has so far
 
+    // A generic function's type parameters, which its frame is given when it is called (M6.6 part 1).
+    std::vector<std::string> typeParams;
+
     std::vector<Local> locals;
     int slotTop = 0;  // the slot the next local will get
     std::map<std::pair<int, uint64_t>, int> constantIndex;
@@ -246,6 +250,7 @@ struct ClassState {
     FunctionState* definedIn = nullptr;
     bool inStaticInit = false;  // the value of a static field is being compiled
     bool isEnum = false;
+    std::vector<std::string> typeParams;  // a generic class's, which each of its objects keeps (M6.6 part 1)
 
     // Fields whose initial values the generated initializer assigns, after the header's
     // entries, so that such a value can be worked out from them. The value may be null.
@@ -259,6 +264,14 @@ struct ClassState {
 };
 
 }  // namespace
+
+bool checkingNativeResults() {
+    static const bool checking = [] {
+        const char* set = std::getenv("ASTRA_CHECK_NATIVE_RESULTS");
+        return set != nullptr && *set != '0' && *set != '\0';
+    }();
+    return checking;
+}
 
 bool readFile(const std::string& path, std::string& out) {
     if (!readWholeFile(fs::path(path), out)) return false;
@@ -1766,6 +1779,265 @@ private:
         return type;
     }
 
+    // ---- Types when the program runs (M6.6 part 1) ----
+
+    // Where the value of a type parameter is when the program runs: one of the frame's type
+    // arguments, or one of those of the object a method runs on.
+    struct TypeParamPlace {
+        bool ofObject = false;
+        int index = -1;
+        FunctionState* owner = nullptr;  // the generic function, for one of a frame's
+    };
+
+    // The type parameter `name`, as the code being compiled reaches it; false where it cannot:
+    // a class's in a static member, a function's from inside a generic function of its own
+    // (whose frame has its own type arguments), and a class's from a class inside it.
+    bool findTypeParam(const std::string& name, TypeParamPlace& place) const {
+        bool crossedGeneric = false;
+        for (FunctionState* state = fs_; state != nullptr; state = state->enclosing) {
+            auto found = std::find(state->typeParams.begin(), state->typeParams.end(), name);
+            if (found != state->typeParams.end()) {
+                if (crossedGeneric || found - state->typeParams.begin() > 0xFF) return false;
+                place = TypeParamPlace{false, static_cast<int>(found - state->typeParams.begin()), state};
+                return true;
+            }
+            if (!state->typeParams.empty()) crossedGeneric = true;
+            if (state->kind == FunctionKind::StaticMethod) return false;
+            if (kindHasThis(state->kind)) {
+                if (class_ == nullptr) return false;
+                auto own = std::find(class_->typeParams.begin(), class_->typeParams.end(), name);
+                if (own == class_->typeParams.end() || own - class_->typeParams.begin() > 0xFF) return false;
+                place = TypeParamPlace{true, static_cast<int>(own - class_->typeParams.begin()), nullptr};
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // Pushes the value of a type parameter that findTypeParam found.
+    void emitTypeParam(const TypeParamPlace& place, const Node& at) {
+        if (place.ofObject) {
+            emitGet("this", at);
+            emitGet(class_->storage, at);
+            emit(Op::InstanceTypeArg);
+        } else {
+            // The lambdas between keep the generic function's, each in its closure.
+            for (FunctionState* state = fs_; state != place.owner && state != nullptr; state = state->enclosing)
+                state->proto->typeArgs |= kTypeArgsKept;
+            emit(Op::TypeArg);
+        }
+        emitByte(place.index);
+    }
+
+    // What a MakeType takes from the stack: the global of a class, or a type parameter.
+    struct TypeOperand {
+        int global = -1;
+        TypeParamPlace param;
+    };
+
+    // A type the checker worked out, as the shape of a MakeType and what it takes from the
+    // stack, in order; false where a part of it cannot be made when the program runs. A type
+    // parameter out of reach is made `any`, which takes every value.
+    bool shapeOf(const RuntimeType& t, std::string& shape, std::vector<TypeOperand>& operands) {
+        if (t.nullable) shape += '?';
+        switch (t.kind) {
+            case RuntimeType::Any: shape += 'a'; return true;
+            case RuntimeType::Int: shape += 'i'; return true;
+            case RuntimeType::Float: shape += 'f'; return true;
+            case RuntimeType::Number: shape += 'n'; return true;
+            case RuntimeType::String: shape += 's'; return true;
+            case RuntimeType::Bool: shape += 'b'; return true;
+            case RuntimeType::Bytes: shape += 'y'; return true;
+            case RuntimeType::Range: shape += 'r'; return true;
+            case RuntimeType::TypeValue: shape += 't'; return true;
+            case RuntimeType::Function: shape += 'F'; return true;
+            case RuntimeType::List:
+                shape += 'L';
+                return t.args.size() == 1 && shapeOf(t.args[0], shape, operands);
+            case RuntimeType::Map:
+                shape += 'M';
+                return t.args.size() == 2 && shapeOf(t.args[0], shape, operands) && shapeOf(t.args[1], shape, operands);
+            case RuntimeType::Class: {
+                const GlobalName* global = nullptr;
+                if (!t.privateFile.empty()) {
+                    auto& file = session_.privates_[t.privateFile];
+                    if (auto found = file.find(t.global); found != file.end()) global = &found->second;
+                } else if (t.ns != nullptr) {
+                    if (auto found = t.ns->names.find(t.global); found != t.ns->names.end()) global = &found->second;
+                }
+                if (global == nullptr || global->slot < 0 || t.args.size() > 9) return false;
+                operands.push_back(TypeOperand{global->slot, {}});
+                shape += 'C';
+                shape += static_cast<char>('0' + t.args.size());
+                for (const RuntimeType& arg : t.args)
+                    if (!shapeOf(arg, shape, operands)) return false;
+                return true;
+            }
+            case RuntimeType::TypeParam: {
+                TypeParamPlace place;
+                if (!findTypeParam(t.typeParam, place)) {
+                    shape += 'a';
+                    return true;
+                }
+                operands.push_back(TypeOperand{-1, place});
+                shape += 'P';
+                return true;
+            }
+            default:
+                return false;
+        }
+    }
+
+    // Pushes the type of `shape` and `operands`. One made of nothing that changes is made once,
+    // where it is written, and kept there; one with a type parameter is made each time.
+    bool emitShape(const std::string& shape, const std::vector<TypeOperand>& operands, const Node& at) {
+        bool fixed = true;
+        for (const TypeOperand& operand : operands) fixed = fixed && operand.global >= 0;
+        if (fixed && fs_->caches > 0xFFFF) return false;
+        int cache = -1, skip = -1;
+        if (fixed) {
+            cache = fs_->caches++;
+            emit(Op::CachedType, cache);
+            skip = static_cast<int>(code().size());
+            emitI32(0);
+        }
+        for (const TypeOperand& operand : operands) {
+            if (operand.global >= 0) emit(Op::GetGlobal, operand.global);
+            else emitTypeParam(operand.param, at);
+        }
+        emit(Op::MakeType, stringConstant(shape));
+        if (fixed) {
+            emit(Op::CacheType, cache);
+            patchJump(skip);
+        }
+        return true;
+    }
+
+    // Gives the list or map on the stack the type the checker worked out for it, where it has
+    // none yet. A type made of nothing that changes is made the first time and kept, and after
+    // that the one instruction gives it (TagCollection); false where it cannot be made.
+    bool emitTag(const RuntimeType& t, const Node& at) {
+        std::string shape;
+        std::vector<TypeOperand> operands;
+        if (!shapeOf(t, shape, operands)) return false;
+        bool fixed = true;
+        for (const TypeOperand& operand : operands) fixed = fixed && operand.global >= 0;
+        if (!fixed) {
+            if (!emitShape(shape, operands, at)) return false;
+            emit(Op::TypeCollection);
+            return true;
+        }
+        if (fs_->caches > 0xFFFF) return false;
+        const int cache = fs_->caches++;
+        emit(Op::TagCollection, cache);
+        const int skip = static_cast<int>(code().size());
+        emitI32(0);
+        for (const TypeOperand& operand : operands) emit(Op::GetGlobal, operand.global);
+        emit(Op::MakeType, stringConstant(shape));
+        emit(Op::CacheType, cache);
+        emit(Op::TypeCollection);
+        patchJump(skip);
+        return true;
+    }
+
+    // Pushes a type the checker worked out; false, pushing nothing, where it cannot be made.
+    bool emitRuntimeType(const RuntimeType& t, const Node& at) {
+        std::string shape;
+        std::vector<TypeOperand> operands;
+        if (!shapeOf(t, shape, operands)) return false;
+        return emitShape(shape, operands, at);
+    }
+
+    // A call of a generic function or class written in Astra: its type arguments, as the
+    // checker worked them out, given to it by WithTypes right before the call. Each emitter of
+    // a call instruction calls this after the arguments.
+    void emitTypeArguments(const CallExpr& call) {
+        std::vector<RuntimeType> args;
+        if (session_.checker == nullptr || !session_.checker->typeArguments(call, args) || args.empty() || args.size() > 9) return;
+        std::string shape = "A";
+        shape += static_cast<char>('0' + args.size());
+        std::vector<TypeOperand> operands;
+        for (const RuntimeType& arg : args) {
+            std::string part;
+            std::vector<TypeOperand> partOperands;
+            if (arg.kind == RuntimeType::Unknown || !shapeOf(arg, part, partOperands)) {
+                shape += 'a';  // not worked out: any value fits it
+                continue;
+            }
+            shape += part;
+            operands.insert(operands.end(), partOperands.begin(), partOperands.end());
+        }
+        if (emitShape(shape, operands, call)) emit(Op::WithTypes);
+    }
+
+    // After a call of a function of the C++'s (`external`), on the value it gave: a list or
+    // map is given the type the checker worked out where the C++ gave it none (`args()` a
+    // List<string>), and with ASTRA_CHECK_NATIVE_RESULTS the value is checked against the
+    // declaration, so that the suite proves the declarations say what the C++ does.
+    void emitExternalResult(const CallExpr& call) {
+        RuntimeType result;
+        std::string name;
+        if (session_.checker == nullptr || !session_.checker->externalResult(call, result, name)) return;
+        if (checkingNativeResults() && emitRuntimeType(result, call)) emit(Op::CheckResult, stringConstant(name));
+        if (result.kind != RuntimeType::List && result.kind != RuntimeType::Map) return;
+        result.nullable = false;  // a list it gave, or null, which is left as it is
+        emitTag(result, call);
+    }
+
+    // A type as written (`List<Point?>`, `T`), with its type arguments, pushed for IsFull or
+    // CastFull: the classes it names found as any name of a type is.
+    void emitWrittenType(const TypeAnnotation& t, std::string& shape) {
+        if (t.nullable) shape += '?';
+        if (t.typeParam) {
+            TypeParamPlace place;
+            if (findTypeParam(t.name, place)) {
+                emitTypeParam(place, t);
+                shape += 'P';
+            } else {
+                shape += 'a';
+            }
+            return;
+        }
+        if (t.star || !t.present() || t.name == "any") {
+            shape += 'a';
+            return;
+        }
+        if (!t.result.empty() || t.name == "Function") {
+            shape += 'F';
+            return;
+        }
+        const uint8_t id = builtinTypeId(t.name);
+        if (id == kTypeList && t.args.size() == 1) {
+            shape += 'L';
+            emitWrittenType(t.args[0], shape);
+            return;
+        }
+        if (id == kTypeMap && t.args.size() == 2) {
+            shape += 'M';
+            emitWrittenType(t.args[0], shape);
+            emitWrittenType(t.args[1], shape);
+            return;
+        }
+        // The others, and a list or map with nothing said of what it holds: of anything.
+        static const char* const kShapes[] = {"", "i", "f", "n", "s", "b", "La", "Maa", "r", "F", "y", "t"};
+        if (id != 0 && id < sizeof kShapes / sizeof kShapes[0]) {
+            shape += kShapes[id];
+            return;
+        }
+        emitTypeName(t.name, t);
+        shape += 'C';
+        shape += static_cast<char>('0' + std::min<size_t>(t.args.size(), 9));
+        for (size_t i = 0; i < t.args.size() && i < 9; i++) emitWrittenType(t.args[i], shape);
+    }
+
+    // Whether a type as written says more than its class or kind: type arguments to check, or
+    // a type parameter, whose value the code is given when it runs.
+    bool hasTypeArguments(const TypeAnnotation& t) const {
+        TypeParamPlace place;
+        if (t.typeParam) return findTypeParam(t.name, place);
+        return !t.args.empty() && t.result.empty();
+    }
+
     // An instruction whose operand is a type: a class is passed on the stack, above the value.
     void emitTypeOperand(Op op, const TypeSpec& type, const TypeAnnotation& at) {
         if (type.id() == kTypeInstance) emitTypeName(type.className, at);
@@ -2670,6 +2942,7 @@ private:
         cls.definedIn = fs_;
         cls.hasSuper = s.hasSuper;
         cls.isEnum = s.isEnum;
+        for (const TypeParam& p : s.typeParams) cls.typeParams.push_back(p.name);
         cls.id = classId(s);
         if (!s.isInterface && !s.hasSuper && !s.fields.empty()) cls.closed = &s;
         for (const auto& field : s.fields) cls.members.insert(field->name);
@@ -2750,6 +3023,10 @@ private:
             emitGet(storage, s);
             emit(Op::Inherit);
             emitByte(static_cast<int>(s.supertypes.size()));
+
+            // A supertype written with type arguments: a function that makes it from the class's own.
+            for (size_t i = 0; i < s.supertypeTypes.size(); i++)
+                if (!s.supertypeTypes[i].args.empty()) compileSupertypeMaker(s, s.supertypeTypes[i], storage);
 
             // The superclass (null if all of them were interfaces) stays on the stack as a
             // hidden local that methods capture for `super`.
@@ -3427,6 +3704,8 @@ private:
         state.proto->varargIndex = decl.varargIndex;
         state.scopeDepth = 1;
         state.isLambda = decl.isLambda;
+        for (const TypeParam& p : decl.typeParams) state.typeParams.push_back(p.name);
+        if (!decl.typeParams.empty()) state.proto->typeArgs |= kTypeArgsOwn;
         state.label = decl.label;
         state.calleeLabel = decl.calleeLabel;
         state.isExtension = std::exchange(nextIsExtension_, false);
@@ -3573,6 +3852,36 @@ private:
         int index = static_cast<int>(fs_->proto->protos.size());
         fs_->proto->protos.push_back(state.proto);
         emit(Op::Closure, index);
+    }
+
+    // For `class Pair<A> : Base<List<A>>()`: a function that makes `Base<List<A>>` from the
+    // class's own type arguments, which it is given as a generic function is (M6.6 part 1).
+    void compileSupertypeMaker(const ClassStmt& s, const TypeAnnotation& supertype, const std::string& storage) {
+        line_ = supertype.line;
+        emitGet(storage, s);
+        FunctionState state;
+        state.enclosing = fs_;
+        state.kind = FunctionKind::Function;
+        state.proto = newProto();
+        state.proto->name = s.name + " (supertype " + supertype.name + ")";
+        state.proto->source = file_;
+        state.proto->typeArgs = kTypeArgsOwn;
+        state.scopeDepth = 1;
+        for (const TypeParam& p : s.typeParams) state.typeParams.push_back(p.name);
+        state.add(Local{"", 1, VarInfo{}});
+        fs_ = &state;
+        std::string shape;
+        emitWrittenType(supertype, shape);
+        emit(Op::MakeType, stringConstant(shape));
+        emit(Op::Return);
+        finish(state);
+        fs_ = state.enclosing;
+        line_ = supertype.line;
+        const int index = static_cast<int>(fs_->proto->protos.size());
+        fs_->proto->protos.push_back(state.proto);
+        emit(Op::Closure, index);
+        emit(Op::SupertypeMaker);
+        emit(Op::Pop);
     }
 
     // ---- Expressions ----
@@ -3850,12 +4159,14 @@ private:
                     // `object?.method(...)`: with no object the arguments are not worked out either.
                     int toEnd = member.safe ? emitJump(Op::JumpIfNull) : -1;
                     compileArgs(e.args);
+                    emitTypeArguments(e);
                     line_ = member.line;
                     if (ownMember(*member.object, member.name))
                         emit(e.trailingLambda ? Op::InvokeOwnTrailing : Op::InvokeOwn, stringConstant(calledName(e, member.name)));
                     else
                         emit(e.trailingLambda ? Op::InvokeTrailing : Op::Invoke, stringConstant(calledName(e, member.name)));
                     emitByte(argc);
+                    emitExternalResult(e);
                     if (toEnd >= 0) patchJump(toEnd);
                 } else if (e.callee->kind == ExprKind::Name && compileBareCall(e)) {
                     // done: the name was a method, or may be one
@@ -3865,15 +4176,19 @@ private:
                     emitGet("this", sup);
                     compileArgs(e.args);
                     emitGet("super", sup);
+                    emitTypeArguments(e);
                     line_ = sup.line;
                     emit(e.trailingLambda ? Op::SuperInvokeTrailing : Op::SuperInvoke, stringConstant(calledName(e, sup.method)));
                     emitByte(argc);
+                    emitExternalResult(e);
                 } else {
                     compileCallee(e);
                     compileArgs(e.args);
+                    emitTypeArguments(e);
                     line_ = e.line;
                     emit(Op::Call);
                     emitByte(argc);
+                    emitExternalResult(e);
                 }
                 break;
             }
@@ -3908,6 +4223,8 @@ private:
                 for (const ExprPtr& item : e.items) compileExpr(*item);
                 line_ = e.line;
                 emit(Op::BuildList, static_cast<int>(e.items.size()));
+                RuntimeType made;
+                if (session_.checker->literalType(e, made)) emitTag(made, e);
                 break;
             }
 
@@ -3919,6 +4236,8 @@ private:
                 }
                 line_ = e.line;
                 emit(Op::BuildMap, static_cast<int>(e.entries.size()));
+                RuntimeType made;
+                if (session_.checker->literalType(e, made)) emitTag(made, e);
                 break;
             }
 
@@ -3938,7 +4257,13 @@ private:
                 compileExpr(*e.value);
                 line_ = e.line;
                 TypeSpec type = resolveType(e.type);
-                if (type.typed()) {
+                if (hasTypeArguments(e.type)) {
+                    // `x is List<int>`: what the list was made to hold is checked too.
+                    std::string shape;
+                    emitWrittenType(e.type, shape);
+                    emit(Op::MakeType, stringConstant(shape));
+                    emit(Op::IsFull);
+                } else if (type.typed()) {
                     emitTypeOperand(Op::IsType, type, e.type);
                 } else {
                     emit(Op::Pop);  // `any` takes every value
@@ -3953,7 +4278,15 @@ private:
                 compileExpr(*e.value);
                 line_ = e.line;
                 TypeSpec type = resolveType(e.type);
-                if (type.typed()) emitTypeOperand(e.safe ? Op::CastOrNull : Op::Cast, type, e.type);
+                if (hasTypeArguments(e.type)) {
+                    std::string shape;
+                    emitWrittenType(e.type, shape);
+                    emit(Op::MakeType, stringConstant(shape));
+                    emit(Op::CastFull);
+                    emitByte(e.safe ? 1 : 0);
+                } else if (type.typed()) {
+                    emitTypeOperand(e.safe ? Op::CastOrNull : Op::Cast, type, e.type);
+                }
                 break;
             }
 
@@ -4185,9 +4518,11 @@ private:
         if (side == ClassSide::Instance && class_->members.count(name) != 0 && kindHasThis(fs_->kind)) {
             emit(Op::GetLocal, 0);
             compileArgs(e.args);
+            emitTypeArguments(e);
             line_ = e.line;
             emit(Op::InvokeOwn, stringConstant(calledName(e, name)));
             emitByte(argc);
+            emitExternalResult(e);
             return true;
         }
         const bool member = side == ClassSide::Instance && class_->members.count(name) != 0;
@@ -4196,18 +4531,22 @@ private:
             if (namesFromReceiver() || (side == ClassSide::Instance && class_->hasSuper)) return false;
             emitGet(class_->storage, callee);
             compileArgs(e.args);
+            emitTypeArguments(e);
             line_ = e.line;
             emit(Op::InvokeOwn, stringConstant(name));
             emitByte(argc);
+            emitExternalResult(e);
             return true;
         }
         if (!member && !(side == ClassSide::None ? namesFromReceiver() : mayBeMember(side))) return false;
 
         emit(Op::Null);  // where the object, or the function, is put when the call is made
         compileArgs(e.args);
+        emitTypeArguments(e);
         line_ = e.line;
         emitImplicit(Op::InvokeImplicit, name);
         emitByte(argc);
+        emitExternalResult(e);
         return true;
     }
 
@@ -4260,10 +4599,12 @@ private:
             compileArg(*e.args[i]);
         }
 
+        emitTypeArguments(e);
         line_ = e.line;
         emit(e.hasSpread ? Op::CallSpread : Op::CallNamed);
         if (!e.hasSpread) emitByte(static_cast<int>(positional));
         emitByte(static_cast<int>(e.namedCount + trailing));
+        emitExternalResult(e);
         if (toEnd >= 0) patchJump(toEnd);
     }
 
@@ -4626,7 +4967,8 @@ CompilerSession::CompilerSession(VM& vm, Checker* given) : checker(given), vm_(v
     // --std`) or astra.exe is making that compiled copy.
     const std::string prelude = preludeSource();
     std::string attached;
-    if (!checker->reportStandardLibrary && !compilingPrelude && attachedPrelude(attached) && usePrelude(prelude, attached))
+    if (!checker->reportStandardLibrary && !compilingPrelude && !checkingNativeResults() && attachedPrelude(attached) &&
+        usePrelude(prelude, attached))
         return;
     program.modules.push_back(compileUnit(prelude, "<std>", "<builtin>", "<prelude>", false));
     noteModule(0, "<prelude>");

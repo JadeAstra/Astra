@@ -18,6 +18,7 @@ enum class ObjType : uint8_t {
     String, List, Map, Range, Closure, Upvalue, Native, Class, Instance, BoundMethod, BoundNative, Iterator, Bytes,
     Fiber,  // a flow: a function that can set itself aside (ObjFiber, in vm.h)
     Resource,  // something the runtime holds for a program that is not made of values
+    TypeInfo,  // a type, as the program has it when it runs (ObjTypeInfo)
 };
 
 // Header shared by every garbage-collected object.
@@ -269,13 +270,19 @@ private:
     std::unordered_map<Value, uint32_t, Hash, Eq> index_;
 };
 
+struct ObjTypeInfo;
+
 struct ObjList final : Obj {
     std::vector<Value> items;
+    // What the list was made to hold, `List<int>` (M6.6 part 1); null where that was not said,
+    // as for a list made before types were kept, which takes anything.
+    ObjTypeInfo* type = nullptr;
     ObjList() : Obj(ObjType::List) {}
 };
 
 struct ObjMap final : Obj {
     ValueMap map;
+    ObjTypeInfo* type = nullptr;  // `Map<string, int>`, as for a list
     ObjMap() : Obj(ObjType::Map) {}
 };
 
@@ -326,6 +333,9 @@ struct ObjUpvalue final : Obj {
 struct ObjClosure : Obj {
     const FunctionProto* const proto;
     std::vector<ObjUpvalue*> upvalues;
+    // The type arguments of the call it was made in (M6.6 part 1): a lambda written in a generic
+    // function reads the function's own. Null where there were none.
+    const ObjTypeInfo* typeArgs = nullptr;
     ObjClosure(const FunctionProto* p, size_t upvalueCount)
         : Obj(ObjType::Closure), proto(p), upvalues(upvalueCount, nullptr) {}
 };
@@ -428,6 +438,13 @@ struct ObjClass final : Obj {
     bool anyRequired = false;               // this class or an ancestor has required fields
     std::vector<ObjClosure*> fieldInits;    // run on every new instance, superclass first
 
+    // The supertypes written with type arguments (`class Pair<A> : Base<List<A>>()`, M6.6 part
+    // 1): for each, a function that makes it from this class's own type arguments, which it is
+    // given as a generic function is; and what they made, by the type of this class they were
+    // made for (null for an object made without one), in VM::supertypesOf.
+    std::vector<ObjClosure*> supertypeMakers;
+    std::unordered_map<const ObjTypeInfo*, std::vector<ObjTypeInfo*>> supertypesMade;
+
     // Static fields declared with `static val` / `static var` (their values are in `statics`),
     // and static properties.
     std::vector<FieldDecl> staticDeclared;
@@ -478,6 +495,19 @@ struct ObjClass final : Obj {
     }
 };
 
+// A type as the program has it when it runs (M6.6 part 1): what a list or a map was made to
+// hold, a generic class's or function's type arguments. There is one of each type, made the
+// first time it is needed and kept for as long as the VM (VM::typeOf), so two types are the
+// same exactly when they are the same object.
+struct ObjTypeInfo final : Obj {
+    const uint8_t id;      // a TypeId (bytecode.h), or 0 for any
+    const bool nullable;
+    ObjClass* const cls;   // for an instance of a class
+    const std::vector<ObjTypeInfo*> args;  // List: the items; Map: the keys and the values; a class: its type arguments
+    ObjTypeInfo(uint8_t i, bool n, ObjClass* c, std::vector<ObjTypeInfo*> a)
+        : Obj(ObjType::TypeInfo), id(i), nullable(n), cls(c), args(std::move(a)) {}
+};
+
 // An object of a class. Its fields are kept in the order of the class's `declared` (M6.5 part 4),
 // right after it in the same block of memory; one that has not been given a value yet holds
 // Undefined. Made with VM::newInstance, which sets aside the room for them.
@@ -490,12 +520,22 @@ struct ObjInstance final : Obj {
     // its members use, each an ObjUpvalue, kept after the fields (M6.5 part 4). Its class is
     // made once, so they cannot be in its methods' closures.
     const uint16_t captureCount;
+    // An object of a generic class made with its type arguments known (`Box<int>(1)`, M6.6
+    // part 1) keeps its type after the captures; one made without them does not, and is read
+    // as of any type arguments.
+    const bool typed;
 
-    ObjInstance(ObjClass* c, uint32_t count, uint16_t captures)
-        : Obj(ObjType::Instance), cls(c), shape(c->shape), fieldCount(count), captureCount(captures) {
+    ObjInstance(ObjClass* c, uint32_t count, uint16_t captures, bool withType)
+        : Obj(ObjType::Instance), cls(c), shape(c->shape), fieldCount(count), captureCount(captures), typed(withType) {
         Value* at = fields();
-        for (uint32_t i = 0; i < count + captures; i++) new (at + i) Value(Value::undefined());
+        for (uint32_t i = 0; i < count + captures + (withType ? 1u : 0u); i++) new (at + i) Value(Value::undefined());
     }
+
+    // Its type, `Box<int>`, or null where it was made without one.
+    const ObjTypeInfo* type() const {
+        return typed ? static_cast<const ObjTypeInfo*>(fields()[fieldCount + captureCount].as.obj) : nullptr;
+    }
+    void setType(ObjTypeInfo* type) { fields()[fieldCount + captureCount] = Value::object(type); }
 
     // Capture `k`, where the code that uses it was compiled for this object's class.
     ObjUpvalue* captured(uint32_t k) const { return static_cast<ObjUpvalue*>(fields()[fieldCount + k].as.obj); }

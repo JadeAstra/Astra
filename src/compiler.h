@@ -78,6 +78,11 @@ extern bool compilingPrelude;
 // Reads a whole file; returns false if it cannot be opened. Strips a UTF-8 byte order mark.
 bool readFile(const std::string& path, std::string& out);
 
+// ASTRA_CHECK_NATIVE_RESULTS: every value a function of the C++'s gives is checked against its
+// `external` declaration when the program runs (M6.6 part 1). The standard library is then
+// compiled from its source, and compiled programs are kept apart from the others.
+bool checkingNativeResults();
+
 // Compiles source files into one Program. A session outlives a single compile so the shell
 // can keep adding code that sees earlier globals. All of its entry points throw CompileError.
 class CompilerSession {

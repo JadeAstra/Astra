@@ -89,6 +89,7 @@ external val List.size : int
 external val List.length : int
 external val List.lastIndex : int
 external val List.indices : Range
+external val List.itemType : Type    // what it was made to hold (M6.6): `int` for a List<int>, `any` where that was not said
 external fun <T> List<T>.push(item : T, vararg more : T)
 external fun <T> List<T>.pop() : T
 external fun <T> List<T>.add(item : T) : bool
@@ -129,6 +130,8 @@ external val Map.length : int
 external val <K, V> Map<K, V>.keys : List<K>
 external val <K, V> Map<K, V>.values : List<V>
 external val <K, V> Map<K, V>.entries : List<MapEntry<K, V>>
+external val Map.keyType : Type
+external val Map.valueType : Type
 external fun <K, V> Map<K, V>.keys() : List<K>
 external fun <K, V> Map<K, V>.values() : List<V>
 external fun <K, V> Map<K, V>.entries() : List<MapEntry<K, V>>
@@ -174,17 +177,24 @@ external fun Bytes.contains(value : any?) : bool
 
 // -- int and float --
 
+// The coerce functions give one of the numbers as it was: an int where all of them are ints, a
+// float where all are floats, and either where they are mixed (`2.5.coerceIn(0, 1)` is 1).
 external fun int.coerceIn(minimumValue : int, maximumValue : int) : int
 external fun int.coerceIn(range : Range) : int
 external fun int.coerceIn(minimumValue : Number, maximumValue : Number) : Number
-external fun int.coerceAtLeast(minimumValue : Number) : int
-external fun int.coerceAtMost(maximumValue : Number) : int
+external fun int.coerceAtLeast(minimumValue : int) : int
+external fun int.coerceAtLeast(minimumValue : Number) : Number
+external fun int.coerceAtMost(maximumValue : int) : int
+external fun int.coerceAtMost(maximumValue : Number) : Number
 external fun int.pow(exponent : Number) : Number
 external fun int.mod(divisor : int) : int
-external fun float.coerceIn(minimumValue : Number, maximumValue : Number) : float
-external fun float.coerceIn(range : Range) : float
-external fun float.coerceAtLeast(minimumValue : Number) : float
-external fun float.coerceAtMost(maximumValue : Number) : float
+external fun float.coerceIn(minimumValue : float, maximumValue : float) : float
+external fun float.coerceIn(minimumValue : Number, maximumValue : Number) : Number
+external fun float.coerceIn(range : Range) : Number
+external fun float.coerceAtLeast(minimumValue : float) : float
+external fun float.coerceAtLeast(minimumValue : Number) : Number
+external fun float.coerceAtMost(maximumValue : float) : float
+external fun float.coerceAtMost(maximumValue : Number) : Number
 external fun float.pow(exponent : Number) : float
 external fun float.mod(divisor : Number) : float
 external fun Number.roundToInt() : int

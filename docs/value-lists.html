@@ -97,7 +97,7 @@ ol li { margin: 6px 0; }
 <body>
 <main>
 <h1>Lists of values: compact storage</h1>
-<p class="lede">How a list whose items are values (numbers, characters, bytes, booleans and <code>value</code> types) keeps them one after another in memory: a million points in 16 MB instead of about 190, read without allocating, with every list operation and nothing new for a program to choose. Decided 2026-10-14 to be built in M6.6 (L1 and L2 in <a href="language-choices.html">language-choices.html</a>), with the questions of section 18 still open.</p>
+<p class="lede">How a list whose items are values (numbers, characters, bytes, booleans and <code>value</code> types) keeps them one after another in memory: a million points in 16 MB instead of about 190, read without allocating, with every list operation and nothing new for a program to choose. Decided 2026-10-14 to be built in M6.6 (L1 and L2 in <a href="language-choices.html">language-choices.html</a>), with the questions of section 18 decided on 2026-10-18.</p>
 
 <nav><h2>Contents</h2><ul>
 <li><a href="#goal">1. What it is for</a></li>
@@ -138,7 +138,7 @@ ol li { margin: 6px 0; }
 <ul>
 <li><strong>A list of a class</strong> (<code>list&lt;Component&gt;</code>) holds references to its objects, exactly as today: an item read from it is the object itself.</li>
 <li><strong>A list of a value type</strong> (<code>list&lt;int&gt;</code>, <code>list&lt;float&gt;</code>, <code>list&lt;char&gt;</code>, <code>list&lt;byte&gt;</code>, <code>list&lt;bool&gt;</code>, <code>list&lt;Point&gt;</code> for a <code>value Point</code>) holds its values one after another, each at its own width. <code>bytes</code> is <code>list&lt;byte&gt;</code>.</li>
-<li><strong>A list of a type that may hold anything</strong> (<code>list&lt;any&gt;</code>, <code>list&lt;number&gt;</code>) or of a nullable value type (<code>list&lt;int?&gt;</code>, <code>list&lt;Point?&gt;</code>) holds 16-byte values as today, since each item has to say what it is, or whether it is null.</li>
+<li><strong>A list of a type that may hold anything</strong> (<code>list&lt;any&gt;</code>, <code>list&lt;number&gt;</code>) holds 16-byte values as today, since each item has to say what it is. A list of a nullable value type (<code>list&lt;int?&gt;</code>, <code>list&lt;Point?&gt;</code>) holds its values packed as the value type's list does, with a bit per item for null (section 18).</li>
 </ul>
 <p><strong>Why this is safe.</strong> Packing a list of objects would change what programs mean: a kept item would be a copy, not the same object. A value has no identity (<code>===</code> is refused), so a copy cannot be told from the original, and packed and boxed storage of values differ only in speed and memory. Value types are new, so no existing program changes meaning.</p>
 <p><strong>What others do.</strong> C#'s <code>List&lt;struct&gt;</code>, Swift's <code>[Struct]</code>, Rust's <code>Vec&lt;T&gt;</code> and Go's <code>[]T</code> all store value items inline, with no separate packed type. Kotlin and Java, without value types, add <code>IntArray</code> and its kind beside their lists.</p>
@@ -176,7 +176,8 @@ ol li { margin: 6px 0; }
 <ul>
 <li><strong>A class:</strong> an 8-byte reference.</li>
 <li><strong>A value type:</strong> its own size, from 1 byte (<code>byte</code>, <code>bool</code>) and 4 (<code>char</code>) to 8 (<code>int</code>, <code>float</code>) and as many as its fields need (<code>Point</code> 16, <code>Ball</code> 48).</li>
-<li><strong><code>any</code>, <code>number</code>, nullable types:</strong> a 16-byte value, as every list item is today.</li>
+<li><strong><code>any</code>, <code>number</code>, a nullable class:</strong> a 16-byte value, as every list item is today.</li>
+<li><strong>A nullable value type:</strong> the value type's own size, as above, and a bit per item for null, kept beside the items (section 18).</li>
 </ul>
 <p>Nothing else: no index, no bits, nothing for the collector beyond the block and, for items holding references, the map of where they are. A list grows by moving to a block twice as large.</p>
 </section>
@@ -398,10 +399,10 @@ balls.parallelStream().replaceAll { it.moved(width, height, steps) }   // each c
 <li><strong>Value types holding strings and objects:</strong> decided: yes.</li>
 <li><strong>The word for a value type:</strong> decided: <code>value Point(...)</code>.</li>
 <li><strong><code>bytes</code>:</strong> decided: <code>list&lt;byte&gt;</code> (which the earlier <code>pack&lt;byte&gt;</code> now is).</li>
-<li><strong>Size:</strong> any size of value type may go in a list of values, or only up to some limit? Suggested: any, up to the 64 KB that a reference's offset allows; the type's author chooses <code>class</code> for large things that are kept and reordered.</li>
-<li><strong>Nullable value types</strong> (<code>list&lt;Point?&gt;</code>, <code>list&lt;int?&gt;</code>): kept as 16-byte values, as today, or packed with a bit per item for null? Suggested: as 16-byte values; simpler, and such lists are rarer.</li>
-<li><strong>The sort through positions:</strong> from 32 bytes an item? Suggested: yes, to be tuned by measurement.</li>
-<li><strong><code>replaceAll { }</code></strong>, Kotlin's name for replacing every item with what a lambda gives for it: keep it? Suggested: yes.</li>
+<li><strong>Size:</strong> decided 2026-10-18: any size, up to the 64 KB that a reference's offset allows; the type's author chooses <code>class</code> for large things that are kept and reordered.</li>
+<li><strong>Nullable value types</strong> (<code>list&lt;Point?&gt;</code>, <code>list&lt;int?&gt;</code>): decided 2026-10-18: packed as the items of a list of values are, with a bit per item for null, kept beside the items (the bits move with them when items are inserted, removed and sorted). Measured on two uses with 16-byte items, against 16-byte values with a box per item and against a null flag inside each item: a weather station's million readings, 5% missing, and a spreadsheet's 100,000 rows of ten cells, 30% empty. Packed with bits was the fastest or close at everything: changing every reading 1.7 ms against 30.5 boxed and 3.8 with flags, building 20 against 44 and 26, sorting 60 against 104 and 63, no collection against 19 ms boxed, in 16 MB against 48 and 24; inserting and removing in the middle cost about the same as boxed and about half as much as flags, which move 24 bytes an item. A list of a nullable value type is therefore as compact and fast as one of the value type.</li>
+<li><strong>The sort through positions:</strong> decided 2026-10-18: from 32 bytes an item to begin with, tuned by measurement.</li>
+<li><strong><code>replaceAll { }</code></strong>, Kotlin's name for replacing every item with what a lambda gives for it: decided 2026-10-18: kept.</li>
 </ul>
 </section>
 </main>

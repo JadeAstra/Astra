@@ -51,6 +51,9 @@ VM::VM(bool worker) : output(&std::cout), input(&std::cin), rng(std::random_devi
     names.indices = intern("indices");
     names.lastIndex = intern("lastIndex");
     names.keys = intern("keys");
+    names.itemType = intern("itemType");
+    names.keyType = intern("keyType");
+    names.valueType = intern("valueType");
     names.values = intern("values");
     names.key = intern("key");
     names.value = intern("value");
@@ -119,6 +122,202 @@ VM::~VM() {
 }
 
 // ---- Strings ----
+
+// ---- Types when the program runs (M6.6 part 1) ----
+
+ObjTypeInfo* VM::typeOf(uint8_t id, bool nullable, ObjClass* cls, const std::vector<ObjTypeInfo*>& args) {
+    if (root_ != nullptr) {
+        // A core's VM has no table of its own: a type is the same object for every core.
+        std::lock_guard<std::mutex> hold(root_->internMutex_);
+        return root_->typeOf(id, nullable, cls, args);
+    }
+    std::string key;
+    key.reserve(10 + 8 * (args.size() + 1));
+    key.push_back(static_cast<char>(id));
+    key.push_back(nullable ? 1 : 0);
+    auto pointer = [&](const void* p) {
+        const uintptr_t bits = reinterpret_cast<uintptr_t>(p);
+        key.append(reinterpret_cast<const char*>(&bits), sizeof bits);
+    };
+    pointer(cls);
+    for (const ObjTypeInfo* arg : args) pointer(arg);
+    auto found = types_.find(key);
+    if (found != types_.end()) return found->second;
+    ObjTypeInfo* type = alloc<ObjTypeInfo>(id, nullable, cls, args);
+    type->immortal = true;
+    type->core = 0;  // every core's to read
+    types_.emplace(std::move(key), type);
+    return type;
+}
+
+std::string VM::typeInfoText(const ObjTypeInfo* type) const {
+    std::string text;
+    if (type->id == kTypeInstance) {
+        text = type->cls->name->chars;
+    } else if (type->id == 0) {
+        text = "any";
+    } else {
+        text = declaredTypeText(type->id, nullptr);
+    }
+    if (!type->args.empty()) {
+        text += "<";
+        for (size_t i = 0; i < type->args.size(); i++) text += (i ? ", " : "") + typeInfoText(type->args[i]);
+        text += ">";
+    }
+    if (type->nullable) text += "?";
+    return text;
+}
+
+ObjTypeInfo* VM::typeFromShape(const std::string& shape, size_t& at, const Value*& operand) {
+    bool nullable = false;
+    if (at < shape.size() && shape[at] == '?') {
+        nullable = true;
+        at++;
+    }
+    if (at >= shape.size()) throw runtimeError("invalid type shape");
+    const char c = shape[at++];
+    switch (c) {
+        case 'a': return typeOf(0, nullable, nullptr, {});
+        case 'i': return typeOf(kTypeInt, nullable, nullptr, {});
+        case 'f': return typeOf(kTypeFloat, nullable, nullptr, {});
+        case 'n': return typeOf(kTypeNumber, nullable, nullptr, {});
+        case 's': return typeOf(kTypeString, nullable, nullptr, {});
+        case 'b': return typeOf(kTypeBool, nullable, nullptr, {});
+        case 'y': return typeOf(kTypeBytes, nullable, nullptr, {});
+        case 'r': return typeOf(kTypeRange, nullable, nullptr, {});
+        case 't': return typeOf(kTypeType, nullable, nullptr, {});
+        case 'F': return typeOf(kTypeFunction, nullable, nullptr, {});
+        case 'L': {
+            ObjTypeInfo* item = typeFromShape(shape, at, operand);
+            return typeOf(kTypeList, nullable, nullptr, {item});
+        }
+        case 'M': {
+            ObjTypeInfo* key = typeFromShape(shape, at, operand);
+            ObjTypeInfo* value = typeFromShape(shape, at, operand);
+            return typeOf(kTypeMap, nullable, nullptr, {key, value});
+        }
+        case 'C': {
+            const int count = shape[at++] - '0';
+            const Value cls = *operand++;
+            if (!cls.isObjType(ObjType::Class)) throw runtimeError("a type must be a class or a built-in type, not a value of type " + typeName(cls));
+            std::vector<ObjTypeInfo*> args;
+            for (int i = 0; i < count; i++) args.push_back(typeFromShape(shape, at, operand));
+            return typeOf(kTypeInstance, nullable, asClass(cls), args);
+        }
+        case 'A': {
+            const int count = shape[at++] - '0';
+            std::vector<ObjTypeInfo*> args;
+            for (int i = 0; i < count; i++) args.push_back(typeFromShape(shape, at, operand));
+            return typeOf(kTypeArguments, false, nullptr, args);
+        }
+        case 'P': {
+            const Value given = *operand++;
+            if (!given.isObjType(ObjType::TypeInfo)) throw runtimeError("invalid type");
+            ObjTypeInfo* type = static_cast<ObjTypeInfo*>(given.as.obj);
+            if (!nullable || type->nullable) return type;  // as it is: no need to look it up
+            return typeOf(type->id, true, type->cls, type->args);
+        }
+        default:
+            throw runtimeError("invalid type shape");
+    }
+}
+
+std::string VM::valueTypeText(const Value& v) const {
+    if (v.isObjType(ObjType::List) && asList(v)->type != nullptr) return typeInfoText(asList(v)->type);
+    if (v.isObjType(ObjType::Map) && asMap(v)->type != nullptr) return typeInfoText(asMap(v)->type);
+    if (v.isObjType(ObjType::Instance) && asInstance(v)->type() != nullptr) return typeInfoText(asInstance(v)->type());
+    return typeName(v);
+}
+
+const std::vector<ObjTypeInfo*>& VM::supertypesOf(ObjClass* cls, const ObjTypeInfo* own) {
+    VM& root = root_ != nullptr ? *root_ : *this;  // what every core has made, kept once
+    {
+        std::lock_guard<std::mutex> hold(root.internMutex_);
+        auto found = cls->supertypesMade.find(own);
+        if (found != cls->supertypesMade.end()) return found->second;
+    }
+    // Made outside the lock, which making a type takes. Two cores may make them at once, and
+    // make the same types, which are interned: the first kept is kept.
+    std::vector<ObjTypeInfo*> made;
+    const ObjTypeInfo* args = own != nullptr ? typeOf(kTypeArguments, false, nullptr, own->args) : nullptr;
+    for (ObjClosure* maker : cls->supertypeMakers) {
+        pendingTypeArgs_ = args;
+        const Value type = call(Value::object(maker), 0, nullptr);
+        if (type.isObjType(ObjType::TypeInfo) && static_cast<ObjTypeInfo*>(type.as.obj)->id == kTypeInstance)
+            made.push_back(static_cast<ObjTypeInfo*>(type.as.obj));
+    }
+    std::lock_guard<std::mutex> hold(root.internMutex_);
+    return cls->supertypesMade.emplace(own, std::move(made)).first->second;
+}
+
+const ObjTypeInfo* VM::typeAs(ObjClass* cls, const ObjTypeInfo* own, const ObjClass* target) {
+    while (cls != target) {
+        if (cls == nullptr) return nullptr;
+        // A supertype written with type arguments that leads to the target, or else the
+        // superclass, written without them.
+        const ObjTypeInfo* next = nullptr;
+        if (!cls->supertypeMakers.empty())
+            for (ObjTypeInfo* made : supertypesOf(cls, own))
+                if (made->cls->isSubclassOf(target)) {
+                    next = made;
+                    break;
+                }
+        if (next != nullptr) {
+            cls = next->cls;
+            own = next;
+            continue;
+        }
+        if (cls->super == nullptr || !cls->super->isSubclassOf(target)) return nullptr;  // by an interface written bare
+        cls = cls->super;
+        own = nullptr;
+    }
+    return own;
+}
+
+bool VM::isSubtype(const ObjTypeInfo* a, const ObjTypeInfo* b) {
+    if (a == b) return true;
+    if (a->nullable && !b->nullable) return false;
+    if (b->id == 0) return true;  // any
+    if (a->id == 0) return false;
+    if (b->id == kTypeNumber && (a->id == kTypeInt || a->id == kTypeFloat || a->id == kTypeNumber)) return true;
+    if (a->id != b->id) return false;
+    if (a->id == kTypeInstance && !a->cls->isSubclassOf(b->cls)) return false;
+    if (a->id == kTypeInstance && !b->args.empty() && a->cls != b->cls) {
+        // A subclass's type, seen as the class's: `Pair<int>` as the `Base<List<int>>` it extends.
+        a = typeAs(a->cls, a, b->cls);
+        if (a == nullptr) return true;  // made without type arguments: takes any
+    }
+    if (a->id == kTypeInstance && b->args.empty()) return true;
+    if (a->args.size() != b->args.size()) return b->args.empty();
+    for (size_t i = 0; i < a->args.size(); i++)
+        if (!isSubtype(a->args[i], b->args[i])) return false;
+    return true;
+}
+
+bool VM::fitsType(const Value& v, const ObjTypeInfo* type) {
+    if (v.isNull()) return type->nullable || type->id == 0;
+    if (type->id == 0) return true;
+    if (type->id == kTypeInstance) {
+        if (!v.isObjType(ObjType::Instance) || !asInstance(v)->cls->isSubclassOf(type->cls)) return false;
+        if (type->args.empty()) return true;
+        // An object made without its type arguments takes any; one of a subclass is seen as
+        // the class it extends.
+        ObjInstance* instance = asInstance(v);
+        const ObjTypeInfo* made = typeAs(instance->cls, instance->type(), type->cls);
+        if (made == nullptr || made->args.size() != type->args.size()) return true;
+        for (size_t i = 0; i < made->args.size(); i++)
+            if (!isSubtype(made->args[i], type->args[i])) return false;
+        return true;
+    }
+    if (!matchesType(v, type->id, nullptr)) return false;
+    if (type->args.empty()) return true;
+    // A list or map made before its type was kept, or by code that did not say, takes anything.
+    const ObjTypeInfo* made = v.isObjType(ObjType::List) ? asList(v)->type : v.isObjType(ObjType::Map) ? asMap(v)->type : nullptr;
+    if (made == nullptr || made->args.size() != type->args.size()) return true;
+    for (size_t i = 0; i < made->args.size(); i++)
+        if (!isSubtype(made->args[i], type->args[i])) return false;
+    return true;
+}
 
 ObjString* VM::intern(std::string_view s) {
     if (root_ != nullptr) {
@@ -408,6 +607,8 @@ bool VM::hasMember(Value candidate, const ObjString* name) const {
         return type == ObjType::String || type == ObjType::List || type == ObjType::Map || type == ObjType::Range ||
                type == ObjType::Bytes;
     if (name == names.indices || name == names.lastIndex) return type == ObjType::String || type == ObjType::List;
+    if (name == names.itemType) return type == ObjType::List;
+    if (name == names.keyType || name == names.valueType) return type == ObjType::Map;
     if (name == names.code) return type == ObjType::String;
     return type == ObjType::Range && (name == names.start || name == names.end || name == names.step);
 }
@@ -701,6 +902,7 @@ bool VM::tryHandle(Value exception, int baseFrame) {
 
     handlers_.pop_back();
     closeUpvalues(h.stackTop);
+    pendingTypeArgs_ = nullptr;  // a call that failed before it began
     frameCount_ = h.frameIndex + 1;
     sp_ = h.stackTop;
     *sp_++ = exception;
@@ -740,6 +942,7 @@ std::string VM::typeName(Value v) const {
         case ObjType::Resource: return static_cast<const ObjResource*>(v.as.obj)->kind;
         case ObjType::Upvalue:
         case ObjType::Iterator: return "internal";
+        case ObjType::TypeInfo: return "Type";
     }
     return "unknown";
 }
@@ -993,6 +1196,13 @@ void VM::callClosure(ObjClosure* closure, int argc, bool packed) {
     CallFrame& frame = frames_[static_cast<size_t>(frameCount_++)];
     frame.dropResult = false;
     frame.closure = closure;
+    // A generic function takes those WithTypes gave; a lambda has those of where it was made.
+    // Only a function that reads them keeps them, which the others are not slowed by.
+    if (proto->typeArgs != 0) {
+        frameTypeArgs(frameCount_ - 1) =
+            pendingTypeArgs_ != nullptr && (proto->typeArgs & kTypeArgsOwn) != 0 ? pendingTypeArgs_ : closure->typeArgs;
+        pendingTypeArgs_ = nullptr;
+    }
     frame.ip = proto->code.data();
     frame.base = base;
 }
@@ -1087,6 +1297,7 @@ bool VM::callValue(Value callee, int argc, bool packed) {
                     guardNative(sp_ - argc, argc);
                 }
                 nativeBase_ = sp_ - argc - 1;
+                pendingTypeArgs_ = nullptr;
                 Value result = native->fn(*this, argc, sp_ - argc);
                 if (result.kind == ValueKind::Undefined) return true;  // it set a call going in its place (tailCallOn)
                 sp_ -= argc + 1;
@@ -1115,6 +1326,7 @@ bool VM::callValue(Value callee, int argc, bool packed) {
                     guardNative(sp_ - argc, argc);
                 }
                 nativeBase_ = sp_ - argc - 1;
+                pendingTypeArgs_ = nullptr;
                 Value result = method->fn(*this, bound->receiver, argc, sp_ - argc);
                 sp_ -= argc + 1;
                 *sp_++ = result;
@@ -1407,6 +1619,7 @@ bool VM::invoke(ObjString* name, int argc, bool trailing) {
         guardNative(sp_ - argc, argc);
     }
     nativeBase_ = sp_ - argc - 1;
+    pendingTypeArgs_ = nullptr;
     Value result = method->fn(*this, receiver, argc, sp_ - argc);
     sp_ -= argc + 1;
     *sp_++ = result;
@@ -1610,9 +1823,12 @@ Value VM::getProperty(Value obj, ObjString* name) {
                 if (name == names.indices)
                     return Value::object(alloc<ObjRange>(int64_t{0}, static_cast<int64_t>(asList(obj)->items.size()), int64_t{1}, false));
                 if (name == names.lastIndex) return Value::integer(static_cast<int64_t>(asList(obj)->items.size()) - 1);
+                if (name == names.itemType) return Value::object(typeArgument(asList(obj)->type, 0));  // M6.6 part 1
                 break;
             case ObjType::Map:
                 if (name == names.length || name == names.size) return Value::integer(static_cast<int64_t>(asMap(obj)->map.size()));
+                if (name == names.keyType) return Value::object(typeArgument(asMap(obj)->type, 0));
+                if (name == names.valueType) return Value::object(typeArgument(asMap(obj)->type, 1));
                 if (name == names.keys) return mapKeys(asMap(obj));
                 if (name == names.values) return mapValues(asMap(obj));
                 if (name == names.entries) return mapEntries(asMap(obj));
@@ -1661,8 +1877,11 @@ bool VM::construct(ObjClass* cls, int argc, bool packed, const Value* captures, 
     if (cls->enumSealed)
         throw runtimeError("enum " + cls->name->chars + " has only the entries it declares; " + cls->name->chars +
                            "() cannot make another");
-    ObjInstance* instance = newInstance(cls, captureCount);
+    // A generic class's type arguments, given by WithTypes: the object keeps its type.
+    const ObjTypeInfo* typeArgs = std::exchange(pendingTypeArgs_, nullptr);
+    ObjInstance* instance = newInstance(cls, captureCount, typeArgs != nullptr);
     for (uint16_t i = 0; i < captureCount; i++) instance->fields()[instance->fieldCount + i] = captures[i];
+    if (typeArgs != nullptr) instance->setType(typeOf(kTypeInstance, false, cls, typeArgs->args));
     sp_[-argc - 1] = Value::object(instance);
     instance->constructing = true;
     if (cls->nextEntry != nullptr) {
@@ -1799,8 +2018,19 @@ Value VM::makeEntry(Value key, Value value) {
     return Value::object(entry);
 }
 
+// What a list made of a map's keys, values or entries holds, as the map says (M6.6 part 1):
+// 0 its keys, 1 its values, 2 its entries; null for a map made without its type.
+ObjTypeInfo* VM::mapPartType(const ObjMap* map, int part) {
+    if (map->type == nullptr || map->type->args.size() != 2) return nullptr;
+    ObjTypeInfo* item = part < 2 ? map->type->args[static_cast<size_t>(part)]
+                                 : mapEntryClass_ != nullptr ? typeOf(kTypeInstance, false, mapEntryClass_, map->type->args) : nullptr;
+    return item != nullptr ? typeOf(kTypeList, false, nullptr, {item}) : nullptr;
+}
+
 Value VM::mapEntries(ObjMap* map) {
+    ObjTypeInfo* const type = mapPartType(map, 2);
     ObjList* list = alloc<ObjList>();
+    list->type = type;
     TempRoot keep(*this, Value::object(list));
     for (const ValueMap::Entry& entry : map->map.entries())
         if (entry.live) list->items.push_back(makeEntry(entry.key, entry.value));
@@ -1809,7 +2039,9 @@ Value VM::mapEntries(ObjMap* map) {
 }
 
 Value VM::mapKeys(ObjMap* map) {
+    ObjTypeInfo* const type = mapPartType(map, 0);
     ObjList* list = alloc<ObjList>();
+    list->type = type;
     for (const ValueMap::Entry& entry : map->map.entries())
         if (entry.live) list->items.push_back(entry.key);
     account(list->items.size() * sizeof(Value));
@@ -1817,7 +2049,9 @@ Value VM::mapKeys(ObjMap* map) {
 }
 
 Value VM::mapValues(ObjMap* map) {
+    ObjTypeInfo* const type = mapPartType(map, 1);
     ObjList* list = alloc<ObjList>();
+    list->type = type;
     for (const ValueMap::Entry& entry : map->map.entries())
         if (entry.live) list->items.push_back(entry.value);
     account(list->items.size() * sizeof(Value));
@@ -2076,6 +2310,7 @@ bool VM::matchesType(const Value& v, uint8_t type, const ObjClass* cls) const {
         case kTypeMap: return v.isObjType(ObjType::Map);
         case kTypeRange: return v.isObjType(ObjType::Range);
         case kTypeBytes: return v.isObjType(ObjType::Bytes);
+        case kTypeType: return v.isObjType(ObjType::TypeInfo);
         case kTypeFunction:
             return v.isObjType(ObjType::Closure) || v.isObjType(ObjType::Native) ||
                    v.isObjType(ObjType::BoundMethod) || v.isObjType(ObjType::BoundNative);
@@ -2402,6 +2637,7 @@ void VM::run(int baseFrame) {
         const FunctionProto* const proto_ = quick_->proto;                                                    \
         Value* const base_ = sp - (argc) - 1;                                                                 \
         if ((argc) == proto_->arity && !proto_->chooser && proto_->varargIndex < 0 && pendingEnums_ == 0 &&   \
+            proto_->typeArgs == 0 &&                                                                          \
             frameCount_ < maxFrames_ && stackEnd_ - base_ >= proto_->maxStack && bytesAllocated_ <= nextGC_ &&\
             !attention_.load(std::memory_order_relaxed)) {                                                    \
             frame->ip = ip + (size);                                                                          \
@@ -2804,6 +3040,20 @@ void VM::run(int baseFrame) {
                         *sp_++ = value;
                         break;
                     }
+                    case Op::MakeType:
+                    case Op::CachedType:
+                    case Op::CacheType:
+                    case Op::TypeCollection:
+                    case Op::IsFull:
+                    case Op::CastFull:
+                    case Op::WithTypes:
+                    case Op::TypeArg:
+                    case Op::InstanceTypeArg:
+                    case Op::SupertypeMaker:
+                    case Op::CheckResult:
+                        ip = typeInstruction(static_cast<Op>(ip[-1]), ip, frame);
+                        break;
+
                     case Op::GetCaptured: {
                         const ObjUpvalue* cell = capturedOf(base[0], READ_U16());
                         ObjString* name = asString(consts[READ_U16()]);
@@ -3520,6 +3770,7 @@ void VM::run(int baseFrame) {
                     case Op::Closure: {
                         const FunctionProto* proto = frame->closure->proto->protos[static_cast<size_t>(READ_U16())];
                         ObjClosure* closure = alloc<ObjClosure>(proto, proto->upvalues.size());
+                        if ((proto->typeArgs & kTypeArgsKept) != 0) closure->typeArgs = frameTypeArgs(frame - frames_);
                         account(proto->upvalues.size() * sizeof(ObjUpvalue*));
                         for (size_t i = 0; i < proto->upvalues.size(); i++) {
                             const UpvalueDesc& uv = proto->upvalues[i];
@@ -4111,6 +4362,21 @@ void VM::run(int baseFrame) {
                         *sp_++ = Value::object(list);
                         break;
                     }
+                    case Op::TagCollection: {
+                        // A list or map literal of a type that is made once (M6.6 part 1): given
+                        // it, and on past the code that makes it, the first time only.
+                        const uint64_t kept = caches != nullptr ? caches[FAST_U16(0)].load(std::memory_order_acquire) : 0;
+                        if (kept == 0) {
+                            ip += 6;
+                            break;
+                        }
+                        ObjTypeInfo* const type = reinterpret_cast<ObjTypeInfo*>(static_cast<uintptr_t>(kept));
+                        const Value made = sp_[-1];
+                        if (made.isObjType(ObjType::List) && type->id == kTypeList && asList(made)->type == nullptr) asList(made)->type = type;
+                        else if (made.isObjType(ObjType::Map) && type->id == kTypeMap && asMap(made)->type == nullptr) asMap(made)->type = type;
+                        ip = code + FAST_I32(2);
+                        break;
+                    }
                     case Op::BuildMap: {
                         int count = READ_U16();
                         ObjMap* map = alloc<ObjMap>();
@@ -4288,6 +4554,122 @@ void VM::run(int baseFrame) {
 #undef COMPARISON
 }
 
+// The instructions of types when the program runs (M6.6 part 1), kept out of run()'s loop: they
+// are seldom run, and code in the loop costs every other instruction there. Gives where the
+// next instruction is.
+#ifdef _MSC_VER
+__declspec(noinline)
+#else
+__attribute__((noinline))
+#endif
+const uint8_t* VM::typeInstruction(Op op, const uint8_t* ip, CallFrame* frame) {
+    const uint8_t* const code = frame->closure->proto->code.data();
+    const Value* const consts = frame->closure->proto->constants.data();
+    std::atomic<uint64_t>* const caches = frame->closure->proto->caches.get();
+    switch (op) {
+        case Op::MakeType: {
+            const std::string& shape = asString(consts[(ip += 2, operandU16(ip - 2))])->chars;
+            const int count = shapeOperands(shape);
+            const Value* operand = sp_ - count;
+            size_t at = 0;
+            ObjTypeInfo* made = typeFromShape(shape, at, operand);
+            sp_ -= count;
+            *sp_++ = Value::object(made);
+            break;
+        }
+        case Op::CachedType: {
+            const int cache = (ip += 2, operandU16(ip - 2));
+            const int target = (ip += 4, operandI32(ip - 4));
+            const uint64_t kept = caches != nullptr ? caches[cache].load(std::memory_order_acquire) : 0;
+            if (kept != 0) {
+                *sp_++ = Value::object(reinterpret_cast<ObjTypeInfo*>(static_cast<uintptr_t>(kept)));
+                ip = code + target;
+            }
+            break;
+        }
+        case Op::CacheType: {
+            const int cache = (ip += 2, operandU16(ip - 2));
+            if (caches != nullptr && sp_[-1].isObjType(ObjType::TypeInfo))
+                caches[cache].store(static_cast<uint64_t>(reinterpret_cast<uintptr_t>(sp_[-1].as.obj)), std::memory_order_release);
+            break;
+        }
+        case Op::TypeCollection: {
+            if (!sp_[-1].isObjType(ObjType::TypeInfo)) throw runtimeError("invalid type");
+            ObjTypeInfo* type = static_cast<ObjTypeInfo*>(sp_[-1].as.obj);
+            const Value made = sp_[-2];
+            // What it was made to hold, said once: a list a C++ function gave with a type of
+            // its own keeps it.
+            if (made.isObjType(ObjType::List) && type->id == kTypeList && asList(made)->type == nullptr) asList(made)->type = type;
+            else if (made.isObjType(ObjType::Map) && type->id == kTypeMap && asMap(made)->type == nullptr) asMap(made)->type = type;
+            sp_--;
+            break;
+        }
+        case Op::IsFull: {
+            if (!sp_[-1].isObjType(ObjType::TypeInfo)) throw runtimeError("invalid type");
+            const bool fits = fitsType(sp_[-2], static_cast<const ObjTypeInfo*>(sp_[-1].as.obj));
+            sp_[-2].setBool(fits);
+            sp_--;
+            break;
+        }
+        case Op::WithTypes: {
+            if (!sp_[-1].isObjType(ObjType::TypeInfo)) throw runtimeError("invalid type");
+            pendingTypeArgs_ = static_cast<const ObjTypeInfo*>(sp_[-1].as.obj);
+            sp_--;
+            break;
+        }
+        case Op::TypeArg: {
+            const int index = (*ip++);
+            *sp_++ = Value::object(typeArgument(frameTypeArgs(frame - frames_), index));
+            break;
+        }
+        case Op::InstanceTypeArg: {
+            // The type argument of the class that declares the code, which the object may extend.
+            const int index = (*ip++);
+            const ObjTypeInfo* type = nullptr;
+            if (sp_[-2].isObjType(ObjType::Instance) && sp_[-1].isObjType(ObjType::Class)) {
+                ObjInstance* instance = asInstance(sp_[-2]);
+                type = instance->cls == asClass(sp_[-1]) ? instance->type() : typeAs(instance->cls, instance->type(), asClass(sp_[-1]));
+            }
+            sp_--;
+            sp_[-1] = Value::object(typeArgument(type, index));
+            break;
+        }
+        case Op::CheckResult: {
+            const std::string& name = asString(consts[(ip += 2, operandU16(ip - 2))])->chars;
+            if (!sp_[-1].isObjType(ObjType::TypeInfo)) throw runtimeError("invalid type");
+            const ObjTypeInfo* type = static_cast<const ObjTypeInfo*>(sp_[-1].as.obj);
+            if (!fitsType(sp_[-2], type))
+                throw runtimeError("the C++ function " + name + "() gave a value of type " + valueTypeText(sp_[-2]) + ", where its declaration says " +
+                                   typeInfoText(type));
+            sp_--;
+            break;
+        }
+        case Op::SupertypeMaker: {
+            if (!sp_[-2].isObjType(ObjType::Class) || !sp_[-1].isObjType(ObjType::Closure)) throw runtimeError("invalid class declaration");
+            asClass(sp_[-2])->supertypeMakers.push_back(asClosure(sp_[-1]));
+            sp_--;
+            break;
+        }
+        case Op::CastFull: {
+            const bool safe = (*ip++) != 0;
+            if (!sp_[-1].isObjType(ObjType::TypeInfo)) throw runtimeError("invalid type");
+            const ObjTypeInfo* type = static_cast<const ObjTypeInfo*>(sp_[-1].as.obj);
+            if (!fitsType(sp_[-2], type)) {
+                if (!safe) {
+                    frame->ip = ip;
+                    throw runtimeError("cannot cast a value of type " + valueTypeText(sp_[-2]) + " to " + typeInfoText(type));
+                }
+                sp_[-2] = Value::null();
+            }
+            sp_--;
+            break;
+        }
+        default:
+            break;
+    }
+    return ip;
+}
+
 // ---- Converting values to text ----
 
 std::string VM::stringify(Value v) {
@@ -4453,6 +4835,10 @@ void VM::stringifyInto(std::string& out, Value v, bool quote, int depth) {
         case ObjType::Iterator:
             out += "<internal>";
             return;
+
+        case ObjType::TypeInfo:
+            out += typeInfoText(static_cast<const ObjTypeInfo*>(v.as.obj));
+            return;
     }
 }
 
@@ -4485,6 +4871,7 @@ void VM::collectGarbage() {
     for (const Timer& timer : timers_) markValue(timer.task);
     for (const Value& global : globals_) markValue(global);
     for (const Table& table : typeExtensions_) markTable(table);
+    for (const auto& [key, type] : types_) markObject(type);  // what the types name, their classes
     markTable(nullExtensions_);
     markTable(nullExtensionOwners_);
     markTable(anyExtensions_);
@@ -4583,6 +4970,12 @@ void VM::blacken(Obj* obj) {
         case ObjType::Resource:
             liveBytes_ += sizeof(ObjResource);
             break;
+        case ObjType::TypeInfo: {
+            ObjTypeInfo* type = static_cast<ObjTypeInfo*>(obj);
+            markObject(type->cls);
+            for (ObjTypeInfo* arg : type->args) markObject(arg);
+            break;
+        }
         case ObjType::Fiber: {
             ObjFiber* fiber = static_cast<ObjFiber*>(obj);
             liveBytes_ += sizeof(ObjFiber) + ObjFiber::kStackSize;
@@ -4602,6 +4995,7 @@ void VM::blacken(Obj* obj) {
             markObject(cls->name);
             markObject(cls->super);
             markObject(cls->init);
+            for (ObjClosure* maker : cls->supertypeMakers) markObject(maker);
             markTable(cls->methods);
             markTable(cls->statics);
             markTable(cls->getters);

@@ -20,8 +20,9 @@ print(circle is string, "circle" is Shape, [circle] is Shape, Circle is Shape)  
 print(none is Shape?, circle is Shape?, none is int?, 3 is int?, "3" is int?, none is any, 0 is any)
 // expect: true true true true false true true
 
-// Generic types are read, and only the outer type is tested.
-print([1, 2] is List<int>, ["a"] is List<int>, {:} is Map<string, List<int>>, [] is List<*>)   // expect: true true true true
+// Generic types are kept when the program runs (M6.6): what a list or map was made to hold is
+// tested too, and one made with nothing said of it (an empty literal on its own) takes anything.
+print([1, 2] is List<int>, ["a"] is List<int>, {:} is Map<string, List<int>>, [] is List<*>)   // expect: true false true true
 
 // !is
 print(circle !is Square, circle !is Shape, none !is Shape, 1 !is string)   // expect: true false true true

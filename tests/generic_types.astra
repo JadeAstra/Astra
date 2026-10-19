@@ -1,0 +1,97 @@
+// Generic types kept when the program runs (M6.6 part 1): what a list or map was made to hold,
+// the type arguments a generic function is called with, and those of an object of a generic
+// class, are all there to test.
+
+class Shape
+class Circle : Shape()
+
+// A list or map knows what it was made to hold.
+val ints = [1, 2, 3]
+val circles = [Circle(), Circle()]
+val things : any = ints
+print(things is List<int>, things is List<string>, things is List<Number>)   // expect: true false true
+val shapes : any = circles
+print(shapes is List<Shape>, shapes is List<Circle>, shapes is List<string>)   // expect: true true false
+val scores : any = {"a": 1, "b": 2}
+print(scores is Map<string, int>, scores is Map<string, string>)   // expect: true false
+print((things as List<int>).size, (things as? List<string>) == null)   // expect: 3 true
+try { val bad = things as List<string> } catch (e : Error) { print(e.message) }   // expect: cannot cast a value of type List<int> to List<string>
+
+// A generic function is given its type arguments, written or worked out.
+fun <T> isA(x : any) : bool => x is T
+print(isA<int>(1), isA<int>("one"), isA<string>("one"), isA<Shape>(Circle()), isA<Circle>(Shape()))   // expect: true false true true false
+
+fun <T> listOfOne(x : T) : List<T> => [x]
+val one : any = listOfOne(1)
+val word : any = listOfOne("a")
+print(one is List<int>, one is List<string>, word is List<string>, word is List<int>)   // expect: true false true false
+
+fun <T> pick(items : List<any>) : List<T> {
+    val out : List<T> = []
+    for (item in items) {
+        if (item is T) { out.add(item as T) }
+    }
+    return out
+}
+print(pick<int>([1, "two", 3, 4.5]), pick<string>([1, "two", 3, 4.5]))   // expect: [1, 3] ["two"]
+
+// Passed on, from one generic function to another.
+fun <T> outer(x : any) : bool => isA<T>(x)
+print(outer<float>(1.5), outer<float>(1))   // expect: true false
+fun <T> wrapped(x : any) : List<T> => listOfOne(x as T)
+val strings : any = wrapped<string>("q")
+print(strings is List<string>, strings is List<int>)   // expect: true false
+try { wrapped<int>("q") } catch (e : Error) { print(e.message) }   // expect: cannot cast a value of type string to int
+
+// A lambda reads those of the call it was made in.
+fun <T> tester() : (any) -> bool => { x : any -> x is T }
+val intTest = tester<int>()
+val stringTest = tester<string>()
+print(intTest(3), intTest("x"), stringTest(3), stringTest("x"))   // expect: true false false true
+
+// An object of a generic class keeps its type.
+class Box<T>(val item : T) {
+    fun holds(x : any) : bool => x is T
+    fun later() : (any) -> bool => { x : any -> x is T }
+}
+val box = Box(5)
+val words = Box<string>("s")
+print(box.holds(1), box.holds("s"), box.later()(2), box.later()("t"), words.holds("x"), words.holds(1))
+// expect: true false true false true false
+val boxed : any = box
+print(boxed is Box<int>, boxed is Box<string>, boxed is Box<Number>, boxed is Box)   // expect: true false true true
+try { val wrong = boxed as Box<string> } catch (e : Error) { print(e.message) }   // expect: cannot cast a value of type Box<int> to Box<string>
+
+// An object of a subclass is seen as the generic class it extends.
+class Base<T>(val item : T) {
+    fun holds(x : any) : bool => x is T
+}
+class IntBase(n : int) : Base<int>(n)
+class ListBase<A>(xs : List<A>) : Base<List<A>>(xs)
+class Deeper : ListBase<string>(["a"])
+val ib = IntBase(3)
+val lb = ListBase([1, 2])
+val deeper = Deeper()
+print(ib.holds(1), ib.holds("s"), lb.holds([3]), lb.holds(["s"]), deeper.holds(["x"]), deeper.holds([1]))
+// expect: true false true false true false
+val anyIb : any = ib
+val anyDeeper : any = deeper
+print(anyIb is Base<int>, anyIb is Base<string>, anyDeeper is Base<List<string>>, anyDeeper is Base<List<int>>)
+// expect: true false true false
+print(anyDeeper is ListBase<string>, anyDeeper is ListBase<int>)   // expect: true false
+val bases : any = [ib, Base(4)]
+print(bases is List<Base<int>>, bases is List<Base<string>>)   // expect: true false
+
+// What a list or map was made to hold, as a value: a Type.
+val names : List<string> = []
+val ages = {"ann": 31, "bo": 4}
+print(ints.itemType, circles.itemType, names.itemType, ages.keyType, ages.valueType)   // expect: int Circle string string int
+print([].itemType, ints.itemType == listOfOne(2).itemType, ints.itemType == names.itemType)   // expect: any true false
+val kind : Type = ints.itemType
+print(kind is Type, 1 is Type, kind)   // expect: true false int
+
+// A list or map the C++ gives has the type its declaration says, worked out at the call.
+print("a,b".split(",").itemType, ints.reversed().itemType, circles.slice(0, 1).itemType)   // expect: string int Circle
+print(ages.keys.itemType, ages.values.itemType, ages.entries.itemType)   // expect: string int MapEntry<string, int>
+val split : any = "x y".split(" ")
+print(split is List<string>, split is List<int>)   // expect: true false

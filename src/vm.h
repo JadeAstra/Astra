@@ -44,6 +44,8 @@ struct CallFrame {
     // This is how `apply` and `also` give back the value they were called on.
     bool dropResult;
 };
+// The type arguments a frame's generic function was called with (M6.6 part 1) are kept beside
+// the frames, not in them, which stay small for the calls that have none: VM::frameTypeArgs.
 
 // A catch block that is waiting for an error.
 struct Handler {
@@ -156,6 +158,9 @@ struct Names {
     ObjString* indices;
     ObjString* lastIndex;
     ObjString* keys;
+    ObjString* itemType;
+    ObjString* keyType;
+    ObjString* valueType;
     ObjString* values;
     ObjString* key;
     ObjString* value;
@@ -228,13 +233,14 @@ public:
 
     // An object of `cls`, with room for the fields the class declares, none of them given a
     // value yet (M6.5 part 4).
-    ObjInstance* newInstance(ObjClass* cls, uint16_t captures = 0) {
+    ObjInstance* newInstance(ObjClass* cls, uint16_t captures = 0, bool typed = false) {
         const uint32_t count = static_cast<uint32_t>(cls->declared.size());
-        ObjInstance* obj = new (count + captures) ObjInstance(cls, count, captures);
+        const uint32_t slots = count + captures + (typed ? 1u : 0u);
+        ObjInstance* obj = new (slots) ObjInstance(cls, count, captures, typed);
         obj->core = coreId_;
         obj->next = objects_;
         objects_ = obj;
-        bytesAllocated_ += sizeof(ObjInstance) + (count + captures) * sizeof(Value);
+        bytesAllocated_ += sizeof(ObjInstance) + slots * sizeof(Value);
         return obj;
     }
     // Makes an object of `cls` in the slot under its `argc` arguments and starts its
@@ -249,6 +255,46 @@ public:
     void account(size_t bytes) { bytesAllocated_ += bytes; }
 
     ObjString* intern(std::string_view s);
+
+    // ---- Types when the program runs (M6.6 part 1) ----
+    // The one object for a type: `id` a TypeId (0 any), for a class `cls`, with its arguments.
+    ObjTypeInfo* typeOf(uint8_t id, bool nullable, ObjClass* cls, const std::vector<ObjTypeInfo*>& args);
+    // A type as the program writes it: `List<Point?>`.
+    std::string typeInfoText(const ObjTypeInfo* type) const;
+    // Whether every value of `a` is one of `b`. A list or map read through a type is read as
+    // any type its items fit (a List<Circle> is a List<Shape>), as Kotlin's read-only ones are.
+    bool isSubtype(const ObjTypeInfo* a, const ObjTypeInfo* b);
+    // Whether a value is of a type, its type arguments included.
+    bool fitsType(const Value& v, const ObjTypeInfo* type);
+    // An object of `cls` whose own type is `own` (null where it was made without one), seen as
+    // one of `target`, a class it extends or an interface it implements: `Base<List<int>>` for a
+    // `Pair<int>` of `class Pair<A> : Base<List<A>>()`. Null where that has no type arguments.
+    const ObjTypeInfo* typeAs(ObjClass* cls, const ObjTypeInfo* own, const ObjClass* target);
+    // The supertypes of `cls` written with type arguments, made for `own` (ObjClass::supertypeMakers).
+    const std::vector<ObjTypeInfo*>& supertypesOf(ObjClass* cls, const ObjTypeInfo* own);
+    // What type a value is, as the program writes it: `List<string>` for a list made to hold strings.
+    std::string valueTypeText(const Value& v) const;
+    // Runs one of the instructions of types (MakeType to InstanceTypeArg); gives where the next one is.
+    const uint8_t* typeInstruction(Op op, const uint8_t* ip, CallFrame* frame);
+    // The type a MakeType shape describes, from `at`, its classes and types taken from `operand` on.
+    ObjTypeInfo* typeFromShape(const std::string& shape, size_t& at, const Value*& operand);
+    // The type `any`, made once.
+    ObjTypeInfo* anyType() {
+        if (anyType_ == nullptr) anyType_ = typeOf(0, false, nullptr, {});
+        return anyType_;
+    }
+    // The type arguments of frame `index`, a kTypeArguments type, null where there are none: a
+    // generic function's are those WithTypes gave its call, and a lambda's those of where it was
+    // made. Kept only for a function whose FunctionProto::typeArgs says it reads them. They are
+    // in the block of the frames, after them (Context).
+    const ObjTypeInfo*& frameTypeArgs(ptrdiff_t index) {
+        return reinterpret_cast<const ObjTypeInfo**>(frames_ + maxFrames_)[index];
+    }
+    // Type argument `i` of what is in `args` (a frame's, or an object's type), or `any` where
+    // that is not known.
+    ObjTypeInfo* typeArgument(const ObjTypeInfo* args, int i) {
+        return args != nullptr && static_cast<size_t>(i) < args->args.size() ? args->args[static_cast<size_t>(i)] : anyType();
+    }
     ObjString* newString(std::string s);
     Value str(std::string s) { return Value::object(newString(std::move(s))); }
 
@@ -591,6 +637,11 @@ private:
     size_t liveBytes_ = 0;
     std::vector<Obj*> gray_;
     std::unordered_map<std::string_view, ObjString*> interned_;
+    std::unordered_map<std::string, ObjTypeInfo*> types_;  // by what they are made of (typeOf)
+    ObjTypeInfo* anyType_ = nullptr;
+    // The type arguments WithTypes gave for the call that follows it, which takes them: the
+    // frame it pushes, or the object it makes. Cleared by a call of C++, which has none.
+    const ObjTypeInfo* pendingTypeArgs_ = nullptr;
 
     Value execute(const FunctionProto* proto);
     void run(int baseFrame);
@@ -637,6 +688,8 @@ public:
     // One entry of a map, as `map.entries` gives it: an object with a key and a value.
     Value makeEntry(Value key, Value value);
     Value mapEntries(ObjMap* map);
+    // The type of a list of a map's keys (0), values (1) or entries (2), from the map's own; null where it has none.
+    ObjTypeInfo* mapPartType(const ObjMap* map, int part);
     Value mapKeys(ObjMap* map);
     Value mapValues(ObjMap* map);
 

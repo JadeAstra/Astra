@@ -245,6 +245,32 @@ enum class Op : uint8_t {
     GetCaptured,        // u16 capture, u16 name           -> value  (throws if it has no value yet)
     SetCaptured,        // u16 capture                     value -> value
 
+    // Types when the program runs (M6.6 part 1). MakeType makes a type from a shape, a string
+    // constant read left to right (shapeOperands): `?` makes what follows nullable; a any, i
+    // int, f float, n Number, s string, b bool, y Bytes, r Range, F a function, L a list of
+    // what follows, M a map of the two that follow, t Type, C<digit> the class on the stack with that
+    // many type arguments after it, P a type on the stack. The classes and types it names are
+    // on the stack in the order they come in the shape. A type made of nothing that changes is
+    // made once, where it is written: CachedType pushes it and jumps over the code that makes
+    // it, which CacheType ends by keeping it. A<digit> makes the type arguments of a call, the
+    // types that follow.
+    //
+    // A generic function is given its type arguments by WithTypes, right before the call: the
+    // frame the call pushes keeps them, or the object it makes, for a generic class. TypeArg
+    // reads one of the frame's, and InstanceTypeArg one of an object's.
+    MakeType,           // u16 shape                       operands... -> type
+    CachedType,         // u16 cache, i32 target           -> [type, at target]
+    CacheType,          // u16 cache                       type -> type
+    TagCollection,      // u16 cache, i32 target           list-or-map -> list-or-map  (given the type kept, then at target; else on, to make it)
+    TypeCollection,     //                                 list-or-map type -> list-or-map  (what it was made to hold)
+    IsFull,             //                                 value type -> bool
+    CastFull,           // u8 safe                         value type -> value  (throws on a mismatch, or with `safe` null)
+    WithTypes,          //                                 type-arguments ->  (for the call that follows)
+    TypeArg,            // u8 index                        -> type
+    InstanceTypeArg,    // u8 index                        object class -> type  (of the class's own type parameters)
+    SupertypeMaker,     //                                 class function -> class  (ObjClass::supertypeMakers)
+    CheckResult,        // u16 name                        value type -> value  (ASTRA_CHECK_NATIVE_RESULTS: throws on a mismatch)
+
     Count_,
 };
 
@@ -260,11 +286,17 @@ enum TypeId : uint8_t {
     kTypeRange,
     kTypeFunction,
     kTypeBytes,
+    kTypeType,      // a type, as the program runs (M6.6 part 1): `items.itemType`
     kTypeInstance,  // an instance of a particular class or of one of its subclasses
 };
 
 const uint8_t kTypeNullable = 0x80;  // `type?`: null is allowed as well
 const uint8_t kTypeMask = 0x7F;
+// Never the type of a value: the type arguments of a call, kept as one type (M6.6 part 1).
+const uint8_t kTypeArguments = 0x7F;
+// FunctionProto::typeArgs.
+const uint8_t kTypeArgsOwn = 1;
+const uint8_t kTypeArgsKept = 2;
 
 const int kFieldVal = 0x100;       // the field can be assigned only once
 const int kFieldRequired = 0x200;  // the initializer has to assign it
@@ -314,6 +346,12 @@ struct FunctionProto {
     // The `vararg` parameter (counted from 0), which receives the arguments from its position
     // on as a list, or -1. Parameters after it can only be passed by name.
     int varargIndex = -1;
+
+    // Whether its frame keeps type arguments (M6.6 part 1): kTypeArgsOwn for a generic
+    // function, given its own by WithTypes; kTypeArgsKept for a lambda or local function that
+    // reads those of the function it is written in, or makes one that does, which its closure
+    // keeps. Only such a function's frame has them: the others are called without.
+    uint8_t typeArgs = 0;
 
     // Bit i is set when parameter i is declared with a class type, the only kind of parameter
     // that can turn a bare name into an enum entry. (Parameters past the 64th never do.)
@@ -394,6 +432,9 @@ void verifyFunction(FunctionProto& f, const Program& program);
 int stackDepthAtEnd(FunctionProto& f, const Program& program);
 
 void disassemble(const Program& program, std::ostream& out);
+
+// How many classes and types a MakeType shape takes from the stack; -1 if it is malformed.
+int shapeOperands(const std::string& shape);
 
 // The length of the instruction at `at`, its operands included.
 size_t instructionSize(const std::vector<uint8_t>& code, size_t at);

@@ -10,6 +10,21 @@ namespace astra {
 
 struct Namespace;
 
+// A type as the compiler writes it into a program for when it runs (M6.6 part 1): what a list
+// or map literal is made to hold, and the like.
+struct RuntimeType {
+    enum Kind : uint8_t { Unknown, Any, Int, Float, Number, String, Bool, Bytes, Range, TypeValue, Function, List, Map, Class, TypeParam };
+    Kind kind = Unknown;
+    bool nullable = false;
+    // A class: where its global is, in a namespace by `global` or, for a private one, in the
+    // file `privateFile`; its type arguments in `args`.
+    const Namespace* ns = nullptr;
+    std::string privateFile;
+    std::string global;
+    std::string typeParam;  // a type parameter: its name
+    std::vector<RuntimeType> args;
+};
+
 // The value of a constant (R2, D139), worked out when the program is checked.
 struct ConstValue {
     enum Kind : uint8_t { None, Int, Float, Bool, String };
@@ -101,6 +116,18 @@ public:
     // The forms of a method name a class has, its own and those it inherits, by their roots;
     // empty where the name has one form.
     std::vector<const FunctionDecl*> formRoots(const ClassStmt& cls, const std::string& name);
+
+    // For a list or map literal: the type it is made as, where that is known.
+    bool literalType(const Expr& literal, RuntimeType& out) const;
+
+    // For a call of a generic function or class written in Astra: what it gives the type
+    // parameters, in their order, an Unknown where that was not worked out.
+    bool typeArguments(const Node& call, std::vector<RuntimeType>& out) const;
+
+    // For a call of a function the C++ provides (`external`): what its declaration says it
+    // gives, its type parameters filled in, and its name; false where that is nothing, or not
+    // known.
+    bool externalResult(const Node& call, RuntimeType& out, std::string& name) const;
 
     // For an extension function: its receiver's type as written; null for anything else.
     const TypeAnnotation* extensionReceiver(const FunctionDecl& fn) const;

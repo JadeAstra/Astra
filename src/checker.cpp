@@ -47,6 +47,7 @@ struct Type {
         Unit,       // what a function that gives nothing gives
         Null,       // the type of `null` alone
         Bool, Int, Float, Number, String, Bytes, Range,
+        TypeValue,  // `Type`: a type, as the program runs (M6.6 part 1)
         List, Map,
         Function,
         Class,
@@ -167,6 +168,9 @@ struct ClassInfo {
     ClassInfo* outer = nullptr;
     bool isInterface = false, isObject = false, isEnum = false, isData = false, isAbstract = false;
     std::vector<std::string> typeParams;
+    // Declared at the top of a file, or inside a class that is: its class is a global, which the
+    // compiler can name in a type it writes for when the program runs (M6.6 part 1).
+    bool global = false;
 
     ClassInfo* superclass = nullptr;
     std::vector<Type> superArgs;          // what the superclass's type parameters are given
@@ -354,6 +358,7 @@ struct Checker::Impl {
             case Type::String: s = "string"; break;
             case Type::Bytes: s = "Bytes"; break;
             case Type::Range: s = "Range"; break;
+            case Type::TypeValue: s = "Type"; break;
             case Type::List: s = "List<" + (t.args.empty() ? std::string("*") : argText(t.args[0])) + ">"; break;
             case Type::Map:
                 s = "Map<" + (t.args.size() < 2 ? std::string("*") : argText(t.args[0])) + ", " +
@@ -640,9 +645,10 @@ struct Checker::Impl {
         return f;
     }
 
-    ClassInfo* gatherClass(const ClassStmt& c, Unit* u, ClassInfo* outer) {
+    ClassInfo* gatherClass(const ClassStmt& c, Unit* u, ClassInfo* outer, bool global = false) {
         classStore.push_back(std::make_unique<ClassInfo>());
         ClassInfo* k = classStore.back().get();
+        k->global = global;
         k->name = outer ? outer->name + "." + c.name : c.name;
         k->decl = &c;
         k->unit = u;
@@ -690,7 +696,7 @@ struct Checker::Impl {
             f->state = 2;
             k->statics[e.name] = f;
         }
-        for (const auto& inner : c.nested) k->nested[inner->name] = gatherClass(*inner, u, k);
+        for (const auto& inner : c.nested) k->nested[inner->name] = gatherClass(*inner, u, k, k->global);
         return k;
     }
 
@@ -747,7 +753,7 @@ struct Checker::Impl {
                 }
                 case StmtKind::Class: {
                     const auto& c = static_cast<const ClassStmt&>(*stmt);
-                    declared(u, stmt->visibility, c.name).cls = gatherClass(c, &u, nullptr);
+                    declared(u, stmt->visibility, c.name).cls = gatherClass(c, &u, nullptr, true);
                     break;
                 }
                 default:
@@ -900,6 +906,7 @@ struct Checker::Impl {
             else if (n == "bool") t.kind = Type::Bool;
             else if (n == "Bytes") t.kind = Type::Bytes;
             else if (n == "Range") t.kind = Type::Range;
+            else if (n == "Type") t.kind = Type::TypeValue;
             else if (n == "any") t.kind = Type::Any;
             else if (n == "unit" || n == "Unit") t.kind = Type::Unit;
             else if (n == "nothing" || n == "Nothing") t.kind = Type::Nothing;
@@ -2332,7 +2339,19 @@ struct Checker::Impl {
 
     // An expression where a type is expected: a lambda takes its parameters from it, and a
     // list or map literal its item types.
+    // The types list and map literals are made as, for the compiler (M6.6 part 1).
+    std::unordered_map<const Expr*, Type> literalTypes;
+
     Type exprExpected(const Expr& e, const Type& expected) {
+        if (e.kind == ExprKind::List || e.kind == ExprKind::Map) {
+            const Type made = exprExpectedLiteral(e, expected);
+            literalTypes[&e] = made;
+            return made;
+        }
+        return exprExpectedLiteral(e, expected);
+    }
+
+    Type exprExpectedLiteral(const Expr& e, const Type& expected) {
         if (expected.known()) {
             if (e.kind == ExprKind::Function) {
                 Type plain = withNull(expected, false);
@@ -2453,11 +2472,11 @@ struct Checker::Impl {
                 return index(static_cast<const IndexExpr&>(e));
             case ExprKind::List: {
                 const auto& l = static_cast<const ListExpr&>(e);
-                if (l.items.empty()) return listOf(unknownType());
+                if (l.items.empty()) return literalTypes[&e] = listOf(unknownType());
                 Type item = expr(*l.items[0]);
                 for (size_t i = 1; i < l.items.size(); i++) item = common(item, expr(*l.items[i]));
                 if (item.kind == Type::Null) item = unknownType();
-                return listOf(item);
+                return literalTypes[&e] = listOf(item);
             }
             case ExprKind::Map: {
                 const auto& m = static_cast<const MapExpr&>(e);
@@ -2471,7 +2490,7 @@ struct Checker::Impl {
                 if (k.kind == Type::Null) k = unknownType();
                 if (v.kind == Type::Null) v = unknownType();
                 t.args = {k, v};
-                return t;
+                return literalTypes[&e] = t;
             }
             case ExprKind::Range: {
                 const auto& r = static_cast<const RangeExpr&>(e);
@@ -3416,12 +3435,13 @@ struct Checker::Impl {
         vars.erase(std::remove_if(vars.begin(), vars.end(), [&](const std::string& v) { return env.count(v) > 0; }), vars.end());
         if (receiver != nullptr && f->isExtension) {
             unify(f->receiver, *receiver, env, vars);
-            fixByReceiver(env, vars);
+            fixByReceiver(f->receiver, env, vars);
         }
         if (args.spread) {
             for (const ExprPtr& a : args.exprs) expr(*a);
             if (envOut != nullptr) *envOut = env;
-            return finish(resultOf(f), env, vars);
+            noteTypeArguments(f, env, at);
+            return finishCall(f, env, vars, at);
         }
         Binding b = bind(f, args, at, what);
         if (f->decl != nullptr && f->decl->isSuspend) noteWait(at, f->name);
@@ -3460,18 +3480,73 @@ struct Checker::Impl {
             }
         }
         if (envOut != nullptr) *envOut = env;
-        return finish(resultOf(f), env, vars);
+        noteTypeArguments(f, env, at);
+        return finishCall(f, env, vars, at);
+    }
+
+    // A call's result, with what is known of the type parameters filled in; for a function of
+    // the C++'s, kept for the compiler (M6.6 part 1), with the function's name as a program
+    // writes it.
+    struct ExternalCall {
+        Type result;
+        std::string name;
+    };
+    std::unordered_map<const Node*, ExternalCall> externalCalls;
+
+    Type finishCall(FuncInfo* f, const Env& env, const std::vector<std::string>& vars, const Node& at) {
+        Type result = finish(resultOf(f), env, vars);
+        if (f->isExternal) {
+            std::string name = f->name;
+            if (f->isExtension) name = argText(f->receiver) + "." + name;
+            else if (f->owner != nullptr) name = f->owner->name + "." + name;
+            externalCalls[&at] = ExternalCall{result, std::move(name)};
+        }
+        return result;
+    }
+
+    // What a call of a generic function or class gives its type parameters, in their order,
+    // for the compiler to pass on (M6.6 part 1); a part not worked out is unknown.
+    std::unordered_map<const Node*, std::vector<Type>> typeArgumentsAt;
+
+    void noteTypeArguments(const std::vector<std::string>& params, const Env& env, const Node& at) {
+        std::vector<Type>& given = typeArgumentsAt[&at];
+        given.clear();
+        for (const std::string& p : params) {
+            auto found = env.find(p);
+            given.push_back(found != env.end() ? subst(found->second, env) : unknownType());
+        }
+    }
+
+    // Only a function written in Astra takes them: the C++'s have none.
+    void noteTypeArguments(const FuncInfo* f, const Env& env, const Node& at) {
+        if (!f->typeParams.empty() && f->decl != nullptr && !f->isExternal) noteTypeArguments(f->typeParams, env, at);
     }
 
     // What the object a function is called on says of its type parameters is so: `words.add(1)` on
-    // a List<string> does not make T something both fit, as an argument would.
-    static void fixByReceiver(const Env& env, std::vector<std::string>& vars) {
+    // a List<string> does not make T something both fit, as an argument would. Where it says
+    // nothing of one (a Map written with no type arguments), that one is unknown: the arguments
+    // cannot tell what the object holds, and `data.get(key, "missing")` is not a string? for it
+    // (M6.6 part 1, found by ASTRA_CHECK_NATIVE_RESULTS).
+    static void fixByReceiver(const Type& declared, Env& env, std::vector<std::string>& vars) {
+        std::vector<std::string> named;
+        typeParamsIn(declared, named);
         vars.erase(std::remove_if(vars.begin(), vars.end(),
                                   [&](const std::string& v) {
                                       auto found = env.find(v);
-                                      return found != env.end() && found->second.known();
+                                      if (found != env.end() && found->second.known()) return true;
+                                      if (std::find(named.begin(), named.end(), v) == named.end()) return false;
+                                      env[v] = unknownType();
+                                      return true;
                                   }),
                    vars.end());
+    }
+
+    // The names of the type parameters a type is written with, `K` and `V` in `Map<K, List<V>>`.
+    static void typeParamsIn(const Type& t, std::vector<std::string>& out) {
+        if (t.kind == Type::TypeParam) out.push_back(t.name);
+        for (const Type& arg : t.args) typeParamsIn(arg, out);
+        if (t.result) typeParamsIn(*t.result, out);
+        if (t.receiver) typeParamsIn(*t.receiver, out);
     }
 
     // A result with what is known of the type parameters filled in, and the rest unknown.
@@ -3495,6 +3570,7 @@ struct Checker::Impl {
         }
         Type t = classType(k);
         for (const std::string& p : k->typeParams) t.args.push_back(env.count(p) ? env[p] : unknownType());
+        if (!k->typeParams.empty() && k->decl != nullptr && !k->isInterface) noteTypeArguments(k->typeParams, env, at);
         return t;
     }
 
@@ -3585,7 +3661,7 @@ struct Checker::Impl {
             vars.erase(std::remove_if(vars.begin(), vars.end(), [&](const std::string& v) { return fit.env.count(v) > 0; }), vars.end());
             if (receiver != nullptr && f->isExtension) {
                 unify(f->receiver, *receiver, fit.env, vars);
-                fixByReceiver(fit.env, vars);
+                fixByReceiver(f->receiver, fit.env, vars);
                 if (!fits(*receiver, subst(f->receiver, fit.env))) continue;
                 receiverFits = true;
             }
@@ -4793,6 +4869,84 @@ const TypeAnnotation* Checker::extensionReceiver(const FunctionDecl& fn) const {
     if (found == impl_->funcOf.end() || !found->second->isExtension || found->second->isExternal || found->second->stmt == nullptr)
         return nullptr;
     return &found->second->stmt->receiverType;
+}
+
+namespace {
+
+// A checker's type as the compiler writes it for when the program runs; Unknown where a part
+// of it cannot be (the type of a function's parameters, a class declared inside a function).
+RuntimeType runtimeTypeOf(const Type& t) {
+    RuntimeType r;
+    r.nullable = t.nullable;
+    switch (t.kind) {
+        case Type::Any: r.kind = RuntimeType::Any; return r;
+        case Type::Bool: r.kind = RuntimeType::Bool; return r;
+        case Type::Int: r.kind = RuntimeType::Int; return r;
+        case Type::Float: r.kind = RuntimeType::Float; return r;
+        case Type::Number: r.kind = RuntimeType::Number; return r;
+        case Type::String: r.kind = RuntimeType::String; return r;
+        case Type::Bytes: r.kind = RuntimeType::Bytes; return r;
+        case Type::Range: r.kind = RuntimeType::Range; return r;
+        case Type::TypeValue: r.kind = RuntimeType::TypeValue; return r;
+        case Type::Function: r.kind = RuntimeType::Function; return r;
+        case Type::TypeParam:
+            r.kind = RuntimeType::TypeParam;
+            r.typeParam = t.name;
+            return r;
+        case Type::List:
+        case Type::Map: {
+            r.kind = t.kind == Type::List ? RuntimeType::List : RuntimeType::Map;
+            for (const Type& arg : t.args) {
+                r.args.push_back(runtimeTypeOf(arg));
+                if (r.args.back().kind == RuntimeType::Unknown) return RuntimeType{};
+            }
+            if (r.args.size() != (t.kind == Type::List ? 1u : 2u)) return RuntimeType{};
+            return r;
+        }
+        case Type::Class: {
+            // A class declared inside a function, or of an anonymous object, is no global: not
+            // named here. Nor is an object declared with `object`, whose class is out of sight.
+            if (t.cls == nullptr || t.cls->unit == nullptr || t.cls->decl == nullptr || !t.cls->global || t.cls->isObject) return RuntimeType{};
+            r.kind = RuntimeType::Class;
+            r.global = t.cls->name;  // `Outer.Inner` for one declared inside another
+            r.ns = t.cls->unit->ns;
+            if (t.cls->decl->visibility == GlobalName::Private) r.privateFile = t.cls->unit->fileKey;
+            for (const Type& arg : t.args) {
+                r.args.push_back(runtimeTypeOf(arg));
+                if (r.args.back().kind == RuntimeType::Unknown) return RuntimeType{};
+            }
+            return r;
+        }
+        default:
+            return RuntimeType{};
+    }
+}
+
+}  // namespace
+
+bool Checker::typeArguments(const Node& call, std::vector<RuntimeType>& out) const {
+    auto found = impl_->typeArgumentsAt.find(&call);
+    if (found == impl_->typeArgumentsAt.end()) return false;
+    out.clear();
+    for (const Type& t : found->second) out.push_back(runtimeTypeOf(t));
+    return true;
+}
+
+bool Checker::externalResult(const Node& call, RuntimeType& out, std::string& name) const {
+    auto found = impl_->externalCalls.find(&call);
+    if (found == impl_->externalCalls.end()) return false;
+    const Type& result = found->second.result;
+    if (result.kind == Type::Unit || result.kind == Type::Nothing || result.kind == Type::Null) return false;
+    out = runtimeTypeOf(result);
+    name = found->second.name;
+    return out.kind != RuntimeType::Unknown;
+}
+
+bool Checker::literalType(const Expr& literal, RuntimeType& out) const {
+    auto found = impl_->literalTypes.find(&literal);
+    if (found == impl_->literalTypes.end()) return false;
+    out = runtimeTypeOf(found->second);
+    return out.kind != RuntimeType::Unknown;
 }
 
 const FunctionDecl* Checker::chosenForm(const CallExpr& call) const {

@@ -173,9 +173,21 @@ const OpInfo kOps[] = {
     {"NEW_OBJECT", Operand::U8},
     {"GET_CAPTURED", Operand::U16U16},
     {"SET_CAPTURED", Operand::U16},
+    {"MAKE_TYPE", Operand::U16},
+    {"CACHED_TYPE", Operand::U16I32},
+    {"CACHE_TYPE", Operand::U16},
+    {"TAG_COLLECTION", Operand::U16I32},
+    {"TYPE_COLLECTION", Operand::None},
+    {"IS_FULL", Operand::None},
+    {"CAST_FULL", Operand::U8},
+    {"WITH_TYPES", Operand::None},
+    {"TYPE_ARG", Operand::U8},
+    {"INSTANCE_TYPE_ARG", Operand::U8},
+    {"SUPERTYPE_MAKER", Operand::None},
+    {"CHECK_RESULT", Operand::U16},
 };
 
-const char* const kTypeNames[] = {"", "int", "float", "Number", "string", "bool", "List", "Map", "Range", "Function", "Bytes"};
+const char* const kTypeNames[] = {"", "int", "float", "Number", "string", "bool", "List", "Map", "Range", "Function", "Bytes", "Type"};
 
 static_assert(sizeof(kOps) / sizeof(kOps[0]) == static_cast<size_t>(Op::Count_), "kOps must match the Op enum");
 
@@ -583,6 +595,50 @@ static int analyzeStack(FunctionProto& f, const Program& program, bool partial) 
                     requireName(b);
                     pushes = 1;
                     break;
+                case Op::MakeType: {
+                    requireName(a);
+                    const int operands = shapeOperands(asString(f.constants[static_cast<size_t>(a)])->chars);
+                    if (operands < 0) fail("bad type shape");
+                    pops = operands;
+                    pushes = 1;
+                    break;
+                }
+                case Op::CachedType:
+                    caches = std::max(caches, a + 1);
+                    flow(b, depth + 1);
+                    maxDepth = std::max(maxDepth, depth + 1);
+                    break;
+                case Op::CacheType:
+                    caches = std::max(caches, a + 1);
+                    pops = pushes = 1;
+                    break;
+                case Op::TagCollection:
+                    caches = std::max(caches, a + 1);
+                    flow(b, depth);
+                    break;
+                case Op::TypeCollection:
+                case Op::IsFull:
+                case Op::CastFull:
+                    pops = 2;
+                    pushes = 1;
+                    break;
+                case Op::CheckResult:
+                    requireName(a);
+                    pops = 2;
+                    pushes = 1;
+                    break;
+                case Op::WithTypes:
+                    pops = 1;
+                    break;
+                case Op::TypeArg:
+                    if (f.typeArgs == 0) fail("type arguments out of reach");
+                    pushes = 1;
+                    break;
+                case Op::InstanceTypeArg:
+                case Op::SupertypeMaker:
+                    pops = 2;
+                    pushes = 1;
+                    break;
                 case Op::SetCaptured:
                     pops = pushes = 1;
                     break;
@@ -723,6 +779,8 @@ static int analyzeStack(FunctionProto& f, const Program& program, bool partial) 
                     break;
                 case Op::Closure: {
                     if (static_cast<size_t>(a) >= f.protos.size()) fail("nested function out of range");
+                    // A closure keeps the type arguments of the frame it is made in, which has them.
+                    if ((f.protos[a]->typeArgs & kTypeArgsKept) != 0 && f.typeArgs == 0) fail("type arguments out of reach");
                     // A local function may capture its own slot, which is the one being pushed.
                     for (const UpvalueDesc& uv : f.protos[a]->upvalues) {
                         if (uv.fromCapture) continue;  // checked when the closure is made
@@ -951,6 +1009,10 @@ void disassembleFunction(const FunctionProto& f, const Program& program, std::os
             case Op::RangeNext:
                 out << " slot=" << a << " -> " << b;
                 break;
+            case Op::CachedType:
+            case Op::TagCollection:
+                out << " cache=" << a << " -> " << b;
+                break;
             case Op::ObjectClass:
                 out << " " << a << " -> " << b;
                 break;
@@ -1008,6 +1070,26 @@ size_t instructionSize(const std::vector<uint8_t>& code, size_t at) {
     return raw < static_cast<uint8_t>(Op::Count_) ? 1 + operandSize(kOps[raw].operand) : 1;
 }
 
+int shapeOperands(const std::string& shape) {
+    int operands = 0;
+    for (size_t at = 0; at < shape.size(); at++) {
+        const char c = shape[at];
+        if (c == 'C') {
+            if (at + 1 >= shape.size() || shape[at + 1] < '0' || shape[at + 1] > '9') return -1;
+            operands++;
+            at++;
+        } else if (c == 'A') {
+            if (at + 1 >= shape.size() || shape[at + 1] < '0' || shape[at + 1] > '9') return -1;
+            at++;
+        } else if (c == 'P') {
+            operands++;
+        } else if (std::string_view("?aifnsbyrtFLM").find(c) == std::string_view::npos) {
+            return -1;
+        }
+    }
+    return operands;
+}
+
 const char* opName(Op op) {
     const size_t i = static_cast<size_t>(op);
     return i < static_cast<size_t>(Op::Count_) ? kOps[i].name : "?";
@@ -1024,7 +1106,7 @@ void disassemble(const Program& program, std::ostream& out) {
 namespace {
 
 const char kMagic[4] = {'A', 'S', 'T', 'R'};
-const uint8_t kFormatVersion = 10;
+const uint8_t kFormatVersion = 11;
 const int kMaxProtoNesting = 200;
 
 enum ConstantTag : uint8_t { TagInt = 0, TagFloat = 1, TagString = 2 };
@@ -1055,6 +1137,7 @@ struct Writer {
         u32(static_cast<uint32_t>(f.requiredArgs()));
         u32(static_cast<uint32_t>(f.varargIndex + 1));
         u64(f.classParams);
+        u8(f.typeArgs);
         u32(static_cast<uint32_t>(f.paramNames.size()));
         for (const ObjString* param : f.paramNames) str(param->chars);
 
@@ -1174,6 +1257,8 @@ struct Reader {
         if (vararg > static_cast<uint32_t>(f->arity)) corrupt();
         f->varargIndex = static_cast<int>(vararg) - 1;
         f->classParams = u64();
+        f->typeArgs = u8();
+        if ((f->typeArgs & ~(kTypeArgsOwn | kTypeArgsKept)) != 0) corrupt();
         uint32_t paramCount = count(4);
         for (uint32_t i = 0; i < paramCount; i++) f->paramNames.push_back(vm.intern(str()));
 
@@ -1422,6 +1507,8 @@ int targetOperand(Op op) {
         case Op::JumpIfNotNull:
         case Op::TryBegin: return 1;
         case Op::ObjectClass:
+        case Op::CachedType:
+        case Op::TagCollection:
         case Op::RangeNext:
         case Op::TryImplicit:
         case Op::IterNext:

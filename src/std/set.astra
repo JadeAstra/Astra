@@ -127,7 +127,14 @@ class Set<T> {
   fun minus(other : Set<T>) : Set<T> => this - other
 
   // Two sets are equal if they hold the same items, whatever the order.
-  op ==(other : any?) : bool => other is Set and other.size == items.size and containsAll(other.toList() as List<T>)
+  // Its items are not cast to T: a set of other things is not equal to this one, and gives false.
+  op ==(other : any?) : bool {
+    if (other !is Set or other.size != items.size) { return false }
+    for (item in other.toList()) {
+      if (!items.has(item)) { return false }
+    }
+    return true
+  }
 
   fun first() : T {
     if (items.size == 0) { throw Error("first() of an empty set") }
@@ -334,7 +341,13 @@ class Deque<T> {
 
   // A for loop goes through the items as they were when it began, front to back.
   fun iterator() : List<T> => toList()
-  fun toList() : List<T> => items.slice(head) as List<T>
+  // A list of T made of them: the items are kept as T? (what is before `head` is null), and a
+  // List<T?> is no List<T> (M6.6).
+  fun toList() : List<T> {
+    val out : List<T> = []
+    for (i in head ..< items.size) { out.add(items[i] as T) }
+    return out
+  }
   fun toMutableList() : List<T> => toList()
 
   fun forEach(action : (T) -> unit) { toList().forEach(action) }
