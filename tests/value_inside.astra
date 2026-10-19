@@ -1,0 +1,109 @@
+// Values kept where they are used (M6.6 part 5, value-lists.html section 4): a value type of at
+// most 8 bytes that holds no object is kept in the value itself, with no box; a field of a
+// value type is kept inside its object; and what a field or a function gives is read where it
+// is, wherever nothing may change it while it is in use.
+
+// Small values: in the value itself, in lists, fields, maps and anything that takes a value.
+value Rgba(val argb : int) {
+  fun red() : int => (argb >> 16) & 255
+  fun withAlpha(a : int) : Rgba => Rgba((argb & 0xFFFFFF) | (a << 24))
+}
+value Flags(var on : bool, var shown : bool)
+value Meters(val m : float) {
+  op +(o : Meters) : Meters => Meters(m + o.m)
+}
+val c = Rgba(0xFF8040)
+print(c, c.red(), c.withAlpha(128).argb, c == Rgba(0xFF8040), c == Rgba(1))
+// expect: Rgba(argb=16744512) 255 2164228160 true false
+val cs : List<Rgba> = [Rgba(1), Rgba(2), Rgba(3)]
+print(cs, cs.map { it.argb }, cs.contains(Rgba(2)), cs.indexOf(Rgba(3)), cs.sortedByDescending { it.argb }[0])
+// expect: [Rgba(argb=1), Rgba(argb=2), Rgba(argb=3)] [1, 2, 3] true 2 Rgba(argb=3)
+var f = Flags(true, false)
+val g = f
+f.shown = true
+print(f, g, f == g)   // expect: Flags(on=true, shown=true) Flags(on=true, shown=false) false
+print(Meters(1.5) + Meters(2.0), Meters(0.0) == Meters(-0.0))   // expect: Meters(m=3.5) true
+val keyed = mapOf(Rgba(1) to "one", Rgba(2) to "two")
+val anyOne : any = Rgba(9)
+print(keyed[Rgba(2)], Rgba(1) in keyed.keys, anyOne is Rgba, "$anyOne")   // expect: two true true Rgba(argb=9)
+
+// A field of a value type, kept inside its object: set, read, read through, changed through
+// its place, and given another value.
+value Point(var x : int, var y : int) {
+  mutating fun move(dx : int) { x += dx }
+}
+value Rect(var origin : Point, var w : int, var h : int) {
+  fun moved(dx : int) : Rect => Rect(Point(origin.x + dx, origin.y), w, h)
+}
+class Comp(var bounds : Rect) {
+  var where = Point(0, 0)
+  fun area() : int => bounds.w * bounds.h
+  fun grow() { bounds.w += 1 }
+  fun shift() { bounds = bounds.moved(1) }
+}
+val comp = Comp(Rect(Point(1, 2), 10, 20))
+val kept = comp.bounds
+comp.bounds = Rect(Point(5, 5), 3, 4)
+comp.bounds.w = 30
+comp.bounds.origin.move(100)
+comp.grow()
+comp.shift()
+comp.where.move(7)
+print(comp.bounds, comp.area(), comp.where, kept)
+// expect: Rect(origin=Point(x=106, y=5), w=31, h=4) 124 Point(x=7, y=0) Rect(origin=Point(x=1, y=2), w=10, h=20)
+
+// What a function gives back, kept: a copy when what it read may change meanwhile.
+class Node {
+  var before = Point(9, 9)  // so that cached is not first inside the object
+  var cached = Rect(Point(0, 0), 1, 1)
+  var calls = 0
+  fun sizes() : Rect {
+    calls += 1
+    cached = Rect(Point(calls, calls), calls, calls)
+    return cached
+  }
+  fun peek() : Rect => cached
+}
+val node = Node()
+val first = node.sizes()
+val second = node.sizes()
+val looked = node.peek()
+node.sizes()
+print(first.w, second.w, looked.w, node.peek().w, node.sizes().origin.x)   // expect: 1 2 2 3 4
+fun originOf(n : Node) : int {
+  val o = n.peek().origin
+  return o.x * 10 + o.y
+}
+print(originOf(node), node.peek().origin)   // expect: 44 Point(x=4, y=4)
+
+// A field read kept across a change to it, in a method, and a value held past its object.
+class Holder(var r : Rect) {
+  fun swap(other : Rect) : Rect {
+    val old = r
+    r = other
+    return old
+  }
+}
+val holder = Holder(Rect(Point(1, 1), 1, 1))
+print(holder.swap(Rect(Point(2, 2), 2, 2)), holder.r)
+// expect: Rect(origin=Point(x=1, y=1), w=1, h=1) Rect(origin=Point(x=2, y=2), w=2, h=2)
+fun made() : Rect => Holder(Rect(Point(7, 7), 7, 7)).r
+print(made())   // expect: Rect(origin=Point(x=7, y=7), w=7, h=7)
+
+// A data class holding a value inside: equal, printed and copied by its fields.
+data Labelled(val r : Rect, val n : int)
+val d1 = Labelled(Rect(Point(1, 1), 2, 2), 1)
+print(d1 == Labelled(Rect(Point(1, 1), 2, 2), 1), setOf(d1, Labelled(Rect(Point(1, 1), 2, 2), 1)).size, d1.copy(n = 5))
+// expect: true 1 Labelled(r=Rect(origin=Point(x=1, y=1), w=2, h=2), n=5)
+
+// Items added to another list while a loop reads them where they are: copied in by `add`.
+fun evens(from : List<Rect>) : List<Rect> {
+  val out : List<Rect> = []
+  for (r in from) {
+    if (r.w % 2 == 0) { out.add(r) }
+  }
+  out.add(0, from[0])
+  return out
+}
+val rects : List<Rect> = [Rect(Point(0, 0), 1, 1), Rect(Point(1, 1), 2, 2), Rect(Point(2, 2), 4, 4)]
+print(evens(rects).map { it.w }, rects.map { it.w })   // expect: [1, 2, 4] [1, 2, 4]

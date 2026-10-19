@@ -10,6 +10,8 @@
 
 namespace astra {
 
+std::atomic<ObjClass*> smallClasses[kMaxSmallClasses];
+
 uint32_t newShape() {
     static std::atomic<uint32_t> next{1};
     uint32_t shape;
@@ -27,6 +29,8 @@ uint32_t hashString(std::string_view s) {
     return hash;
 }
 
+bool valueBytesEqual(const ValueLayout& layout, const uint8_t* x, const uint8_t* y, int depth);
+
 bool valuesEqual(const Value& a, const Value& b) {
     if (a.kind == b.kind) {
         switch (a.kind) {
@@ -39,6 +43,12 @@ bool valuesEqual(const Value& a, const Value& b) {
                 return a.as.i == b.as.i;
             case ValueKind::Float:
                 return a.as.d == b.as.d;
+            case ValueKind::Small: {
+                // Two values of one small value type, field by field (M6.6 part 5).
+                if (a.refIndex != b.refIndex) return false;
+                const ObjClass* cls = smallClassOf(a);
+                return valueBytesEqual(*cls->layout.load(std::memory_order_acquire), smallBytes(a), smallBytes(b), 0);
+            }
             case ValueKind::Obj:
                 if (a.as.obj == b.as.obj) return true;
                 if (a.as.obj->type == ObjType::String && b.as.obj->type == ObjType::String) {
@@ -72,6 +82,7 @@ size_t hashValue(const Value& v) {
         case ValueKind::Obj:
             if (v.as.obj->type == ObjType::String) return asString(v)->hash;
             return std::hash<const Obj*>()(v.as.obj);
+        case ValueKind::Small: return keyHash(v, 0);
         default:
             return 0;
     }
@@ -115,7 +126,6 @@ double floatAt(const uint8_t* at) {
 bool keysEqual(const Value& a, const Value& b, int depth);
 size_t keyHash(const Value& v, int depth);
 
-namespace {
 // The fields of two values of one value type, compared as keys are, from their bytes in the
 // type's layout (M6.6 part 2); a value held in place in another, field by field in turn.
 bool valueBytesEqual(const ValueLayout& layout, const uint8_t* x, const uint8_t* y, int depth) {
@@ -146,6 +156,7 @@ bool valueBytesEqual(const ValueLayout& layout, const uint8_t* x, const uint8_t*
     return true;
 }
 
+namespace {
 size_t mixHash(size_t seed, size_t next) { return seed ^ (next + 0x9e3779b97f4a7c15ULL + (seed << 6) + (seed >> 2)); }
 
 size_t valueBytesHash(const ValueLayout& layout, const uint8_t* x, int depth) {
@@ -201,9 +212,37 @@ KeyItem keyItem(const ObjList* list, size_t i) {
     }
 }
 
+// A value of a value type in any of its forms: a box, one kept in the value itself (whose
+// bytes are in `v`, which has to outlive them), or a Ref; its class and where its bytes are.
+bool valueForm(const Value& v, const ObjClass*& cls, const uint8_t*& bytes) {
+    if (v.kind == ValueKind::Small) {
+        cls = smallClassOf(v);
+        bytes = smallBytes(v);
+        return true;
+    }
+    if (v.kind == ValueKind::Ref) {
+        bytes = refBytes(v);
+        if (bytes == nullptr) return false;
+        cls = refClass(v);
+        return true;
+    }
+    if (v.isObjType(ObjType::Value)) {
+        cls = asValue(v)->cls;
+        bytes = asValue(v)->data();
+        return true;
+    }
+    return false;
+}
+
 bool keyItemsEqual(const KeyItem& a, const KeyItem& b, int depth) {
-    if (a.cls != nullptr || b.cls != nullptr)
-        return a.cls == b.cls && valueBytesEqual(*a.cls->layout.load(std::memory_order_acquire), a.bytes, b.bytes, depth + 1);
+    const ObjClass* ca = a.cls;
+    const ObjClass* cb = b.cls;
+    const uint8_t* pa = a.bytes;
+    const uint8_t* pb = b.bytes;
+    if (ca == nullptr && a.value.isSmall()) valueForm(a.value, ca, pa);
+    if (cb == nullptr && b.value.isSmall()) valueForm(b.value, cb, pb);
+    if (ca != nullptr || cb != nullptr)
+        return ca == cb && valueBytesEqual(*ca->layout.load(std::memory_order_acquire), pa, pb, depth + 1);
     return keysEqual(a.value, b.value, depth + 1);
 }
 
@@ -219,6 +258,13 @@ size_t keyItemHash(const KeyItem& a, int depth) {
 static bool readableHere(const Value& v) { return v.as.obj->core == 0 || v.as.obj->core == currentCore; }
 
 bool keysEqual(const Value& a, const Value& b, int depth) {
+    // Values of value types, whatever form each is in (M6.6 part 5).
+    if ((a.isSmall() || b.isSmall() || a.isRef() || b.isRef()) && depth < kMaxKeyDepth) {
+        const ObjClass *ca = nullptr, *cb = nullptr;
+        const uint8_t *pa = nullptr, *pb = nullptr;
+        if (!valueForm(a, ca, pa) || !valueForm(b, cb, pb)) return false;
+        return ca == cb && valueBytesEqual(*ca->layout.load(std::memory_order_acquire), pa, pb, depth);
+    }
     if (!hasContentKey(a) || !hasContentKey(b) || depth >= kMaxKeyDepth) return valuesEqual(a, b);
     // What another core is working on is a key as itself only: its contents are not looked at.
     if (!readableHere(a) || !readableHere(b)) return valuesEqual(a, b);
@@ -263,6 +309,12 @@ bool keysEqual(const Value& a, const Value& b, int depth) {
 }
 
 size_t keyHash(const Value& v, int depth) {
+    if (v.isSmall() || v.isRef()) {
+        const ObjClass* cls = nullptr;
+        const uint8_t* bytes = nullptr;
+        if (!valueForm(v, cls, bytes)) return 0;
+        return mixHash(std::hash<const void*>()(cls), valueBytesHash(*cls->layout.load(std::memory_order_acquire), bytes, depth));
+    }
     if (!hasContentKey(v) || depth >= kMaxKeyDepth || !readableHere(v)) return hashValue(v);
     auto mix = [](size_t seed, size_t next) { return seed ^ (next + 0x9e3779b97f4a7c15ULL + (seed << 6) + (seed >> 2)); };
     switch (v.as.obj->type) {

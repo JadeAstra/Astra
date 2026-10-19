@@ -1136,9 +1136,18 @@ Everything a data class has, a value type has: printing, `==`, `copy`, coming ap
 with methods, properties and fields worked out from the header, and interfaces. It extends no
 class, and no class extends it. A field is given its value when the value is made, in the
 header or where it is declared in the body; a `var` field changes only through a place (below).
-A value is kept in its type's fixed layout, each field at a set place, so
-a `Point` takes one allocation of 56 bytes where an object of a class takes 80; one value type
-holds another in place, so it cannot hold itself except where that field may be null.
+A value is kept in its type's fixed layout, each field at a set place; one value type holds
+another in place, so it cannot hold itself except where that field may be null. Where a value
+is kept depends on its size, and the program sees no difference:
+
+- **A value of at most 8 bytes that holds no object** (`value Rgba(val argb : int)`, a
+  `Meters` of one `float`, a few `bool`s) is kept in the value itself, as an `int` is: making,
+  passing and keeping one allocates nothing.
+- **A field of a larger value type** in an object of a class is kept inside the object: a
+  component's `bounds` is 32 bytes of the component, given a new value by copying the bytes in,
+  or by building the new one there (`bounds = Rect(x, y, w, h)`).
+- **Anywhere else** a larger value is kept in a box of its own, one allocation of 56 bytes for a
+  `Point` where an object of a class takes 80.
 
 A list made to hold values keeps them one after another, each at its own width: a
 `List<Point>` 16 bytes a point in one block of memory, a `List<int>` or `List<float>` 8 bytes
@@ -1186,7 +1195,7 @@ use. Otherwise, and wherever a value is kept (in a field, a list, a variable a l
 it is copied. The program sees no difference but the time and the memory; with
 `ASTRA_COPY_READS=1` every read is a copy, for testing that.
 
-Values kept in variables without a box, and values inside objects, come in the rest of M6.6
+Larger values kept in variables, arguments and results without a box come in the rest of M6.6
 ([value-lists.html](docs/value-lists.html)).
 
 #### Taking values apart

@@ -1,0 +1,104 @@
+// Jade's layout with what each component measures kept, as Jade keeps it (M6.6 part 5): a
+// component's Sizes are worked out again only after the tree is marked changed, every fourth
+// pass here, and read from where they are kept the other times. With the geometry as classes;
+// layout_cached_values.astra is the same with value types, kept inside their components.
+
+class Dimension(val width : int, val height : int)
+class Insets(val top : int, val left : int, val bottom : int, val right : int)
+class Rectangle(val x : int, val y : int, val width : int, val height : int)
+class Sizes(val min : Dimension, val pref : Dimension, val max : Dimension)
+
+class Node(val leafWidth : int, val leafHeight : int, val columns : int, val children : List<Node>) {
+  val insets = Insets(4, 6, 4, 6)
+  var bounds = Rectangle(0, 0, 0, 0)
+
+  var cached = Sizes(Dimension(0, 0), Dimension(0, 0), Dimension(0, 0))
+  var valid = false
+
+  fun sizes() : Sizes {
+    if (!valid) {
+      cached = measure()
+      valid = true
+    }
+    return cached
+  }
+
+  fun invalidate() {
+    valid = false
+    for (child in children) { child.invalidate() }
+  }
+
+  fun measure() : Sizes {
+    if (children.isEmpty()) {
+      return Sizes(Dimension(leafWidth / 2, leafHeight / 2), Dimension(leafWidth, leafHeight), Dimension(10000, 10000))
+    }
+    var prefW = 0
+    var prefH = 0
+    var minW = 0
+    var minH = 0
+    var rowW = 0
+    var rowH = 0
+    var col = 0
+    for (child in children) {
+      val s = child.sizes()
+      rowW += s.pref.width
+      rowH = Math.max(rowH, s.pref.height)
+      minW = Math.max(minW, s.min.width)
+      minH = Math.max(minH, s.min.height)
+      col += 1
+      if (col == columns) {
+        prefW = Math.max(prefW, rowW)
+        prefH += rowH
+        rowW = 0
+        rowH = 0
+        col = 0
+      }
+    }
+    prefW = Math.max(prefW, rowW) + insets.left + insets.right
+    prefH = prefH + rowH + insets.top + insets.bottom
+    return Sizes(Dimension(minW, minH), Dimension(prefW, prefH), Dimension(10000, 10000))
+  }
+
+  fun layout(area : Rectangle) {
+    bounds = area
+    if (children.isEmpty()) { return }
+    val inner = Rectangle(area.x + insets.left, area.y + insets.top, area.width - insets.left - insets.right,
+                          area.height - insets.top - insets.bottom)
+    val rows = (children.size + columns - 1) / columns
+    val cellW = inner.width / columns
+    val cellH = inner.height / rows
+    var i = 0
+    for (child in children) {
+      val pref = child.sizes().pref
+      val w = Math.min(cellW, pref.width)
+      val h = Math.min(cellH, pref.height)
+      child.layout(Rectangle(inner.x + (i % columns) * cellW, inner.y + (i / columns) * cellH, w, h))
+      i += 1
+    }
+  }
+
+  fun total() : int {
+    var sum = bounds.x + bounds.y + bounds.width + bounds.height
+    for (child in children) { sum += child.total() }
+    return sum
+  }
+}
+
+fun tree(depth : int) : Node {
+  if (depth == 0) { return Node(40 + depth, 20, 1, []) }
+  val kids : List<Node> = []
+  for (i in 0 ..< 3) { kids.add(tree(depth - 1)) }
+  return Node(0, 0, 3, kids)
+}
+
+val root = tree(4)
+val started = clock()
+var check = 0
+for (pass in 0 ..< 200) {
+  if (pass % 4 == 0) { root.invalidate() }
+  val s = root.sizes()
+  root.layout(Rectangle(0, 0, s.pref.width + pass % 7, s.pref.height))
+  check += root.total() % 1000
+}
+val seconds = clock() - started
+print("layout_cached_classes", check, seconds)

@@ -778,8 +778,9 @@ void registerListMethods(VM& vm) {
     vm.defineMethod(T, "add", 1, 2, [](VM& vm, Value self, int argc, Value* args) -> Value {
         ObjList* list = asList(self);
         if (argc == 1) {
-            vm.listAdd(list, args[0]);
+            vm.listAdd(list, args[0]);  // at the end, where nothing moves: a Ref is read as it is copied
         } else {
+            args[1] = vm.boxed(args[1]);  // copied before the items after it move
             if (!args[0].isInt() || args[0].as.i < 0 || static_cast<uint64_t>(args[0].as.i) > list->size())
                 throw outOfRange(vm, "add", args[0], list->size());
             vm.listInsert(list, static_cast<size_t>(args[0].as.i), &args[1], 1);

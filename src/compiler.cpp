@@ -783,7 +783,7 @@ private:
         if (u16 < 0 || u16 > 0xFFFF) throw CompileError(file_, line_, 1, "function is too large (operand overflow)");
         emit(op);
         emitU16(u16);
-        if (op == Op::GetProp || op == Op::SetProp || op == Op::GetOwn || op == Op::SetOwn) {
+        if (op == Op::GetProp || op == Op::SetProp || op == Op::GetOwn || op == Op::SetOwn || op == Op::GetPropRef || op == Op::GetOwnRef) {
             // Each has a place of its own to remember where it found the field (M6.5 part 4).
             if (fs_->caches > 0xFFFF) throw CompileError(file_, line_, 1, "function is too large (too many members used)");
             emitU16(fs_->caches++);
@@ -1661,7 +1661,8 @@ private:
             if (side == ClassSide::Instance && class_->members.count(name) != 0) {
                 if (kindHasThis(fs_->kind)) {
                     emit(Op::GetLocal, 0);
-                    emit(Op::GetOwn, stringConstant(name));
+                    const bool inPlace = session_.checker != nullptr && !copyingReads() && session_.checker->readsFieldInPlace(at);
+                    emit(inPlace ? Op::GetOwnRef : Op::GetOwn, stringConstant(name));
                 } else {
                     emitImplicit(Op::GetImplicit, name);  // in a function inside the method
                 }
@@ -1974,6 +1975,8 @@ private:
         } else if (&call == destinationCall_ && above >= 0 && above <= 0xFF) {
             emit(Op::WithDestinationAt);
             emitByte(above);
+        } else if (session_.checker != nullptr && !copyingReads() && !session_.checker->constructsValue(call) && session_.checker->readsFieldInPlace(call)) {
+            emit(Op::WithRefResult);  // what it gives back may stay where it is (M6.6 part 5)
         }
         emitTypeArguments(call);
     }
@@ -3663,10 +3666,20 @@ private:
                                    "' needs an init that sets it");
             if (!required && !setByGeneratedInit) initialized.push_back(i);
 
-            if (type.id() == kTypeInstance) emitTypeThunk(type.className, f.type);
+            uint16_t flags = type.flags;
+            if (type.id() == kTypeInstance) {
+                emitTypeThunk(type.className, f.type);
+            } else if (!type.typed() && initialValue != nullptr && initialValue->kind == ExprKind::Call && session_.checker != nullptr &&
+                       session_.checker->constructsValue(static_cast<const CallExpr&>(*initialValue)) &&
+                       static_cast<const CallExpr&>(*initialValue).callee->kind == ExprKind::Name) {
+                // `var cached = Size(0, 0)`: a value type's field, by what it is made as, so that
+                // the object can keep it inside itself (M6.6 part 5).
+                emitTypeThunk(static_cast<const NameExpr&>(*static_cast<const CallExpr&>(*initialValue).callee).name, f);
+                flags = kTypeInstance;
+            }
             emit(Op::DeclareField);
             emitU16(stringConstant(storedName(f)));
-            emitU16(type.flags | (f.isVal ? kFieldVal : 0) | (required ? kFieldRequired : 0) | (f.isOverride ? kFieldOverride : 0));
+            emitU16(flags | (f.isVal ? kFieldVal : 0) | (required ? kFieldRequired : 0) | (f.isOverride ? kFieldOverride : 0));
         }
 
         if (initialized.empty()) return;
@@ -4362,7 +4375,11 @@ private:
                 compileExpr(*e.object);
                 line_ = e.line;
                 int toEnd = e.safe ? emitJump(Op::JumpIfNull) : -1;
-                emit(ownMember(*e.object, e.name) ? Op::GetOwn : Op::GetProp, stringConstant(e.name));
+                {
+                    const bool own = ownMember(*e.object, e.name);
+                    const bool inPlace = session_.checker != nullptr && !copyingReads() && session_.checker->readsFieldInPlace(e);
+                    emit(inPlace ? (own ? Op::GetOwnRef : Op::GetPropRef) : (own ? Op::GetOwn : Op::GetProp), stringConstant(e.name));
+                }
                 if (toEnd >= 0) patchJump(toEnd);
                 break;
             }
@@ -4889,12 +4906,36 @@ private:
         emit(Op::Pop);
     }
 
+    // The value of `place = f(...)` with the place on the stack: the call is given it as where
+    // its result goes (M6.6 part 4), and it is gone once the result is on the stack.
+    void compileWhereItGoes(const AssignExpr& e) {
+        const CallExpr* savedTail = tailCall_;
+        const CallExpr* savedDestination = destinationCall_;
+        tailCall_ = nullptr;
+        destinationCall_ = static_cast<const CallExpr*>(e.value.get());
+        compileExpr(*e.value);
+        tailCall_ = savedTail;
+        destinationCall_ = savedDestination;
+        line_ = e.line;
+        emit(Op::Swap);
+        emit(Op::Pop);  // the place: the result is there already, or goes there now
+    }
+
     void compileAssign(const AssignExpr& e) {
         bool compound = e.op != TokenType::Eq;
 
         switch (e.target->kind) {
             case ExprKind::Name: {
                 const auto& target = static_cast<const NameExpr&>(*e.target);
+                if (!compound && session_.checker != nullptr && session_.checker->buildsInPlace(e)) {
+                    // `bounds = Rect(...)` in a method: the field, inside the object, is where the
+                    // result goes (M6.6 part 5).
+                    emit(Op::GetLocal, 0);
+                    emit(Op::FieldDestination, stringConstant(target.name));
+                    compileWhereItGoes(e);
+                    emitSet(target.name, target);
+                    break;
+                }
                 if (compound) emitGet(target.name, target);
                 const int skip = beginNullSafe(compound && e.nullSafe);
                 if (compound) compileExpr(*e.value);
@@ -4913,6 +4954,16 @@ private:
                 // `object?.field = value` does nothing, and works nothing out, with no object.
                 int toEnd = target.safe ? emitJump(Op::JumpIfNull) : -1;
                 const bool own = ownMember(*target.object, target.name);
+                if (!compound && session_.checker != nullptr && session_.checker->buildsInPlace(e)) {
+                    // `comp.bounds = Rect(...)`: the field, inside the object, is where the result
+                    // goes (M6.6 part 5).
+                    emit(Op::Dup);
+                    emit(Op::FieldDestination, stringConstant(target.name));
+                    compileWhereItGoes(e);
+                    emit(own ? Op::SetOwn : Op::SetProp, stringConstant(target.name));
+                    if (toEnd >= 0) patchJump(toEnd);
+                    break;
+                }
                 if (compound) {
                     emit(Op::Dup);
                     emit(own ? Op::GetOwn : Op::GetProp, stringConstant(target.name));
@@ -4937,16 +4988,7 @@ private:
                     // under the call as it is made.
                     emit(Op::Dup2);
                     emit(Op::PlaceIndex);
-                    const CallExpr* savedTail = tailCall_;
-                    const CallExpr* savedDestination = destinationCall_;
-                    tailCall_ = nullptr;
-                    destinationCall_ = static_cast<const CallExpr*>(e.value.get());
-                    compileExpr(*e.value);
-                    tailCall_ = savedTail;
-                    destinationCall_ = savedDestination;
-                    line_ = e.line;
-                    emit(Op::Swap);
-                    emit(Op::Pop);  // the place: the result is there already, or goes there now
+                    compileWhereItGoes(e);
                     emit(Op::SetIndex);
                     break;
                 }

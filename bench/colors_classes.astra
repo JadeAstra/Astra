@@ -1,0 +1,35 @@
+// A colour-heavy drawing loop (M6.6 part 5): 100 frames of a 320 by 240 picture, each pixel
+// blended with a colour from a palette. Rgba is a class here, each colour an object of its
+// own; colors_values.astra is the same with Rgba a value type of one int, kept in the value
+// itself. The time is that of the frames.
+
+class Rgba(val argb : int) {
+  fun red() : int => (argb >> 16) & 255
+  fun green() : int => (argb >> 8) & 255
+  fun blue() : int => argb & 255
+  fun blend(over : Rgba, amount : int) : Rgba {
+    val keep = 256 - amount
+    val r = (red() * keep + over.red() * amount) >> 8
+    val g = (green() * keep + over.green() * amount) >> 8
+    val b = (blue() * keep + over.blue() * amount) >> 8
+    return Rgba(0xFF000000 | (r << 16) | (g << 8) | b)
+  }
+}
+
+val width = 320
+val height = 240
+val pixels : List<Rgba> = []
+for (i in 0 ..< width * height) { pixels.add(Rgba(0xFF000000)) }
+val palette : List<Rgba> = [Rgba(0xFFFF0000), Rgba(0xFF00FF00), Rgba(0xFF0000FF), Rgba(0xFFFFFF00),
+                            Rgba(0xFF00FFFF), Rgba(0xFFFF00FF), Rgba(0xFF808080), Rgba(0xFFFFFFFF)]
+
+val started = clock()
+for (frame in 0 ..< 100) {
+  for (i in 0 ..< width * height) {
+    pixels[i] = pixels[i].blend(palette[(i + frame) % 8], 64)
+  }
+}
+val took = clock() - started
+var check = 0
+for (p in pixels) { check = (check * 31 + p.argb) % 1000003 }
+print("colors_classes", check, took)

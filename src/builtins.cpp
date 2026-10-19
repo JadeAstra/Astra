@@ -899,6 +899,8 @@ void registerBuiltins(VM& vm) {
                                         "removeFirst", "removeLast", "removeFirstOrNull", "removeLastOrNull", "fill", "sortBy",
                                         "sortByDescending", "replaceAll"});
     vm.markMutating(BuiltinType::Map, {"remove", "clear", "put", "set"});
+    // Given an item of a list of values where it is, `add` copies it in at once (M6.6 part 5).
+    vm.markTakesPlaces(BuiltinType::List, {"add"});
     vm.markMutating(BuiltinType::Bytes, {"fill"});
     for (const char* global : {"__thread", "__loop", "__io", "__file", "__worker", "input", "exit"})
         vm.markNotParallel(global);

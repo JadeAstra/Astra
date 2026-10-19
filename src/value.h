@@ -56,6 +56,11 @@ enum class ValueKind : uint8_t {
     // `refIndex`, and where the value is within it in `refOffset`, `refDepth` values deep.
     // Only ever on a thread's stack: storing it anywhere else stores a box with a copy.
     Ref,
+
+    // A value of a small value type kept in the value itself (M6.6 part 5, value-lists.html
+    // section 4): one of at most 8 bytes that holds no object, its fields in `as`, its type's
+    // number in `refIndex` (smallClasses). Kept anywhere a value is, with no box.
+    Small,
 };
 
 // An Astra runtime value: null, bool, 64-bit int, double, or a pointer to a heap object.
@@ -134,6 +139,16 @@ struct Value {
         return v;
     }
     bool isRef() const { return kind == ValueKind::Ref; }
+    static Value inSlot(uint32_t type, uint64_t bits) {
+        Value v;
+        v.kind = ValueKind::Small;
+        v.refDepth = 0;
+        v.refOffset = 0;
+        v.refIndex = type;
+        v.as.i = static_cast<int64_t>(bits);
+        return v;
+    }
+    bool isSmall() const { return kind == ValueKind::Small; }
 
     bool isNull() const { return kind == ValueKind::Null; }
     bool isBool() const { return kind == ValueKind::Bool; }
@@ -434,6 +449,9 @@ struct NativeMethod {
     std::vector<std::string> params;
     // It changes the value it is called on: in a parallel section, a core's own only.
     bool mutates = false;
+    // It copies a value of a value type it is given at once, so it may be given one where it is
+    // kept, a Ref, rather than a box made for it (M6.6 part 5).
+    bool takesPlaces = false;
 };
 
 struct ObjClass;
@@ -452,6 +470,10 @@ struct FieldDecl {
     // so that a field may name a class that is declared later in the program.
     ObjClosure* typeThunk = nullptr;
     ObjClass* typeClass = nullptr;
+
+    // A field of a value type kept inside its object (M6.6 part 5): where its bytes are in the
+    // object's inline part; -1 for any other field.
+    int32_t inlineOffset = -1;
 };
 
 // Gives each layout of a class's fields a number of its own, never given again (M6.5 part 4).
@@ -484,6 +506,11 @@ struct ValueLayout {
     std::vector<uint32_t> objects;    // where the Object fields are, nested types' included, for the collector
     std::vector<uint32_t> values;     // and the Any fields
 };
+
+// The value types kept in the value itself (ValueKind::Small), by number; each VM keeps its
+// own alive, and a class takes its number out when it goes.
+constexpr uint32_t kMaxSmallClasses = 1u << 16;
+extern std::atomic<ObjClass*> smallClasses[kMaxSmallClasses];
 
 struct ObjClass final : Obj {
     ObjString* const name;
@@ -558,6 +585,28 @@ struct ObjClass final : Obj {
     // It is a data class as well.
     bool isValue = false;
     bool madeFromHeader = false;  // a value type with no init, init blocks or fields of its body
+    uint32_t smallId = 0;         // kept in the value itself: its number in smallClasses; 0 if not
+
+    // The fields of value types an object of this class keeps inside itself (M6.6 part 5,
+    // value-lists.html section 4), worked out when the first one is made: each one's place in
+    // the object's inline part, after its other slots, and its type; and how many slots of a
+    // value's size the part takes.
+    struct InlineField {
+        uint32_t offset;
+        uint32_t size;
+        ObjClass* cls;
+    };
+    std::vector<InlineField> inlineFields;
+    uint32_t inlineSlots = 0;
+    std::atomic<bool> inlineLaid{false};
+    const InlineField* inlineFieldAt(uint32_t offset) const {
+        for (const InlineField& f : inlineFields)
+            if (offset >= f.offset && offset < f.offset + f.size) return &f;
+        return nullptr;
+    }
+    ~ObjClass() override {
+        if (smallId != 0) smallClasses[smallId].store(nullptr, std::memory_order_release);
+    }
     std::atomic<const ValueLayout*> layout{nullptr};
     std::unique_ptr<ValueLayout> layoutOwned;
 
@@ -622,11 +671,21 @@ struct ObjInstance final : Obj {
     // part 1) keeps its type after the captures; one made without them does not, and is read
     // as of any type arguments.
     const bool typed;
+    // Made with room for its class's fields of value types inside it (M6.6 part 5).
+    const bool inlined;
 
-    ObjInstance(ObjClass* c, uint32_t count, uint16_t captures, bool withType)
-        : Obj(ObjType::Instance), cls(c), shape(c->shape), fieldCount(count), captureCount(captures), typed(withType) {
+    ObjInstance(ObjClass* c, uint32_t count, uint16_t captures, bool withType, uint32_t inlineSlots)
+        : Obj(ObjType::Instance), cls(c), shape(c->shape), fieldCount(count), captureCount(captures), typed(withType),
+          inlined(inlineSlots != 0) {
         Value* at = fields();
         for (uint32_t i = 0; i < count + captures + (withType ? 1u : 0u); i++) new (at + i) Value(Value::undefined());
+        if (inlineSlots != 0) std::memset(inlineData(), 0, inlineSlots * sizeof(Value));
+    }
+
+    // The bytes of its fields of value types, after its other slots.
+    uint8_t* inlineData() { return reinterpret_cast<uint8_t*>(fields() + fieldCount + captureCount + (typed ? 1u : 0u)); }
+    const uint8_t* inlineData() const {
+        return reinterpret_cast<const uint8_t*>(fields() + fieldCount + captureCount + (typed ? 1u : 0u));
     }
 
     // Its type, `Box<int>`, or null where it was made without one.
@@ -687,9 +746,17 @@ static_assert(sizeof(ObjValue) % alignof(Value) == 0, "a value's fields follow i
 // The value type of what a Ref points at: the holder's item type, and from there `refDepth`
 // values in, the one whose place `refOffset` is in.
 inline ObjClass* refClass(const Value& v) {
-    ObjClass* cls = v.as.obj->type == ObjType::List ? static_cast<const ObjList*>(v.as.obj)->pack->itemClass
-                                                    : static_cast<const ObjValue*>(v.as.obj)->cls;
+    ObjClass* cls;
     uint32_t base = 0;
+    if (v.as.obj->type == ObjType::Instance) {
+        // A field of a value type inside an object (M6.6 part 5): the one the offset is in.
+        const ObjClass::InlineField* field = static_cast<const ObjInstance*>(v.as.obj)->cls->inlineFieldAt(v.refOffset);
+        cls = field->cls;
+        base = field->offset;
+    } else {
+        cls = v.as.obj->type == ObjType::List ? static_cast<const ObjList*>(v.as.obj)->pack->itemClass
+                                              : static_cast<const ObjValue*>(v.as.obj)->cls;
+    }
     for (int d = 0; d < v.refDepth; d++) {
         const ValueLayout* layout = cls->layout.load(std::memory_order_acquire);
         for (const ValueField& field : layout->fields) {
@@ -712,8 +779,13 @@ inline ObjClass* refHolderClass(const Value& v) {
         const ObjList* list = static_cast<const ObjList*>(v.as.obj);
         return list->pack != nullptr ? list->pack->itemClass : nullptr;
     }
+    if (v.as.obj->type == ObjType::Instance) return static_cast<const ObjInstance*>(v.as.obj)->cls->inlineFieldAt(v.refOffset)->cls;
     return static_cast<const ObjValue*>(v.as.obj)->cls;
 }
+
+// The class of a value kept in the value itself.
+inline ObjClass* smallClassOf(const Value& v) { return smallClasses[v.refIndex].load(std::memory_order_acquire); }
+inline const uint8_t* smallBytes(const Value& v) { return reinterpret_cast<const uint8_t*>(&v.as); }
 
 // Where the bytes of what a Ref points at are; null for an item that is no longer in its list.
 inline uint8_t* refBytes(const Value& v) {
@@ -722,6 +794,7 @@ inline uint8_t* refBytes(const Value& v) {
         if (list->pack == nullptr || v.refIndex >= list->pack->count) return nullptr;
         return const_cast<uint8_t*>(list->pack->block.data()) + static_cast<size_t>(v.refIndex) * list->pack->width + v.refOffset;
     }
+    if (v.as.obj->type == ObjType::Instance) return static_cast<ObjInstance*>(v.as.obj)->inlineData() + v.refOffset;
     return static_cast<ObjValue*>(v.as.obj)->data() + v.refOffset;
 }
 
@@ -729,6 +802,7 @@ inline uint8_t* refBytes(const Value& v) {
 // is pointed at; null for anything else.
 inline ObjClass* classOf(const Value& v) {
     if (v.kind == ValueKind::Ref) return refClass(v);
+    if (v.kind == ValueKind::Small) return smallClassOf(v);
     if (!v.isObj()) return nullptr;
     if (v.as.obj->type == ObjType::Instance) return static_cast<const ObjInstance*>(v.as.obj)->cls;
     if (v.as.obj->type == ObjType::Value) return static_cast<const ObjValue*>(v.as.obj)->cls;

@@ -590,8 +590,8 @@ const Value* VM::findExtension(Value receiver, const ObjString* name) const {
 // Whether a bare name written in code that runs on `candidate` means a member of it.
 bool VM::hasMember(Value candidate, const ObjString* name) const {
     guardRead(candidate);
-    if (candidate.isObjType(ObjType::Value)) {
-        const ObjClass* cls = asValue(candidate)->cls;
+    if (candidate.isObjType(ObjType::Value) || candidate.isSmall() || candidate.isRef()) {
+        const ObjClass* cls = classOf(candidate);
         if (cls->declaredIndex.find(name) != nullptr || cls->methods.find(name) != nullptr || cls->getters.find(name) != nullptr)
             return true;
         return findExtension(candidate, name) != nullptr;
@@ -736,10 +736,10 @@ void VM::joinProtected(ObjClass* subclass) {
 // class for its static members), or may not assign to it. This is only asked for a name that
 // some class restricts (see CHECK_ACCESS).
 bool VM::accessDenied(Value target, const ObjString* name, const FunctionProto* proto, bool write) const {
-    if (!target.isObj()) return false;
+    if (!target.isObj() && !target.isSmall() && !target.isRef()) return false;
     const ObjClass* cls;
     const Table* marks;
-    if (target.as.obj->type == ObjType::Instance || target.as.obj->type == ObjType::Value) {
+    if (!target.isObj() || target.as.obj->type == ObjType::Instance || target.as.obj->type == ObjType::Value) {
         cls = classOf(target);
         marks = &cls->accessMarks;
         // Code written in the object's own class may use all that the class has, or all but
@@ -934,6 +934,7 @@ std::string VM::typeName(Value v) const {
     switch (v.kind) {
         case ValueKind::Null: return "null";
         case ValueKind::Ref: return refClass(v)->name->chars;
+        case ValueKind::Small: return smallClassOf(v)->name->chars;
         case ValueKind::Bool: return "bool";
         case ValueKind::Int: return "int";
         case ValueKind::Float: return "float";
@@ -1315,7 +1316,7 @@ bool VM::callValue(Value callee, int argc, bool packed) {
                 }
                 nativeBase_ = sp_ - argc - 1;
                 pendingTypeArgs_ = nullptr;
-                ownAll(sp_ - argc, sp_);  // the C++ is given copies, never a place in a list
+                boxAll(sp_ - argc, sp_);  // the C++ is given boxes, never a place in a list
                 pendingDestination_ = Value::null();
                 Value result = native->fn(*this, argc, sp_ - argc);
                 if (result.kind == ValueKind::Undefined) return true;  // it set a call going in its place (tailCallOn)
@@ -1347,7 +1348,7 @@ bool VM::callValue(Value callee, int argc, bool packed) {
                 }
                 nativeBase_ = sp_ - argc - 1;
                 pendingTypeArgs_ = nullptr;
-                ownAll(sp_ - argc, sp_);
+                if (!method->takesPlaces) boxAll(sp_ - argc, sp_);
                 Value result = method->fn(*this, bound->receiver, argc, sp_ - argc);
                 sp_ -= argc + 1;
                 *sp_++ = result;
@@ -1579,6 +1580,16 @@ const NativeMethod* VM::findNativeMethod(Value receiver, const ObjString* name) 
 // Calls method `name` on the receiver sitting below `argc` arguments. Same result as callValue.
 bool VM::invoke(ObjString* name, int argc, bool trailing) {
     Value receiver = sp_[-argc - 1];
+    if (receiver.isSmall()) {
+        // A method run on a value kept in the value itself (M6.6 part 5): `this` is the value.
+        ObjClass* cls = smallClassOf(receiver);
+        if (const Value* method = cls->methods.find(name)) {
+            if (trailing) callTrailing(asClosure(*method), argc);
+            else callClosure(asClosure(*method), argc);
+            return true;
+        }
+        receiver = sp_[-argc - 1] = boxSmall(receiver);  // a field, a property or an extension: on a box
+    }
     if (receiver.isRef()) {
         // A method run on a value where it is kept (M6.6 part 4): `this` is the place.
         ObjClass* cls = refClass(receiver);
@@ -1690,8 +1701,8 @@ bool VM::invoke(ObjString* name, int argc, bool trailing) {
     }
     nativeBase_ = sp_ - argc - 1;
     pendingTypeArgs_ = nullptr;
-    ownAll(sp_ - argc, sp_);
-    receiver = own(receiver);
+    if (!method->takesPlaces) boxAll(sp_ - argc, sp_);
+    receiver = boxed(receiver);
     Value result = method->fn(*this, receiver, argc, sp_ - argc);
     sp_ -= argc + 1;
     *sp_++ = result;
@@ -1764,9 +1775,11 @@ int VM::scopeFunction(ObjString* name, int argc) {
 // has one, and otherwise only to itself. A structure nested deeper than a comparison can
 // follow (one that contains itself, for instance) is equal only to itself from there on.
 bool VM::equals(Value a, Value b, int depth) {
-    if (a.isRef() || b.isRef()) {
-        TempRoot keepA(*this, a = own(a));
-        TempRoot keepB(*this, b = own(b));
+    if (a.isSmall() && b.isSmall() && a.refIndex == b.refIndex && smallClassOf(a)->methods.find(names.opEq) == nullptr)
+        return valuesEqual(a, b);  // field by field, with no box (M6.6 part 5)
+    if (a.isRef() || b.isRef() || a.isSmall() || b.isSmall()) {
+        TempRoot keepA(*this, a = boxed(a));
+        TempRoot keepB(*this, b = boxed(b));
         return equals(a, b, depth);
     }
     if (!a.isObj() || !b.isObj()) return valuesEqual(a, b);
@@ -1869,6 +1882,15 @@ void VM::invokeOperator(Value receiver, ObjString* name, int argc) {
 // ---- Properties and indexing ----
 
 Value VM::getProperty(Value obj, ObjString* name) {
+    if (obj.isSmall()) {
+        // A field of a value kept in the value itself (M6.6 part 5); anything else, on a box.
+        const ObjClass* cls = smallClassOf(obj);
+        if (const Value* at = cls->declaredIndex.find(name)) {
+            const ValueField& field = cls->layout.load(std::memory_order_relaxed)->fields[static_cast<size_t>(at->as.i)];
+            return readValueField(smallBytes(obj) + field.offset, field);
+        }
+        obj = boxSmall(obj);
+    }
     if (obj.isRef()) {
         Value read;
         if (refField(obj, name, read)) return read;
@@ -1879,7 +1901,7 @@ Value VM::getProperty(Value obj, ObjString* name) {
         switch (obj.as.obj->type) {
             case ObjType::Instance: {
                 ObjInstance* instance = asInstance(obj);
-                if (const Value* field = instance->field(name)) return *field;
+                if (const Value* field = instance->field(name)) return fieldRead(*field);
                 if (const Value* method = instance->cls->methods.find(name))
                     return Value::object(alloc<ObjBoundMethod>(obj, asClosure(*method)));
                 if (instance->cls->setters.find(name) != nullptr)
@@ -2070,6 +2092,16 @@ const ValueLayout& VM::layoutOf(ObjClass* cls) {
     VM& root = root_ != nullptr ? *root_ : *this;
     std::lock_guard<std::mutex> hold(root.internMutex_);
     if (const ValueLayout* known = cls->layout.load(std::memory_order_acquire)) return *known;
+    // At most 8 bytes, holding no object: kept in the value itself, with no box (M6.6 part 5).
+    if (made->size <= 8 && made->objects.empty() && made->values.empty()) {
+        static std::atomic<uint32_t> nextSmall{1};
+        const uint32_t id = nextSmall.fetch_add(1, std::memory_order_relaxed);
+        if (id < kMaxSmallClasses) {
+            cls->smallId = id;
+            smallClasses[id].store(cls, std::memory_order_release);
+            root.smallKept_.push_back(cls);
+        }
+    }
     cls->layoutOwned = std::move(made);
     cls->layout.store(cls->layoutOwned.get(), std::memory_order_release);
     return *cls->layoutOwned;
@@ -2126,6 +2158,7 @@ Value VM::readValueField(const uint8_t* at, const ValueField& field) {
             return v;
         }
         case ValueField::Nested: {
+            if (field.cls->smallId != 0) return smallFrom(field.cls, at, field.cls->layout.load(std::memory_order_relaxed)->size);
             // A value held in another, read on its own: a box of its own, a copy (M6.6 part 2).
             ObjValue* box = newValue(field.cls);
             std::memcpy(box->data(), at, layoutOf(field.cls).size);
@@ -2156,7 +2189,9 @@ void VM::writeValueField(uint8_t* at, const ValueField& field, const ObjClass* o
             break;
         }
         case ValueField::Any: std::memcpy(at, &value, sizeof value); break;
-        case ValueField::Nested: std::memcpy(at, asValue(value)->data(), layoutOf(field.cls).size); break;
+        case ValueField::Nested:
+            std::memcpy(at, value.isSmall() ? smallBytes(value) : asValue(value)->data(), layoutOf(field.cls).size);
+            break;
     }
 }
 
@@ -2170,7 +2205,7 @@ inline int operandU16(const uint8_t* at);  // below, with the interpreter
 const uint8_t* VM::readThrough(const uint8_t* at, const ValueField* field, const uint8_t* next, const Value* consts, Value& out) {
     for (;;) {
         const Op op = static_cast<Op>(*next);
-        if (op != Op::GetProp && op != Op::GetOwn) break;
+        if (op != Op::GetProp && op != Op::GetOwn && op != Op::GetPropRef && op != Op::GetOwnRef) break;
         const ObjString* name = asString(consts[operandU16(next + 1)]);
         if (name->restricted != 0) break;  // whether it may be used is told by the instruction itself
         const Value* index = field->cls->declaredIndex.find(name);
@@ -2326,6 +2361,7 @@ Value VM::packedGet(ObjList* list, size_t i) {
         }
         case ListStore::Bools: return Value::boolean(*at != 0);
         case ListStore::Items: {
+            if (list->pack->itemClass->smallId != 0) return smallFrom(list->pack->itemClass, at, list->pack->width);
             ObjValue* box = newValue(list->pack->itemClass);
             std::memcpy(box->data(), at, list->pack->width);
             return Value::object(box);
@@ -2343,7 +2379,8 @@ void VM::checkItem(const ObjList* list, Value v) {
         case ListStore::Floats: fits = v.isFloat(); break;
         case ListStore::Bools: fits = v.isBool(); break;
         case ListStore::Items:
-            fits = (v.isObjType(ObjType::Value) && asValue(v)->cls == list->pack->itemClass) || (v.isRef() && refClass(v) == list->pack->itemClass);
+            fits = (v.isObjType(ObjType::Value) && asValue(v)->cls == list->pack->itemClass) || (v.isRef() && refClass(v) == list->pack->itemClass) ||
+                   (v.isSmall() && smallClassOf(v) == list->pack->itemClass);
             break;
         default: fits = true; break;
     }
@@ -2364,7 +2401,9 @@ void VM::writeItem(ObjList* list, size_t i, Value v) {
         case ListStore::Ints: std::memcpy(at, &v.as.i, 8); break;
         case ListStore::Floats: std::memcpy(at, &v.as.d, 8); break;
         case ListStore::Bools: *at = v.as.b ? 1 : 0; break;
-        case ListStore::Items: std::memmove(at, v.isRef() ? refAt(v, false) : asValue(v)->data(), list->pack->width); break;
+        case ListStore::Items:
+            std::memmove(at, v.isRef() ? refAt(v, false) : v.isSmall() ? smallBytes(v) : asValue(v)->data(), list->pack->width);
+            break;
         default: break;
     }
 }
@@ -2517,6 +2556,17 @@ void VM::makeFromHeader(ObjClass* cls, int argc, Value dest) {
         sp_[-1] = dest;
         return;
     }
+    if (cls->smallId != 0) {
+        // Small: in the value itself, with no box (M6.6 part 5).
+        uint8_t bytes[8] = {};
+        for (int k = 0; k < argc; k++) {
+            const ValueField& field = layout.fields[static_cast<size_t>(cls->declaredIndex.find(cls->components[static_cast<size_t>(k)])->as.i)];
+            writeValueField(bytes + field.offset, field, cls, args[k]);
+        }
+        sp_ = args;
+        sp_[-1] = smallFrom(cls, bytes, sizeof bytes);
+        return;
+    }
     ObjValue* box = newValue(cls);
     sp_[-argc - 1] = Value::object(box);  // kept where the collector sees it
     for (int k = 0; k < argc; k++) {
@@ -2524,6 +2574,43 @@ void VM::makeFromHeader(ObjClass* cls, int argc, Value dest) {
         writeValueField(box->data() + field.offset, field, cls, args[k]);
     }
     sp_ = args;
+}
+
+// Which of a class's fields are kept inside its objects (M6.6 part 5, value-lists.html section
+// 4): those whose type is a value type kept in a box elsewhere, neither null nor small, laid out
+// one after another after the object's other slots. Worked out when the first object of the
+// class is made; a field whose type names a class that does not exist yet keeps its value in a
+// box, as any other field does.
+void VM::layInline(ObjClass* cls) {
+    std::vector<ObjClass::InlineField> fields;
+    std::vector<int32_t> offsets(cls->declared.size(), -1);
+    uint32_t at = 0;
+    for (size_t i = 0; i < cls->declared.size(); i++) {
+        FieldDecl& declared = cls->declared[i];
+        if ((declared.type & kTypeMask) != kTypeInstance || (declared.type & kTypeNullable) != 0) continue;
+        ObjClass* type = declared.typeClass;
+        if (type == nullptr) {
+            try {
+                type = fieldClass(declared);
+            } catch (AstraThrow&) {
+                continue;  // not there yet
+            }
+        }
+        if (!type->isValue) continue;
+        const ValueLayout& layout = layoutOf(type);
+        if (type->smallId != 0) continue;  // kept in the value itself already
+        at = (at + 7) / 8 * 8;
+        offsets[i] = static_cast<int32_t>(at);
+        fields.push_back({at, layout.size, type});
+        at += layout.size;
+    }
+    VM& root = root_ != nullptr ? *root_ : *this;
+    std::lock_guard<std::mutex> hold(root.internMutex_);
+    if (cls->inlineLaid.load(std::memory_order_acquire)) return;
+    for (size_t i = 0; i < offsets.size(); i++) cls->declared[i].inlineOffset = offsets[i];
+    cls->inlineFields = std::move(fields);
+    cls->inlineSlots = (at + sizeof(Value) - 1) / sizeof(Value);
+    cls->inlineLaid.store(true, std::memory_order_release);
 }
 
 // `pts.add(Point(1, 2))` (Op::AddNew): the value written straight into a new item at the end of
@@ -2617,6 +2704,13 @@ Value VM::ownRef(Value r) {
     return Value::object(box);
 }
 
+Value VM::boxSmall(Value v) {
+    ObjClass* cls = smallClassOf(v);
+    ObjValue* box = newValue(cls);
+    std::memcpy(box->data(), smallBytes(v), layoutOf(cls).size);
+    return Value::object(box);
+}
+
 uint8_t* VM::refAt(Value r, bool write) {
     uint8_t* at = refBytes(r);
     if (at == nullptr)
@@ -2625,6 +2719,9 @@ uint8_t* VM::refAt(Value r, bool write) {
     if (r.as.obj == bandObject_) [[unlikely]] {
         // In a parallel section over this list: this core's own part of it, and no other.
         if (r.refIndex < bandFrom_ || r.refIndex >= bandTo_) throw outsideBand(r.refIndex);
+    } else if (r.as.obj->type == ObjType::Instance) {
+        if (write) guardWrite(r.as.obj);
+        else guardRead(r.as.obj);
     } else if (write) {
         if (r.as.obj->type == ObjType::List) guardWrite(r.as.obj);
         else if (!static_cast<ObjValue*>(r.as.obj)->constructing)
@@ -2662,8 +2759,8 @@ void VM::setRefField(Value r, ObjString* name, Value value) {
 }
 
 Value VM::placeIn(Value& slot) {
-    if (slot.isRef() && slot.as.obj->type == ObjType::List) return slot;  // where it is already
-    const Value kept = own(slot);
+    if (slot.isRef() && slot.as.obj->type != ObjType::Value) return slot;  // where it is already: in a list or an object
+    const Value kept = boxed(slot);
     if (!kept.isObjType(ObjType::Value))
         throw runtimeError("cannot change a field of " + (kept.isNull() ? std::string("null") : "a value of type " + typeName(kept)) +
                            " through its place");
@@ -2707,6 +2804,7 @@ bool VM::construct(ObjClass* cls, int argc, bool packed, const Value* captures, 
         if (argc != 0) throw runtimeError(cls->name->chars + "() takes no arguments but got " + std::to_string(argc));
         return false;
     }
+    if (!cls->inlineLaid.load(std::memory_order_acquire)) layInline(cls);
     ObjInstance* instance = newInstance(cls, captureCount, typeArgs != nullptr);
     for (uint16_t i = 0; i < captureCount; i++) instance->fields()[instance->fieldCount + i] = captures[i];
     if (typeArgs != nullptr) instance->setType(typeOf(kTypeInstance, false, cls, typeArgs->args));
@@ -2949,9 +3047,10 @@ void VM::setProperty(Value obj, ObjString* name, Value value) {
         setRefField(obj, name, value);  // in place, where the value is
         return;
     }
-    value = own(value);
+    // A Ref is copied where the value is kept as it is; one kept inside an object is copied from
+    // where it is (M6.6 part 5).
     if (obj.isObjType(ObjType::Value)) {
-        setValueField(asValue(obj), name, value);  // only while it is being made
+        setValueField(asValue(obj), name, own(value));  // only while it is being made
         return;
     }
     if (obj.isObjType(ObjType::Instance)) {
@@ -2960,10 +3059,23 @@ void VM::setProperty(Value obj, ObjString* name, Value value) {
         if (instance->cls->isEnum && (name == names.name || name == names.ordinal))
             throw runtimeError("cannot assign to '" + name->chars + "' of an entry of enum " + instance->cls->name->chars);
         checkFieldAssignment(instance, name, value);  // every field is declared (R24)
-        if (!instance->setField(name, value))
+        if (instance->inlined) {
+            const int64_t at = instance->fieldIndex(name);
+            if (at >= 0 && instance->cls->declared[static_cast<size_t>(at)].inlineOffset >= 0) {
+                // A value kept inside the object: its bytes copied in (M6.6 part 5).
+                const uint32_t offset = static_cast<uint32_t>(instance->cls->declared[static_cast<size_t>(at)].inlineOffset);
+                ValueField whole;
+                whole.kind = ValueField::Nested;
+                whole.cls = instance->cls->inlineFieldAt(offset)->cls;
+                writeValueField(instance->inlineData() + offset, whole, instance->cls, value);
+                instance->fields()[at] = Value::ref(instance, 0, static_cast<uint16_t>(offset), 0);
+                return;
+            }
+        }
+        if (!instance->setField(name, own(value)))
             throw runtimeError(instance->cls->name->chars + " has no field '" + name->chars + "'");
     } else if (obj.isObjType(ObjType::Class)) {
-        assignStatic(asClass(obj), name, value);
+        assignStatic(asClass(obj), name, own(value));
     } else {
         throw runtimeError("cannot set property '" + name->chars + "' on a value of type " + typeName(obj));
     }
@@ -3742,7 +3854,7 @@ void VM::run(int baseFrame) {
                         }
                         ObjInstance* instance = asInstance(receiver);
                         if (const Value* field = instance->field(name)) {
-                            *sp_++ = *field;
+                            *sp_++ = fieldRead(*field);
                             break;
                         }
                         if (instance->cls->hasAccessors) {
@@ -3771,7 +3883,7 @@ void VM::run(int baseFrame) {
                         }
                         ObjInstance* instance = asInstance(receiver);
                         if (const Value* field = instance->field(name)) {
-                            *sp_++ = *field;
+                            *sp_++ = fieldRead(*field);
                             break;
                         }
                         if (instance->cls->hasAccessors) {
@@ -3997,17 +4109,32 @@ void VM::run(int baseFrame) {
                     }
 
                     case Op::GetOwn:
-                    case Op::GetProp: {
+                    case Op::GetProp:
+                    case Op::GetOwnRef:
+                    case Op::GetPropRef: {
                         // Where this place has found the field before, in an object of the same
                         // layout, it is there again (M6.5 part 4): nothing else about it has
-                        // changed, the right to use it included.
+                        // changed, the right to use it included. A value kept inside the object
+                        // (M6.6 part 5) is read where it is only by GetPropRef and GetOwnRef.
                         if (sp[-1].isObjType(ObjType::Instance) && caches != nullptr) {
                             const ObjInstance* instance = asInstance(sp[-1]);
                             const uint64_t seen = caches[FAST_U16(2)].load(std::memory_order_relaxed);
                             if (static_cast<uint32_t>(seen >> 32) == instance->shape &&
                                 (instance->core == 0 || instance->core == coreId_)) {
                                 const Value field = instance->fields()[(seen >> 16) & 0xFFFF];
-                                if (field.kind != ValueKind::Undefined) {
+                                if (field.kind == ValueKind::Ref && static_cast<Op>(ip[-1]) < Op::GetPropRef) {
+                                    // A value kept inside the object, read through at once with
+                                    // the fields read from it next (`comp.bounds.width`).
+                                    if (const Op after = static_cast<Op>(ip[4]); after == Op::GetProp || after == Op::GetOwn) {
+                                        ValueField whole;
+                                        whole.kind = ValueField::Nested;
+                                        whole.cls = refClass(field);
+                                        Value read;
+                                        ip = readThrough(refBytes(field), &whole, ip + 4, consts, read);
+                                        sp[-1] = read;
+                                        continue;
+                                    }
+                                } else if (field.kind != ValueKind::Undefined) {
                                     sp[-1] = field;
                                     ip += 4;
                                     continue;
@@ -4036,6 +4163,17 @@ void VM::run(int baseFrame) {
                                 ip += 4;
                                 continue;
                             }
+                        } else if (sp[-1].isSmall() && caches != nullptr) {
+                            // A field of a value kept in the value itself (M6.6 part 5).
+                            const ObjClass* cls = smallClassOf(sp[-1]);
+                            const uint64_t seen = caches[FAST_U16(2)].load(std::memory_order_relaxed);
+                            if (static_cast<uint32_t>(seen >> 32) == cls->shape) {
+                                const ValueField& field = cls->layout.load(std::memory_order_relaxed)->fields[(seen >> 16) & 0xFFFF];
+                                const Value read = readPlainField(smallBytes(sp[-1]) + field.offset, field);
+                                sp[-1] = read;
+                                ip += 4;
+                                continue;
+                            }
                         } else if (sp[-1].isRef() && sp[-1].refDepth == 0 && caches != nullptr) {
                             // A field of a value where it is kept, an item of a list say (M6.6 part 4).
                             const Value r = sp[-1];
@@ -4051,7 +4189,7 @@ void VM::run(int baseFrame) {
                                             sp[-1] = read;
                                             continue;
                                         }
-                                        sp[-1] = Value::ref(r.as.obj, r.refIndex, static_cast<uint16_t>(field.offset), 1);
+                                        sp[-1] = Value::ref(r.as.obj, r.refIndex, static_cast<uint16_t>(r.refOffset + field.offset), 1);
                                     } else {
                                         sp[-1] = readPlainField(at + field.offset, field);
                                     }
@@ -4060,7 +4198,8 @@ void VM::run(int baseFrame) {
                                 }
                             }
                         }
-                        const bool own = static_cast<Op>(ip[-1]) == Op::GetOwn;
+                        const Op getOp = static_cast<Op>(ip[-1]);
+                        const bool own = getOp == Op::GetOwn || getOp == Op::GetOwnRef;
                         ObjString* name = asString(consts[READ_U16()]);
                         const int cache = READ_U16();
                         Value obj = sp_[-1];
@@ -4070,7 +4209,24 @@ void VM::run(int baseFrame) {
                             guardRead(instance);
                             const int64_t at = instance->fieldIndex(name);
                             if (at >= 0 && instance->fields()[at].kind != ValueKind::Undefined) {
-                                sp_[-1] = instance->fields()[at];
+                                const Value slot = instance->fields()[at];
+                                if (slot.isRef() && getOp < Op::GetPropRef) {
+                                    // A value kept inside the object, read on a copy; or read
+                                    // through at once with the fields read from it next.
+                                    if (const Op after = static_cast<Op>(*ip); after == Op::GetProp || after == Op::GetOwn ||
+                                                                                 after == Op::GetPropRef || after == Op::GetOwnRef) {
+                                        ValueField whole;
+                                        whole.kind = ValueField::Nested;
+                                        whole.cls = refClass(slot);
+                                        Value read;
+                                        ip = readThrough(refBytes(slot), &whole, ip, consts, read);
+                                        sp_[-1] = read;
+                                        break;
+                                    }
+                                    sp_[-1] = ownRef(slot);
+                                } else {
+                                    sp_[-1] = slot;
+                                }
                                 if (caches != nullptr && at <= 0xFFFF)
                                     caches[cache].store(static_cast<uint64_t>(instance->shape) << 32 | static_cast<uint64_t>(at) << 16,
                                                         std::memory_order_relaxed);
@@ -4101,6 +4257,16 @@ void VM::run(int baseFrame) {
                                 SAVE_IP();
                                 callClosure(asClosure(*getter), 0);
                                 LOAD_FRAME();
+                                break;
+                            }
+                        } else if (obj.isSmall()) {
+                            const ObjClass* cls = smallClassOf(obj);
+                            if (const Value* at = cls->declaredIndex.find(name)) {
+                                const ValueField& field = cls->layout.load(std::memory_order_relaxed)->fields[static_cast<size_t>(at->as.i)];
+                                sp_[-1] = readValueField(smallBytes(obj) + field.offset, field);
+                                if (caches != nullptr && at->as.i <= 0xFFFF)
+                                    caches[cache].store(static_cast<uint64_t>(cls->shape) << 32 | static_cast<uint64_t>(at->as.i) << 16,
+                                                        std::memory_order_relaxed);
                                 break;
                             }
                         } else if (obj.isRef()) {
@@ -4137,7 +4303,24 @@ void VM::run(int baseFrame) {
                             ObjInstance* instance = asInstance(sp[-2]);
                             const uint64_t seen = caches[FAST_U16(2)].load(std::memory_order_relaxed);
                             Value* const field = instance->fields() + ((seen >> 16) & 0xFFFF);
-                            if (static_cast<uint32_t>(seen >> 32) == instance->shape && instance->core == coreId_ &&
+                            if ((seen & 2) != 0) {
+                                // A value kept inside the object, given another of its type (M6.6
+                                // part 5): its bytes copied in, from a box or from where it is.
+                                if (static_cast<uint32_t>(seen >> 32) == instance->shape && instance->core == coreId_ && field->isRef()) {
+                                    const Value value = sp[-1];
+                                    const ObjClass::InlineField* inside = instance->cls->inlineFieldAt(field->refOffset);
+                                    const uint8_t* from = value.isObjType(ObjType::Value) && asValue(value)->cls == inside->cls ? asValue(value)->data()
+                                                          : value.isRef() && refClass(value) == inside->cls          ? refQuickly(value, false)
+                                                                                                                     : nullptr;
+                                    if (from != nullptr) {
+                                        std::memmove(instance->inlineData() + inside->offset, from, inside->size);
+                                        sp[-2] = value;
+                                        sp--;
+                                        ip += 4;
+                                        continue;
+                                    }
+                                }
+                            } else if (static_cast<uint32_t>(seen >> 32) == instance->shape && instance->core == coreId_ &&
                                 ((seen & 1) == 0 || field->kind == ValueKind::Undefined)) {
                                 const Value value = sp[-1];
                                 const uint8_t type = static_cast<uint8_t>(seen >> 8);
@@ -4213,6 +4396,9 @@ void VM::run(int baseFrame) {
                                     caches[cache].store(static_cast<uint64_t>(instance->shape) << 32 | static_cast<uint64_t>(at) << 16 |
                                                             static_cast<uint64_t>(field.type) << 8 | (field.isVal ? 1u : 0u),
                                                         std::memory_order_relaxed);
+                                else if (field.inlineOffset >= 0 && instance->inlined && !field.isVal)
+                                    caches[cache].store(static_cast<uint64_t>(instance->shape) << 32 | static_cast<uint64_t>(at) << 16 | 2u,
+                                                        std::memory_order_relaxed);  // kept inside the object (the second bit)
                             }
                         }
                         sp_[-2] = value;
@@ -4305,7 +4491,7 @@ void VM::run(int baseFrame) {
                             guardRead(sp_[-1]);
                             const Value* field = sp_[-1].isObjType(ObjType::Instance) ? asInstance(sp_[-1])->field(name) : nullptr;
                             if (field != nullptr && asClass(super)->declaredIndex.find(name) != nullptr) {
-                                sp_[-1] = *field;
+                                sp_[-1] = fieldRead(*field);
                                 break;
                             }
                             throw runtimeError("undefined method or property '" + name->chars + "' in superclass " +
@@ -4549,7 +4735,8 @@ void VM::run(int baseFrame) {
                             LOAD_FRAME();
                             break;
                         }
-                        if ((a.isRef() || b.isRef()) || (a.isObj() && b.isObj() && a.as.obj != b.as.obj && a.as.obj->type != ObjType::String)) {
+                        if ((a.isRef() || b.isRef() || a.isSmall() || b.isSmall()) ||
+                            (a.isObj() && b.isObj() && a.as.obj != b.as.obj && a.as.obj->type != ObjType::String)) {
                             // Two lists, maps or ranges: equal if what they hold is equal.
                             SAVE_IP();
                             const bool same = equals(a, b);
@@ -4564,10 +4751,10 @@ void VM::run(int baseFrame) {
                     case Op::Identical: {
                         // The very same object. Numbers, booleans and strings have no identity
                         // apart from their value.
-                        if (sp_[-1].isRef() || sp_[-2].isRef()) {
+                        if (sp_[-1].isRef() || sp_[-2].isRef() || sp_[-1].isSmall() || sp_[-2].isSmall()) {
                             SAVE_IP();
-                            sp_[-1] = own(sp_[-1]);
-                            sp_[-2] = own(sp_[-2]);
+                            sp_[-1] = boxed(sp_[-1]);
+                            sp_[-2] = boxed(sp_[-2]);
                         }
                         Value b = sp_[-1], a = sp_[-2];
                         const bool objects = a.isObj() && b.isObj() && !a.isString();
@@ -4727,6 +4914,12 @@ void VM::run(int baseFrame) {
                                 (instance->core == 0 || instance->core == coreId_)) {
                                 if (const Value* method = instance->cls->methods.find(name)) QUICK_CALL(asClosure(*method), ip[2], 3)
                             }
+                        } else if (sp[-ip[2] - 1].isSmall()) {
+                            // A method of a small value's type, run on the value itself (M6.6 part 5).
+                            const ObjClass* cls = smallClassOf(sp[-ip[2] - 1]);
+                            const ObjString* name = asString(consts[FAST_U16(0)]);
+                            if ((name->restricted & 1) == 0 || static_cast<Op>(ip[-1]) == Op::InvokeOwn)
+                                if (const Value* method = cls->methods.find(name)) QUICK_CALL(asClosure(*method), ip[2], 3)
                         } else if (sp[-ip[2] - 1].isObjType(ObjType::Value)) {
                             // A method of a value's type (M6.6 part 2): a value never changes, so
                             // any core may run one on it.
@@ -4896,8 +5089,16 @@ void VM::run(int baseFrame) {
                         // The object is made once its own class's initializer has returned.
                         if (base[0].isObjType(ObjType::Instance) && asInstance(base[0])->cls->init == frame->closure)
                             asInstance(base[0])->constructing = false;
-                        else if (base[0].isObjType(ObjType::Value) && asValue(base[0])->cls->init == frame->closure)
-                            asValue(base[0])->constructing = false;  // and from now on never changes
+                        else if (base[0].isObjType(ObjType::Value) && asValue(base[0])->cls->init == frame->closure) {
+                            ObjValue* box = asValue(base[0]);
+                            box->constructing = false;  // and from now on never changes
+                            if (box->cls->smallId != 0) {
+                                // Small: given back in the value itself (M6.6 part 5).
+                                const Value made = smallFrom(box->cls, box->data(), box->cls->layout.load(std::memory_order_relaxed)->size);
+                                if (sp[-1].kind == ValueKind::Obj && sp[-1].as.obj == box) sp[-1] = made;
+                                base[0] = made;
+                            }
+                        }
                         // Slot 0 is the new instance: its required fields must be set by now.
                         if (base[0].isObjType(ObjType::Instance) && asInstance(base[0])->cls->anyRequired) {
                             SAVE_IP();
@@ -4910,7 +5111,7 @@ void VM::run(int baseFrame) {
                         // wanted (M6.5 part 4).
                         if ((openUpvalues_ == nullptr || openUpvalues_->location < base) && !frame->dropResult &&
                             frameCount_ - 1 != baseFrame && (handlers_.empty() || handlers_.back().frameIndex < frameCount_ - 1) &&
-                            sp[-1].kind != ValueKind::Ref) {
+                            (sp[-1].kind != ValueKind::Ref || keptAsItIs(frame))) {
                             Value* const top = base;
                             *top = sp[-1];
                             sp = top + 1;
@@ -5111,6 +5312,21 @@ void VM::run(int baseFrame) {
                         if (!sp_[-1].isObjType(ObjType::Class)) throw runtimeError("invalid class declaration");
                         asClass(sp_[-1])->isValue = true;
                         asClass(sp_[-1])->madeFromHeader = fromHeader;
+                        break;
+                    }
+                    case Op::WithRefResult:
+                        pendingDestination_ = Value::undefined();  // taken by a function that gives a value
+                        break;
+                    case Op::FieldDestination: {
+                        ObjString* name = asString(consts[READ_U16()]);
+                        const Value obj = sp_[-1];
+                        Value place = Value::null();
+                        if (obj.isObjType(ObjType::Instance) && asInstance(obj)->inlined) {
+                            ObjInstance* instance = asInstance(obj);
+                            const int64_t at = instance->fieldIndex(name);
+                            if (at >= 0 && instance->fields()[at].isRef() && instance->fields()[at].as.obj == instance) place = instance->fields()[at];
+                        }
+                        sp_[-1] = place;
                         break;
                     }
                     case Op::PlaceLocal:
@@ -5652,21 +5868,23 @@ void VM::run(int baseFrame) {
 #undef COMPARISON
 }
 
-// What a function returns that is a Ref (M6.6 part 4): one into a list goes no further than the
-// function that made it, unless it is where the caller asked for the result to go.
+// What a function returns that is a Ref (M6.6 part 4): one into a list, or into an object
+// (part 5), goes no further than the function that made it, unless it is where the caller asked
+// for the result to go.
 #ifdef _MSC_VER
 __declspec(noinline)
 #else
 __attribute__((noinline))
 #endif
 Value VM::returnedRef(Value result, ptrdiff_t frameIndex) {
-    if (result.as.obj->type != ObjType::List) return result;
     if ((frames_[frameIndex].closure->proto->typeArgs & kTakesDestination) != 0) {
         const Value& dest = frameDestination(frameIndex);
+        if (dest.kind == ValueKind::Undefined) return result;  // the caller keeps it as it is (Op::WithRefResult)
         if (dest.isRef() && dest.as.obj == result.as.obj && dest.refIndex == result.refIndex && dest.refOffset == result.refOffset &&
             dest.refDepth == result.refDepth)
             return result;
     }
+    if (result.as.obj->type != ObjType::List && result.as.obj->type != ObjType::Instance) return result;
     return ownRef(result);
 }
 
@@ -5880,7 +6098,7 @@ std::string VM::repr(Value v) {
 
 // `v` must be reachable by the collector: a toString() method may run and trigger it.
 void VM::stringifyInto(std::string& out, Value v, bool quote, int depth) {
-    if (v.isRef()) v = ownRef(v);  // printed as the value it is
+    if (v.isRef() || v.isSmall()) v = boxed(v);  // printed as the value it is
     TempRoot keepValue(*this, v);
     switch (v.kind) {
         case ValueKind::Null: out += "null"; return;
@@ -6083,6 +6301,7 @@ void VM::collectGarbage() {
     for (ObjUpvalue* upvalue = openUpvalues_; upvalue != nullptr; upvalue = upvalue->nextOpen) markObject(upvalue);
     markObject(context_->fiber);
     markValue(pendingDestination_);
+    for (ObjClass* cls : smallKept_) markObject(cls);
     // ...and every other one that a thread is in the middle of: the contexts under the
     // running one, and those of the threads that are waiting for the lock or blocked.
     for (const ThreadState* thread : threads_) {
@@ -6288,6 +6507,24 @@ void VM::blacken(Obj* obj) {
             markObject(instance->cls);
             const Value* fields = instance->fields();
             for (uint32_t i = 0; i < instance->fieldCount + instance->captureCount; i++) markValue(fields[i]);
+            if (instance->inlined) {
+                // The values kept inside it (M6.6 part 5): what they hold, where their layouts say.
+                liveBytes_ += instance->cls->inlineSlots * sizeof(Value);
+                for (const ObjClass::InlineField& inside : instance->cls->inlineFields) {
+                    const ValueLayout* layout = inside.cls->layout.load(std::memory_order_acquire);
+                    const uint8_t* at = instance->inlineData() + inside.offset;
+                    for (uint32_t offset : layout->objects) {
+                        Obj* held;
+                        std::memcpy(&held, at + offset, sizeof held);
+                        if (held != nullptr) markObject(held);
+                    }
+                    for (uint32_t offset : layout->values) {
+                        Value held;
+                        std::memcpy(&held, at + offset, sizeof held);
+                        markValue(held);
+                    }
+                }
+            }
             break;
         }
         case ObjType::BoundMethod: {

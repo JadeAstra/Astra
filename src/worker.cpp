@@ -47,6 +47,7 @@ void putSize(std::string& out, size_t size) {
 
 void encode(VM& vm, Value v, std::string& out, int depth) {
     if (depth > 64) throw vm.runtimeError("a message is nested too deeply (or holds itself)");
+    if (v.isSmall() || v.isRef()) v = vm.boxed(v);  // a value of a value type, as a box (M6.6 part 5)
     switch (v.kind) {
         case ValueKind::Null: out += kNull; return;
         case ValueKind::Bool: out += v.as.b ? kTrue : kFalse; return;

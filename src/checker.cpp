@@ -2018,6 +2018,9 @@ struct Checker::Impl {
         if (ctx == nullptr) return;
         const bool checked = ctx->returnKnown && r.label.empty() && !(ctx->isLambda && !r.implicit);
         Type value = r.value ? (checked ? exprExpected(*r.value, ctx->expected) : expr(*r.value)) : Type::of(Type::Unit);
+        // `return cached`: the field is given back at once, and is copied on the way unless the
+        // caller keeps it where it is (M6.6 part 5).
+        if (r.value && (r.value->kind == ExprKind::Member || r.value->kind == ExprKind::Name)) readAtOnce.insert(r.value.get());
         if (!r.label.empty()) return;  // return@name leaves a lambda
         if (ctx->isLambda && !r.implicit) return;  // a bare return in an inlined lambda leaves the function around it
         if (ctx->returns != nullptr) {
@@ -2534,8 +2537,14 @@ struct Checker::Impl {
                     report(e, std::string(i.increment ? "++" : "--") + " needs a number; this is " + describe(t));
                 return Type::of(Type::Unit);
             }
-            case ExprKind::Call:
-                return call(static_cast<const CallExpr&>(e));
+            case ExprKind::Call: {
+                const Type made = call(static_cast<const CallExpr&>(e));
+                // A value given back by a function may be one kept in a list or an object, read
+                // where it is (M6.6 part 5): kept so where the code around may.
+                if (made.kind == Type::Class && !made.nullable && made.cls != nullptr && made.cls->isValue)
+                    fieldCandidates[&e] = IndexCandidate{effectKey(), made.cls};
+                return made;
+            }
             case ExprKind::Member:
                 return member(static_cast<const MemberExpr&>(e));
             case ExprKind::Index:
@@ -2844,7 +2853,10 @@ struct Checker::Impl {
         if (ctx != nullptr && ctx->cls != nullptr) {
             if (!ctx->isStatic) {
                 Member m = lookupMember(selfType(ctx->cls), n.name);
-                if (m.field) return subst(fieldType(noteConst(n, m.field)), m.env);
+                if (m.field) {
+                    if (ClassInfo* t = insideObject(ctx->cls, fieldType(m.field))) fieldCandidates[&n] = IndexCandidate{effectKey(), t};
+                    return subst(fieldType(noteConst(n, m.field)), m.env);
+                }
                 if (m.getter) return subst(resultOf(m.getter), m.env);
             }
             for (ClassInfo* c = ctx->cls; c != nullptr; c = c->outer) {
@@ -3285,7 +3297,24 @@ struct Checker::Impl {
     // `this` in a mutating method), changes a list of its type.
     void notePlaceChange(const Expr& place, ClassInfo* type) {
         const Expr* root = &place;
-        while (root->kind == ExprKind::Member) root = static_cast<const MemberExpr&>(*root).object.get();
+        while (root->kind == ExprKind::Member) {
+            // Through a field of an object, the change is to a value kept inside it (M6.6 part 5).
+            const auto& m = static_cast<const MemberExpr&>(*root);
+            const Type owner = typeQuietly(*m.object);
+            if (owner.kind == Type::Class && owner.cls != nullptr && !owner.cls->isValue) {
+                if (FieldInfo* f = fieldNamed(owner.cls, m.name))
+                    if (ClassInfo* t = insideObject(owner.cls, fieldType(f))) effects[effectKeyHere()].types.insert(t);
+                return;
+            }
+            root = m.object.get();
+        }
+        if (root->kind == ExprKind::Name && findLocal(static_cast<const NameExpr&>(*root).name) == nullptr && ctx != nullptr &&
+            ctx->cls != nullptr && !ctx->cls->isValue) {
+            if (FieldInfo* f = fieldNamed(ctx->cls, static_cast<const NameExpr&>(*root).name)) {
+                if (ClassInfo* t = insideObject(ctx->cls, fieldType(f))) effects[effectKeyHere()].types.insert(t);
+                return;
+            }
+        }
         if (root->kind == ExprKind::Index) {
             noteListChange(typeQuietly(*static_cast<const IndexExpr&>(*root).object));
             return;
@@ -3388,6 +3417,21 @@ struct Checker::Impl {
 
     // An item of a list of values read where it is (GetIndexRef): where nothing the code does
     // may change a list of its type.
+    // A field of a value type kept inside its object (M6.6 part 5): one of an object of a class,
+    // whose declared type is a value type, not null. Its type, or null for any other field.
+    static ClassInfo* insideObject(const ClassInfo* owner, const Type& field) {
+        if (owner == nullptr || owner->isValue) return nullptr;
+        if (field.kind != Type::Class || field.nullable || field.cls == nullptr || !field.cls->isValue) return nullptr;
+        return field.cls;
+    }
+    std::unordered_map<const Node*, IndexCandidate> fieldCandidates;
+    std::unordered_set<const Node*> readAtOnce;  // calls whose value is read at once, by a field of it
+    bool readsFieldInPlace(const Node& at) {
+        if (readAtOnce.count(&at) != 0) return true;
+        auto found = fieldCandidates.find(&at);
+        return found != fieldCandidates.end() && !mayChangeLists(found->second.key, found->second.type);
+    }
+
     bool readsInPlace(const IndexExpr& i) {
         auto found = indexCandidates.find(&i);
         return found != indexCandidates.end() && !mayChangeLists(found->second.key, found->second.type);
@@ -3477,6 +3521,21 @@ struct Checker::Impl {
             target = index(static_cast<const IndexExpr&>(*a.target));
         } else {
             expr(*a.target);
+        }
+        // A value kept inside an object given another (M6.6 part 5): a change to values of its type;
+        // and `comp.bounds = Rect(...)` may build the new one there.
+        ClassInfo* inside = nullptr;
+        if (a.target->kind == ExprKind::Member && !static_cast<const MemberExpr&>(*a.target).safe) {
+            const auto& m = static_cast<const MemberExpr&>(*a.target);
+            const Type owner = typeQuietly(*m.object);
+            if (owner.kind == Type::Class && owner.cls != nullptr)
+                if (FieldInfo* f = fieldNamed(owner.cls, m.name)) inside = insideObject(owner.cls, fieldType(f));
+        } else if (a.target->kind == ExprKind::Name && local == nullptr && ctx != nullptr && ctx->cls != nullptr && !ctx->isStatic) {
+            if (FieldInfo* f = fieldNamed(ctx->cls, targetName)) inside = insideObject(ctx->cls, fieldType(f));
+        }
+        if (inside != nullptr) {
+            effects[effectKeyHere()].types.insert(inside);
+            if (a.op == TokenType::Eq && a.value->kind == ExprKind::Call && silent == 0) builtInPlace.insert(&a);
         }
         Type value = exprExpected(*a.value, a.op == TokenType::Eq ? target : unknownType());
         if (local != nullptr) {
@@ -3647,7 +3706,16 @@ struct Checker::Impl {
             }
         }
         Type obj = expr(*m.object);
-        return memberOf(obj, m.name, m, m.safe);
+        Type result = memberOf(obj, m.name, m, m.safe);
+        if (obj.kind == Type::Class && obj.cls != nullptr) {
+            if (FieldInfo* f = fieldNamed(obj.cls, m.name)) {
+                if (ClassInfo* t = insideObject(obj.cls, fieldType(f))) fieldCandidates[&m] = IndexCandidate{effectKey(), t};
+                // `node.sizes().pref`: what the call gives is read at once, with nothing run in
+                // between, so it may be where the function found it (M6.6 part 5).
+                if (obj.cls->isValue && m.object->kind == ExprKind::Call) readAtOnce.insert(m.object.get());
+            }
+        }
+        return result;
     }
 
     // Whether a bare name is a member of something the code runs on, rather than a class.
@@ -5443,6 +5511,7 @@ bool Checker::addsNewValue(const Node& call) const { return impl_->newValueAdds.
 bool Checker::isValuePlace(const Expr& e) const { return impl_->valuePlaces.count(&e) != 0; }
 
 bool Checker::readsInPlace(const IndexExpr& index) const { return impl_->readsInPlace(index); }
+bool Checker::readsFieldInPlace(const Node& read) const { return impl_->readsFieldInPlace(read); }
 
 bool Checker::returnsValue(const FunctionDecl& fn) const {
     if (impl_->valueLambdas.count(&fn) != 0) return true;

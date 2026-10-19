@@ -78,13 +78,13 @@ td.when { min-width: 9em; }
 <body>
 <main>
 <h1>M6.6 so far: what is left open</h1>
-<p class="lede">The choices made while building parts 1 to 4 of M6.6 that are not yet confirmed, and the gaps those parts left, each with where it is to be dealt with. Written 2026-10-19, and brought up to date after part 4 the same day: the gaps part 4 closed are gone from the list. The same items are in <a href="gui-plan.md">gui-plan.md</a> (the M6.6 notes, D162 to D170 and the Open list); the design is in <a href="value-lists.html">value-lists.html</a>.</p>
+<p class="lede">The choices made while building parts 1 to 5 of M6.6 that are not yet confirmed, and the gaps those parts left, each with where it is to be dealt with. Written 2026-10-19, and brought up to date after parts 4 and 5 the same day: the gaps they closed are gone from the list. The same items are in <a href="gui-plan.md">gui-plan.md</a> (the M6.6 notes, D162 to D175 and the Open list); the design is in <a href="value-lists.html">value-lists.html</a>.</p>
 
 <nav>
 <h2>Contents</h2>
 <ul>
-<li><a href="#choices">Choices to confirm</a> (twelve)</li>
-<li><a href="#gaps">Gaps left</a> (fourteen)</li>
+<li><a href="#choices">Choices to confirm</a> (eighteen)</li>
+<li><a href="#gaps">Gaps left</a> (nineteen)</li>
 </ul>
 </nav>
 
@@ -191,6 +191,56 @@ td.when { min-width: 9em; }
 <div class="verdict"><span class="label">Your choice</span><span class="blank"></span></div>
 </section>
 
+<section class="decision" id="d171">
+<h3><span class="code">D171</span>Small values in the value itself (part 5)</h3>
+<ul>
+<li>A value type whose layout is at most 8 bytes and holds no object (<code>value Rgba(val argb : int)</code>, <code>value Meters(val m : float)</code>, <code>value Flags(var on : bool, var shown : bool)</code>) is kept in the value itself: its fields in the 8 bytes a value has for its contents, its type's number beside them.</li>
+<li>So in variables, arguments, results, fields, lists and maps it takes no box and allocates nothing. The program sees no difference.</li>
+<li>C++ functions are given one in a box, as they are given every value of a value type; <code>list.add</code> excepted (D174).</li>
+<li>Measured: <code>bench/colors_values.astra</code>, 100 frames of a 320 by 240 picture blended from a palette, 24 to 31% faster than in part 4, with no box made where part 4 made 15.4 million.</li>
+</ul>
+<div class="verdict"><span class="label">Your choice</span><span class="blank"></span></div>
+</section>
+
+<section class="decision" id="d172">
+<h3><span class="code">D172</span>Values inside their objects (part 5)</h3>
+<ul>
+<li>A field of a value type larger than 8 bytes, not null, is kept inside its object, after its other slots, laid out when the first object of the class is made.</li>
+<li><code>comp.bounds = r</code> copies the value's bytes in; <code>comp.bounds.w = 30</code> and <code>comp.bounds.origin.move(1)</code> change it there; <code>comp.bounds = Rect(...)</code> and <code>cached = measure()</code> build it there.</li>
+<li>A field is laid out so when its type is written, or when it is given a value made by its type's name (<code>var cached = Size(0, 0)</code>). A field of an object made before its class's field types exist keeps a box.</li>
+</ul>
+<div class="verdict"><span class="label">Your choice</span><span class="blank"></span></div>
+</section>
+
+<section class="decision" id="d173">
+<h3><span class="code">D173</span>Fields and results read where they are (part 5)</h3>
+<ul>
+<li>Giving a field of a value type another value counts, for D168, as a change to values of that type, as changing a list of them does.</li>
+<li>A field kept inside its object is read where it is (a reference into the object) where nothing that may change values of its type runs while the read is in use; otherwise it is copied.</li>
+<li>What a function gives back that it read where it is stays so where the caller is shown to be as safe; a call's result read at once by one of its fields (<code>node.sizes().pref</code>), and a field given back by <code>return</code>, always are. Elsewhere a function gives back a copy.</li>
+<li>Measured: <code>bench/layout_cached_values.astra</code>, Jade's layout with each component's <code>Sizes</code> kept inside it, makes 1,215 boxes where part 4 made 57,126; its time is 4 to 7% more, from the reads through references (a gap below).</li>
+</ul>
+<div class="verdict"><span class="label">Your choice</span><span class="blank"></span></div>
+</section>
+
+<section class="decision" id="d174">
+<h3><span class="code">D174</span><code>list.add</code> copies where the item is (part 5)</h3>
+<p><code>out.add(p)</code> for an item read where it is, in a loop say, copies its bytes straight into <code>out</code>, with no box made for it on the way: filtering a million points by hand takes 43 ms instead of 65. <code>add(i, item)</code> copies the item first, since the items after <code>i</code> move.</p>
+<div class="verdict"><span class="label">Your choice</span><span class="blank"></span></div>
+</section>
+
+<section class="decision" id="d175">
+<h3><span class="code">D175</span>Generic functions copied per layout: not now (part 5)</h3>
+<p>Measured on a million points: <code>map</code> 46 ms against 41 written out by hand, <code>sumOf</code> 25 against 23, <code>filter</code> 98 against 43, <code>sortedBy</code> 84. The check that generic code makes costs a few percent. <code>filter</code>'s difference comes from copying each item it hands to its lambda, since the lambda might change the list; inline functions (D59, the second half) remove that, and copies per layout would not. Proposed: copies per layout wait until a measurement asks for them.</p>
+<div class="verdict"><span class="label">Your choice</span><span class="blank"></span></div>
+</section>
+
+<section class="decision" id="d149-moved">
+<h3><span class="code">D149</span>Values in variables, moved to part 6</h3>
+<p>Values of up to 32 bytes kept in consecutive slots of a frame (D149) need the same change to how a frame's slots are laid out as part 6's slots that keep only a payload, so they are built there, together, rather than in part 5. Until then a value larger than 8 bytes in a variable, an argument or a result is a box.</p>
+<div class="verdict"><span class="label">Your choice</span><span class="blank"></span></div>
+</section>
+
 <section class="decision" id="largest">
 <h3><span class="code">Size</span>The largest value type (from value-lists.html)</h3>
 <p>Decided "any size, up to 64 KB". Offered on 2026-10-18 and not yet answered: "any size, with a copy on read past 64 KB". The limit comes only from the 16-bit offset in a reference into a list item, and only fields kept in place count towards it.</p>
@@ -210,12 +260,17 @@ td.when { min-width: 9em; }
 <tr><td class="part">2</td><td>A field of a class whose type is a value type holds a box, not the value's fields within the object.</td><td class="when">Part 5, values inside objects</td></tr>
 <tr><td class="part">3</td><td>A worker is sent a list of values item by item, not as one block of memory.</td><td class="when">Not placed yet</td></tr>
 <tr><td class="part">3</td><td><code>pts.insert(i, Point(...))</code> makes a box first: only <code>add</code> at the end and <code>pts[i] = ...</code> write straight into the list.</td><td class="when">Not placed yet</td></tr>
-<tr><td class="part">4</td><td>A variable changed through its place is given a box of its own at every change (<code>p.x = 1</code> in a loop makes a box each time), since another variable may hold the box it had: on 40 million calls, <code>one.move()</code> on a variable takes 8.4 s against 2.7 for an object.</td><td class="when">Part 5, values in variables (D149)</td></tr>
+<tr><td class="part">4</td><td>A variable changed through its place is given a box of its own at every change (<code>p.x = 1</code> in a loop makes a box each time), since another variable may hold the box it had: on 40 million calls, <code>one.move()</code> on a variable takes 8.4 s against 2.7 for an object.</td><td class="when">Part 6, values in variables (D149)</td></tr>
 <tr><td class="part">4</td><td>A field read through a list item finds the item again each time (the list, its items, the item): on one core a mutating method on items is some 1.4 times slower than on objects (6.1 s against 4.2 in <code>bench/bounce_values.astra</code>; on 32 cores it is faster, 0.46 s against 0.78).</td><td class="when">Part 6, typed instructions</td></tr>
 <tr><td class="part">4</td><td><code>pts[i]</code> read whole is judged by the whole function, not by the statement it is in: one <code>sortBy</code> anywhere in the function makes it a copy.</td><td class="when">Not placed yet</td></tr>
 <tr><td class="part">4</td><td>A list of values that may hold null (<code>List&lt;Point?&gt;</code>) is gone through by copies in a parallel section, so <code>forEach { it?.move() }</code> cannot change its items.</td><td class="when">Not placed yet</td></tr>
 <tr><td class="part">4</td><td>A <code>float</code>'s <code>toInt()</code> and the like are method calls: drawing a million particles by one loop takes 80 ms a frame, most of it there.</td><td class="when">Part 6, typed instructions</td></tr>
 <tr><td class="part">4</td><td>Calls, field access and the simulation slice are 4 to 6% slower than in part 3, the same instructions run (with Clang and with MSVC; <code>calls</code> 19% under MSVC, where placement alone moves it): the checks for references spread over the instructions, and what they do to how the compilers lay out the loop. Value types' benchmarks and making objects of classes got faster in part 4.</td><td class="when">The VM's loop rewritten for D160, M6.7</td></tr>
+<tr><td class="part">5</td><td>A value of a value type larger than 8 bytes in a variable, an argument or a result is a box, so Jade's layout without kept sizes (<code>bench/layout_values.astra</code>) makes as many boxes as before: 470,042 in 200 passes.</td><td class="when">Part 6, values in variables (D149)</td></tr>
+<tr><td class="part">5</td><td>Through a reference into an object, a field is read by finding which of the object's values the reference is in, and reading on through a value held in it (<code>node.sizes().pref.width</code>) looks each field up by name: Jade's layout with kept sizes takes 4 to 7% longer than in part 4 for it, though it makes 47 times fewer boxes.</td><td class="when">Part 6, typed instructions</td></tr>
+<tr><td class="part">5</td><td>Generic list functions that hand each item to a lambda (<code>filter</code>, <code>any</code>, <code>count</code> and the like) copy each item of a list of values, since the lambda may change the list: <code>filter</code> on a million points 98 ms, against 43 written out by hand.</td><td class="when">Inline functions (D59), the second half</td></tr>
+<tr><td class="part">5</td><td>A field is kept inside its object only when its type is written, or it is given a value made by its type's name; one whose type the checker works out from anything else keeps a box, as does one whose type names a class that does not exist yet when the first object is made.</td><td class="when">Not placed yet</td></tr>
+<tr><td class="part">5</td><td>A value type kept in the value itself holds ints, floats and bools only, up to 8 bytes; Jade's <code>Color</code> is still a class (whether it becomes a value type is yours to decide, with the rest of Jade's geometry).</td><td class="when">Storage widths (D148), the second half</td></tr>
 <tr><td class="part">All</td><td>Under MSVC, code placement alone moves the <code>fields</code> benchmark by 10 to 20% with the same loop. Not a gap in Astra, but a caution in reading timings: compare against a baseline built the same way, and count instructions, before calling a change slower.</td><td class="when">D160: the Clang build's dispatch, M6.7</td></tr>
 </tbody>
 </table></div>

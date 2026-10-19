@@ -1688,7 +1688,7 @@ and 11% (a `val` field given its value in `init` is now remembered by the instru
 MSVC, where code placement alone moves it). Left for later, each known:
 - A variable changed through its place is given a box of its own at every change (`p.x = 1`
   in a loop makes a box each time), since another variable may hold the box it had. Values in
-  variables (D149, part 5) leave no box to copy.
+  variables (D149, part 6) leave no box to copy.
 - A field read through a list item finds the item again each time (the list, its items, the
   item), so on one core a mutating method on an item is some 1.4 times slower than on an
   object. Reading `this`'s fields at a known place is part 6's typed instructions.
@@ -1705,6 +1705,40 @@ MSVC, where code placement alone moves it). Left for later, each known:
   instructions run: the checks for references, spread over the instructions, and what they do to
   how the compilers lay out the loop. The VM's loop rewritten for D160 (M6.7) is where to win
   it back.
+
+Part 5 (built 2026-10-19): small values in the value itself, values inside their objects, and
+fields and results read where they are, as D171 to D174 propose; generic functions copied per
+layout measured and not built (D175). A value type of at most 8 bytes that holds no object is
+kept in the value itself, with no box, wherever a value is. A field of a value type, not null
+and larger, is kept inside its object, the field's slot a reference into the object once it is
+given a value; `comp.bounds = Rect(...)` and `cached = measure()` build the value there. A field
+read, and what a function gives back, are read where they are wherever nothing that may change
+values of their type runs while they are in use, and always when read at once (`n.sizes().w`,
+`return cached`). `list.add` copies an item it is given where it is, with no box made for it.
+Measured, against part 4 built the same way: `bench/colors_values.astra`, 100 frames of a
+320 by 240 picture blended with a palette of `Rgba(val argb : int)`, 24 to 31% faster with no
+box made (15.4 million before); `bench/layout_cached_values.astra`, Jade's layout with each
+component's `Sizes` kept inside it, 1,215 boxes made where part 4 made 57,126, its time 4 to 7%
+more (the reads through references, below); the other benchmarks within 5 either way. Values
+in variables, arguments and results (D149) are left for part 6, with the slots that keep only
+a payload: they need the same change to how a frame's slots are laid out. Left for later, each
+known:
+- A value of a value type larger than 8 bytes in a variable, an argument or a result is still a
+  box, so Jade's layout without kept sizes (`bench/layout_values.astra`) makes as many boxes as
+  before, 470,042 in 200 passes. D149 (part 6).
+- Through a reference into an object, a field is read by finding which of the object's values
+  the reference is in, and reading on through a value held in it (`node.sizes().pref.width`)
+  looks each field up by name; both are what typed instructions (part 6) make direct.
+- Generic list functions that hand each item to a lambda (`filter`, `any`, `count` and the
+  like) copy each item of a list of values, since the lambda may change the list: `filter` on a
+  million points 98 ms, against 43 written out by hand. Inline functions (D59, the second half)
+  remove it; copies per layout would not (D175).
+- A field is kept inside its object when its type is written, or when it is given a value made
+  by its type's name (`var cached = Size(0, 0)`); a field whose type is only worked out by the
+  checker from anything else keeps a box. A field whose type names a class that does not exist
+  when the first object is made keeps a box too.
+- A value type of up to 8 bytes kept in the value itself holds ints, floats and bools only:
+  storage widths (D148, the second half) let more fit.
 
 The second half builds, on M6.5's checker, the language choices decided in
 [language-choices.html](language-choices.html) (section 8): `byte`, with unsigned reads from `bytes` (D19); `>>>` and the unsigned helpers (D44); strings kept at
@@ -2030,7 +2064,7 @@ font metrics will need new numbers: no other font engine measures text exactly a
 | D146 | Counting from the end: `^k`. | In an index, `^k` is `size - k` (`items[^1]` the last, `items[^k]` computed, `^0` an error), for lists, strings and anything indexed by position. Negative numbers never count from the end: `items[-1]` a compile error saying `items[^1]`, a computed negative index an `IndexOutOfBoundsException`. `last()`, `lastOrNull()`, `lastIndex` stay. Anyone's functions can take `^n`: it makes an `Index` (a value type: a number and a from-the-end flag), an `int` passing as one; `at.of(size)` resolves it; an `int` parameter does not take `^n`; a `Range` may have `^` ends (`r.of(size)`), so `op [](i : Index)` and `op [](r : Range)` give any class `thing[^1]` and `thing[2..^1]`; a range with a `^` end cannot be looped over without a length. Changes L18 (D25). Built in M6.6 (R11 in [decision-review.html](decision-review.html)). |
 | D147 | Slices. | A range in an index gives that part, inclusive as `..` is: `items[1..]` from 1 to the end, `items[0..^1]` the whole, `items[0..^2]` all but the last, `items[..^2]` (start 0), `items[2..4]` three items, `items[0..<^1]` with the end left out; strings and `bytes` too. A copy (an open list, L23), as `subList` gave; `splitAt` (L76) for views. Out of range an error (a slice may end right at the end: `items[3..]` of three is empty); a slice that runs backwards an error. `subList` and `substring` errors pointing to it (`items.subList(1, 4)` is `items[1..<4]`). One copy, no other cost. Two dimensions on a `Bitmap`: `bitmap[3..5, 10..50]` a new `Bitmap` (columns, then rows; a number takes one column or row); a class may declare `op [](xs, ys)` with ranges. Inside `editPixels`, `bitmap[3..5, 10..50] = other` copies a same-sized `Bitmap` into that region (pixels replaced, not blended; a size mismatch an error), marking only that rectangle changed; `op []=(xs, ys, value)` likewise. Changes L49 (D74). Built in M6.6 (R11 in [decision-review.html](decision-review.html)). |
 | D148 | Storage widths, and 32-bit helpers. | `int16`, `int32`, `uint16`, `uint32` and `float32` are storage types as `byte` is: compact in packed lists, value types' fields and fields; read as `int` or `float`; arithmetic stays 64-bit; storing what does not fit an error (`toInt16Wrapped()` and the like for the low bits). Helpers for 32-bit work: `wrap32()`, `rotateLeft32`, `rotateRight32`, `hash(a, b, ...)`. Changes L0, L3 (D19, D23). Built in M6.6 (R12 in [decision-review.html](decision-review.html)). |
-| D149 | Value types in variables. | Up to 32 bytes, a value type takes consecutive slots in locals, parameters and results once types are known, so `Point`, `Size`, `Rect`, `Insets` and `Pair` in variables make no object; boxed only where the type is not known (`any`, a union, a captured variable that outlives the call). Changes L2, L48, L82 to L85. Built in M6.6 (R13 in [decision-review.html](decision-review.html)). |
+| D149 | Value types in variables. | Up to 32 bytes, a value type takes consecutive slots in locals, parameters and results once types are known, so `Point`, `Size`, `Rect`, `Insets` and `Pair` in variables make no object; boxed only where the type is not known (`any`, a union, a captured variable that outlives the call). Changes L2, L48, L82 to L85. Built in M6.6 part 6, with the slots that keep only a payload, which need the same change to how a frame's slots are laid out (moved there from part 5 on 2026-10-19; R13 in [decision-review.html](decision-review.html)). |
 | D150 | `Path`: properties and functions. | Properties for what is in the path (`name`, `extension`, `nameWithoutExtension`, `parent`, `text`, `absolute`); functions for what asks the disk (`exists()`, `isFile()`, `isDirectory()`, `isExecutable()`, `size()`, `lastModified()`, `canonical()`, `list()`, `walk()`), so a property never throws. Changes L106, L112, L117 (D131, D135, D130). Built in M6.6 (R14 in [decision-review.html](decision-review.html)). |
 | D151 | What a bare `catch (e)` catches. | Every `Exception`, and nothing else; an `Error` (`StackOverflowError`, `OutOfMemoryError`) only when named (`catch (e : Error)` or `Throwable`). Changes L12 (D35). Built in M6.6 with D35, whose tree of throwables it needs (R15 in [decision-review.html](decision-review.html); moved from M6.5 by the user on 2026-10-18). |
 | D152 | `size` in two dimensions. | On things with a width and a height (`Rect`, `Image`, `Surface`, `Bitmap`, `Component`, `Window`) `size` is a `Size`; on collections, strings and `bytes` a count; a path's `size()` its bytes on disk. Built in M6.6 (R16 in [decision-review.html](decision-review.html)). |
@@ -2052,12 +2086,17 @@ font metrics will need new numbers: no other font engine measures text exactly a
 | D168 | Reading a value where it is. | Proposed 2026-10-19 (M6.6 part 4), to be confirmed. A value read from a list or another value (`pts[i]`, a loop's item, a lambda's `it`, a parameter, `this`) is not copied where the checker shows that nothing which may change a list of its type (remove, insert, sort, set, `replaceAll` and the rest, but not `add` at the end) runs while it is in use, through what the code calls, overrides included; a function given as an argument counts as one that may. A loop is judged by its body; given to a variable from outside the loop, the item is judged by the whole function. A call that may wait counts as one that changes every list, since other code runs meanwhile. Whatever keeps a value longer than the stack does (a field, a list, a global, a captured variable, a C++ function) takes a copy. The test setting `ASTRA_COPY_READS=1` copies every read, and the suite prints the same with it. |
 | D169 | Results built where they go. | Proposed 2026-10-19 (M6.6 part 4), to be confirmed. `pts[i] = f(...)`, where `f` gives a value of the list's type, gives `f` the item as where its result goes; a function that gives a value passes that place on to a call whose result it returns, and making a value from its header alone writes its fields there, every argument worked out before any is written. So `pts[i] = pts[i].moved(1)`, `pts[i] = Point(...)` and `pts[i] = pts[i].copy(x = 4)` make no copy. `list.replaceAll { it.moved() }` replaces each item by what the lambda gives, built where the item is. |
 | D170 | Parallel sections over a list of values. | Proposed 2026-10-19 (M6.6 part 4), to be confirmed. `pts.parallelStream()` deals each core its own part of the list, and hands it the items where they are: `forEach { it.move() }` changes them there, `map` and the rest read them there. `parallelStream().replaceAll { it.moved() }` replaces each item on every core, built where it is. A core reads and writes only its own part (`pts[0]` from another core's part is an error saying so) and changes the list itself not at all (`sortBy`, `replaceAll` and `sortByDescending` count as changing a list); a built-in function given the whole list is refused, but for `isEmpty` and `isNotEmpty`. |
+| D171 | Small values in the value itself. | Proposed 2026-10-19 (M6.6 part 5), to be confirmed. A value type whose layout is at most 8 bytes and holds no object (`value Rgba(val argb : int)`, `value Meters(val m : float)`, `value Flags(var on : bool, var shown : bool)`) is kept in the value itself, its fields in the 8 bytes a value has for its contents and its type's number beside them: in variables, arguments, results, fields, lists and maps, with no box and nothing allocated. The program sees no difference; C++ functions are given it in a box, but `list.add`. |
+| D172 | Values inside their objects. | Proposed 2026-10-19 (M6.6 part 5), to be confirmed. A field of a value type larger than 8 bytes, not null, is kept inside its object, after its other slots, laid out when the first object of the class is made: `comp.bounds = r` copies the value's bytes in, `comp.bounds.w = 30` and `comp.bounds.origin.move(1)` change it there, and `comp.bounds = Rect(...)` builds it there (D169). A field is laid out so when its type is written or it is given a value made by its type's name (`var cached = Size(0, 0)`). A field of an object made before its class's field types exist keeps a box. |
+| D173 | Fields and results read where they are. | Proposed 2026-10-19 (M6.6 part 5), to be confirmed. Giving a field of a value type another value counts, for D168, as a change to values of that type, as changing a list of them does. A field kept inside its object is read where it is (a reference into the object) where nothing that may change values of its type runs while the read is in use; otherwise it is copied. What a function gives back that it read where it is stays so where the caller is shown to be as safe (a call marked so, WithRefResult); a call's result read at once by one of its fields (`node.sizes().pref`), and a field given back by `return`, always are. Where nothing says so, a function gives back a copy. |
+| D174 | `list.add` copies where the item is. | Proposed 2026-10-19 (M6.6 part 5), to be confirmed. `out.add(p)` for an item read where it is, in a loop say, copies its bytes straight into `out`, with no box made for it on the way; `add(i, item)` copies it first, since the items after `i` move. |
+| D175 | Generic functions copied per layout. | Proposed 2026-10-19 (M6.6 part 5), to be confirmed: not built now. Measured on a million points: `map` 46 ms against 41 by hand, `sumOf` 25 against 23, `filter` 98 against 43, `sortedBy` 84. The check of section 10 costs a few percent; `filter`'s difference comes from copying each item handed to its lambda, which inline functions (D59) remove and copies per layout would not. So copies per layout wait until a measurement asks for them. |
 | | How files are loaded under namespaces. | Importing a folder loads every `.astra` file directly in it, as one unit. Importing a file loads that file only, into its folder's namespace (5.1). |
 | | A lambda's parameter list over several lines. | Allowed, as in Kotlin (5.1). |
 
 ### Open
 
-Seven. The language choices, all decided since; five from M6.6 for the user to answer; and one
+Eight. The language choices, all decided since; six from M6.6 for the user to answer; and one
 left for the milestone that raises it. (The measuring rule on scaled displays, open earlier, was settled in M4:
 section 4, point 8.)
 
@@ -2072,6 +2111,10 @@ section 4, point 8.)
 - **M6.6 part 3's proposal**, D166: lists of values as built.
 - **M6.6 part 4's proposals**, D167 to D170: changing a value through its place, reading a
   value where it is, results built where they go, and parallel sections over a list of values.
+- **M6.6 part 5's proposals**, D171 to D175: small values in the value itself, values inside
+  their objects, fields and results read where they are, `list.add` copying where the item
+  is, and generic functions not copied per layout for now. And D149, values in variables, moved
+  to part 6.
 - **The largest value type** (value-lists.html): decided "any, up to 64 KB"; offered on
   2026-10-18, not yet answered, is "any size, with a copy on read past 64 KB", the limit
   coming only from the 16-bit offset in a reference into a list item.

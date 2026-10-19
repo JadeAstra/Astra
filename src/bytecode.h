@@ -291,6 +291,16 @@ enum class Op : uint8_t {
     // keep as it runs takes a copy as it starts (OwnLocal).
     GetIndexRef,        //                                 list index -> item
     IterNextRef,        // u16 slot, i32 target            -> [item]  (as IterNext)
+    // A field read where it is (M6.6 part 5): as GetProp and GetOwn, but a value kept inside its
+    // object is given as a Ref into it, where the checker has shown nothing changes it meanwhile.
+    GetPropRef,         // u16 name, u16 cache             obj -> value
+    GetOwnRef,          // u16 name, u16 cache             obj -> value
+    // `comp.bounds = Rect(...)` (M6.6 part 5): the field as where the result goes, a Ref into the
+    // object where it keeps a value of a value type inside it, and otherwise null.
+    FieldDestination,   // u16 name                        obj -> place
+    // Right before a call whose result may stay where the function found it (M6.6 part 5): a
+    // value it gives back that is a Ref into a list or an object is not copied on return.
+    WithRefResult,      //                                 ->
     OwnLocal,           // u16 slot                        ->
 
     // Results built where they go (M6.6 part 4, value-lists.html section 7). Right before a call,

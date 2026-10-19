@@ -141,6 +141,10 @@ public:
     // value-lists.html section 6): `pts[i]`, a for loop's variable; and the parameters, and
     // `this`, a function copies as it starts, should it be given an item where it is.
     bool readsInPlace(const IndexExpr& index) const;
+    // Whether a field read (a member, or a bare name in a method) gives a value kept inside its
+    // object where it is (M6.6 part 5): where nothing that may change values of its type runs
+    // while it is in use.
+    bool readsFieldInPlace(const Node& read) const;
     bool loopsInPlace(const ForInStmt& loop) const;
     bool loopPassesOn(const ForInStmt& loop) const;  // its variable's one use is to be passed on
     std::vector<int> paramsOwned(const FunctionDecl& fn) const;

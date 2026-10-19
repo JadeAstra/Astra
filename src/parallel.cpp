@@ -401,6 +401,10 @@ void VM::markMutating(BuiltinType type, std::initializer_list<const char*> metho
     for (const char* name : methods) methods_[static_cast<int>(type)].at(intern(name)).mutates = true;
 }
 
+void VM::markTakesPlaces(BuiltinType type, std::initializer_list<const char*> methods) {
+    for (const char* name : methods) methods_[static_cast<int>(type)].at(intern(name)).takesPlaces = true;
+}
+
 void VM::markNotParallel(const std::string& global, std::initializer_list<const char*> except) {
     auto found = builtins_.find(global);
     if (found == builtins_.end()) return;

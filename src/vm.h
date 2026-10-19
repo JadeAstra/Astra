@@ -235,8 +235,9 @@ public:
     // value yet (M6.5 part 4).
     ObjInstance* newInstance(ObjClass* cls, uint16_t captures = 0, bool typed = false) {
         const uint32_t count = static_cast<uint32_t>(cls->declared.size());
-        const uint32_t slots = count + captures + (typed ? 1u : 0u);
-        ObjInstance* obj = new (slots) ObjInstance(cls, count, captures, typed);
+        const uint32_t inlineSlots = cls->inlineLaid.load(std::memory_order_acquire) ? cls->inlineSlots : 0;
+        const uint32_t slots = count + captures + (typed ? 1u : 0u) + inlineSlots;
+        ObjInstance* obj = new (slots) ObjInstance(cls, count, captures, typed, inlineSlots);
         obj->core = coreId_;
         obj->next = objects_;
         objects_ = obj;
@@ -269,12 +270,31 @@ public:
     void markItems(ObjList* list);
     bool addNew(int argc);
     void makeFromHeader(ObjClass* cls, int argc, Value dest);
+    void layInline(ObjClass* cls);
+    // What a field read gives where it is not shown to be safe to read in place: a copy of a
+    // value kept inside its object (M6.6 part 5), anything else as it is.
+    Value fieldRead(const Value& slot) { return slot.kind == ValueKind::Ref ? ownRef(slot) : slot; }
     void listArrange(ObjList* list, const std::vector<size_t>& order);
 
     // ---- References (M6.6 part 4) ----
     // A value as it is kept: a Ref replaced by a box with a copy, anything else as it is. What
     // is stored anywhere but a thread's stack goes through this.
     Value own(Value v) { return v.kind == ValueKind::Ref ? ownRef(v) : v; }
+    // A value of a value type in a box of its own, whatever form it is in (M6.6 part 5): for
+    // the code that works on boxes, and C++ that is given values.
+    Value boxed(Value v) { return v.kind == ValueKind::Ref ? ownRef(v) : v.kind == ValueKind::Small ? boxSmall(v) : v; }
+    Value boxSmall(Value v);
+    void boxAll(Value* from, Value* to) {
+        for (Value* at = from; at < to; at++)
+            if (at->kind == ValueKind::Ref || at->kind == ValueKind::Small) *at = boxed(*at);
+    }
+    // A value made of a small value type's bytes, kept in the value itself.
+    static Value smallFrom(const ObjClass* cls, const uint8_t* bytes, size_t size) {
+        uint64_t bits = 0;
+        std::memcpy(&bits, bytes, size);
+        return Value::inSlot(cls->smallId, bits);
+    }
+    std::vector<ObjClass*> smallKept_;  // the small value types this VM numbered, kept alive
     Value ownRef(Value v);
     void ownAll(Value* from, Value* to) {
         for (Value* at = from; at < to; at++)
@@ -288,6 +308,8 @@ public:
     uint8_t* refQuickly(Value r, bool write) const {
         if (r.as.obj == bandObject_) {
             if (r.refIndex < bandFrom_ || r.refIndex >= bandTo_) return nullptr;
+        } else if (r.as.obj->type == ObjType::Instance) {
+            if (write ? r.as.obj->core != coreId_ : (r.as.obj->core != 0 && r.as.obj->core != coreId_)) return nullptr;
         } else if (write && (r.as.obj->type == ObjType::List ? r.as.obj->core != coreId_ : !static_cast<const ObjValue*>(r.as.obj)->constructing)) {
             return nullptr;
         }
@@ -359,6 +381,10 @@ public:
     const uint8_t* typeInstruction(Op op, const uint8_t* ip, CallFrame* frame);
     const uint8_t* placeInstruction(Op op, const uint8_t* ip, CallFrame* frame);
     Value returnedRef(Value result, ptrdiff_t frameIndex);
+    // Whether the caller of `frame` keeps what it returns where it is (Op::WithRefResult).
+    bool keptAsItIs(const CallFrame* frame) {
+        return (frame->closure->proto->typeArgs & kTakesDestination) != 0 && frameDestination(frame - frames_).kind == ValueKind::Undefined;
+    }
     // The type a MakeType shape describes, from `at`, its classes and types taken from `operand` on.
     ObjTypeInfo* typeFromShape(const std::string& shape, size_t& at, const Value*& operand);
     // The type `any`, made once.
@@ -545,6 +571,7 @@ public:
     // Says which of a type's built-in methods change the value they are called on, and which
     // built-in functions are not for a parallel section (by the object they belong to).
     void markMutating(BuiltinType type, std::initializer_list<const char*> methods);
+    void markTakesPlaces(BuiltinType type, std::initializer_list<const char*> methods);
     void markNotParallel(const std::string& global, std::initializer_list<const char*> except = {});
 
     // Runs `function` on every item of `source` (a list, a range, anything a loop takes), the
@@ -845,7 +872,7 @@ private:
 
     void collectGarbage();
     void markValue(const Value& v) {
-        if (v.kind == ValueKind::Obj || v.kind == ValueKind::Ref) markObject(v.as.obj);
+        if (v.kind == ValueKind::Obj || v.kind == ValueKind::Ref) markObject(v.as.obj);  // a Small holds no object
     }
     void markObject(Obj* obj);
     void markTable(const Table& table);

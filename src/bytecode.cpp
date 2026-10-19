@@ -194,6 +194,10 @@ const OpInfo kOps[] = {
     {"PLACE_INDEX", Operand::None},
     {"GET_INDEX_REF", Operand::None},
     {"ITER_NEXT_REF", Operand::U16I32},
+    {"GET_PROP_REF", Operand::U16U16},
+    {"GET_OWN_REF", Operand::U16U16},
+    {"FIELD_DESTINATION", Operand::U16},
+    {"WITH_REF_RESULT", Operand::None},
     {"OWN_LOCAL", Operand::U16},
     {"WITH_DESTINATION_AT", Operand::U8},
     {"WITH_FRAME_DESTINATION", Operand::None},
@@ -476,9 +480,17 @@ static int analyzeStack(FunctionProto& f, const Program& program, bool partial) 
                     break;
                 case Op::GetProp:
                 case Op::GetOwn:
+                case Op::GetPropRef:
+                case Op::GetOwnRef:
                     requireName(a);
                     caches = std::max(caches, b + 1);
                     pops = pushes = 1;
+                    break;
+                case Op::FieldDestination:
+                    requireName(a);
+                    pops = pushes = 1;
+                    break;
+                case Op::WithRefResult:
                     break;
                 case Op::SetProp:
                 case Op::SetOwn:
@@ -1018,6 +1030,9 @@ void disassembleFunction(const FunctionProto& f, const Program& program, std::os
             case Op::SetProp:
             case Op::GetOwn:
             case Op::SetOwn:
+            case Op::GetPropRef:
+            case Op::GetOwnRef:
+            case Op::FieldDestination:
             case Op::GetSuper:
             case Op::Class:
             case Op::Method:
@@ -1163,7 +1178,7 @@ void disassemble(const Program& program, std::ostream& out) {
 namespace {
 
 const char kMagic[4] = {'A', 'S', 'T', 'R'};
-const uint8_t kFormatVersion = 13;
+const uint8_t kFormatVersion = 14;
 const int kMaxProtoNesting = 200;
 
 enum ConstantTag : uint8_t { TagInt = 0, TagFloat = 1, TagString = 2 };
@@ -1584,6 +1599,9 @@ bool usesMemberName(Op op) {
         case Op::SetProp:
         case Op::GetOwn:
         case Op::SetOwn:
+        case Op::GetPropRef:
+        case Op::GetOwnRef:
+        case Op::FieldDestination:
         case Op::Invoke:
         case Op::InvokeOwn:
         case Op::InvokeTrailing:
