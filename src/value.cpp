@@ -5,6 +5,7 @@
 
 #include <charconv>
 #include <cmath>
+#include <cstring>
 #include <functional>
 
 namespace astra {
@@ -87,8 +88,129 @@ bool hasContentKey(const Value& v) {
         case ObjType::Range:
         case ObjType::Bytes: return true;
         case ObjType::Instance: return asInstance(v)->cls->isData;
+        case ObjType::Value: return true;
         default: return false;
     }
+}
+
+Value objectAt(const uint8_t* at) {
+    Obj* obj;
+    std::memcpy(&obj, at, sizeof obj);
+    return obj != nullptr ? Value::object(obj) : Value::null();
+}
+
+Value valueAt(const uint8_t* at) {
+    Value v;
+    std::memcpy(&v, at, sizeof v);
+    return v;
+}
+
+double floatAt(const uint8_t* at) {
+    double d;
+    std::memcpy(&d, at, sizeof d);
+    return d;
+}
+}  // namespace
+
+bool keysEqual(const Value& a, const Value& b, int depth);
+size_t keyHash(const Value& v, int depth);
+
+namespace {
+// The fields of two values of one value type, compared as keys are, from their bytes in the
+// type's layout (M6.6 part 2); a value held in place in another, field by field in turn.
+bool valueBytesEqual(const ValueLayout& layout, const uint8_t* x, const uint8_t* y, int depth) {
+    for (const ValueField& field : layout.fields) {
+        const uint8_t* p = x + field.offset;
+        const uint8_t* q = y + field.offset;
+        switch (field.kind) {
+            case ValueField::Int:
+                if (std::memcmp(p, q, 8) != 0) return false;
+                break;
+            case ValueField::Bool:
+                if (*p != *q) return false;
+                break;
+            case ValueField::Float:
+                if (!(floatAt(p) == floatAt(q))) return false;
+                break;
+            case ValueField::Object:
+                if (!keysEqual(objectAt(p), objectAt(q), depth + 1)) return false;
+                break;
+            case ValueField::Any:
+                if (!keysEqual(valueAt(p), valueAt(q), depth + 1)) return false;
+                break;
+            case ValueField::Nested:
+                if (!valueBytesEqual(*field.cls->layout.load(std::memory_order_acquire), p, q, depth + 1)) return false;
+                break;
+        }
+    }
+    return true;
+}
+
+size_t mixHash(size_t seed, size_t next) { return seed ^ (next + 0x9e3779b97f4a7c15ULL + (seed << 6) + (seed >> 2)); }
+
+size_t valueBytesHash(const ValueLayout& layout, const uint8_t* x, int depth) {
+    size_t h = 23;
+    for (const ValueField& field : layout.fields) {
+        const uint8_t* p = x + field.offset;
+        switch (field.kind) {
+            case ValueField::Int: {
+                int64_t i;
+                std::memcpy(&i, p, sizeof i);
+                h = mixHash(h, hashValue(Value::integer(i)));
+                break;
+            }
+            case ValueField::Bool: h = mixHash(h, *p ? 11 : 7); break;
+            case ValueField::Float: h = mixHash(h, hashValue(Value::number(floatAt(p) == 0.0 ? 0.0 : floatAt(p)))); break;
+            case ValueField::Object: h = mixHash(h, keyHash(objectAt(p), depth + 1)); break;
+            case ValueField::Any: h = mixHash(h, keyHash(valueAt(p), depth + 1)); break;
+            case ValueField::Nested:
+                h = mixHash(h, valueBytesHash(*field.cls->layout.load(std::memory_order_acquire), p, depth + 1));
+                break;
+        }
+    }
+    return h;
+}
+}  // namespace
+
+namespace {
+// An item of a list as a key sees it (M6.6 part 3): its value, or, for a value type's item,
+// where its bytes are, whether the list keeps it packed or in a box.
+struct KeyItem {
+    Value value;
+    const uint8_t* bytes = nullptr;
+    const ObjClass* cls = nullptr;
+};
+
+KeyItem keyItem(const ObjList* list, size_t i) {
+    if (!list->packed()) {
+        const Value v = list->values()[i];
+        if (v.isObjType(ObjType::Value)) return KeyItem{v, asValue(v)->data(), asValue(v)->cls};
+        return KeyItem{v};
+    }
+    if (list->pack->nullable && (list->pack->nulls[i / 64] >> (i % 64) & 1) != 0) return KeyItem{Value::null()};
+    const uint8_t* at = list->pack->block.data() + i * list->pack->width;
+    switch (list->pack->store) {
+        case ListStore::Ints: {
+            int64_t v;
+            std::memcpy(&v, at, sizeof v);
+            return KeyItem{Value::integer(v)};
+        }
+        case ListStore::Floats: return KeyItem{Value::number(floatAt(at))};
+        case ListStore::Bools: return KeyItem{Value::boolean(*at != 0)};
+        default: return KeyItem{Value::null(), at, list->pack->itemClass};
+    }
+}
+
+bool keyItemsEqual(const KeyItem& a, const KeyItem& b, int depth) {
+    if (a.cls != nullptr || b.cls != nullptr)
+        return a.cls == b.cls && valueBytesEqual(*a.cls->layout.load(std::memory_order_acquire), a.bytes, b.bytes, depth + 1);
+    return keysEqual(a.value, b.value, depth + 1);
+}
+
+size_t keyItemHash(const KeyItem& a, int depth) {
+    if (a.cls != nullptr)
+        return mixHash(std::hash<const void*>()(a.cls), valueBytesHash(*a.cls->layout.load(std::memory_order_acquire), a.bytes, depth));
+    return keyHash(a.value, depth + 1);
 }
 }  // namespace
 
@@ -104,11 +226,11 @@ bool keysEqual(const Value& a, const Value& b, int depth) {
     if (a.as.obj->type != b.as.obj->type) return false;
     switch (a.as.obj->type) {
         case ObjType::List: {
-            const std::vector<Value>& x = asList(a)->items;
-            const std::vector<Value>& y = asList(b)->items;
-            if (x.size() != y.size()) return false;
-            for (size_t i = 0; i < x.size(); i++)
-                if (!keysEqual(x[i], y[i], depth + 1)) return false;
+            const ObjList* x = asList(a);
+            const ObjList* y = asList(b);
+            if (x->size() != y->size()) return false;
+            for (size_t i = 0; i < x->size(); i++)
+                if (!keyItemsEqual(keyItem(x, i), keyItem(y, i), depth)) return false;
             return true;
         }
         case ObjType::Range: {
@@ -118,6 +240,11 @@ bool keysEqual(const Value& a, const Value& b, int depth) {
         }
         case ObjType::Bytes:
             return asBytes(a)->data == asBytes(b)->data;
+        case ObjType::Value: {
+            const ObjValue* x = asValue(a);
+            const ObjValue* y = asValue(b);
+            return x->cls == y->cls && valueBytesEqual(*x->cls->layout.load(std::memory_order_acquire), x->data(), y->data(), depth);
+        }
         case ObjType::Instance: {
             const ObjInstance* x = asInstance(a);
             const ObjInstance* y = asInstance(b);
@@ -141,7 +268,8 @@ size_t keyHash(const Value& v, int depth) {
     switch (v.as.obj->type) {
         case ObjType::List: {
             size_t h = 17;
-            for (const Value& item : asList(v)->items) h = mix(h, keyHash(item, depth + 1));
+            const ObjList* list = asList(v);
+            for (size_t i = 0; i < list->size(); i++) h = mix(h, keyItemHash(keyItem(list, i), depth));
             return h;
         }
         case ObjType::Range: {
@@ -152,6 +280,10 @@ size_t keyHash(const Value& v, int depth) {
             size_t h = 31;
             for (uint8_t b : asBytes(v)->data) h = h * 131 + b;
             return h;
+        }
+        case ObjType::Value: {
+            const ObjValue* box = asValue(v);
+            return mix(std::hash<const void*>()(box->cls), valueBytesHash(*box->cls->layout.load(std::memory_order_acquire), box->data(), depth));
         }
         case ObjType::Instance: {
             const ObjInstance* instance = asInstance(v);

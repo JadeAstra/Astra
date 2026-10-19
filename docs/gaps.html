@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>M6.6 open gaps</title>
+<style>
+:root {
+  --bg: #fbfaf7; --surface: #ffffff; --ink: #1d2422; --muted: #5d6763; --line: #dfe3e0;
+  --accent: #1f5fa8; --accent-soft: #e8f0fa; --decide: #a8551f; --decide-soft: #fbefe5;
+  --code-bg: #eef1ef;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #161a19; --surface: #1d2221; --ink: #e4e9e6; --muted: #9aa5a0; --line: #2e3533;
+    --accent: #7fb2ec; --accent-soft: #1e2a38; --decide: #e7a06b; --decide-soft: #3a2a1f;
+    --code-bg: #262c2a;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #161a19; --surface: #1d2221; --ink: #e4e9e6; --muted: #9aa5a0; --line: #2e3533;
+  --accent: #7fb2ec; --accent-soft: #1e2a38; --decide: #e7a06b; --decide-soft: #3a2a1f;
+  --code-bg: #262c2a;
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body {
+  margin: 0; background: var(--bg); color: var(--ink);
+  font: 16px/1.6 "Segoe UI", system-ui, -apple-system, sans-serif;
+}
+main { max-width: 880px; margin: 0 auto; padding: 40px 16px 80px; }
+h1 { font-size: 1.9rem; line-height: 1.25; margin: 0 0 8px; }
+.lede { color: var(--muted); margin: 0 0 28px; }
+h2 { font-size: 1.3rem; line-height: 1.3; margin: 32px 0 12px; }
+h3 { font-size: 1.05rem; margin: 0 0 8px; }
+p { margin: 0 0 12px; }
+ul { margin: 0 0 12px; padding-left: 22px; }
+li { margin: 4px 0; }
+a { color: var(--accent); }
+code {
+  font: 0.88em/1.4 Consolas, "Cascadia Mono", monospace; background: var(--code-bg);
+  padding: 1px 5px; border-radius: 4px;
+}
+nav {
+  background: var(--surface); border: 1px solid var(--line); border-radius: 10px;
+  padding: 16px 20px; margin: 0 0 8px;
+}
+nav h2 { font-size: 1rem; margin: 0 0 8px; color: var(--muted); }
+nav ul { list-style: none; padding: 0; margin: 0; }
+nav a { text-decoration: none; color: var(--ink); }
+nav a:hover { color: var(--accent); }
+.code { font-weight: 600; color: var(--accent); font-variant-numeric: tabular-nums; margin-right: 6px; }
+section.decision {
+  background: var(--surface); border: 1px solid var(--line); border-radius: 10px;
+  padding: 20px 24px 16px; margin: 0 0 18px;
+}
+.verdict {
+  display: flex; align-items: center; gap: 14px; background: var(--decide-soft);
+  border: 1px dashed var(--decide); border-radius: 6px; padding: 10px 14px; margin-top: 12px;
+}
+.label { font-size: 0.78rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
+.verdict .label { color: var(--decide); white-space: nowrap; }
+.verdict .blank { flex: 1; border-bottom: 1px solid var(--decide); height: 1.2em; opacity: 0.6; }
+.table { overflow-x: auto; margin: 4px 0 18px; }
+table { border-collapse: collapse; width: 100%; font-size: 0.93rem; }
+th, td { text-align: left; vertical-align: top; padding: 8px 10px; border-top: 1px solid var(--line); }
+th { color: var(--muted); font-weight: 600; border-top: none; border-bottom: 2px solid var(--line); }
+td.part { white-space: nowrap; color: var(--muted); }
+td.when { min-width: 9em; }
+.note { color: var(--muted); font-size: 0.93rem; }
+@media (max-width: 600px) {
+  main { padding-top: 24px; }
+  h1 { font-size: 1.5rem; }
+  section.decision { padding: 14px 14px 10px; }
+}
+</style>
+</head>
+<body>
+<main>
+<h1>M6.6 so far: what is left open</h1>
+<p class="lede">The choices made while building parts 1 to 3 of M6.6 that are not yet confirmed, and the gaps those parts left, each with where it is to be dealt with. Written 2026-10-19. The same items are in <a href="gui-plan.md">gui-plan.md</a> (the M6.6 notes, D162 to D166 and the Open list); the design is in <a href="value-lists.html">value-lists.html</a>.</p>
+
+<nav>
+<h2>Contents</h2>
+<ul>
+<li><a href="#choices">Choices to confirm</a> (seven)</li>
+<li><a href="#gaps">Gaps left</a> (twelve)</li>
+</ul>
+</nav>
+
+<h2 id="choices">Choices to confirm</h2>
+
+<section class="decision" id="d162">
+<h3><span class="code">D162</span>The type of <code>items.itemType</code> (part 1)</h3>
+<p>A new built-in type, <code>Type</code>: a type as the program runs. <code>items.itemType</code>, <code>map.keyType</code> and <code>map.valueType</code> give one (<code>any</code> for a collection made without its type). It prints as written (<code>List&lt;int&gt;</code>), two are <code>==</code> when they are the same type, and <code>x is Type</code> tests for one.</p>
+<div class="verdict"><span class="label">Your choice</span><span class="blank"></span></div>
+</section>
+
+<section class="decision" id="d163">
+<h3><span class="code">D163</span>How the C++ functions' results are checked (part 1)</h3>
+<p>By a test setting, not on every call. <code>ASTRA_CHECK_NATIVE_RESULTS=1</code> compiles a check after every call of an <code>external</code> function against its declaration; the suite passes with it, and each checkpoint would run it beside the GC and thread stress settings. The C++ is fixed code, so the suite proves its declarations once, and later parts can then trust them while the program runs. The other way, a check on every call, costs every call of the C++.</p>
+<div class="verdict"><span class="label">Your choice</span><span class="blank"></span></div>
+</section>
+
+<section class="decision" id="d164">
+<h3><span class="code">D164</span>What the check changed in the standard library (part 1)</h3>
+<ul>
+<li>The coerce functions give one of their numbers as it was, so <code>float.coerceIn(Number, Number)</code> and the like now say <code>Number</code>, with forms for all ints and all floats that say <code>int</code> and <code>float</code>. (<code>2.5.coerceIn(0, 1)</code> is the int <code>1</code>.)</li>
+<li>A type parameter that the object a call is made on says nothing of (a <code>Map</code> written without type arguments) is unknown, not taken from the arguments: <code>data.get(key, "missing")</code> is no longer typed <code>string?</code> there.</li>
+<li><code>Deque.toList</code> builds a <code>List&lt;T&gt;</code> rather than casting its <code>List&lt;T?&gt;</code>, and <code>Set ==</code> gives false for a set of other things rather than failing at a cast, now that casts are checked in full.</li>
+</ul>
+<div class="verdict"><span class="label">Your choice</span><span class="blank"></span></div>
+</section>
+
+<section class="decision" id="d165">
+<h3><span class="code">D165</span>The rules of a value type, as built (part 2)</h3>
+<ul>
+<li><code>value Point(val x : int, val y : int)</code> needs a header whose entries are all fields. It is a data class: printing, <code>==</code>, <code>copy</code>, coming apart.</li>
+<li>It may implement interfaces, extends no class, and no class extends it.</li>
+<li>A field is given its value in the header, where it is declared in the body (one declared there with none is an error), or in the type's <code>init</code>; never again. <code>p.x = 4</code>, and <code>x += 1</code> in a method, are compile errors saying to make a changed copy, until changing through a place (part 4).</li>
+<li><code>===</code> on a value type is a compile error, as a value has no identity; through <code>any</code> it compares contents.</li>
+<li>A value type cannot hold itself except where that field may be null; the checker reports it.</li>
+<li>Every core may read a value, since it never changes.</li>
+</ul>
+<div class="verdict"><span class="label">Your choice</span><span class="blank"></span></div>
+</section>
+
+<section class="decision" id="jade-geometry">
+<h3><span class="code">Jade</span>Jade's geometry as value types (part 2)</h3>
+<p>Jade's <code>Point</code>, <code>Dimension</code>, <code>Insets</code> and <code>Rectangle</code> are still classes. Jade changes them where they are (<code>setSize</code>, <code>translate</code>, <code>setLocation</code>), so they can become values only with changing through a place (part 4), and that changes what code sharing them means: Jade's API, which is yours to decide. Measured on a copy of Jade's layout, values were 10% faster and a <code>Sizes</code> of three <code>Dimension</code>s one allocation of 88 bytes instead of four of 336.</p>
+<div class="verdict"><span class="label">Your choice</span><span class="blank"></span></div>
+</section>
+
+<section class="decision" id="d166">
+<h3><span class="code">D166</span>Lists of values, as built (part 3)</h3>
+<ul>
+<li>A list is packed when it is given its type (by its literal, by what it is declared as, or at the call of a C++ function that made it): <code>List&lt;int&gt;</code>, <code>List&lt;float&gt;</code>, <code>List&lt;bool&gt;</code>, a value type's list, and the nullable ones of those.</li>
+<li>Putting in a value the list was not made to hold is an error where it is put in (<code>cannot put a value of type string in a List&lt;int&gt;</code>), which an unchecked cast through <code>List&lt;any&gt;</code> used to allow.</li>
+<li>A copy of a list (<code>toList</code>, <code>slice</code>, <code>subList</code>, <code>reversed</code>, <code>+</code> of two of one type) keeps its type and how it is kept.</li>
+<li><code>sortBy</code> and <code>sortByDescending</code>, for every list, call the selector once per item rather than twice per comparison (a million items sorted in 70 to 130 ms instead of 1.5 s). A selector with side effects sees fewer calls.</li>
+</ul>
+<div class="verdict"><span class="label">Your choice</span><span class="blank"></span></div>
+</section>
+
+<section class="decision" id="largest">
+<h3><span class="code">Size</span>The largest value type (from value-lists.html)</h3>
+<p>Decided "any size, up to 64 KB". Offered on 2026-10-18 and not yet answered: "any size, with a copy on read past 64 KB". The limit comes only from the 16-bit offset in a reference into a list item, and only fields kept in place count towards it.</p>
+<div class="verdict"><span class="label">Your choice</span><span class="blank"></span></div>
+</section>
+
+<h2 id="gaps">Gaps left</h2>
+<p class="note">Each is known, and the code around it is tested; none gives a wrong result. Most make something slower or leave a feature for a later part.</p>
+
+<div class="table"><table>
+<thead><tr><th>Part</th><th>Gap</th><th>When</th></tr></thead>
+<tbody>
+<tr><td class="part">1</td><td>A generic local function written inside another generic function sees the outer one's type parameters as <code>any</code>: its frame has its own type arguments, not the outer's.</td><td class="when">Not placed yet</td></tr>
+<tr><td class="part">1</td><td><code>object : Holder&lt;T&gt; { }</code>, an anonymous object whose supertype has type arguments, does not parse: the look-ahead after <code>object :</code> does not skip <code>&lt;...&gt;</code>. Once it does, the anonymous class, made once, would keep the type arguments of the first call that made it; a type parameter of the code around must make the class be made every time, as a variable of the code around does.</td><td class="when">Not placed yet</td></tr>
+<tr><td class="part">1</td><td>A type parameter passed on (<code>isA&lt;T&gt;(x)</code> inside a generic function) has its type arguments looked up in the table of types on every call, under a lock on the cores. Cheap, but it can be cut, by passing the frame's own when they are the same.</td><td class="when">If it shows in timings</td></tr>
+<tr><td class="part">2</td><td>A value held in another and read on its own (<code>val pref = sizes.pref</code>) is copied into a box of its own. Read with one of its fields in the same expression (<code>sizes.pref.width</code>) it is read in place.</td><td class="when">Part 4, the analyses</td></tr>
+<tr><td class="part">2</td><td>A generic value type keeps no type arguments when the program runs: a <code>Two&lt;int, string&gt;</code> is any <code>Two</code> to <code>is</code> and <code>as</code>.</td><td class="when">Not placed yet</td></tr>
+<tr><td class="part">2</td><td>A field of a class whose type is a value type holds a box, not the value's fields within the object.</td><td class="when">Part 5, values inside objects</td></tr>
+<tr><td class="part">3</td><td>An item read on its own, a loop's item (<code>for p in pts</code>) and a lambda's <code>it</code> are copies in a box of their own: a small allocation per item. This is why sorting and walking a million points are slower with values (127 and 77 ms) than with classes (70 and 55). Read with one of its fields in the same expression, <code>pts[i].x</code>, an item is read in place.</td><td class="when">Part 4, the analyses</td></tr>
+<tr><td class="part">3</td><td>A value made where it goes (value-lists.html section 7, rule b) only for <code>pts.add(Point(...))</code> of a value type made from its header alone; <code>pts[i] = Point(...)</code>, <code>insert</code> and <code>copy(...)</code> make a box first.</td><td class="when">Part 4, results built where they go</td></tr>
+<tr><td class="part">3</td><td>A worker is sent a list of values item by item, not as one block of memory.</td><td class="when">Not placed yet</td></tr>
+<tr><td class="part">3</td><td>Changing items in a parallel section: the items a core is given are copies, and a section only reads them.</td><td class="when">Part 4, changing through a place</td></tr>
+<tr><td class="part">3</td><td>The scan at a thread switch that replaces references into lists by copies is not built, as nothing on a stack points into a list yet.</td><td class="when">Part 4, with the references</td></tr>
+<tr><td class="part">All</td><td>Under MSVC, code placement alone moves the <code>fields</code> benchmark by 10 to 20% with the same loop. Not a gap in Astra, but a caution in reading timings: compare against a baseline built the same way, and count instructions, before calling a change slower.</td><td class="when">D160: the Clang build's dispatch, M6.7</td></tr>
+</tbody>
+</table></div>
+
+</main>
+</body>
+</html>

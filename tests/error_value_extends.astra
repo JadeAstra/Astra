@@ -1,0 +1,5 @@
+// A value type may implement interfaces, but extends no class: a value has no identity for a
+// class's code to rely on, and is kept in its own fixed layout.
+class Shape
+value Dot(val x : int) : Shape()
+// expect compile error: error_value_extends.astra:4:7: error: value 'Dot' cannot extend a class: a value type may only implement interfaces

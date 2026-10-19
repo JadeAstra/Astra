@@ -147,8 +147,8 @@ std::vector<std::string> splitLines(const std::string& text) {
 
 ObjList* newList(VM& vm, std::vector<Value> items) {
     ObjList* list = vm.alloc<ObjList>();
-    list->items = std::move(items);
-    vm.account(list->items.size() * sizeof(Value));
+    list->values() = std::move(items);
+    vm.account(list->values().size() * sizeof(Value));
     return list;
 }
 
@@ -197,7 +197,7 @@ void registerGlobals(VM& vm) {
     vm.defineNative("__nameParams", 3, 3, [](VM& vm, int, Value* args) -> Value {
         if (!args[0].isString() || !args[1].isString() || !args[2].isObjType(ObjType::List)) throw vm.runtimeError("__nameParams: bad arguments");
         std::vector<std::string> params;
-        for (const Value& p : asList(args[2])->items)
+        for (const Value& p : vm.listCopy(asList(args[2])))
             if (p.isString()) params.push_back(asString(p)->chars);
         const std::string& type = asString(args[0])->chars;
         BuiltinType builtin;
@@ -251,7 +251,7 @@ void registerGlobals(VM& vm) {
     vm.defineNative("len", 1, 1, [](VM& vm, int, Value* args) -> Value {
         Value v = args[0];
         if (v.isString()) return Value::integer(static_cast<int64_t>(asString(v)->length));
-        if (v.isObjType(ObjType::List)) return Value::integer(static_cast<int64_t>(asList(v)->items.size()));
+        if (v.isObjType(ObjType::List)) return Value::integer(static_cast<int64_t>(asList(v)->size()));
         if (v.isObjType(ObjType::Map)) return Value::integer(static_cast<int64_t>(asMap(v)->map.size()));
         if (v.isObjType(ObjType::Range)) return Value::integer(asRange(v)->count());
         throw vm.runtimeError("a value of type " + vm.typeName(v) + " has no length");
@@ -583,79 +583,77 @@ void registerListMethods(VM& vm) {
 
     vm.defineMethod(T, "push", 1, -1, [](VM& vm, Value self, int argc, Value* args) -> Value {
         ObjList* list = asList(self);
-        list->items.insert(list->items.end(), args, args + argc);
-        vm.account(static_cast<size_t>(argc) * sizeof(Value));
+        vm.listInsert(list, list->size(), args, static_cast<size_t>(argc));
         return Value::null();
     });
 
     vm.defineMethod(T, "pop", 0, 0, [](VM& vm, Value self, int, Value*) -> Value {
         ObjList* list = asList(self);
-        if (list->items.empty()) throw vm.runtimeError("pop() from an empty list");
-        Value last = list->items.back();
-        list->items.pop_back();
+        if (list->size() == 0) throw vm.runtimeError("pop() from an empty list");
+        const Value last = vm.listGet(list, list->size() - 1);
+        vm.listErase(list, list->size() - 1, 1);
         return last;
     });
 
     vm.defineMethod(T, "insert", 2, 2, [](VM& vm, Value self, int, Value* args) -> Value {
         ObjList* list = asList(self);
-        size_t at = clampPosition(vm.toInt(args[0], "insert position"), list->items.size());
-        list->items.insert(list->items.begin() + static_cast<std::ptrdiff_t>(at), args[1]);
-        vm.account(sizeof(Value));
+        size_t at = clampPosition(vm.toInt(args[0], "insert position"), list->size());
+        vm.listInsert(list, at, &args[1], 1);
         return Value::null();
     });
 
     vm.defineMethod(T, "removeAt", 1, 1, [](VM& vm, Value self, int, Value* args) -> Value {
         ObjList* list = asList(self);
         int64_t index = vm.toInt(args[0], "list index");
-        int64_t n = static_cast<int64_t>(list->items.size());
+        int64_t n = static_cast<int64_t>(list->size());
         if (index < 0) index += n;
         if (index < 0 || index >= n)
             throw vm.runtimeError("list index " + std::to_string(args[0].as.i) + " is out of range (length " +
                                   std::to_string(n) + ")");
-        Value removed = list->items[static_cast<size_t>(index)];
-        list->items.erase(list->items.begin() + static_cast<std::ptrdiff_t>(index));
+        const Value removed = vm.listGet(list, static_cast<size_t>(index));
+        vm.listErase(list, static_cast<size_t>(index), 1);
         return removed;
     });
 
     vm.defineMethod(T, "remove", 1, 1, [](VM& vm, Value self, int, Value* args) -> Value {
-        std::vector<Value>& items = asList(self)->items;
-        for (size_t i = 0; i < items.size(); i++) {
-            if (vm.equals(items[i], args[0])) {
-                items.erase(items.begin() + static_cast<std::ptrdiff_t>(i));
+        ObjList* list = asList(self);
+        for (size_t i = 0; i < list->size(); i++) {
+            if (vm.equals(vm.listGet(list, i), args[0])) {
+                vm.listErase(list, i, 1);
                 return Value::boolean(true);
             }
         }
         return Value::boolean(false);
     });
 
-    vm.defineMethod(T, "clear", 0, 0, [](VM&, Value self, int, Value*) -> Value {
-        asList(self)->items.clear();
+    vm.defineMethod(T, "clear", 0, 0, [](VM& vm, Value self, int, Value*) -> Value {
+        vm.listClear(asList(self));
         return Value::null();
     });
 
     vm.defineMethod(T, "contains", 1, 1, [](VM& vm, Value self, int, Value* args) -> Value {
         // By index: comparing may run an object's own == operator, which may change the list.
-        const std::vector<Value>& items = asList(self)->items;
-        for (size_t i = 0; i < items.size(); i++)
-            if (vm.equals(items[i], args[0])) return Value::boolean(true);
+        ObjList* list = asList(self);
+        for (size_t i = 0; i < list->size(); i++)
+            if (vm.equals(vm.listGet(list, i), args[0])) return Value::boolean(true);
         return Value::boolean(false);
     });
 
     vm.defineMethod(T, "indexOf", 1, 1, [](VM& vm, Value self, int, Value* args) -> Value {
-        const std::vector<Value>& items = asList(self)->items;
-        for (size_t i = 0; i < items.size(); i++)
-            if (vm.equals(items[i], args[0])) return Value::integer(static_cast<int64_t>(i));
+        ObjList* list = asList(self);
+        for (size_t i = 0; i < list->size(); i++)
+            if (vm.equals(vm.listGet(list, i), args[0])) return Value::integer(static_cast<int64_t>(i));
         return Value::integer(-1);
     });
 
     vm.defineMethod(T, "slice", 0, 2, [](VM& vm, Value self, int argc, Value* args) -> Value {
-        const std::vector<Value>& items = asList(self)->items;
-        size_t begin = argc > 0 ? clampPosition(vm.toInt(args[0], "slice start"), items.size()) : 0;
-        size_t end = argc > 1 ? clampPosition(vm.toInt(args[1], "slice end"), items.size()) : items.size();
-        std::vector<Value> part;
-        if (begin < end)
-            part.assign(items.begin() + static_cast<std::ptrdiff_t>(begin), items.begin() + static_cast<std::ptrdiff_t>(end));
-        return Value::object(newList(vm, std::move(part)));
+        ObjList* list = asList(self);
+        size_t begin = argc > 0 ? clampPosition(vm.toInt(args[0], "slice start"), list->size()) : 0;
+        size_t end = argc > 1 ? clampPosition(vm.toInt(args[1], "slice end"), list->size()) : list->size();
+        // Of the same type, and kept as the list is: a packed one's items as one block.
+        ObjList* part = list->packed() ? vm.listLike(list) : newList(vm);
+        if (begin < end) vm.listCopyRange(part, list, begin, end - begin);
+        return Value::object(part);
     });
 
     vm.defineMethod(T, "join", 0, 1, [](VM& vm, Value self, int argc, Value* args) -> Value {
@@ -663,23 +661,25 @@ void registerListMethods(VM& vm) {
         std::string sep = argc > 0 ? vm.toStr(args[0], "separator") : std::string();
         std::string result;
         // Indexed and re-checked each time round: stringify may run a toString() that changes the list.
-        for (size_t i = 0; i < list->items.size(); i++) {
+        for (size_t i = 0; i < list->size(); i++) {
             if (i > 0) result += sep;
-            result += vm.stringify(list->items[i]);
+            result += vm.stringify(vm.listGet(list, i));
         }
         return vm.str(std::move(result));
     });
 
-    vm.defineMethod(T, "reverse", 0, 0, [](VM&, Value self, int, Value*) -> Value {
-        std::vector<Value>& items = asList(self)->items;
-        std::reverse(items.begin(), items.end());
+    vm.defineMethod(T, "reverse", 0, 0, [](VM& vm, Value self, int, Value*) -> Value {
+        ObjList* list = asList(self);
+        for (size_t i = 0, j = list->size(); i + 1 < j; i++, j--) vm.listSwap(list, i, j - 1);
         return self;
     });
 
     vm.defineMethod(T, "sort", 0, 1, [](VM& vm, Value self, int argc, Value* args) -> Value {
         ObjList* list = asList(self);
-        // Sorts a copy, so a comparator that modifies the list cannot corrupt the sort.
-        std::vector<Value> items = list->items;
+        // Sorts a copy, so a comparator that modifies the list cannot corrupt the sort. A packed
+        // list's items are taken out once, sorted, and each written back once: the items move
+        // once, however many comparisons there are (value-lists.html, section 9).
+        std::vector<Value> items = vm.listCopy(list);
         TempVector keepAlive(vm, items);
         std::vector<Value> scratch(items.size());
 
@@ -697,7 +697,12 @@ void registerListMethods(VM& vm) {
         }
 
         mergeSort(items, scratch, 0, items.size(), less);
-        list->items = std::move(items);
+        if (!list->packed()) {
+            list->values() = std::move(items);
+        } else {
+            if (list->size() != items.size()) throw vm.runtimeError("the list was changed while it was sorted");
+            for (size_t i = 0; i < items.size(); i++) vm.listSet(list, i, items[i]);
+        }
         return self;
     });
 
@@ -797,7 +802,7 @@ void registerBytes(VM& vm) {
             vm.checkRoomFor(static_cast<uint64_t>(from.as.i));
             made->data.assign(static_cast<size_t>(from.as.i), 0);
         } else if (from.isObjType(ObjType::List)) {
-            for (Value item : asList(from)->items) {
+            for (Value item : vm.listCopy(asList(from))) {
                 if (!item.isInt() || item.as.i < 0 || item.as.i > 255)
                     throw vm.runtimeError("a byte is a whole number from 0 to 255, not " + vm.stringify(item));
                 made->data.push_back(static_cast<uint8_t>(item.as.i));

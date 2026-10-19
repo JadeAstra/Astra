@@ -415,8 +415,16 @@ fun <T> List<T>.sorted() : List<T> {
 }
 
 fun <T> List<T>.sortedDescending() : List<T> => this.sortedWith { a, b -> compareValues(b, a) }
-fun <T> List<T>.sortedBy(selector : (T) -> any?) : List<T> => this.sortedWith { a, b -> compareValues(selector(a), selector(b)) }
-fun <T> List<T>.sortedByDescending(selector : (T) -> any?) : List<T> => this.sortedWith { a, b -> compareValues(selector(b), selector(a)) }
+fun <T> List<T>.sortedBy(selector : (T) -> any?) : List<T> {
+  val out = this.toList()
+  out.sortBy(selector)
+  return out
+}
+fun <T> List<T>.sortedByDescending(selector : (T) -> any?) : List<T> {
+  val out = this.toList()
+  out.sortByDescending(selector)
+  return out
+}
 
 fun <T> List<T>.sortedWith(comparator : (T, T) -> int) : List<T> {
   val out = this.toList()
@@ -424,14 +432,8 @@ fun <T> List<T>.sortedWith(comparator : (T, T) -> int) : List<T> {
   return out
 }
 
-// These sort the list itself.
-fun <T> List<T>.sortBy(selector : (T) -> any?) {
-  this.sort { a, b -> compareValues(selector(a), selector(b)) }
-}
-
-fun <T> List<T>.sortByDescending(selector : (T) -> any?) {
-  this.sort { a, b -> compareValues(selector(b), selector(a)) }
-}
+// These sort the list itself. sortBy and sortByDescending are the C++'s (builtins.astra): each
+// item's key is worked out once, and each item moved once.
 
 fun <T> List<T>.sortWith(comparator : (T, T) -> int) {
   this.sort(comparator)

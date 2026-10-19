@@ -247,6 +247,40 @@ public:
     // initializer; with `captures`, an anonymous object that keeps them (Op::NewObject).
     // Returns whether a frame was pushed.
     bool construct(ObjClass* cls, int argc, bool packed, const Value* captures = nullptr, uint16_t captureCount = 0);
+
+    // ---- Lists (M6.6 part 3): see "Lists" in vm.cpp ----
+    ListStore storeFor(const ObjTypeInfo* item, uint32_t& width, ObjClass*& itemClass);
+    void typeList(ObjList* list, ObjTypeInfo* type);
+    uint8_t* itemAt(ObjList* list, size_t i);
+    // Item `i` of a list, `i` already checked against its size: a value type's item copied into a box.
+    Value listGet(ObjList* list, size_t i) { return !list->packed() ? list->values()[i] : packedGet(list, i); }
+    Value packedGet(ObjList* list, size_t i);
+    void checkItem(const ObjList* list, Value v);
+    void writeItem(ObjList* list, size_t i, Value v);
+    void listSet(ObjList* list, size_t i, Value v);
+    void listInsert(ObjList* list, size_t at, const Value* items, size_t n);
+    void listAdd(ObjList* list, Value v);
+    void listErase(ObjList* list, size_t at, size_t n);
+    void listClear(ObjList* list);
+    std::vector<Value> listCopy(ObjList* list);
+    ObjList* listLike(const ObjList* like);
+    void listCopyRange(ObjList* to, const ObjList* from, size_t start, size_t count);
+    void listSwap(ObjList* list, size_t i, size_t j);
+    void markItems(ObjList* list);
+    bool addNew(int argc);
+    void listArrange(ObjList* list, const std::vector<size_t>& order);
+
+    // ---- Value types (M6.6 part 2) ----
+    ObjClass* fieldClass(FieldDecl& field);
+    const ValueLayout& layoutOf(ObjClass* cls);
+    ObjValue* newValue(ObjClass* cls);
+    Value readValueField(const uint8_t* at, const ValueField& field);
+    void writeValueField(uint8_t* at, const ValueField& field, const ObjClass* owner, Value value);
+    int64_t valueFieldIndex(const ObjValue* box, const ObjString* name) const;
+    Value valueField(const ObjValue* box, size_t index);
+    void setValueField(ObjValue* box, ObjString* name, Value value);
+    bool valuesSame(const ObjValue* a, const ObjValue* b, int depth);
+    const uint8_t* readThrough(const uint8_t* at, const ValueField* field, const uint8_t* next, const Value* consts, Value& out);
     // Capture `k` of the object a member of an anonymous class runs on, checked.
     ObjUpvalue* capturedOf(Value receiver, int k);
     ObjUpvalue* receiverUpvalue(const CallFrame* frame, const Value* base, uint16_t entry) const;

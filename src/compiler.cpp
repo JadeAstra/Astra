@@ -3018,6 +3018,17 @@ private:
             emit(s.isInterface ? Op::MarkInterface : Op::MarkAbstract);
             emit(Op::Pop);
         }
+        if (s.isValue) {
+            // Made from its header alone: no fields of the body, no init of its own and no init
+            // blocks, so that a value can be made by writing its arguments where it goes.
+            bool ownInit = false;
+            for (const auto& method : s.methods) ownInit = ownInit || (!method->isStatic && method->name == "init");
+            const bool headerAlone = !ownInit && s.initBlocks.empty() && s.fields.size() == s.headerFieldCount;
+            emitGet(storage, s);
+            emit(Op::MarkValue);
+            emitByte(headerAlone ? 1 : 0);
+            emit(Op::Pop);
+        }
         if (s.hasSuper) {
             for (const std::string& supertype : s.supertypes) emitTypeName(supertype, s);
             emitGet(storage, s);
@@ -3884,6 +3895,36 @@ private:
         emit(Op::Pop);
     }
 
+    // `pts.add(Point(1, 2))` on a list of a value type (M6.6 part 3): the value is written into
+    // a new item of the list where the list keeps its items packed and the type is made from
+    // its header alone (AddNew); otherwise the call and the add as usual, which follow it.
+    bool compileAddNew(const CallExpr& e, const MemberExpr& member) {
+        if (member.safe || member.name != "add" || e.args.size() != 1 || e.trailingLambda || e.namedCount > 0 || e.hasSpread)
+            return false;
+        if (session_.checker == nullptr || !session_.checker->addsNewValue(e)) return false;
+        if (e.args[0]->kind != ExprKind::Call) return false;
+        const auto& made = static_cast<const CallExpr&>(*e.args[0]);
+        std::vector<RuntimeType> typeArgs;
+        if (made.namedCount > 0 || made.hasSpread || made.trailingLambda || made.args.size() > 0xFF ||
+            session_.checker->typeArguments(made, typeArgs))
+            return false;
+        compileExpr(*member.object);
+        compileCallee(made);
+        compileArgs(made.args);
+        line_ = made.line;
+        emit(Op::AddNew);
+        emitByte(static_cast<int>(made.args.size()));
+        const int skip = here();
+        emitI32(0);
+        emit(Op::Call);
+        emitByte(static_cast<int>(made.args.size()));
+        line_ = member.line;
+        emit(Op::Invoke, stringConstant(calledName(e, member.name)));
+        emitByte(1);
+        patchJump(skip);
+        return true;
+    }
+
     // ---- Expressions ----
 
     void requireMethodContext(const Node& at, const char* keyword) {
@@ -4155,6 +4196,7 @@ private:
                            importedMember(*static_cast<const MemberExpr&>(*e.callee).object,
                                           static_cast<const MemberExpr&>(*e.callee).name, *e.callee) == nullptr) {
                     const auto& member = static_cast<const MemberExpr&>(*e.callee);
+                    if (compileAddNew(e, member)) break;
                     compileExpr(*member.object);
                     // `object?.method(...)`: with no object the arguments are not worked out either.
                     int toEnd = member.safe ? emitJump(Op::JumpIfNull) : -1;

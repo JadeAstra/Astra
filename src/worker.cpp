@@ -69,7 +69,7 @@ void encode(VM& vm, Value v, std::string& out, int depth) {
         putSize(out, asBytes(v)->data.size());
         putRaw(out, asBytes(v)->data.data(), asBytes(v)->data.size());
     } else if (v.isObjType(ObjType::List)) {
-        const std::vector<Value>& items = asList(v)->items;
+        const std::vector<Value> items = vm.listCopy(asList(v));
         out += kList;
         putSize(out, items.size());
         for (const Value& item : items) encode(vm, item, out, depth + 1);
@@ -128,9 +128,9 @@ Value decode(VM& vm, Reader& in) {
         case kList: {
             const uint32_t count = in.raw<uint32_t>();
             ObjList* list = newList(vm);
-            list->items.reserve(std::min<size_t>(count, static_cast<size_t>(in.end - in.at)));
-            for (uint32_t i = 0; i < count && in.at < in.end; i++) list->items.push_back(decode(vm, in));
-            vm.account(list->items.size() * sizeof(Value));
+            list->values().reserve(std::min<size_t>(count, static_cast<size_t>(in.end - in.at)));
+            for (uint32_t i = 0; i < count && in.at < in.end; i++) list->values().push_back(decode(vm, in));
+            vm.account(list->values().size() * sizeof(Value));
             return Value::object(list);
         }
         case kMap: {

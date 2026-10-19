@@ -129,6 +129,10 @@ public:
     // known.
     bool externalResult(const Node& call, RuntimeType& out, std::string& name) const;
 
+    // For `pts.add(Point(1, 2))` on a list of a value type: whether the value made is the
+    // list's item type, so that it can be made in the list (M6.6 part 3).
+    bool addsNewValue(const Node& call) const;
+
     // For an extension function: its receiver's type as written; null for anything else.
     const TypeAnnotation* extensionReceiver(const FunctionDecl& fn) const;
 

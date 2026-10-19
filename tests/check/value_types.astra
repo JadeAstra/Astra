@@ -1,0 +1,16 @@
+// Value types (M6.6 part 2): a value never changes once made, has no identity, and keeps the
+// values it holds in place, so it cannot hold itself.
+
+value Point(var x : int, var y : int) {
+  fun bump() { x += 1 }       // check: 'x' of value Point cannot be given a new value: a value never changes once it is made; make a changed copy, copy(x = ...)
+  fun moved(dx : int) : Point => copy(x = x + dx)
+}
+var p = Point(1, 2)
+p.y = 4                       // check: 'y' of value Point cannot be given a new value: a value never changes once it is made; make a changed copy, copy(y = ...)
+p = p.moved(3)
+print(p === Point(4, 2))      // check: a value has no identity, so === cannot tell two values of Point apart; == compares them by their fields
+
+class Moving : Point(0, 0)    // check: 'Moving' cannot extend value 'Point': a value type has no subclasses
+
+value Link(val n : int, val next : Link)   // check: value Link holds itself, and would have no end: make the field that holds it nullable, Link?, which keeps it in a box
+value Fine(val n : int, val next : Fine?)

@@ -1,0 +1,104 @@
+// Value types (M6.6 part 2): `value Point(...)` is a data class whose values have no identity
+// and never change once made. They are kept in boxes, their fields in a fixed layout.
+
+value Point(val x : int, val y : int) {
+    op +(o : Point) : Point => Point(x + o.x, y + o.y)
+    fun scaled(by : int) : Point => Point(x * by, y * by)
+    get length2() : int => x * x + y * y
+}
+value Size(val width : float, val height : float)
+value Rect(val origin : Point, val size : Size, val name : string = "r") {
+    get area() : float => size.width * size.height
+}
+
+val a = Point(1, 2)
+val b = Point(3, 4)
+print(a, a + b, a.scaled(3), a.length2)   // expect: Point(x=1, y=2) Point(x=4, y=6) Point(x=3, y=6) 5
+
+// Equal by their fields; a value has no identity to tell two of the same apart.
+print(a == Point(1, 2), a == b, a != b)   // expect: true false true
+val one : any = Point(7, 7)
+val other : any = Point(7, 7)
+val third : any = Point(8, 8)
+print(one === other, one === third, one == other)   // expect: true false true
+print(Size(-0.0, 1.0) == Size(0.0, 1.0))   // expect: true
+
+// A value holds others in place; read on its own, one is a copy.
+val r = Rect(Point(5, 6), Size(2.5, 4.0))
+print(r)   // expect: Rect(origin=Point(x=5, y=6), size=Size(width=2.5, height=4.0), name="r")
+print(r.origin.x, r.size.height, r.area, r.name, r.origin == Point(5, 6))   // expect: 5 4.0 10.0 r true
+
+// As a data class: taken apart, and copied with some fields changed.
+val (px, py) = a
+print(px, py)   // expect: 1 2
+print(a.copy(y = 9), r.copy(name = "s").name, r.copy(origin = b).origin)   // expect: Point(x=1, y=9) s Point(x=3, y=4)
+
+// A map key, and in a list, by its fields.
+val names : Map<Point, string> = {:}
+names[a] = "a"
+names[Point(3, 4)] = "b"
+print(names[Point(1, 2)], names[b], names.size)   // expect: a b 2
+val ps = [Point(1, 1), Point(2, 2)]
+print(ps, ps.contains(Point(2, 2)), ps.indexOf(Point(2, 2)))   // expect: [Point(x=1, y=1), Point(x=2, y=2)] true 1
+
+// Its type, as any object's.
+val thing : any = a
+print(thing is Point, thing is Rect, type(a))   // expect: true false Point
+
+// Fields that may be null, and of any type, kept as the value they are.
+value Flags(val on : bool, val count : int?, val label : string?, val extra : any? = null)
+print(Flags(true, null, null), Flags(false, 3, "x") == Flags(false, 3, "x"))   // expect: Flags(on=true, count=null, label=null, extra=null) true
+print(Flags(false, 3, "x", [1, 2]).extra)   // expect: [1, 2]
+
+// Fields worked out from the header, an initializer that checks, and an interface.
+interface Shape { fun area() : float }
+value Square(val side : float) : Shape {
+    val perimeter = side * 4
+    init { require(side >= 0) }
+    override fun area() : float => side * side
+}
+val shape : Shape = Square(2.0)
+print(shape.area(), shape is Square, shape, Square(1.5).perimeter)   // expect: 4.0 true Square(side=2.0) 6.0
+try { Square(-1.0) } catch (e : Error) { print(e.message) }   // expect: Failed requirement.
+
+// A value that may hold another of its own type, where that may be null: in a box of its own.
+value Chain(val n : int, val next : Chain?)
+val chain = Chain(1, Chain(2, null))
+print(chain.next?.n, chain.next?.next, chain == Chain(1, Chain(2, null)))   // expect: 2 null true
+
+// Its own toString and ==.
+value Money(val cents : int) {
+    override fun toString() : string => "\$${cents / 100}.${cents % 100}"
+}
+print(Money(1250), [Money(5)])   // expect: $12.50 [$0.5]
+
+// A held value read with one of its fields at once is read in place; read on its own, a copy.
+value Frame(val outer : Rect, val depth : int)
+val frame = Frame(Rect(Point(1, 2), Size(3.0, 4.0), "f"), 2)
+print(frame.outer.origin.y, frame.outer.size.width, frame.outer.name, frame.outer.origin.scaled(2))   // expect: 2 3.0 f Point(x=2, y=4)
+val held = frame.outer.origin
+print(held, held == Point(1, 2), frame.outer.origin.length2)   // expect: Point(x=1, y=2) true 5
+
+// Made and read on every core in a parallel section, and passed between threads.
+val points = (0 ..< 1000).map { Point(it, it * 2) }
+val moved = points.parallelStream().map { it + Point(1, 1) }.toList()
+print(moved.size, moved[999], moved.parallelStream().sumOf { it.y })   // expect: 1000 Point(x=1000, y=1999) 1000000
+var fromThread : Point? = null
+thread { fromThread = Point(5, 5).scaled(2) }.join()
+print(fromThread)   // expect: Point(x=10, y=10)
+
+// A generic value type; a value that may be null; matched in a when, sorted.
+value Two<A, B>(val first : A, val second : B) {
+    fun swapped() : Two<B, A> => Two(second, first)
+}
+val two = Two(1, "one")
+print(two, two.swapped(), two.first + 1, two.second.length)   // expect: Two(first=1, second="one") Two(first="one", second=1) 2 3
+var maybe : Two<int, string>? = null
+print(maybe?.first)   // expect: null
+maybe = two
+print(maybe?.first, maybe!!.second)   // expect: 1 one
+when (two) {
+    Two(1, "one") -> print("matched")   // expect: matched
+    else -> print("not matched")
+}
+print([Two(3, "c"), Two(1, "a"), Two(2, "b")].sortedBy { it.first }.map { it.second })   // expect: ["a", "b", "c"]

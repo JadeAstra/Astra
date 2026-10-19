@@ -1,0 +1,30 @@
+// A million points built, summed, sorted and walked (M6.6 part 3): with Point a class, a
+// List<Point> keeps a reference to each object. points_values.astra is the same with a value
+// type. The phases' times are printed above the total.
+
+class Point(val x : int, val y : int)
+
+val n = 1000000
+val started = clock()
+
+var t = clock()
+val pts : List<Point> = []
+for (i in 0 ..< n) { pts.add(Point(i * 7919 % n, i)) }
+val built = clock() - t
+
+t = clock()
+var sum = 0
+for (i in 0 ..< n) { sum += pts[i].x + pts[i].y }
+val summed = clock() - t
+
+t = clock()
+val sorted = pts.sortedBy { it.x }
+val sortTime = clock() - t
+
+t = clock()
+var walked = 0
+for (p in sorted) { walked += p.x - p.y }
+val walkTime = clock() - t
+
+print("built", built, "summed", summed, "sorted", sortTime, "walked", walkTime)
+print("points_classes", sum % 1000003, walked % 1000003, sorted[17].x, clock() - started)

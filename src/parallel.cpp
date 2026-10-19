@@ -298,9 +298,9 @@ Value VM::runParallel(Value source, Value function, bool keep) {
     for (const ParallelJob::Share& share : job.shares)
         if (share.failed) throw share.error;
     if (!keep) return Value::null();
-    out->items.reserve(items.size());
-    for (const ParallelJob::Share& share : job.shares) out->items.insert(out->items.end(), share.results.begin(), share.results.end());
-    account(out->items.size() * sizeof(Value));
+    out->values().reserve(items.size());
+    for (const ParallelJob::Share& share : job.shares) out->values().insert(out->values().end(), share.results.begin(), share.results.end());
+    account(out->values().size() * sizeof(Value));
     return Value::object(out);
 }
 

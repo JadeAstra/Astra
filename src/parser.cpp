@@ -234,6 +234,30 @@ StmtPtr Parser::declaration() {
                 addDataMembers(cls, word);
                 return declared;
             }
+            if (word.text == "value" && after.type == TokenType::Identifier && !after.newlineBefore) {
+                // `value Point(var x : int, var y : int)` (M6.6 part 2): a data class whose values
+                // are what they hold; `value` is an ordinary name anywhere else.
+                StmtPtr declared = classDeclaration();
+                auto& cls = static_cast<ClassStmt&>(*declared);
+                if (!cls.hasHeader || cls.header.empty())
+                    throw error(after, "value '" + cls.name + "' needs a header listing its fields: value " + cls.name +
+                                           "(val x : int, val y : int)");
+                for (const HeaderParam& param : cls.header)
+                    if (!param.isField)
+                        throw error(after, "'" + param.name + "' in the header of value '" + cls.name +
+                                               "' needs val or var: every entry is a field");
+                if (cls.hasSuperArgs)
+                    throw error(after, "value '" + cls.name + "' cannot extend a class: a value type may only implement interfaces");
+                for (size_t i = cls.headerFieldCount; i < cls.fields.size(); i++)
+                    if (const auto& field = cls.fields[i]; !field->init && !field->getter)
+                        throw CompileError(file_, field->line, field->col,
+                                           "'" + field->name + "' of value '" + cls.name +
+                                               "' needs its value where it is declared, or a place in the header");
+                cls.isData = true;
+                cls.isValue = true;
+                addDataMembers(cls, word);
+                return declared;
+            }
             if (word.text == "interface" && after.type == TokenType::Identifier && !after.newlineBefore) {
                 StmtPtr declared = classDeclaration(false, true);
                 const auto& cls = static_cast<const ClassStmt&>(*declared);

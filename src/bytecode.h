@@ -174,6 +174,7 @@ enum class Op : uint8_t {
     // and 0 stands for every value.
     Extension,          // u16 name, u8 type               [class] closure ->
     MarkAbstract,       //                                 class -> class
+    MarkValue,          // u8 made from its header alone   class -> class  (a value type, M6.6 part 2)
     // A member written `override` has to have something to take the place of.
     CheckOverride,      // u16 name, u8 flags              class -> class  (1: written override; 2: a field or property)
     // Invoke, where the last argument is a lambda written after the call: it goes to the last
@@ -270,6 +271,10 @@ enum class Op : uint8_t {
     InstanceTypeArg,    // u8 index                        object class -> type  (of the class's own type parameters)
     SupertypeMaker,     //                                 class function -> class  (ObjClass::supertypeMakers)
     CheckResult,        // u16 name                        value type -> value  (ASTRA_CHECK_NATIVE_RESULTS: throws on a mismatch)
+    // `pts.add(Point(1, 2))` (M6.6 part 3): where the list keeps its items packed and the value
+    // type is made from its header alone, the arguments are written into a new item at the
+    // end, and on at target with true; otherwise on, the stack as it was, to the call and the add.
+    AddNew,             // u8 argc, i32 target             list class args... -> [true, at target]
 
     Count_,
 };

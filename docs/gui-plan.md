@@ -1634,6 +1634,41 @@ results checked, as D162 to D164 propose. Left for later, each known and tested 
   compare against a baseline built the same way, and count instructions, before calling a
   change slower.
 
+Part 2 (built 2026-10-19): value types as boxes, as D165 proposes. `bench/layout_values.astra`
+against `layout_classes.astra`, Jade's grid layout with its geometry made new at every step:
+84 ms against 94, a `Sizes` of three `Dimension`s one allocation of 88 bytes against four of
+336. Left for later, each known:
+- A value held in another and read on its own (`val pref = sizes.pref`) is copied into a box
+  of its own. Read with one of its fields in the same expression (`sizes.pref.width`) it is
+  read in place: the VM does the two reads as one (VM::readThrough). References into a value
+  that need no copy come with the analyses (part 4).
+- Jade's `Point`, `Dimension`, `Insets` and `Rectangle` are still classes: they are changed
+  where they are (`setSize`, `translate`, `setLocation`), so they become values only with
+  changing through a place (part 4), and that changes Jade's API, for the user to decide.
+- A generic value type keeps no type arguments when the program runs: a `Two<int, string>` is
+  any `Two` to `is` and `as`.
+- A field of a class whose type is a value type holds a box until values inside their objects
+  (part 5).
+
+Part 3 (built 2026-10-19): lists of values, as D166 proposes. A list made to hold values keeps
+them packed in one block (a packed list's storage apart from the list, so other lists grow by
+one pointer); every list operation works on the block. Measured with `bench/points_values.astra`
+against `points_classes.astra`, a million points: built 46 ms against 171, summed 34 against 40,
+sorted by `x` 127 against 70, walked 77 against 55, 284 ms in all against 336, at most 146 MB in
+use against 183 (the list itself 16 MB against some 112). `sortBy` and `sortByDescending`, for
+every list, work out each key once and move each item once (C++, beside `compareValues`): the
+million points sorted by `it.x` in 1.5 s before, now as above. Left for later, each known:
+- An item read on its own, a loop's item and a lambda's `it` are copies in a box of their own
+  (`for p in pts` costs a small allocation per item); read with one of its fields in the same
+  expression, `pts[i].x`, it is read in place. References into a list come with the analyses
+  (part 4); until then nothing on a stack points into a list, so there is nothing for the scan
+  at a thread switch to do.
+- Made where it goes (section 7, rule b) only for `pts.add(Point(...))` of a value type made
+  from its header alone; `pts[i] = Point(...)`, `insert` and `copy(...)` make a box first.
+- A worker is sent a list of values item by item, not as one block.
+- Changing items in a parallel section waits for changing through a place (part 4): the items
+  a core is given are copies, and a section only reads them.
+
 The second half builds, on M6.5's checker, the language choices decided in
 [language-choices.html](language-choices.html) (section 8): `byte`, with unsigned reads from `bytes` (D19); `>>>` and the unsigned helpers (D44); strings kept at
 flexible width (D20); `char` and how it adds to strings, `'c' == "c"` (D24, D25); `op ==` with
@@ -1974,12 +2009,14 @@ font metrics will need new numbers: no other font engine measures text exactly a
 | D162 | The type of `items.itemType`. | Proposed 2026-10-18 (M6.6 part 1), to be confirmed: a built-in type `Type`, a type as the program runs. `items.itemType`, `map.keyType` and `map.valueType` give one (`any` for a collection made without its type); it prints as written (`List<int>`), two are `==` when they are the same type, and `x is Type` tests for one. |
 | D163 | How the C++ functions' results are checked. | Proposed 2026-10-18 (M6.6 part 1), to be confirmed: by a test setting, not on every call. `ASTRA_CHECK_NATIVE_RESULTS=1` compiles a check after every call of an `external` function against its declaration (the standard library compiled from its source, compiled programs kept apart); the suite passes with it, and each checkpoint runs it beside the GC and thread stress settings. The C++ is fixed code, so the suite proves its declarations once, and the compiler may then trust them when the program runs. A list or map a C++ function gives is always tagged at the call with the type the checker worked out, where it has none. |
 | D164 | What checking the C++ results changed. | Proposed 2026-10-18 (M6.6 part 1), to be confirmed. The coerce functions give one of their numbers as it was, so `float.coerceIn(Number, Number)` and the like say `Number`, with forms for all ints and all floats that say `int` and `float`. A type parameter that the object a call is made on says nothing of (a `Map` written without type arguments) is unknown, not taken from the arguments: `data.get(key, "missing")` is not a `string?` there. `Deque.toList` builds a `List<T>` rather than casting its `List<T?>`, and `Set ==` gives false for a set of other things rather than failing at a cast, now that casts are checked in full. |
+| D165 | The rules of a value type, as built. | Proposed 2026-10-19 (M6.6 part 2), to be confirmed. `value Point(val x : int, val y : int)` needs a header, every entry a field; it is a data class (printing, `==`, `copy`, coming apart) that implements interfaces and extends no class, and no class extends it. A field is given its value in the header or where it is declared in the body (one declared there with none is an error), and in the type's `init`, and never again: `p.x = 4` and `x += 1` in a method are compile errors saying to make a changed copy, until changing through a place (part 4). `===` on a value type is a compile error, as a value has no identity; through `any` it compares contents. A value type cannot hold itself but where the field may be null, which the checker reports. Every core may read a value, which never changes. |
+| D166 | Lists of values, as built. | Proposed 2026-10-19 (M6.6 part 3), to be confirmed. A list is packed when it is given its type (by its literal, by what it is declared as, or at the call of a C++ function that made it): a `List<int>`, `List<float>`, `List<bool>`, a value type's list, and the nullable ones of those. Putting in a value the list was not made to hold is an error where it is put in (`cannot put a value of type string in a List<int>`), which an unchecked cast through `List<any>` used to allow. A copy of a list (`toList`, `slice`, `subList`, `reversed`, `+` of two of one type) keeps its type and store. `sortBy` and `sortByDescending` call the selector once per item, not twice per comparison. |
 | | How files are loaded under namespaces. | Importing a folder loads every `.astra` file directly in it, as one unit. Importing a file loads that file only, into its folder's namespace (5.1). |
 | | A lambda's parameter list over several lines. | Allowed, as in Kotlin (5.1). |
 
 ### Open
 
-Four. The language choices, all decided since; two from M6.6 for the user to answer; and one
+Six. The language choices, all decided since; four from M6.6 for the user to answer; and one
 left for the milestone that raises it. (The measuring rule on scaled displays, open earlier, was settled in M4:
 section 4, point 8.)
 
@@ -1988,6 +2025,9 @@ section 4, point 8.)
   Decided: D19 to D157. Every choice is decided.
 - **M6.6 part 1's proposals**, D162 to D164: the built-in type `Type`, the C++ results
   checked by a test setting, and what that check changed in the standard library.
+- **M6.6 part 2's proposal**, D165: the rules of a value type as built; and whether Jade's
+  geometry (`Point`, `Dimension`, `Insets`, `Rectangle`) becomes value types in part 4.
+- **M6.6 part 3's proposal**, D166: lists of values as built.
 - **The largest value type** (value-lists.html): decided "any, up to 64 KB"; offered on
   2026-10-18, not yet answered, is "any size, with a copy on read past 64 KB", the limit
   coming only from the 16-bit offset in a reference into a list item.

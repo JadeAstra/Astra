@@ -524,6 +524,10 @@ struct ClassStmt : Stmt {
     // the parts it comes apart into.
     bool isData = false;
 
+    // `value Point(var x : int, var y : int)` (M6.6 part 2): a data class whose values have no
+    // identity and never change once made.
+    bool isValue = false;
+
     // Fields can be listed in a header after the name. They are ordinary declared fields,
     // and a class that writes no init of its own gets one that takes the header's entries
     // in order.

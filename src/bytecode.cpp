@@ -14,7 +14,7 @@ namespace astra {
 
 namespace {
 
-enum class Operand : uint8_t { None, U8, U16, I32, U16U8, U16I32, U16U16, U8U8, U16U16U8 };
+enum class Operand : uint8_t { None, U8, U16, I32, U16U8, U16I32, U16U16, U8U8, U16U16U8, U8I32 };
 
 struct OpInfo {
     const char* name;
@@ -133,6 +133,7 @@ const OpInfo kOps[] = {
     {"ENSURE_CLASS_INIT", Operand::None},
     {"EXTENSION", Operand::U16U8},
     {"MARK_ABSTRACT", Operand::None},
+    {"MARK_VALUE", Operand::U8},
     {"CHECK_OVERRIDE", Operand::U16U8},
     {"INVOKE_TRAILING", Operand::U16U8},
     {"SUPER_INVOKE_TRAILING", Operand::U16U8},
@@ -185,6 +186,7 @@ const OpInfo kOps[] = {
     {"INSTANCE_TYPE_ARG", Operand::U8},
     {"SUPERTYPE_MAKER", Operand::None},
     {"CHECK_RESULT", Operand::U16},
+    {"ADD_NEW", Operand::U8I32},
 };
 
 const char* const kTypeNames[] = {"", "int", "float", "Number", "string", "bool", "List", "Map", "Range", "Function", "Bytes", "Type"};
@@ -199,6 +201,7 @@ size_t operandSize(Operand o) {
         case Operand::I32: return 4;
         case Operand::U16U8: return 3;
         case Operand::U16I32: return 6;
+        case Operand::U8I32: return 5;
         case Operand::U16U16: return 4;
         case Operand::U8U8: return 2;
         case Operand::U16U16U8: return 5;
@@ -225,6 +228,10 @@ void decodeOperands(const std::vector<uint8_t>& code, size_t ip, Operand operand
         case Operand::U16U8:
             a = readU16(code, ip + 1);
             b = code[ip + 3];
+            break;
+        case Operand::U8I32:
+            a = code[ip + 1];
+            b = readI32(code, ip + 2);
             break;
         case Operand::U16I32:
             a = readU16(code, ip + 1);
@@ -627,6 +634,11 @@ static int analyzeStack(FunctionProto& f, const Program& program, bool partial) 
                     pops = 2;
                     pushes = 1;
                     break;
+                case Op::AddNew:
+                    // On at the target with the add's result, or on to the call, all as they were.
+                    if (depth < a + 2) fail("stack underflow");
+                    flow(b, depth - a - 1);
+                    break;
                 case Op::WithTypes:
                     pops = 1;
                     break;
@@ -667,6 +679,7 @@ static int analyzeStack(FunctionProto& f, const Program& program, bool partial) 
                     break;
                 case Op::EnsureClassInit:
                 case Op::MarkAbstract:
+                case Op::MarkValue:
                     pops = pushes = 1;
                     break;
                 case Op::CheckOverride:
@@ -1013,6 +1026,9 @@ void disassembleFunction(const FunctionProto& f, const Program& program, std::os
             case Op::TagCollection:
                 out << " cache=" << a << " -> " << b;
                 break;
+            case Op::AddNew:
+                out << " argc=" << a << " -> " << b;
+                break;
             case Op::ObjectClass:
                 out << " " << a << " -> " << b;
                 break;
@@ -1106,7 +1122,7 @@ void disassemble(const Program& program, std::ostream& out) {
 namespace {
 
 const char kMagic[4] = {'A', 'S', 'T', 'R'};
-const uint8_t kFormatVersion = 11;
+const uint8_t kFormatVersion = 12;
 const int kMaxProtoNesting = 200;
 
 enum ConstantTag : uint8_t { TagInt = 0, TagFloat = 1, TagString = 2 };
@@ -1495,7 +1511,8 @@ int globalOperand(Op op, int first) {
     }
 }
 
-// Which operand of an instruction is a place in the code to go to: 1 the first, 2 the second.
+// Where in an instruction a place in the code to go to is, counted from the instruction's
+// start in bytes; 0 for one that has none.
 int targetOperand(Op op) {
     switch (op) {
         case Op::Jump:
@@ -1506,13 +1523,14 @@ int targetOperand(Op op) {
         case Op::JumpIfNull:
         case Op::JumpIfNotNull:
         case Op::TryBegin: return 1;
+        case Op::AddNew: return 2;
         case Op::ObjectClass:
         case Op::CachedType:
         case Op::TagCollection:
         case Op::RangeNext:
         case Op::TryImplicit:
         case Op::IterNext:
-        case Op::DefaultArg: return 2;
+        case Op::DefaultArg: return 3;
         default: return 0;
     }
 }
@@ -1699,7 +1717,7 @@ void leaveOut(FunctionProto& module, const Reach& reach, size_t& before, size_t&
         const Op op = static_cast<Op>(code[at]);
         const int target = targetOperand(op);
         if (target != 0) {
-            const size_t place = to + (target == 1 ? 1 : 3);
+            const size_t place = to + static_cast<size_t>(target);
             const int32_t old = static_cast<int32_t>(static_cast<uint32_t>(kept[place]) | (static_cast<uint32_t>(kept[place + 1]) << 8) |
                                                      (static_cast<uint32_t>(kept[place + 2]) << 16) | (static_cast<uint32_t>(kept[place + 3]) << 24));
             if (old < 0 || static_cast<size_t>(old) > code.size() || moved[static_cast<size_t>(old)] < 0 ||

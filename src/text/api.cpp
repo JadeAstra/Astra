@@ -111,7 +111,7 @@ int clampInt(int64_t v) { return static_cast<int>(std::clamp<int64_t>(v, -(int64
 
 Value listOf(VM& vm, std::vector<Value> items) {
     ObjList* list = newList(vm, std::move(items));
-    vm.account(list->items.size() * sizeof(Value));
+    vm.account(list->values().size() * sizeof(Value));
     return Value::object(list);
 }
 
@@ -142,8 +142,8 @@ void registerText(VM& vm) {
     def("families", 0, 0, [](VM& vm, int, Value*) -> Value {
         ObjList* list = newList(vm);
         TempRoot keep(vm, Value::object(list));
-        for (std::string& family : FontBook::installed().families()) list->items.push_back(vm.str(std::move(family)));
-        vm.account(list->items.size() * sizeof(Value));
+        for (std::string& family : FontBook::installed().families()) list->values().push_back(vm.str(std::move(family)));
+        vm.account(list->values().size() * sizeof(Value));
         return Value::object(list);
     });
 
@@ -199,7 +199,7 @@ void registerText(VM& vm) {
         auto face = faceOf(vm, args[0]);
         ObjList* list = newList(vm);
         TempRoot keep(vm, Value::object(list));
-        auto& out = list->items;
+        auto& out = list->values();
         out.push_back(vm.str(face->path()));
         out.push_back(Value::integer(face->index()));
         out.push_back(vm.str(face->family()));
@@ -227,11 +227,11 @@ void registerText(VM& vm) {
         TempRoot keep(vm, Value::object(list));
         for (const text::Axis& axis : face->axes()) {
             ObjList* one = newList(vm);
-            list->items.push_back(Value::object(one));
-            one->items.push_back(vm.str(tagName(axis.tag)));
-            one->items.push_back(Value::number(axis.minimum));
-            one->items.push_back(Value::number(axis.defaultValue));
-            one->items.push_back(Value::number(axis.maximum));
+            list->values().push_back(Value::object(one));
+            one->values().push_back(vm.str(tagName(axis.tag)));
+            one->values().push_back(Value::number(axis.minimum));
+            one->values().push_back(Value::number(axis.defaultValue));
+            one->values().push_back(Value::number(axis.maximum));
         }
         return Value::object(list);
     });
@@ -264,10 +264,10 @@ void registerText(VM& vm) {
         static const int counts[] = {2, 2, 4, 6, 0};
         size_t p = 0;
         for (uint8_t verb : path.verbs) {
-            list->items.push_back(vm.str(names[verb]));
-            for (int i = 0; i < counts[verb]; i++) list->items.push_back(Value::number(path.points[p++]));
+            list->values().push_back(vm.str(names[verb]));
+            for (int i = 0; i < counts[verb]; i++) list->values().push_back(Value::number(path.points[p++]));
         }
-        vm.account(list->items.size() * sizeof(Value));
+        vm.account(list->values().size() * sizeof(Value));
         return Value::object(list);
     });
 

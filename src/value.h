@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <memory>
 #include <new>
 #include <atomic>
 #include <cstdint>
@@ -19,6 +20,7 @@ enum class ObjType : uint8_t {
     Fiber,  // a flow: a function that can set itself aside (ObjFiber, in vm.h)
     Resource,  // something the runtime holds for a program that is not made of values
     TypeInfo,  // a type, as the program has it when it runs (ObjTypeInfo)
+    Value,     // a value of a value type, in a box (ObjValue)
 };
 
 // Header shared by every garbage-collected object.
@@ -271,13 +273,50 @@ private:
 };
 
 struct ObjTypeInfo;
+struct ObjClass;
+
+// How a list keeps its items (M6.6 part 3, value-lists.html section 5): as 16-byte values, as
+// today, for a list of objects, of `any` or of a type a value must say itself, and for a list
+// made with nothing said of what it holds; or packed one after another at their own widths,
+// for a list whose items are values: List<int>, List<float>, List<bool>, a value type's.
+enum class ListStore : uint8_t {
+    Values,  // `items`
+    Ints,    // `block`, 8 bytes an item
+    Floats,  // 8 bytes an item
+    Bools,   // 1 byte an item
+    Items,   // a value type's, in its layout, `width` bytes an item
+};
+
+// The items of a packed list.
+struct PackedItems {
+    ListStore store = ListStore::Values;
+    bool nullable = false;          // with a bit per item for null (List<int?>, List<Point?>)
+    uint32_t width = 0;             // the bytes an item takes
+    size_t count = 0;               // the items
+    ObjClass* itemClass = nullptr;  // ListStore::Items: the value type
+    std::vector<uint8_t> block;     // `count` items of `width` bytes, one after another
+    std::vector<uint64_t> nulls;    // nullable: a bit per item, set where the item is null
+};
 
 struct ObjList final : Obj {
-    std::vector<Value> items;
     // What the list was made to hold, `List<int>` (M6.6 part 1); null where that was not said,
     // as for a list made before types were kept, which takes anything.
     ObjTypeInfo* type = nullptr;
+    // A packed list's items, apart from the list, which most lists do not need (M6.6 part 3).
+    std::unique_ptr<PackedItems> pack;
+
     ObjList() : Obj(ObjType::List) {}
+
+    bool packed() const { return pack != nullptr; }
+    ListStore store() const { return pack != nullptr ? pack->store : ListStore::Values; }
+    size_t size() const { return pack != nullptr ? pack->count : items_.size(); }
+    // The items of a list kept as 16-byte values (not packed()); VM::listGet and the rest work
+    // on any list.
+    std::vector<Value>& values() { return items_; }
+    const std::vector<Value>& values() const { return items_; }
+
+private:
+    std::vector<Value> items_;
 };
 
 struct ObjMap final : Obj {
@@ -399,6 +438,34 @@ struct FieldDecl {
 // Gives each layout of a class's fields a number of its own, never given again (M6.5 part 4).
 uint32_t newShape();
 
+// ---- Value types (M6.6 part 2, value-lists.html) ----
+
+// Where a field of a value type is in the type's fixed layout, which is the same wherever the
+// value is kept: in a box now, and in an item of a list of values or inside an object later.
+struct ValueField {
+    enum Kind : uint8_t {
+        Int,     // 8 bytes, an int64_t
+        Float,   // 8 bytes, a double
+        Bool,    // 1 byte
+        Object,  // 8 bytes, a pointer to an object, null for null: a string, a list, an object of a class...
+        Any,     // 16 bytes, a Value: for a type a value must say itself (any, Number, int?, a type parameter)
+        Nested,  // another value type's fields, in place, at its own size
+    };
+    ObjString* name = nullptr;
+    uint32_t offset = 0;
+    Kind kind = Any;
+    uint8_t type = 0;           // as FieldDecl::type, for the check of a value stored there
+    ObjClass* cls = nullptr;    // the class a class-typed field is declared with; for Nested, the value type
+};
+
+struct ValueLayout {
+    uint32_t size = 0;                // a multiple of the alignment
+    uint32_t align = 1;               // 8, but for a type of bools alone
+    std::vector<ValueField> fields;   // in the order of the class's `declared`, index for index
+    std::vector<uint32_t> objects;    // where the Object fields are, nested types' included, for the collector
+    std::vector<uint32_t> values;     // and the Any fields
+};
+
 struct ObjClass final : Obj {
     ObjString* const name;
 
@@ -466,6 +533,15 @@ struct ObjClass final : Obj {
     bool isData = false;
     std::vector<ObjString*> components;
 
+    // A value type (`value Point(var x : int, var y : int)`, M6.6 part 2): its values have no
+    // identity and never change once made; they are kept in its fixed layout, worked out from
+    // its fields when the first one is made (VM::layoutOf), when every class it names exists.
+    // It is a data class as well.
+    bool isValue = false;
+    bool madeFromHeader = false;  // a value type with no init, init blocks or fields of its body
+    std::atomic<const ValueLayout*> layout{nullptr};
+    std::unique_ptr<ValueLayout> layoutOwned;
+
     // Works out the class's static fields and, for an enum, its entries. It runs once, the
     // first time a static member is asked for or when the program reaches the class's
     // declaration, and is null from then on.
@@ -504,6 +580,9 @@ struct ObjTypeInfo final : Obj {
     const bool nullable;
     ObjClass* const cls;   // for an instance of a class
     const std::vector<ObjTypeInfo*> args;  // List: the items; Map: the keys and the values; a class: its type arguments
+    // For a List type: whether a list of it keeps its items packed (M6.6 part 3), worked out the
+    // first time one is made; every core works out the same.
+    std::atomic<int8_t> packs{-1};
     ObjTypeInfo(uint8_t i, bool n, ObjClass* c, std::vector<ObjTypeInfo*> a)
         : Obj(ObjType::TypeInfo), id(i), nullable(n), cls(c), args(std::move(a)) {}
 };
@@ -568,6 +647,32 @@ struct ObjInstance final : Obj {
 };
 static_assert(sizeof(ObjInstance) % alignof(Value) == 0, "an object's fields follow it");
 
+// A value of a value type in a box (value-lists.html, section 4): its class, and after it its
+// fields in the class's layout. A box never changes once its initializer has returned, so it
+// may be shared: `val b = a` copies the reference.
+struct ObjValue final : Obj {
+    ObjClass* const cls;
+    bool constructing = false;  // from being made until its initializer has returned
+
+    explicit ObjValue(ObjClass* c) : Obj(ObjType::Value), cls(c) {}
+
+    static void* operator new(size_t size, uint32_t bytes) { return ::operator new(size + bytes); }
+    static void operator delete(void* p, uint32_t) { ::operator delete(p); }
+    static void operator delete(void* p) { ::operator delete(p); }
+
+    uint8_t* data() { return reinterpret_cast<uint8_t*>(this + 1); }
+    const uint8_t* data() const { return reinterpret_cast<const uint8_t*>(this + 1); }
+};
+static_assert(sizeof(ObjValue) % alignof(Value) == 0, "a value's fields follow it");
+
+// The class of an object of a class or of a value of a value type; null for anything else.
+inline ObjClass* classOf(const Value& v) {
+    if (!v.isObj()) return nullptr;
+    if (v.as.obj->type == ObjType::Instance) return static_cast<const ObjInstance*>(v.as.obj)->cls;
+    if (v.as.obj->type == ObjType::Value) return static_cast<const ObjValue*>(v.as.obj)->cls;
+    return nullptr;
+}
+
 struct ObjBoundMethod final : Obj {
     const Value receiver;
     ObjClosure* const method;
@@ -598,6 +703,7 @@ inline ObjClosure* asClosure(const Value& v) { return static_cast<ObjClosure*>(v
 inline ObjNative* asNative(const Value& v) { return static_cast<ObjNative*>(v.as.obj); }
 inline ObjClass* asClass(const Value& v) { return static_cast<ObjClass*>(v.as.obj); }
 inline ObjInstance* asInstance(const Value& v) { return static_cast<ObjInstance*>(v.as.obj); }
+inline ObjValue* asValue(const Value& v) { return static_cast<ObjValue*>(v.as.obj); }
 inline ObjBoundMethod* asBoundMethod(const Value& v) { return static_cast<ObjBoundMethod*>(v.as.obj); }
 inline ObjBoundNative* asBoundNative(const Value& v) { return static_cast<ObjBoundNative*>(v.as.obj); }
 inline ObjIterator* asIterator(const Value& v) { return static_cast<ObjIterator*>(v.as.obj); }

@@ -1,0 +1,6 @@
+// A field of a value type is given its value where it is declared or in the header: a value
+// never changes once made, so nothing could give it one later.
+value Reading(val celsius : float) {
+  val fahrenheit : float
+}
+// expect compile error: error_value_field.astra:4:7: error: 'fahrenheit' of value 'Reading' needs its value where it is declared, or a place in the header

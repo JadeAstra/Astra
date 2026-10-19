@@ -501,11 +501,12 @@ void registerIo(VM& vm) {
     // spawn(command, directory, input, output, error, environment): starts a program. Gives
     // [process, its input, its output, its error output], the last three null unless "pipe".
     def("spawn", 6, 6, [](VM& vm, int, Value* args) -> Value {
-        if (!args[0].isObjType(ObjType::List) || asList(args[0])->items.empty())
+        if (!args[0].isObjType(ObjType::List) || asList(args[0])->size() == 0)
             throw vm.runtimeError("a process is started from a list: the program, then its arguments");
         std::wstring commandLine;
-        for (Value part : asList(args[0])->items) appendArgument(commandLine, widen(vm.stringify(part)));
-        const std::string program = vm.stringify(asList(args[0])->items[0]);
+        const std::vector<Value> parts = vm.listCopy(asList(args[0]));
+        for (Value part : parts) appendArgument(commandLine, widen(vm.stringify(part)));
+        const std::string program = vm.stringify(parts[0]);
         const std::wstring directory = args[1].isNull() ? std::wstring() : widen(vm.toStr(args[1], "directory"));
         const std::string errorMode = vm.toStr(args[4], "error stream");
 
@@ -554,15 +555,15 @@ void registerIo(VM& vm) {
 
         ObjList* result = newList(vm);
         TempRoot keepResult(vm, Value::object(result));
-        result->items.push_back(Value::integer(keep(process)));
+        result->values().push_back(Value::integer(keep(process)));
         for (Redirect* end : {&input, &output, &error}) {
             if (end->parent.h == INVALID_HANDLE_VALUE) {
-                result->items.push_back(Value::null());
+                result->values().push_back(Value::null());
                 continue;
             }
             auto pipe = std::make_shared<Stream>(Stream::Kind::Pipe);
             pipe->handle = end->parent.release();
-            result->items.push_back(Value::integer(keep(pipe)));
+            result->values().push_back(Value::integer(keep(pipe)));
         }
         return Value::object(result);
     });
@@ -610,7 +611,7 @@ void registerIo(VM& vm) {
     def("selfCommand", 0, 0, [](VM& vm, int, Value*) -> Value {
         ObjList* list = newList(vm);
         TempRoot keepList(vm, Value::object(list));
-        for (const std::string& part : selfCommand) list->items.push_back(vm.str(part));
+        for (const std::string& part : selfCommand) list->values().push_back(vm.str(part));
         return Value::object(list);
     });
 
@@ -746,18 +747,18 @@ void registerIo(VM& vm) {
         auto portOf = [](const sockaddr_storage& a) {
             return ntohs(a.ss_family == AF_INET6 ? reinterpret_cast<const sockaddr_in6&>(a).sin6_port : reinterpret_cast<const sockaddr_in&>(a).sin_port);
         };
-        list->items.push_back(getsockname(s->socket, reinterpret_cast<sockaddr*>(&address), &size) == 0 ? Value::integer(portOf(address)) : Value::null());
+        list->values().push_back(getsockname(s->socket, reinterpret_cast<sockaddr*>(&address), &size) == 0 ? Value::integer(portOf(address)) : Value::null());
         size = sizeof(address);
         if (s->kind == Stream::Kind::Socket && getpeername(s->socket, reinterpret_cast<sockaddr*>(&address), &size) == 0) {
             wchar_t text[64] = {};
             const void* raw = address.ss_family == AF_INET6 ? static_cast<const void*>(&reinterpret_cast<const sockaddr_in6&>(address).sin6_addr)
                                                             : static_cast<const void*>(&reinterpret_cast<const sockaddr_in&>(address).sin_addr);
             InetNtopW(address.ss_family, raw, text, 64);
-            list->items.push_back(vm.str(narrow(text)));
-            list->items.push_back(Value::integer(portOf(address)));
+            list->values().push_back(vm.str(narrow(text)));
+            list->values().push_back(Value::integer(portOf(address)));
         } else {
-            list->items.push_back(Value::null());
-            list->items.push_back(Value::null());
+            list->values().push_back(Value::null());
+            list->values().push_back(Value::null());
         }
         return Value::object(list);
     });

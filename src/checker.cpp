@@ -167,6 +167,7 @@ struct ClassInfo {
     Unit* unit = nullptr;
     ClassInfo* outer = nullptr;
     bool isInterface = false, isObject = false, isEnum = false, isData = false, isAbstract = false;
+    bool isValue = false;  // `value Point(...)` (M6.6 part 2)
     std::vector<std::string> typeParams;
     // Declared at the top of a file, or inside a class that is: its class is a global, which the
     // compiler can name in a type it writes for when the program runs (M6.6 part 1).
@@ -657,6 +658,7 @@ struct Checker::Impl {
         k->isObject = c.isObject;
         k->isEnum = c.isEnum;
         k->isData = c.isData;
+        k->isValue = c.isValue;
         k->isAbstract = c.isAbstract;
         for (const TypeParam& t : c.typeParams) k->typeParams.push_back(t.name);
         classOf[&c] = k;
@@ -963,6 +965,10 @@ struct Checker::Impl {
             std::vector<Type> args;
             if (i < c.supertypeTypes.size())
                 for (const TypeAnnotation& a : c.supertypeTypes[i].args) args.push_back(resolve(a, *k->unit));
+            if (s->isValue) {
+                report(c, "'" + k->name + "' cannot extend value '" + s->name + "': a value type has no subclasses");
+                continue;
+            }
             if (s->isInterface) {
                 k->interfaces.push_back(s);
                 k->interfaceArgs.push_back(std::move(args));
@@ -2150,8 +2156,28 @@ struct Checker::Impl {
         return ft;
     }
 
+    // A value type keeps the values it holds in place, so it cannot hold itself, through others
+    // or not, except where the field may be null, which keeps it in a box (M6.6 part 2).
+    bool holdsValue(ClassInfo* holder, const ClassInfo* held, std::vector<ClassInfo*>& seen) {
+        for (const auto& [name, field] : holder->fields) {
+            const Type t = fieldType(field);
+            if (t.kind != Type::Class || t.nullable || t.cls == nullptr || !t.cls->isValue) continue;
+            if (t.cls == held) return true;
+            if (std::find(seen.begin(), seen.end(), t.cls) != seen.end()) continue;
+            seen.push_back(t.cls);
+            if (holdsValue(t.cls, held, seen)) return true;
+        }
+        return false;
+    }
+
     void checkClass(ClassInfo* k) {
         const ClassStmt& c = *k->decl;
+        if (k->isValue) {
+            std::vector<ClassInfo*> seen{k};
+            if (holdsValue(k, k, seen))
+                report(c, "value " + k->name + " holds itself, and would have no end: make the field that holds it nullable, " +
+                              k->name + "?, which keeps it in a box");
+        }
         // A method written override takes the place of a form above with its parameters.
         for (const auto& m : c.methods) {
             if (!m->isOverride || m->isStatic || m->accessor != FunctionDecl::Accessor::None || m->name == "init") continue;
@@ -2451,6 +2477,7 @@ struct Checker::Impl {
                 return assign(static_cast<const AssignExpr&>(e));
             case ExprKind::IncDec: {
                 const auto& i = static_cast<const IncDecExpr&>(e);
+                checkValueFieldWrite(*i.target);
                 Type t = expr(*i.target);
                 // a?.count++ does nothing when a is null, so the null that ?. adds is not the
                 // field's own
@@ -2942,6 +2969,12 @@ struct Checker::Impl {
             case TokenType::BangEq:
             case TokenType::EqEqEq:
             case TokenType::BangEqEq:
+                for (const Type* side : {&l, &r})
+                    if ((op == TokenType::EqEqEq || op == TokenType::BangEqEq) && side->kind == Type::Class && side->cls != nullptr && side->cls->isValue) {
+                        report(b, "a value has no identity, so " + std::string(op == TokenType::EqEqEq ? "===" : "!==") +
+                                      " cannot tell two values of " + side->cls->name + " apart; == compares them by their fields");
+                        break;
+                    }
                 return Type::of(Type::Bool);
             default:
                 break;
@@ -3005,7 +3038,36 @@ struct Checker::Impl {
 
     // ---- Assignment ----
 
+    // A field of a value is given its value when the value is made, and never again (M6.6 part
+    // 2): `p.x = 4` outside Point's initializer is an error, as `x = 4` in one of its methods.
+    void checkValueFieldWrite(const Expr& target) {
+        ClassInfo* owner = nullptr;
+        std::string name;
+        if (target.kind == ExprKind::Member) {
+            const auto& m = static_cast<const MemberExpr&>(target);
+            silent++;
+            const Type object = withNull(expr(*m.object), false);
+            silent--;
+            if (object.kind == Type::Class && object.cls != nullptr) owner = object.cls;
+            name = m.name;
+        } else if (target.kind == ExprKind::Name) {
+            const auto& n = static_cast<const NameExpr&>(target);
+            bool escape = false;
+            if (findLocal(n.name) != nullptr || onReceivers(n.name, escape) != nullptr || escape) return;
+            if (ctx != nullptr) owner = ctx->cls;
+            name = n.name;
+        }
+        if (owner == nullptr || !owner->isValue || owner->fields.count(name) == 0) return;
+        for (FnCtx* c = ctx; c != nullptr; c = c->parent) {
+            if (c->cls == owner && (c->noWait == ObjectMade || (c->fn != nullptr && c->fn->name == "init"))) return;
+            if (!c->isLambda) break;
+        }
+        report(target, "'" + name + "' of value " + owner->name + " cannot be given a new value: a value never changes once it is made; " +
+                           "make a changed copy, copy(" + name + " = ...)");
+    }
+
     Type assign(const AssignExpr& a) {
+        checkValueFieldWrite(*a.target);
         Type target = unknownType();
         std::string targetName;
         Local* local = nullptr;
@@ -3481,7 +3543,23 @@ struct Checker::Impl {
         }
         if (envOut != nullptr) *envOut = env;
         noteTypeArguments(f, env, at);
+        noteNewValueAdded(f, receiver, args, at);
         return finishCall(f, env, vars, at);
+    }
+
+    // `pts.add(Point(1, 2))` on a list of a value type: the value can be made where it goes,
+    // in the list, with no box of its own (M6.6 part 3, value-lists.html section 7 rule b).
+    std::unordered_map<const Node*, ClassInfo*> constructedValues;
+    std::unordered_set<const Node*> newValueAdds;
+
+    void noteNewValueAdded(const FuncInfo* f, const Type* receiver, const Args& args, const Node& at) {
+        if (!f->isExternal || f->name != "add" || receiver == nullptr || args.exprs.size() != 1 || args.spread) return;
+        const Type list = withNull(*receiver, false);
+        if (list.kind != Type::List || list.args.size() != 1) return;
+        const Type& item = list.args[0];
+        if (item.kind != Type::Class || item.nullable || item.cls == nullptr || !item.cls->isValue) return;
+        auto made = constructedValues.find(static_cast<const Node*>(args.exprs[0].get()));
+        if (made != constructedValues.end() && made->second == item.cls) newValueAdds.insert(&at);
     }
 
     // A call's result, with what is known of the type parameters filled in; for a function of
@@ -3571,6 +3649,7 @@ struct Checker::Impl {
         Type t = classType(k);
         for (const std::string& p : k->typeParams) t.args.push_back(env.count(p) ? env[p] : unknownType());
         if (!k->typeParams.empty() && k->decl != nullptr && !k->isInterface) noteTypeArguments(k->typeParams, env, at);
+        if (k->isValue && k->typeParams.empty()) constructedValues[&at] = k;
         return t;
     }
 
@@ -4941,6 +5020,8 @@ bool Checker::externalResult(const Node& call, RuntimeType& out, std::string& na
     name = found->second.name;
     return out.kind != RuntimeType::Unknown;
 }
+
+bool Checker::addsNewValue(const Node& call) const { return impl_->newValueAdds.count(&call) != 0; }
 
 bool Checker::literalType(const Expr& literal, RuntimeType& out) const {
     auto found = impl_->literalTypes.find(&literal);

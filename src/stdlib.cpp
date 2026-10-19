@@ -467,8 +467,8 @@ void registerStringMethods(VM& vm) {
     vm.defineMethod(T, "lines", 0, 0, [](VM& vm, Value self, int, Value*) -> Value {
         ObjList* list = newList(vm);
         TempRoot keep(vm, Value::object(list));
-        for (std::string& line : splitLines(asString(self)->chars)) list->items.push_back(vm.str(std::move(line)));
-        vm.account(list->items.size() * sizeof(Value));
+        for (std::string& line : splitLines(asString(self)->chars)) list->values().push_back(vm.str(std::move(line)));
+        vm.account(list->values().size() * sizeof(Value));
         return Value::object(list);
     });
 
@@ -691,77 +691,129 @@ AstraThrow outOfRange(VM& vm, const char* what, Value index, size_t size) {
     return vm.runtimeError(std::string(what) + ": index " + vm.stringify(index) + " is out of range (size " + std::to_string(size) + ")");
 }
 
+// Sorts positions [lo, hi) by `less`, stably: merge sort, so that what `less` does cannot
+// leave the sort in a state std::sort does not allow.
+template <typename Less>
+void sortPositions(std::vector<size_t>& order, std::vector<size_t>& scratch, size_t lo, size_t hi, const Less& less) {
+    if (hi - lo < 2) return;
+    const size_t mid = lo + (hi - lo) / 2;
+    sortPositions(order, scratch, lo, mid, less);
+    sortPositions(order, scratch, mid, hi, less);
+    size_t i = lo, j = mid, k = lo;
+    while (i < mid && j < hi) scratch[k++] = less(order[j], order[i]) ? order[j++] : order[i++];
+    while (i < mid) scratch[k++] = order[i++];
+    while (j < hi) scratch[k++] = order[j++];
+    std::copy(scratch.begin() + static_cast<std::ptrdiff_t>(lo), scratch.begin() + static_cast<std::ptrdiff_t>(hi),
+              order.begin() + static_cast<std::ptrdiff_t>(lo));
+}
+
+// sortBy { key } and sortByDescending { key } (M6.6 part 3, value-lists.html section 9): each
+// item's key is worked out once, the positions are sorted by the keys, and then each item is
+// moved once, to where it goes, however large it is and however many comparisons there are.
+Value sortByKey(VM& vm, Value self, Value selector, bool descending) {
+    ObjList* list = asList(self);
+    const size_t n = list->size();
+    std::vector<Value> keys;
+    keys.reserve(n);
+    TempVector keepKeys(vm, keys);
+    for (size_t i = 0; i < n && i < list->size(); i++) {
+        Value item = vm.listGet(list, i);
+        TempRoot keepItem(vm, item);
+        keys.push_back(vm.call(selector, 1, &item));
+    }
+    if (list->size() != n) throw vm.runtimeError("the list was changed while it was sorted");
+    std::vector<size_t> order(n), scratch(n);
+    for (size_t i = 0; i < n; i++) order[i] = i;
+    bool ints = true;
+    for (const Value& key : keys) ints = ints && key.isInt();
+    if (ints) {
+        sortPositions(order, scratch, 0, n, [&](size_t a, size_t b) {
+            return descending ? keys[b].as.i < keys[a].as.i : keys[a].as.i < keys[b].as.i;
+        });
+    } else {
+        sortPositions(order, scratch, 0, n, [&](size_t a, size_t b) {
+            return descending ? compareValues(vm, keys[b], keys[a]) < 0 : compareValues(vm, keys[a], keys[b]) < 0;
+        });
+    }
+    vm.listArrange(list, order);
+    return Value::null();
+}
+
 void registerListMethods(VM& vm) {
     const BuiltinType T = BuiltinType::List;
+
+    vm.defineMethod(T, "sortBy", 1, 1, [](VM& vm, Value self, int, Value* args) -> Value { return sortByKey(vm, self, args[0], false); });
+    vm.defineMethod(T, "sortByDescending", 1, 1, [](VM& vm, Value self, int, Value* args) -> Value {
+        return sortByKey(vm, self, args[0], true);
+    });
 
     // add(item) at the end, or add(index, item) before the item at `index`.
     vm.defineMethod(T, "add", 1, 2, [](VM& vm, Value self, int argc, Value* args) -> Value {
         ObjList* list = asList(self);
         if (argc == 1) {
-            list->items.push_back(args[0]);
+            vm.listAdd(list, args[0]);
         } else {
-            if (!args[0].isInt() || args[0].as.i < 0 || static_cast<uint64_t>(args[0].as.i) > list->items.size())
-                throw outOfRange(vm, "add", args[0], list->items.size());
-            list->items.insert(list->items.begin() + static_cast<std::ptrdiff_t>(args[0].as.i), args[1]);
+            if (!args[0].isInt() || args[0].as.i < 0 || static_cast<uint64_t>(args[0].as.i) > list->size())
+                throw outOfRange(vm, "add", args[0], list->size());
+            vm.listInsert(list, static_cast<size_t>(args[0].as.i), &args[1], 1);
         }
-        vm.account(sizeof(Value));
         return Value::boolean(true);
     });
 
     // addAll(items) at the end, or addAll(index, items). `items` is anything a for loop takes.
     vm.defineMethod(T, "addAll", 1, 2, [](VM& vm, Value self, int argc, Value* args) -> Value {
         ObjList* list = asList(self);
-        size_t at = list->items.size();
+        size_t at = list->size();
         if (argc == 2) {
-            if (!args[0].isInt() || args[0].as.i < 0 || static_cast<uint64_t>(args[0].as.i) > list->items.size())
-                throw outOfRange(vm, "addAll", args[0], list->items.size());
+            if (!args[0].isInt() || args[0].as.i < 0 || static_cast<uint64_t>(args[0].as.i) > list->size())
+                throw outOfRange(vm, "addAll", args[0], list->size());
             at = static_cast<size_t>(args[0].as.i);
         }
         std::vector<Value> added;
         vm.collect(args[argc - 1], added);
-        at = std::min(at, list->items.size());  // an iterator() may have changed the list
-        list->items.insert(list->items.begin() + static_cast<std::ptrdiff_t>(at), added.begin(), added.end());
-        vm.account(added.size() * sizeof(Value));
+        at = std::min(at, list->size());  // an iterator() may have changed the list
+        TempVector keep(vm, added);
+        vm.listInsert(list, at, added.data(), added.size());
         return Value::boolean(!added.empty());
     });
 
     vm.defineMethod(T, "isEmpty", 0, 0, [](VM&, Value self, int, Value*) -> Value {
-        return Value::boolean(asList(self)->items.empty());
+        return Value::boolean(asList(self)->size() == 0);
     });
     vm.defineMethod(T, "isNotEmpty", 0, 0, [](VM&, Value self, int, Value*) -> Value {
-        return Value::boolean(!asList(self)->items.empty());
+        return Value::boolean(asList(self)->size() != 0);
     });
 
     vm.defineMethod(T, "get", 1, 1, [](VM& vm, Value self, int, Value* args) -> Value {
-        const std::vector<Value>& items = asList(self)->items;
+        ObjList* list = asList(self);
         size_t i;
-        if (!exactIndex(args[0], items.size(), i)) throw outOfRange(vm, "get", args[0], items.size());
-        return items[i];
+        if (!exactIndex(args[0], list->size(), i)) throw outOfRange(vm, "get", args[0], list->size());
+        return vm.listGet(list, i);
     });
-    vm.defineMethod(T, "getOrNull", 1, 1, [](VM&, Value self, int, Value* args) -> Value {
-        const std::vector<Value>& items = asList(self)->items;
+    vm.defineMethod(T, "getOrNull", 1, 1, [](VM& vm, Value self, int, Value* args) -> Value {
+        ObjList* list = asList(self);
         size_t i;
-        return exactIndex(args[0], items.size(), i) ? items[i] : Value::null();
+        return exactIndex(args[0], list->size(), i) ? vm.listGet(list, i) : Value::null();
     });
     // Gives the item that was there.
     vm.defineMethod(T, "set", 2, 2, [](VM& vm, Value self, int, Value* args) -> Value {
-        std::vector<Value>& items = asList(self)->items;
+        ObjList* list = asList(self);
         size_t i;
-        if (!exactIndex(args[0], items.size(), i)) throw outOfRange(vm, "set", args[0], items.size());
-        Value before = items[i];
-        items[i] = args[1];
+        if (!exactIndex(args[0], list->size(), i)) throw outOfRange(vm, "set", args[0], list->size());
+        const Value before = vm.listGet(list, i);
+        vm.listSet(list, i, args[1]);
         return before;
     });
 
     auto removeEnd = [](VM& vm, Value self, bool first, const char* name, bool orNull) -> Value {
-        std::vector<Value>& items = asList(self)->items;
-        if (items.empty()) {
+        ObjList* list = asList(self);
+        if (list->size() == 0) {
             if (orNull) return Value::null();
             throw vm.runtimeError(std::string(name) + "() from an empty list");
         }
-        Value removed = first ? items.front() : items.back();
-        if (first) items.erase(items.begin());
-        else items.pop_back();
+        const size_t at = first ? 0 : list->size() - 1;
+        const Value removed = vm.listGet(list, at);
+        vm.listErase(list, at, 1);
         return removed;
     };
     static const auto removeAtEnd = removeEnd;
@@ -778,40 +830,50 @@ void registerListMethods(VM& vm) {
         return removeAtEnd(vm, self, false, "removeLastOrNull", true);
     });
 
-    // A new list holding the same items.
-    auto copy = [](VM& vm, Value self, int, Value*) -> Value { return Value::object(newList(vm, asList(self)->items)); };
+    // A new list holding the same items, of the same type and kept the same way.
+    auto copy = [](VM& vm, Value self, int, Value*) -> Value {
+        ObjList* list = asList(self);
+        if (!list->packed()) return Value::object(newList(vm, list->values()));
+        ObjList* made = vm.listLike(list);
+        vm.listCopyRange(made, list, 0, list->size());
+        return Value::object(made);
+    };
     vm.defineMethod(T, "toList", 0, 0, copy);
     vm.defineMethod(T, "toMutableList", 0, 0, copy);
 
     // The items from `fromIndex` up to but not including `toIndex`, as a new list.
     vm.defineMethod(T, "subList", 2, 2, [](VM& vm, Value self, int, Value* args) -> Value {
-        const std::vector<Value>& items = asList(self)->items;
+        ObjList* list = asList(self);
         const int64_t from = vm.toInt(args[0], "subList start"), to = vm.toInt(args[1], "subList end");
-        if (from < 0 || to > static_cast<int64_t>(items.size()) || from > to)
+        if (from < 0 || to > static_cast<int64_t>(list->size()) || from > to)
             throw vm.runtimeError("subList(" + std::to_string(from) + ", " + std::to_string(to) + ") is out of range for a list of size " +
-                                  std::to_string(items.size()));
-        return Value::object(newList(vm, std::vector<Value>(items.begin() + static_cast<std::ptrdiff_t>(from),
-                                                              items.begin() + static_cast<std::ptrdiff_t>(to))));
+                                  std::to_string(list->size()));
+        ObjList* part = list->packed() ? vm.listLike(list) : newList(vm);
+        vm.listCopyRange(part, list, static_cast<size_t>(from), static_cast<size_t>(to - from));
+        return Value::object(part);
     });
 
     // A new list in the opposite order; reverse() turns the list itself round.
     vm.defineMethod(T, "reversed", 0, 0, [](VM& vm, Value self, int, Value*) -> Value {
-        const std::vector<Value>& items = asList(self)->items;
-        return Value::object(newList(vm, std::vector<Value>(items.rbegin(), items.rend())));
+        ObjList* list = asList(self);
+        ObjList* made = list->packed() ? vm.listLike(list) : newList(vm);
+        vm.listCopyRange(made, list, 0, list->size());
+        for (size_t i = 0, j = made->size(); i + 1 < j; i++, j--) vm.listSwap(made, i, j - 1);
+        return Value::object(made);
     });
 
     vm.defineMethod(T, "lastIndexOf", 1, 1, [](VM& vm, Value self, int, Value* args) -> Value {
-        const std::vector<Value>& items = asList(self)->items;
-        for (size_t i = items.size(); i > 0; i--) {
-            if (i > items.size()) continue;  // an == operator may have shortened the list
-            if (vm.equals(items[i - 1], args[0])) return Value::integer(static_cast<int64_t>(i - 1));
+        ObjList* list = asList(self);
+        for (size_t i = list->size(); i > 0; i--) {
+            if (i > list->size()) continue;  // an == operator may have shortened the list
+            if (vm.equals(vm.listGet(list, i - 1), args[0])) return Value::integer(static_cast<int64_t>(i - 1));
         }
         return Value::integer(-1);
     });
 
-    vm.defineMethod(T, "fill", 1, 1, [](VM&, Value self, int, Value* args) -> Value {
-        std::vector<Value>& items = asList(self)->items;
-        std::fill(items.begin(), items.end(), args[0]);
+    vm.defineMethod(T, "fill", 1, 1, [](VM& vm, Value self, int, Value* args) -> Value {
+        ObjList* list = asList(self);
+        for (size_t i = 0; i < list->size(); i++) vm.listSet(list, i, args[0]);
         return Value::null();
     });
 }
@@ -1092,8 +1154,8 @@ void registerFiles(VM& vm) {
         std::sort(names.begin(), names.end());
         ObjList* list = newList(vm);
         TempRoot keep(vm, Value::object(list));
-        for (std::string& name : names) list->items.push_back(vm.str(std::move(name)));
-        vm.account(list->items.size() * sizeof(Value));
+        for (std::string& name : names) list->values().push_back(vm.str(std::move(name)));
+        vm.account(list->values().size() * sizeof(Value));
         return Value::object(list);
     });
     def("absolute", 1, 1, [](VM& vm, int, Value* args) -> Value {

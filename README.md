@@ -1113,6 +1113,51 @@ can have a body, default values, a superclass, interfaces and static members, an
 in the body take no part in equality or printing. Objects of an ordinary class are only equal
 to themselves.
 
+#### Value types
+
+`value` declares a data class whose values are what they hold: they have no identity, and
+never change once made.
+
+```astra
+value Point(val x : int, val y : int) {
+    op +(o : Point) : Point => Point(x + o.x, y + o.y)
+}
+value Rect(val origin : Point, val width : int, val height : int)
+
+val p = Point(1, 2)
+p + Point(3, 4)              // Point(x=4, y=6)
+p == Point(1, 2)             // true; === is an error: there is no identity to compare
+p.copy(x = 5)                // Point(x=5, y=2), the way to a changed value
+val r = Rect(p, 10, 20)      // holds its Point in place
+r.origin.x                   // 1
+```
+
+Everything a data class has, a value type has: printing, `==`, `copy`, coming apart, a body
+with methods, properties and fields worked out from the header, and interfaces. It extends no
+class, and no class extends it. A field is given its value when the value is made, in the
+header or where it is declared in the body, and never again: `p.x = 5` is an error, outside
+the type's `init`. A value is kept in its type's fixed layout, each field at a set place, so
+a `Point` takes one allocation of 56 bytes where an object of a class takes 80; one value type
+holds another in place, so it cannot hold itself except where that field may be null.
+
+A list made to hold values keeps them one after another, each at its own width: a
+`List<Point>` 16 bytes a point in one block of memory, a `List<int>` or `List<float>` 8 bytes
+an item, a `List<bool>` one byte; a `List<int?>` or `List<Point?>` the same, with a bit per
+item for null. Nothing about the list changes for the program: every list function works on it,
+and an item read from it is a value as any other.
+
+```astra
+val pts : List<Point> = []
+pts.add(Point(1, 2))         // written straight into the list: no Point is made on its own
+pts[0].x                     // read where it is
+pts.sortBy { it.x }          // each key worked out once, each point moved once
+val list : List<any> = pts
+list.add("text")             // an error: a List<Point> keeps only points
+```
+
+Values kept in place without a box, and changing a field through the place that holds a value
+(`pts[i].x = 4`), come in the rest of M6.6 ([value-lists.html](docs/value-lists.html)).
+
 #### Taking values apart
 
 `val (a, b) = value` declares a variable for each part of a list or of a data object, and

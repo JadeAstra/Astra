@@ -1,0 +1,102 @@
+// Lists of values (M6.6 part 3): a list made to hold values (List<int>, List<float>,
+// List<bool>, a value type's, and the nullable ones of those) keeps its items packed, one after
+// another at their own widths. What a program sees is the same as for any list.
+
+value Point(val x : int, val y : int)
+value Label(val text : string, val at : Point, val tags : List<string>)
+
+// Every operation, on a list of a value type.
+val pts : List<Point> = []
+for (i in 0 ..< 5) { pts.add(Point(i, i * 10)) }
+print(pts.size, pts[2], pts[2].y, pts.first(), pts.last())   // expect: 5 Point(x=2, y=20) 20 Point(x=0, y=0) Point(x=4, y=40)
+pts[1] = Point(-1, -1)
+pts.add(0, Point(9, 9))
+pts.insert(1, Point(8, 8))
+print(pts)   // expect: [Point(x=9, y=9), Point(x=8, y=8), Point(x=0, y=0), Point(x=-1, y=-1), Point(x=2, y=20), Point(x=3, y=30), Point(x=4, y=40)]
+print(pts.removeAt(0), pts.remove(Point(8, 8)), pts.remove(Point(7, 7)), pts.size)   // expect: Point(x=9, y=9) true false 5
+print(pts.contains(Point(2, 20)), pts.indexOf(Point(3, 30)), pts.lastIndexOf(Point(0, 0)), pts.getOrNull(9))   // expect: true 3 0 null
+print(pts.slice(1, 3), pts.subList(3, 5), pts.reversed().first())   // expect: [Point(x=-1, y=-1), Point(x=2, y=20)] [Point(x=3, y=30), Point(x=4, y=40)] Point(x=4, y=40)
+print(pts.removeFirst(), pts.removeLast(), pts)   // expect: Point(x=0, y=0) Point(x=4, y=40) [Point(x=-1, y=-1), Point(x=2, y=20), Point(x=3, y=30)]
+
+// Read with one of its fields at once, an item is read where it is.
+print(pts[1].x + pts[2].y, pts[0] == Point(-1, -1))   // expect: 32 true
+
+// Generic code: the standard library's list functions, written in Astra.
+print(pts.map { it.x }, pts.filter { it.y > 0 }.size, pts.sumOf { it.y }, pts.any { it.x < 0 })   // expect: [-1, 2, 3] 2 49 true
+print(pts.joinToString(" ") { "${it.x}" }, pts.sortedBy { -it.x }.map { it.x }, pts.maxByOrNull { it.y })   // expect: -1 2 3 [3, 2, -1] Point(x=3, y=30)
+var walked = 0
+for (p in pts) { walked += p.x }
+print(walked)   // expect: 4
+
+// Sorting by a key: each key worked out once, each item moved once.
+val many : List<Point> = []
+for (i in 0 ..< 20) { many.add(Point(i * 7 % 20, i)) }
+many.sortBy { it.x }
+print(many.map { it.x } == (0 ..< 20).toList(), many[0], many[19])   // expect: true Point(x=0, y=0) Point(x=19, y=17)
+many.sortByDescending { it.y }
+print(many.take(3).map { it.y })   // expect: [19, 18, 17]
+var calls = 0
+many.sortBy { calls += 1; it.x }
+print(calls)   // expect: 20
+many.sort { a, b -> b.x - a.x }
+print(many.first(), many.last())   // expect: Point(x=19, y=17) Point(x=0, y=0)
+
+// Numbers and booleans.
+val ints = [5, 3, 9, 1]
+ints.add(7)
+ints.sort()
+print(ints, ints.reversed(), ints + [10], ints == [1, 3, 5, 7, 9], ints.sum(), ints.max())   // expect: [1, 3, 5, 7, 9] [9, 7, 5, 3, 1] [1, 3, 5, 7, 9, 10] true 25 9
+ints.reverse()
+ints.fill(4)
+print(ints, ints.indexOf(4), (0 ..< 4).toList().map { it * it })   // expect: [4, 4, 4, 4, 4] 0 [0, 1, 4, 9]
+val floats = [1.5, -2.25]
+floats.add(0.0)
+print(floats, floats.sortedBy { it }, floats.contains(-2.25))   // expect: [1.5, -2.25, 0.0] [-2.25, 0.0, 1.5] true
+val flags = [true, false, true]
+flags[1] = true
+print(flags, flags.all { it }, flags.count { it })   // expect: [true, true, true] true 3
+
+// A list whose items may be null: packed, with a bit per item for null.
+val maybe : List<int?> = [1, null, 3]
+maybe.add(null)
+maybe.add(1, 7)
+print(maybe, maybe.removeAt(0), maybe[1], maybe.filterNotNull())   // expect: [7, null, 3, null] 1 null [7, 3]
+val maybePoints : List<Point?> = [Point(1, 1), null]
+maybePoints.add(0, null)
+maybePoints.sortBy { it?.x ?: -1 }
+print(maybePoints, maybePoints[2]?.x)   // expect: [null, null, Point(x=1, y=1)] 1
+
+// Values that hold strings and lists: the collector follows them where the items are.
+val labels : List<Label> = []
+for (i in 0 ..< 3) { labels.add(Label("label $i", Point(i, -i), ["t$i"])) }
+print(labels[2].text, labels[1].at.y, labels[0].tags, labels.map { it.text.length })   // expect: label 2 -1 ["t0"] [7, 7, 7]
+
+// Equal by their items; as map keys.
+val a : List<Point> = [Point(1, 2)]
+val b : List<Point> = [Point(1, 2)]
+val byPoints : Map<List<Point>, string> = {:}
+byPoints[a] = "found"
+print(a == b, byPoints[b], [1, 2] == [1.0, 2.0])   // expect: true found true
+
+// What a list cannot hold is an error where it is put in.
+val anything : List<any> = ints
+try { anything.add("five") } catch (e : Error) { print(e.message) }   // expect: cannot put a value of type string in a List<int>, which keeps only what it was made to hold
+
+// A value type with fields of its body is made as usual, then added.
+value Doubled(val x : int) {
+    val twice = x * 2
+}
+val doubles : List<Doubled> = []
+doubles.add(Doubled(4))
+print(doubles[0].twice, doubles)   // expect: 8 [Doubled(x=4)]
+
+// Spread into a call, taken apart, sent to another thread, read on every core.
+fun total(vararg values : int) : int => values.sum()
+val (first, second) = pts
+print(total(*[1, 2, 3]), first, second)   // expect: 6 Point(x=-1, y=-1) Point(x=2, y=20)
+val big : List<Point> = []
+for (i in 0 ..< 1000) { big.add(Point(i, 1)) }
+print(big.parallelStream().map { it.x * it.y }.toList().sum())   // expect: 499500
+var seen = 0
+thread { seen = big.size + big[999].x }.join()
+print(seen)   // expect: 1999

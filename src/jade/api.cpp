@@ -221,7 +221,7 @@ void deliver(int id, const RawEvent& e) {
         case RawEvent::FilesDropped: {
             ObjList* files = newList(vm);
             TempRoot keep(vm, Value::object(files));
-            for (const std::string& path : e.files) files->items.push_back(vm.str(path));
+            for (const std::string& path : e.files) files->values().push_back(vm.str(path));
             dispatch(id, "filesDropped", unit(e.x), unit(e.y), 0, 0, 0, 0, Value::object(files));
             break;
         }
@@ -328,7 +328,7 @@ RawEvent syntheticEvent(VM& vm, Window& window, const std::string& kind, Value* 
     } else if (kind == "filesDropped") {
         e.kind = RawEvent::FilesDropped;
         if (args[6].isObjType(ObjType::List))
-            for (const Value& path : asList(args[6])->items) e.files.push_back(vm.toStr(path, "file path"));
+            for (const Value& path : vm.listCopy(asList(args[6]))) e.files.push_back(vm.toStr(path, "file path"));
     } else {
         throw vm.runtimeError("no such event: " + kind);
     }
@@ -715,8 +715,8 @@ void registerJade(VM& vm) {
     def("polygon", 5, 5, [](VM& vm, int, Value* args) -> Value {
         Renderer& r = need(vm);
         if (!args[0].isObjType(ObjType::List) || !args[1].isObjType(ObjType::List)) throw vm.runtimeError("a polygon's points are two lists of numbers");
-        const std::vector<Value>& xs = asList(args[0])->items;
-        const std::vector<Value>& ys = asList(args[1])->items;
+        const std::vector<Value> xs = vm.listCopy(asList(args[0]));
+        const std::vector<Value> ys = vm.listCopy(asList(args[1]));
         const size_t count = static_cast<size_t>(std::clamp<int64_t>(vm.toInt(args[2], "number of points"), 0, static_cast<int64_t>(std::min(xs.size(), ys.size()))));
         if (count < 2) return Value::null();
         if (args[3].truthy()) {

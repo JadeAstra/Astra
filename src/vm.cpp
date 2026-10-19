@@ -298,8 +298,9 @@ bool VM::fitsType(const Value& v, const ObjTypeInfo* type) {
     if (v.isNull()) return type->nullable || type->id == 0;
     if (type->id == 0) return true;
     if (type->id == kTypeInstance) {
-        if (!v.isObjType(ObjType::Instance) || !asInstance(v)->cls->isSubclassOf(type->cls)) return false;
-        if (type->args.empty()) return true;
+        const ObjClass* const cls = classOf(v);
+        if (cls == nullptr || !cls->isSubclassOf(type->cls)) return false;
+        if (type->args.empty() || !v.isObjType(ObjType::Instance)) return true;  // a value keeps no type arguments yet
         // An object made without its type arguments takes any; one of a subclass is seen as
         // the class it extends.
         ObjInstance* instance = asInstance(v);
@@ -402,8 +403,12 @@ bool VM::builtinTypeNamed(const std::string& name, BuiltinType& type) {
 void VM::collect(Value iterable, std::vector<Value>& out) {
     guardRead(iterable);
     if (iterable.isObjType(ObjType::List)) {
-        const std::vector<Value>& items = asList(iterable)->items;
-        out.insert(out.end(), items.begin(), items.end());
+        ObjList* list = asList(iterable);
+        if (!list->packed()) {
+            out.insert(out.end(), list->values().begin(), list->values().end());
+            return;
+        }
+        for (size_t i = 0; i < list->size(); i++) out.push_back(listGet(list, i));
         return;
     }
     TempVector held(*this, out);
@@ -564,8 +569,9 @@ const Value* VM::findExtension(Value receiver, const ObjString* name) const {
                 case ObjType::Native:
                 case ObjType::BoundMethod:
                 case ObjType::BoundNative: found = typeExtensions_[kTypeFunction].find(name); break;
-                case ObjType::Instance: {
-                    const ObjClass* cls = asInstance(receiver)->cls;
+                case ObjType::Instance:
+                case ObjType::Value: {
+                    const ObjClass* cls = classOf(receiver);
                     for (const ObjClass* k = cls; k != nullptr && found == nullptr; k = k->super) found = k->extensions.find(name);
                     for (size_t i = 0; i < cls->interfaces.size() && found == nullptr; i++)
                         found = cls->interfaces[i]->extensions.find(name);
@@ -584,6 +590,12 @@ const Value* VM::findExtension(Value receiver, const ObjString* name) const {
 // Whether a bare name written in code that runs on `candidate` means a member of it.
 bool VM::hasMember(Value candidate, const ObjString* name) const {
     guardRead(candidate);
+    if (candidate.isObjType(ObjType::Value)) {
+        const ObjClass* cls = asValue(candidate)->cls;
+        if (cls->declaredIndex.find(name) != nullptr || cls->methods.find(name) != nullptr || cls->getters.find(name) != nullptr)
+            return true;
+        return findExtension(candidate, name) != nullptr;
+    }
     if (candidate.isObjType(ObjType::Instance)) {
         const ObjInstance* instance = asInstance(candidate);
         const ObjClass* cls = instance->cls;
@@ -727,8 +739,8 @@ bool VM::accessDenied(Value target, const ObjString* name, const FunctionProto* 
     if (!target.isObj()) return false;
     const ObjClass* cls;
     const Table* marks;
-    if (target.as.obj->type == ObjType::Instance) {
-        cls = asInstance(target)->cls;
+    if (target.as.obj->type == ObjType::Instance || target.as.obj->type == ObjType::Value) {
+        cls = classOf(target);
         marks = &cls->accessMarks;
         // Code written in the object's own class may use all that the class has, or all but
         // what a class above keeps private: then a name that is private nowhere is its to use.
@@ -938,6 +950,7 @@ std::string VM::typeName(Value v) const {
         case ObjType::BoundNative: return "Function";
         case ObjType::Class: return "Class";
         case ObjType::Instance: return asInstance(v)->cls->name->chars;
+        case ObjType::Value: return asValue(v)->cls->name->chars;
         case ObjType::Fiber: return "flow";
         case ObjType::Resource: return static_cast<const ObjResource*>(v.as.obj)->kind;
         case ObjType::Upvalue:
@@ -1008,7 +1021,7 @@ int VM::packVarargs(const FunctionProto* proto, int argc) {
     const int extra = argc - at;
     if (pendingEnums_ > 0) rejectPendingNames(sp_ - extra, extra);
     ObjList* list = alloc<ObjList>();
-    list->items.assign(sp_ - extra, sp_);
+    list->values().assign(sp_ - extra, sp_);
     account(static_cast<size_t>(extra) * sizeof(Value));
     sp_ -= extra;
     *sp_++ = Value::object(list);
@@ -1024,7 +1037,7 @@ int VM::paramFit(Value v, uint8_t type, const ObjString* className) const {
         return (type & kTypeMask) == kTypeNumber ? 1 : 2;
     }
     if (v.isNull()) return (type & kTypeNullable) != 0 ? 1 : -1;
-    if (!v.isObjType(ObjType::Instance) || className == nullptr) return -1;
+    if (classOf(v) == nullptr || className == nullptr) return -1;
     // The class is known by its name, as written: the last part of it.
     auto named = [&](const ObjClass* c) {
         const std::string& n = c->name->chars;
@@ -1033,7 +1046,7 @@ int VM::paramFit(Value v, uint8_t type, const ObjString* className) const {
                              n.compare(n.size() - want.size(), want.size(), want) == 0);
     };
     int distance = 0;
-    for (const ObjClass* c = asInstance(v)->cls; c != nullptr; c = c->super, distance++) {
+    for (const ObjClass* c = classOf(v); c != nullptr; c = c->super, distance++) {
         if (named(c)) return 2 + std::max(0, 64 - distance);
         for (const ObjClass* i : c->interfaces)
             if (named(i)) return 2 + std::max(0, 63 - distance);
@@ -1248,7 +1261,7 @@ void VM::callTrailing(ObjClosure* closure, int argc) {
         const int extra = given - vararg;
         if (pendingEnums_ > 0) rejectPendingNames(sp_ - extra, extra);
         ObjList* list = alloc<ObjList>();
-        list->items.assign(sp_ - extra, sp_);
+        list->values().assign(sp_ - extra, sp_);
         account(static_cast<size_t>(extra) * sizeof(Value));
         sp_ -= extra;
         *sp_++ = Value::object(list);
@@ -1422,7 +1435,7 @@ bool VM::callNamed(int positional, int named) {
     if (vararg >= 0 && positional > vararg) {
         // The positional arguments from the vararg parameter on are its list.
         ObjList* list = alloc<ObjList>();
-        list->items.assign(first + vararg, first + positional);
+        list->values().assign(first + vararg, first + positional);
         account(static_cast<size_t>(positional - vararg) * sizeof(Value));
         arranged[static_cast<size_t>(vararg)] = Value::object(list);
     }
@@ -1524,11 +1537,11 @@ bool VM::callNativeNamed(int positional, int named) {
 bool VM::callSpread(int named) {
     Value* slot = sp_ - 2 * named - 1;
     ObjList* list = asList(*slot);
-    const int count = static_cast<int>(list->items.size());
+    const int count = static_cast<int>(list->size());
     if (stackEnd_ - sp_ < count + 1) throw runtimeError("stack overflow");
 
     std::copy_backward(slot + 1, sp_, sp_ + count - 1);
-    std::copy(list->items.begin(), list->items.end(), slot);
+    for (int i = 0; i < count; i++) slot[i] = listGet(list, static_cast<size_t>(i));
     sp_ += count - 1;
     if (named > 0) return callNamed(count, named);
     return callValue(sp_[-count - 1], count);
@@ -1589,6 +1602,34 @@ bool VM::invoke(ObjString* name, int argc, bool trailing) {
             }
             if (const int done = scopeFunction(name, argc)) return done == 2;
             throw runtimeError("undefined method '" + name->chars + "' on " + instance->cls->name->chars);
+        }
+
+        if (receiver.as.obj->type == ObjType::Value) {
+            // A method of a value's type (M6.6 part 2), run on the value; or what a field or a
+            // property holds, called.
+            ObjValue* box = asValue(receiver);
+            if (const Value* method = box->cls->methods.find(name)) {
+                if (trailing) callTrailing(asClosure(*method), argc);
+                else callClosure(asClosure(*method), argc);
+                return true;
+            }
+            if (const int64_t at = valueFieldIndex(box, name); at >= 0) {
+                const Value field = valueField(box, static_cast<size_t>(at));
+                sp_[-argc - 1] = field;
+                return trailing ? callValueTrailing(field, argc) : callValue(field, argc);
+            }
+            if (const Value* getter = box->cls->getters.find(name)) {
+                Value callee = callWithReceiver(receiver, asClosure(*getter));
+                sp_[-argc - 1] = callee;
+                return trailing ? callValueTrailing(callee, argc) : callValue(callee, argc);
+            }
+            if (const Value* extension = findExtension(receiver, name)) {
+                if (trailing) callTrailing(asClosure(*extension), argc);
+                else callClosure(asClosure(*extension), argc);
+                return true;
+            }
+            if (const int done = scopeFunction(name, argc)) return done == 2;
+            throw runtimeError("undefined method '" + name->chars + "' on " + box->cls->name->chars);
         }
 
         if (receiver.as.obj->type == ObjType::Class) {
@@ -1697,6 +1738,16 @@ bool VM::equals(Value a, Value b, int depth) {
 
     // In a parallel section another core's item is not looked into. Telling two objects apart
     // by which they are needs no looking, so only the cases below that do look ask.
+    if (a.isObjType(ObjType::Value)) {
+        // Two values of one value type are equal when their fields are (M6.6 part 2), unless
+        // the type says what == means itself.
+        if (const Value* method = asValue(a)->cls->methods.find(names.opEq)) {
+            TempRoot bound(*this, Value::object(alloc<ObjBoundMethod>(a, asClosure(*method))));
+            return call(bound.get(), 1, &b).truthy();
+        }
+        if (!b.isObjType(ObjType::Value) || depth >= kMaxEqualsDepth) return false;
+        return valuesSame(asValue(a), asValue(b), depth);
+    }
     if (a.isObjType(ObjType::Instance)) {
         const Value* method = asInstance(a)->cls->methods.find(names.opEq);
         if (method == nullptr) {
@@ -1727,13 +1778,21 @@ bool VM::equals(Value a, Value b, int depth) {
         case ObjType::Bytes:
             return asBytes(a)->data == asBytes(b)->data;
         case ObjType::List: {
-            const std::vector<Value>& x = asList(a)->items;
-            const std::vector<Value>& y = asList(b)->items;
-            if (x.size() != y.size()) return false;
+            ObjList* x = asList(a);
+            ObjList* y = asList(b);
+            if (x->size() != y->size()) return false;
+            if (x->packed() && y->packed() && x->store() == y->store() && (x->store() == ListStore::Ints || x->store() == ListStore::Bools) &&
+                !x->pack->nullable && !y->pack->nullable)
+                return x->pack->block == y->pack->block;  // ints and bools, equal where their bytes are
             // An element's own == may change either list, so the sizes are looked at again.
-            for (size_t i = 0; i < x.size() && i < y.size(); i++)
-                if (!equals(x[i], y[i], depth + 1)) return false;
-            return x.size() == y.size();
+            for (size_t i = 0; i < x->size() && i < y->size(); i++) {
+                const Value left = listGet(x, i);
+                TempRoot keep(*this, left);
+                const Value right = listGet(y, i);
+                TempRoot keepToo(*this, right);
+                if (!equals(left, right, depth + 1)) return false;
+            }
+            return x->size() == y->size();
         }
         case ObjType::Map: {
             const ValueMap& x = asMap(a)->map;
@@ -1762,11 +1821,11 @@ bool VM::equals(Value a, Value b, int depth) {
 // Calls an overloaded operator; the receiver and its operands are already on the stack in
 // call layout, so this always pushes a frame.
 void VM::invokeOperator(Value receiver, ObjString* name, int argc) {
-    ObjInstance* instance = asInstance(receiver);
-    const Value* method = instance->cls->methods.find(name);
+    const ObjClass* cls = classOf(receiver);
+    const Value* method = cls->methods.find(name);
     if (method == nullptr) {
         const std::string symbol = name == names.opNeg ? "-" : name == names.opBitNot ? "~" : name->chars;
-        throw runtimeError(instance->cls->name->chars + " does not define operator '" + symbol + "'");
+        throw runtimeError(cls->name->chars + " does not define operator '" + symbol + "'");
     }
     callClosure(asClosure(*method), argc);
 }
@@ -1788,6 +1847,16 @@ Value VM::getProperty(Value obj, ObjString* name) {
                 if (const Value* extension = findExtension(obj, name))
                     return Value::object(alloc<ObjBoundMethod>(obj, asClosure(*extension)));
                 throw runtimeError("undefined property '" + name->chars + "' on " + instance->cls->name->chars);
+            }
+            case ObjType::Value: {
+                ObjValue* box = asValue(obj);
+                if (const int64_t at = valueFieldIndex(box, name); at >= 0) return valueField(box, static_cast<size_t>(at));
+                if (const Value* method = box->cls->methods.find(name))
+                    return Value::object(alloc<ObjBoundMethod>(obj, asClosure(*method)));
+                if (const Value* getter = box->cls->getters.find(name)) return callWithReceiver(obj, asClosure(*getter));
+                if (const Value* extension = findExtension(obj, name))
+                    return Value::object(alloc<ObjBoundMethod>(obj, asClosure(*extension)));
+                throw runtimeError("undefined property '" + name->chars + "' on " + box->cls->name->chars);
             }
             case ObjType::Class: {
                 ObjClass* cls = asClass(obj);
@@ -1819,10 +1888,10 @@ Value VM::getProperty(Value obj, ObjString* name) {
                 }
                 break;
             case ObjType::List:
-                if (name == names.length || name == names.size) return Value::integer(static_cast<int64_t>(asList(obj)->items.size()));
+                if (name == names.length || name == names.size) return Value::integer(static_cast<int64_t>(asList(obj)->size()));
                 if (name == names.indices)
-                    return Value::object(alloc<ObjRange>(int64_t{0}, static_cast<int64_t>(asList(obj)->items.size()), int64_t{1}, false));
-                if (name == names.lastIndex) return Value::integer(static_cast<int64_t>(asList(obj)->items.size()) - 1);
+                    return Value::object(alloc<ObjRange>(int64_t{0}, static_cast<int64_t>(asList(obj)->size()), int64_t{1}, false));
+                if (name == names.lastIndex) return Value::integer(static_cast<int64_t>(asList(obj)->size()) - 1);
                 if (name == names.itemType) return Value::object(typeArgument(asList(obj)->type, 0));  // M6.6 part 1
                 break;
             case ObjType::Map:
@@ -1868,6 +1937,580 @@ Value VM::getProperty(Value obj, ObjString* name) {
     throw runtimeError("undefined property '" + name->chars + "' on a value of type " + typeName(obj));
 }
 
+// ---- Value types (M6.6 part 2, value-lists.html) ----
+
+// The class a class-typed field is declared with, found the first time it is needed (the
+// class may be declared later in the program than the field).
+ObjClass* VM::fieldClass(FieldDecl& field) {
+    if ((field.type & kTypeMask) != kTypeInstance) return nullptr;
+    if (field.typeClass == nullptr) {
+        Value resolved = call(Value::object(field.typeThunk), 0, nullptr);
+        if (!resolved.isObjType(ObjType::Class))
+            throw runtimeError("a type must be a class or a built-in type, not a value of type " + typeName(resolved));
+        // (In a parallel section several cores may find this out at once: they all find the same class.)
+        field.typeClass = asClass(resolved);
+    }
+    return field.typeClass;
+}
+
+// A value type's fixed layout: each field at an offset aligned to its width, in the order the
+// class declares them, a value type held by another in place. Worked out when the first value
+// of the type is made, when every class its fields name exists; then never again.
+const ValueLayout& VM::layoutOf(ObjClass* cls) {
+    if (const ValueLayout* known = cls->layout.load(std::memory_order_acquire)) return *known;
+    // The value types being laid out, to refuse one that holds itself.
+    static thread_local std::vector<const ObjClass*> laying;
+    if (std::find(laying.begin(), laying.end(), cls) != laying.end())
+        throw runtimeError("value " + cls->name->chars + " holds itself, and would have no end: make the field nullable, " +
+                           cls->name->chars + "?, which keeps it in a box");
+    laying.push_back(cls);
+    struct Done {
+        std::vector<const ObjClass*>& list;
+        ~Done() { list.pop_back(); }
+    } done{laying};
+
+    auto made = std::make_unique<ValueLayout>();
+    uint32_t at = 0;
+    auto place = [&](uint32_t size, uint32_t align) {
+        at = (at + align - 1) / align * align;
+        made->align = std::max(made->align, align);
+        const uint32_t offset = at;
+        at += size;
+        return offset;
+    };
+    for (FieldDecl& declared : cls->declared) {
+        ValueField field;
+        field.name = declared.name;
+        field.type = static_cast<uint8_t>(declared.type);
+        const uint8_t id = declared.type & kTypeMask;
+        const bool nullable = (declared.type & kTypeNullable) != 0;
+        if (declared.type == 0) {
+            field.kind = ValueField::Any;
+        } else if (!nullable && id == kTypeInt) {
+            field.kind = ValueField::Int;
+        } else if (!nullable && id == kTypeFloat) {
+            field.kind = ValueField::Float;
+        } else if (!nullable && id == kTypeBool) {
+            field.kind = ValueField::Bool;
+        } else if (id == kTypeInstance) {
+            field.cls = fieldClass(declared);
+            field.kind = !nullable && field.cls->isValue ? ValueField::Nested : ValueField::Object;
+        } else if (id == kTypeString || id == kTypeList || id == kTypeMap || id == kTypeRange || id == kTypeBytes ||
+                   id == kTypeFunction || id == kTypeType) {
+            field.kind = ValueField::Object;  // null is a null pointer, where the type takes it
+        } else {
+            field.kind = ValueField::Any;  // Number, and an int, float or bool that may be null
+        }
+        switch (field.kind) {
+            case ValueField::Int:
+            case ValueField::Float: field.offset = place(8, 8); break;
+            case ValueField::Bool: field.offset = place(1, 1); break;
+            case ValueField::Object:
+                field.offset = place(8, 8);
+                made->objects.push_back(field.offset);
+                break;
+            case ValueField::Any:
+                field.offset = place(sizeof(Value), 8);
+                made->values.push_back(field.offset);
+                break;
+            case ValueField::Nested: {
+                const ValueLayout& inner = layoutOf(field.cls);
+                field.offset = place(inner.size, inner.align);
+                for (uint32_t offset : inner.objects) made->objects.push_back(field.offset + offset);
+                for (uint32_t offset : inner.values) made->values.push_back(field.offset + offset);
+                break;
+            }
+        }
+        made->fields.push_back(field);
+    }
+    made->size = (at + made->align - 1) / made->align * made->align;
+
+    // Two cores may lay a type out at once; the first kept is kept, and the same.
+    VM& root = root_ != nullptr ? *root_ : *this;
+    std::lock_guard<std::mutex> hold(root.internMutex_);
+    if (const ValueLayout* known = cls->layout.load(std::memory_order_acquire)) return *known;
+    cls->layoutOwned = std::move(made);
+    cls->layout.store(cls->layoutOwned.get(), std::memory_order_release);
+    return *cls->layoutOwned;
+}
+
+// A box for a value of `cls`, its fields zero: 0, 0.0, false and null.
+ObjValue* VM::newValue(ObjClass* cls) {
+    const ValueLayout& layout = layoutOf(cls);
+    ObjValue* box = new (layout.size) ObjValue(cls);
+    std::memset(box->data(), 0, layout.size);
+    box->core = 0;  // every core's to read: it never changes once made
+    box->next = objects_;
+    objects_ = box;
+    bytesAllocated_ += sizeof(ObjValue) + layout.size;
+    return box;
+}
+
+// The value of a field kept at `at` in a value's layout.
+Value VM::readValueField(const uint8_t* at, const ValueField& field) {
+    switch (field.kind) {
+        case ValueField::Int: {
+            int64_t i;
+            std::memcpy(&i, at, sizeof i);
+            return Value::integer(i);
+        }
+        case ValueField::Float: {
+            double d;
+            std::memcpy(&d, at, sizeof d);
+            return Value::number(d);
+        }
+        case ValueField::Bool: return Value::boolean(*at != 0);
+        case ValueField::Object: {
+            Obj* obj;
+            std::memcpy(&obj, at, sizeof obj);
+            return obj != nullptr ? Value::object(obj) : Value::null();
+        }
+        case ValueField::Any: {
+            Value v;
+            std::memcpy(&v, at, sizeof v);
+            return v;
+        }
+        case ValueField::Nested: {
+            // A value held in another, read on its own: a box of its own, a copy (M6.6 part 2).
+            ObjValue* box = newValue(field.cls);
+            std::memcpy(box->data(), at, layoutOf(field.cls).size);
+            return Value::object(box);
+        }
+    }
+    return Value::null();
+}
+
+// Writes `value` into a field kept at `at`, checked against the field's declared type as an
+// object's field is.
+void VM::writeValueField(uint8_t* at, const ValueField& field, const ObjClass* owner, Value value) {
+    if (field.type != 0 && !(value.isNull() && (field.type & kTypeNullable) != 0) && !matchesType(value, field.type, field.cls))
+        throw runtimeError("cannot assign a value of type " + typeName(value) + " to field '" + field.name->chars + "' of " +
+                           owner->name->chars + ", which is declared as " + declaredTypeText(field.type, field.cls));
+    switch (field.kind) {
+        case ValueField::Int: std::memcpy(at, &value.as.i, sizeof value.as.i); break;
+        case ValueField::Float: std::memcpy(at, &value.as.d, sizeof value.as.d); break;
+        case ValueField::Bool: *at = value.as.b ? 1 : 0; break;
+        case ValueField::Object: {
+            Obj* obj = value.isObj() ? value.as.obj : nullptr;
+            std::memcpy(at, &obj, sizeof obj);
+            break;
+        }
+        case ValueField::Any: std::memcpy(at, &value, sizeof value); break;
+        case ValueField::Nested: std::memcpy(at, asValue(value)->data(), layoutOf(field.cls).size); break;
+    }
+}
+
+inline int operandU16(const uint8_t* at);  // below, with the interpreter
+
+// A value held in another, read with one of its own fields at once, as in `s.pref.width`: the
+// instruction after (a GetProp or GetOwn at `next`) is done here as well, and the field read
+// where it is, with no copy made of the value that holds it. `at` is where `field` is, a
+// Nested one. Gives where the next instruction to run is, and the value read in `out`; a copy
+// of the held value where the instruction after is not such a read.
+const uint8_t* VM::readThrough(const uint8_t* at, const ValueField* field, const uint8_t* next, const Value* consts, Value& out) {
+    for (;;) {
+        const Op op = static_cast<Op>(*next);
+        if (op != Op::GetProp && op != Op::GetOwn) break;
+        const ObjString* name = asString(consts[operandU16(next + 1)]);
+        if (name->restricted != 0) break;  // whether it may be used is told by the instruction itself
+        const Value* index = field->cls->declaredIndex.find(name);
+        if (index == nullptr) break;
+        const ValueField& inner = layoutOf(field->cls).fields[static_cast<size_t>(index->as.i)];
+        next += 5;  // the instruction and its two operands
+        if (inner.kind != ValueField::Nested) {
+            out = readValueField(at + inner.offset, inner);
+            return next;
+        }
+        at += inner.offset;
+        field = &inner;
+    }
+    out = readValueField(at, *field);
+    return next;
+}
+
+// Field `name` of a value, or -1 if its type has no such field.
+int64_t VM::valueFieldIndex(const ObjValue* box, const ObjString* name) const {
+    const Value* at = box->cls->declaredIndex.find(name);
+    return at != nullptr ? at->as.i : -1;
+}
+
+Value VM::valueField(const ObjValue* box, size_t index) {
+    const ValueField& field = layoutOf(box->cls).fields[index];
+    return readValueField(box->data() + field.offset, field);
+}
+
+// Gives a field of a value being made its value; a value once made never changes.
+void VM::setValueField(ObjValue* box, ObjString* name, Value value) {
+    const int64_t index = valueFieldIndex(box, name);
+    if (index < 0)
+        throw runtimeError(box->cls->name->chars + " has no field '" + name->chars + "'; fields must be declared in it with val or var");
+    if (!box->constructing)
+        throw runtimeError("'" + name->chars + "' of value " + box->cls->name->chars +
+                           " cannot be given a new value: a value never changes once it is made");
+    const ValueField& field = layoutOf(box->cls).fields[static_cast<size_t>(index)];
+    writeValueField(box->data() + field.offset, field, box->cls, value);
+}
+
+// Whether two values of one value type hold the same, field by field, with == for each.
+bool VM::valuesSame(const ObjValue* a, const ObjValue* b, int depth) {
+    if (a->cls != b->cls) return false;
+    const ValueLayout& layout = layoutOf(a->cls);
+    for (size_t i = 0; i < layout.fields.size(); i++) {
+        const ValueField& field = layout.fields[i];
+        switch (field.kind) {
+            case ValueField::Int:
+            case ValueField::Bool:
+                if (std::memcmp(a->data() + field.offset, b->data() + field.offset, field.kind == ValueField::Int ? 8 : 1) != 0)
+                    return false;
+                break;
+            case ValueField::Float: {
+                double x, y;
+                std::memcpy(&x, a->data() + field.offset, sizeof x);
+                std::memcpy(&y, b->data() + field.offset, sizeof y);
+                if (!(x == y)) return false;  // -0.0 is 0.0, as == says
+                break;
+            }
+            default: {
+                const Value x = readValueField(a->data() + field.offset, field);
+                TempRoot keep(*this, x);
+                const Value y = readValueField(b->data() + field.offset, field);
+                TempRoot keepToo(*this, y);
+                if (!equals(x, y, depth + 1)) return false;
+            }
+        }
+    }
+    return true;
+}
+
+// ---- Lists (M6.6 part 3, value-lists.html) ----
+//
+// A list keeps its items as 16-byte values, or, when it was made to hold values (List<int>,
+// List<float>, List<bool>, a value type's, and the nullable ones of those), packed one after
+// another at their own widths, a bit per item for null beside them where the type takes null.
+// Everything that reads or changes a list's items goes through these, or works on `block`
+// itself where it knows the store.
+
+namespace {
+bool nullAt(const ObjList* list, size_t i) { return (list->pack->nulls[i / 64] >> (i % 64) & 1) != 0; }
+void setNullAt(ObjList* list, size_t i, bool null) {
+    const uint64_t bit = uint64_t{1} << (i % 64);
+    if (null) list->pack->nulls[i / 64] |= bit;
+    else list->pack->nulls[i / 64] &= ~bit;
+}
+}  // namespace
+
+// How a list made to hold `item` keeps its items, and how wide each is.
+ListStore VM::storeFor(const ObjTypeInfo* item, uint32_t& width, ObjClass*& itemClass) {
+    itemClass = nullptr;
+    switch (item->id) {
+        case kTypeInt: width = 8; return ListStore::Ints;
+        case kTypeFloat: width = 8; return ListStore::Floats;
+        case kTypeBool: width = 1; return ListStore::Bools;
+        case kTypeInstance:
+            if (item->cls != nullptr && item->cls->isValue) {
+                itemClass = item->cls;
+                width = layoutOf(item->cls).size;
+                return ListStore::Items;
+            }
+            break;
+        default: break;
+    }
+    width = sizeof(Value);
+    return ListStore::Values;
+}
+
+// Gives a list the type it was made to hold, where it has none yet, and from then on keeps its
+// items as that type says: packed, for a list of values.
+void VM::typeList(ObjList* list, ObjTypeInfo* type) {
+    if (list->type != nullptr || type == nullptr || type->id != kTypeList || type->args.size() != 1) return;
+    list->type = type;
+    if (type->packs.load(std::memory_order_relaxed) == 0) return;  // as most lists: 16-byte values
+    uint32_t width = 0;
+    ObjClass* itemClass = nullptr;
+    const ListStore store = storeFor(type->args[0], width, itemClass);
+    type->packs.store(store == ListStore::Values ? 0 : 1, std::memory_order_relaxed);
+    if (store == ListStore::Values) return;
+    std::vector<Value> items = std::move(list->values());
+    list->values().clear();
+    list->values().shrink_to_fit();
+    list->pack = std::make_unique<PackedItems>();
+    list->pack->store = store;
+    list->pack->width = width;
+    list->pack->itemClass = itemClass;
+    list->pack->nullable = type->args[0]->nullable;
+    list->pack->count = 0;
+    // The items it was made with, checked and packed: a list that cannot hold one of them is
+    // an error where it is made.
+    TempRoot keep(*this, Value::object(list));
+    listInsert(list, 0, items.data(), items.size());
+}
+
+uint8_t* VM::itemAt(ObjList* list, size_t i) { return list->pack->block.data() + i * list->pack->width; }
+
+// Item `i` of a packed list (listGet takes the others itself). A value type's item is copied into a
+// box of its own.
+Value VM::packedGet(ObjList* list, size_t i) {
+    if (list->pack->nullable && nullAt(list, i)) return Value::null();
+    const uint8_t* at = itemAt(list, i);
+    switch (list->pack->store) {
+        case ListStore::Ints: {
+            int64_t v;
+            std::memcpy(&v, at, sizeof v);
+            return Value::integer(v);
+        }
+        case ListStore::Floats: {
+            double v;
+            std::memcpy(&v, at, sizeof v);
+            return Value::number(v);
+        }
+        case ListStore::Bools: return Value::boolean(*at != 0);
+        case ListStore::Items: {
+            ObjValue* box = newValue(list->pack->itemClass);
+            std::memcpy(box->data(), at, list->pack->width);
+            return Value::object(box);
+        }
+        default: return Value::null();
+    }
+}
+
+// Whether `v` may be an item of a packed list; an error saying why not, where it may not.
+void VM::checkItem(const ObjList* list, Value v) {
+    if (v.isNull() && list->pack->nullable) return;
+    bool fits = false;
+    switch (list->pack->store) {
+        case ListStore::Ints: fits = v.isInt(); break;
+        case ListStore::Floats: fits = v.isFloat(); break;
+        case ListStore::Bools: fits = v.isBool(); break;
+        case ListStore::Items: fits = v.isObjType(ObjType::Value) && asValue(v)->cls == list->pack->itemClass; break;
+        default: fits = true; break;
+    }
+    if (!fits)
+        throw runtimeError("cannot put a value of type " + typeName(v) + " in a " + typeInfoText(list->type) +
+                           ", which keeps only what it was made to hold");
+}
+
+// Writes `v`, already checked, as item `i` of a packed list.
+void VM::writeItem(ObjList* list, size_t i, Value v) {
+    uint8_t* at = itemAt(list, i);
+    if (list->pack->nullable) setNullAt(list, i, v.isNull());
+    if (v.isNull()) {
+        std::memset(at, 0, list->pack->width);
+        return;
+    }
+    switch (list->pack->store) {
+        case ListStore::Ints: std::memcpy(at, &v.as.i, 8); break;
+        case ListStore::Floats: std::memcpy(at, &v.as.d, 8); break;
+        case ListStore::Bools: *at = v.as.b ? 1 : 0; break;
+        case ListStore::Items: std::memcpy(at, asValue(v)->data(), list->pack->width); break;
+        default: break;
+    }
+}
+
+void VM::listSet(ObjList* list, size_t i, Value v) {
+    if (!list->packed()) {
+        list->values()[i] = v;
+        return;
+    }
+    checkItem(list, v);
+    writeItem(list, i, v);
+}
+
+// Puts `n` items at position `at`, moving those from there on along.
+void VM::listInsert(ObjList* list, size_t at, const Value* items, size_t n) {
+    if (!list->packed()) {
+        std::vector<Value>& values = list->values();
+        values.insert(values.begin() + static_cast<std::ptrdiff_t>(at), items, items + n);
+        account(n * sizeof(Value));
+        return;
+    }
+    for (size_t k = 0; k < n; k++) checkItem(list, items[k]);  // all of them, before anything changes
+    const size_t width = list->pack->width;
+    const size_t old = list->pack->count;
+    const size_t before = list->pack->block.capacity();
+    list->pack->block.resize((old + n) * width);
+    uint8_t* base = list->pack->block.data();
+    std::memmove(base + (at + n) * width, base + at * width, (old - at) * width);
+    if (list->pack->nullable) {
+        list->pack->nulls.resize((old + n + 63) / 64, 0);
+        for (size_t i = old; i-- > at;) setNullAt(list, i + n, nullAt(list, i));
+    }
+    list->pack->count = old + n;
+    for (size_t k = 0; k < n; k++) writeItem(list, at + k, items[k]);
+    if (list->pack->block.capacity() > before) account(list->pack->block.capacity() - before);
+}
+
+void VM::listAdd(ObjList* list, Value v) { listInsert(list, list->size(), &v, 1); }
+
+// Takes `n` items away from position `at`, moving those after it back.
+void VM::listErase(ObjList* list, size_t at, size_t n) {
+    if (!list->packed()) {
+        std::vector<Value>& values = list->values();
+        values.erase(values.begin() + static_cast<std::ptrdiff_t>(at), values.begin() + static_cast<std::ptrdiff_t>(at + n));
+        return;
+    }
+    const size_t width = list->pack->width;
+    uint8_t* base = list->pack->block.data();
+    std::memmove(base + at * width, base + (at + n) * width, (list->pack->count - at - n) * width);
+    if (list->pack->nullable)
+        for (size_t i = at; i + n < list->pack->count; i++) setNullAt(list, i, nullAt(list, i + n));
+    list->pack->count -= n;
+    list->pack->block.resize(list->pack->count * width);
+    if (list->pack->nullable) list->pack->nulls.resize((list->pack->count + 63) / 64);
+}
+
+void VM::listClear(ObjList* list) {
+    if (!list->packed()) {
+        list->values().clear();
+        return;
+    }
+    list->pack->count = 0;
+    list->pack->block.clear();
+    list->pack->nulls.clear();
+}
+
+// The items as 16-byte values, for what reads them so; the list itself is as it was.
+std::vector<Value> VM::listCopy(ObjList* list) {
+    if (!list->packed()) return list->values();
+    std::vector<Value> out;
+    out.reserve(list->pack->count);
+    for (size_t i = 0; i < list->pack->count; i++) out.push_back(listGet(list, i));
+    return out;
+}
+
+// A new list of the same type and store as `like`, with nothing in it.
+ObjList* VM::listLike(const ObjList* like) {
+    ObjList* list = alloc<ObjList>();
+    list->type = like->type;
+    if (like->packed()) {
+        list->pack = std::make_unique<PackedItems>();
+        list->pack->store = like->pack->store;
+        list->pack->width = like->pack->width;
+        list->pack->itemClass = like->pack->itemClass;
+        list->pack->nullable = like->pack->nullable;
+    }
+    return list;
+}
+
+// `count` items of `from`, from position `start`, put at the end of `to`, both of one store:
+// packed ones as one block of memory.
+void VM::listCopyRange(ObjList* to, const ObjList* from, size_t start, size_t count) {
+    if (!from->packed()) {
+        const std::vector<Value>& values = from->values();
+        to->values().insert(to->values().end(), values.begin() + static_cast<std::ptrdiff_t>(start),
+                            values.begin() + static_cast<std::ptrdiff_t>(start + count));
+        account(count * sizeof(Value));
+        return;
+    }
+    const size_t old = to->pack->count;
+    to->pack->block.resize((old + count) * to->pack->width);
+    std::memcpy(to->pack->block.data() + old * to->pack->width, from->pack->block.data() + start * from->pack->width, count * from->pack->width);
+    if (to->pack->nullable) {
+        to->pack->nulls.resize((old + count + 63) / 64, 0);
+        for (size_t i = 0; i < count; i++) setNullAt(to, old + i, nullAt(from, start + i));
+    }
+    to->pack->count = old + count;
+    account(count * to->pack->width);
+}
+
+// Two items of one list change places.
+void VM::listSwap(ObjList* list, size_t i, size_t j) {
+    if (!list->packed()) {
+        std::swap(list->values()[i], list->values()[j]);
+        return;
+    }
+    uint8_t tmp[64];
+    std::vector<uint8_t> big;
+    uint8_t* t = list->pack->width <= sizeof tmp ? tmp : (big.resize(list->pack->width), big.data());
+    std::memcpy(t, itemAt(list, i), list->pack->width);
+    std::memcpy(itemAt(list, i), itemAt(list, j), list->pack->width);
+    std::memcpy(itemAt(list, j), t, list->pack->width);
+    if (list->pack->nullable) {
+        const bool a = nullAt(list, i);
+        setNullAt(list, i, nullAt(list, j));
+        setNullAt(list, j, a);
+    }
+}
+
+// `pts.add(Point(1, 2))` (Op::AddNew): the value written straight into a new item at the end of
+// a list that keeps its items packed, its fields from the arguments, as Point(1, 2) would give
+// them; false, with nothing done, where that is not so and the call and the add follow.
+bool VM::addNew(int argc) {
+    Value* const args = sp_ - argc;
+    if (!args[-2].isObjType(ObjType::List) || !args[-1].isObjType(ObjType::Class)) return false;
+    ObjList* list = asList(args[-2]);
+    ObjClass* cls = asClass(args[-1]);
+    if (list->store() != ListStore::Items || list->pack->itemClass != cls || !cls->madeFromHeader ||
+        static_cast<size_t>(argc) != cls->components.size())
+        return false;
+    guardWrite(list);
+    if (cls->staticInit != nullptr) ensureClassInit(cls);
+    const ValueLayout& layout = layoutOf(cls);
+    // Made apart first, so that an argument of the wrong type leaves the list as it was.
+    uint8_t small[256];
+    std::vector<uint8_t> large;
+    uint8_t* item = layout.size <= sizeof small ? small : (large.resize(layout.size), large.data());
+    std::memset(item, 0, layout.size);
+    for (int k = 0; k < argc; k++) {
+        const ValueField& field = layout.fields[static_cast<size_t>(cls->declaredIndex.find(cls->components[static_cast<size_t>(k)])->as.i)];
+        writeValueField(item + field.offset, field, cls, args[k]);
+    }
+    PackedItems& pack = *list->pack;
+    const size_t before = pack.block.capacity();
+    pack.block.insert(pack.block.end(), item, item + layout.size);
+    if (pack.nullable) {
+        pack.nulls.resize((pack.count + 1 + 63) / 64, 0);
+        setNullAt(list, pack.count, false);
+    }
+    pack.count++;
+    if (pack.block.capacity() > before) account(pack.block.capacity() - before);
+    sp_ = args - 2;
+    *sp_++ = Value::boolean(true);
+    return true;
+}
+
+// Puts a list's items in the order `order` gives, the position each comes from: each item is
+// moved once, a packed one as its bytes.
+void VM::listArrange(ObjList* list, const std::vector<size_t>& order) {
+    if (!list->packed()) {
+        std::vector<Value> arranged;
+        arranged.reserve(order.size());
+        for (size_t from : order) arranged.push_back(list->values()[from]);
+        list->values() = std::move(arranged);
+        return;
+    }
+    PackedItems& pack = *list->pack;
+    std::vector<uint8_t> block(pack.block.size());
+    for (size_t i = 0; i < order.size(); i++)
+        std::memcpy(block.data() + i * pack.width, pack.block.data() + order[i] * pack.width, pack.width);
+    if (pack.nullable) {
+        std::vector<bool> nulls(order.size());
+        for (size_t i = 0; i < order.size(); i++) nulls[i] = nullAt(list, order[i]);
+        for (size_t i = 0; i < order.size(); i++) setNullAt(list, i, nulls[i]);
+    }
+    pack.block = std::move(block);
+}
+
+// The collector's view of a packed list of a value type that holds objects.
+void VM::markItems(ObjList* list) {
+    if (!list->packed() || list->pack->store != ListStore::Items) return;
+    const ValueLayout* layout = list->pack->itemClass->layout.load(std::memory_order_acquire);
+    markObject(list->pack->itemClass);
+    if (layout == nullptr || (layout->objects.empty() && layout->values.empty())) return;
+    for (size_t i = 0; i < list->pack->count; i++) {
+        const uint8_t* item = itemAt(list, i);
+        for (uint32_t offset : layout->objects) {
+            Obj* held;
+            std::memcpy(&held, item + offset, sizeof held);
+            markObject(held);
+        }
+        for (uint32_t offset : layout->values) {
+            Value held;
+            std::memcpy(&held, item + offset, sizeof held);
+            markValue(held);
+        }
+    }
+}
+
 bool VM::construct(ObjClass* cls, int argc, bool packed, const Value* captures, uint16_t captureCount) {
     if (cls->staticInit != nullptr) ensureClassInit(cls);  // an enum has its entries by now
     if (cls->isAbstract)
@@ -1879,6 +2522,21 @@ bool VM::construct(ObjClass* cls, int argc, bool packed, const Value* captures, 
                            "() cannot make another");
     // A generic class's type arguments, given by WithTypes: the object keeps its type.
     const ObjTypeInfo* typeArgs = std::exchange(pendingTypeArgs_, nullptr);
+    if (cls->isValue) {
+        // A value, in a box (M6.6 part 2): its fields are given their values, and then it never
+        // changes. (A generic value type's type arguments are not kept yet.)
+        ObjValue* box = newValue(cls);
+        sp_[-argc - 1] = Value::object(box);
+        box->constructing = true;
+        for (size_t i = 0; i < cls->fieldInits.size(); i++) callWithReceiver(Value::object(box), cls->fieldInits[i]);
+        if (cls->init != nullptr) {
+            callClosure(cls->init, argc, packed);
+            return true;
+        }
+        box->constructing = false;
+        if (argc != 0) throw runtimeError(cls->name->chars + "() takes no arguments but got " + std::to_string(argc));
+        return false;
+    }
     ObjInstance* instance = newInstance(cls, captureCount, typeArgs != nullptr);
     for (uint16_t i = 0; i < captureCount; i++) instance->fields()[instance->fieldCount + i] = captures[i];
     if (typeArgs != nullptr) instance->setType(typeOf(kTypeInstance, false, cls, typeArgs->args));
@@ -1968,8 +2626,8 @@ const Value* VM::superMethod(Value super, Value self, const ObjString* name) con
     if (super.isObjType(ObjType::Class)) {
         if (const Value* method = asClass(super)->methods.find(name)) return method;
     }
-    if (self.isObjType(ObjType::Instance)) {
-        for (const ObjClass* implemented : asInstance(self)->cls->interfaces)
+    if (const ObjClass* cls = classOf(self)) {
+        for (const ObjClass* implemented : cls->interfaces)
             if (const Value* method = implemented->methods.find(name)) return method;
     }
     return nullptr;
@@ -2009,7 +2667,7 @@ void VM::nameEntry(ObjInstance* entry, ObjString* name, int ordinal) {
 Value VM::makeEntry(Value key, Value value) {
     if (mapEntryClass_ == nullptr) {
         ObjList* pair = alloc<ObjList>();
-        pair->items = {key, value};
+        pair->values() = {key, value};
         return Value::object(pair);
     }
     ObjInstance* entry = newInstance(mapEntryClass_);
@@ -2030,31 +2688,31 @@ ObjTypeInfo* VM::mapPartType(const ObjMap* map, int part) {
 Value VM::mapEntries(ObjMap* map) {
     ObjTypeInfo* const type = mapPartType(map, 2);
     ObjList* list = alloc<ObjList>();
-    list->type = type;
     TempRoot keep(*this, Value::object(list));
     for (const ValueMap::Entry& entry : map->map.entries())
-        if (entry.live) list->items.push_back(makeEntry(entry.key, entry.value));
-    account(list->items.size() * sizeof(Value));
+        if (entry.live) list->values().push_back(makeEntry(entry.key, entry.value));
+    account(list->values().size() * sizeof(Value));
+    typeList(list, type);
     return Value::object(list);
 }
 
 Value VM::mapKeys(ObjMap* map) {
     ObjTypeInfo* const type = mapPartType(map, 0);
     ObjList* list = alloc<ObjList>();
-    list->type = type;
     for (const ValueMap::Entry& entry : map->map.entries())
-        if (entry.live) list->items.push_back(entry.key);
-    account(list->items.size() * sizeof(Value));
+        if (entry.live) list->values().push_back(entry.key);
+    account(list->values().size() * sizeof(Value));
+    typeList(list, type);
     return Value::object(list);
 }
 
 Value VM::mapValues(ObjMap* map) {
     ObjTypeInfo* const type = mapPartType(map, 1);
     ObjList* list = alloc<ObjList>();
-    list->type = type;
     for (const ValueMap::Entry& entry : map->map.entries())
-        if (entry.live) list->items.push_back(entry.value);
-    account(list->items.size() * sizeof(Value));
+        if (entry.live) list->values().push_back(entry.value);
+    account(list->values().size() * sizeof(Value));
+    typeList(list, type);
     return Value::object(list);
 }
 
@@ -2117,6 +2775,10 @@ void VM::assignStatic(ObjClass* cls, ObjString* name, Value value) {
 }
 
 void VM::setProperty(Value obj, ObjString* name, Value value) {
+    if (obj.isObjType(ObjType::Value)) {
+        setValueField(asValue(obj), name, value);  // only while it is being made
+        return;
+    }
     if (obj.isObjType(ObjType::Instance)) {
         ObjInstance* instance = asInstance(obj);
         guardWrite(instance);
@@ -2150,12 +2812,12 @@ Value VM::getIndex(Value obj, Value index) {
         guardRead(obj.as.obj);
         switch (obj.as.obj->type) {
             case ObjType::List: {
-                const std::vector<Value>& items = asList(obj)->items;
+                ObjList* list = asList(obj);
                 size_t i;
-                if (!resolveIndex(toInt(index, "list index"), items.size(), i))
+                if (!resolveIndex(toInt(index, "list index"), list->size(), i))
                     throw runtimeError("list index " + std::to_string(index.as.i) + " is out of range (length " +
-                                       std::to_string(items.size()) + ")");
-                return items[i];
+                                       std::to_string(list->size()) + ")");
+                return listGet(list, i);
             }
             case ObjType::String: {
                 // One character, wherever it is: positions count characters, not bytes.
@@ -2188,12 +2850,12 @@ Value VM::getIndex(Value obj, Value index) {
 void VM::setIndex(Value obj, Value index, Value value) {
     if (obj.isObjType(ObjType::List)) {
         guardWrite(obj.as.obj);
-        std::vector<Value>& items = asList(obj)->items;
+        ObjList* list = asList(obj);
         size_t i;
-        if (!resolveIndex(toInt(index, "list index"), items.size(), i))
+        if (!resolveIndex(toInt(index, "list index"), list->size(), i))
             throw runtimeError("list index " + std::to_string(index.as.i) + " is out of range (length " +
-                               std::to_string(items.size()) + ")");
-        items[i] = value;
+                               std::to_string(list->size()) + ")");
+        listSet(list, i, value);
     } else if (obj.isObjType(ObjType::Map)) {
         guardWrite(obj.as.obj);
         asMap(obj)->map.set(index, value);
@@ -2227,7 +2889,7 @@ bool VM::binarySlow(Op op) {
     guardRead(b);
     ObjString* symbol = opNames_[static_cast<int>(op)];
 
-    if (a.isObjType(ObjType::Instance)) {
+    if (classOf(a) != nullptr) {
         invokeOperator(a, symbol, 1);
         return true;
     }
@@ -2257,13 +2919,31 @@ bool VM::binarySlow(Op op) {
             return false;
         }
         if (a.isObjType(ObjType::List) && b.isObjType(ObjType::List)) {
-            ObjList* joined = alloc<ObjList>();
-            const std::vector<Value>& left = asList(a)->items;
-            const std::vector<Value>& right = asList(b)->items;
-            joined->items.reserve(left.size() + right.size());
-            joined->items.insert(joined->items.end(), left.begin(), left.end());
-            joined->items.insert(joined->items.end(), right.begin(), right.end());
-            account(joined->items.size() * sizeof(Value));
+            ObjList* left = asList(a);
+            ObjList* right = asList(b);
+            ObjList* joined;
+            if (!left->packed() && !right->packed()) {
+                // Two lists of 16-byte values, as most are: their items one after the other.
+                joined = alloc<ObjList>();
+                std::vector<Value>& items = joined->values();
+                items.reserve(left->size() + right->size());
+                items.insert(items.end(), left->values().begin(), left->values().end());
+                items.insert(items.end(), right->values().begin(), right->values().end());
+                account(items.size() * sizeof(Value));
+                if (left->type == right->type) joined->type = left->type;
+            } else if (left->type != nullptr && left->type == right->type) {
+                // Two lists of one type: one of that type, packed as they are.
+                joined = listLike(left);
+                listCopyRange(joined, left, 0, left->size());
+                listCopyRange(joined, right, 0, right->size());
+            } else {
+                joined = alloc<ObjList>();
+                std::vector<Value>& items = joined->values();
+                items = listCopy(left);
+                const std::vector<Value> more = listCopy(right);
+                items.insert(items.end(), more.begin(), more.end());
+                account(items.size() * sizeof(Value));
+            }
             sp_[-2] = Value::object(joined);
             sp_--;
             return false;
@@ -2279,7 +2959,7 @@ bool VM::compareSlow(Op op) {
     guardRead(b);
     ObjString* symbol = opNames_[static_cast<int>(op)];
 
-    if (a.isObjType(ObjType::Instance)) {
+    if (classOf(a) != nullptr) {
         invokeOperator(a, symbol, 1);
         return true;
     }
@@ -2314,7 +2994,7 @@ bool VM::matchesType(const Value& v, uint8_t type, const ObjClass* cls) const {
         case kTypeFunction:
             return v.isObjType(ObjType::Closure) || v.isObjType(ObjType::Native) ||
                    v.isObjType(ObjType::BoundMethod) || v.isObjType(ObjType::BoundNative);
-        case kTypeInstance: return v.isObjType(ObjType::Instance) && asInstance(v)->cls->isSubclassOf(cls);
+        case kTypeInstance: return classOf(v) != nullptr && classOf(v)->isSubclassOf(cls);
         default: return false;
     }
 }
@@ -2387,14 +3067,15 @@ Value VM::makeIterator(Value iterable) {
                 it->remaining = asRange(iterable)->count();
                 return Value::object(it);
             }
-            case ObjType::Instance: {
+            case ObjType::Instance:
+            case ObjType::Value: {
                 // An object can be looped over if it has an iterator() that gives something
                 // that can: a list, say, of what it holds.
-                const Value* method = asInstance(iterable)->cls->methods.find(names.iterator);
+                const Value* method = classOf(iterable)->methods.find(names.iterator);
                 if (method == nullptr) break;
                 TempRoot bound(*this, Value::object(alloc<ObjBoundMethod>(iterable, asClosure(*method))));
                 Value inner = call(bound.get(), 0, nullptr);
-                if (inner.isObjType(ObjType::Instance))
+                if (classOf(inner) != nullptr)
                     throw runtimeError("iterator() of " + typeName(iterable) + " has to give a list or another built-in collection");
                 TempRoot keep(*this, inner);
                 return makeIterator(inner);
@@ -2410,9 +3091,9 @@ bool VM::iteratorNext(ObjIterator* it, Value& out) {
     Value source = it->source;
     switch (source.as.obj->type) {
         case ObjType::List: {
-            const std::vector<Value>& items = asList(source)->items;
-            if (it->index >= items.size()) return false;
-            out = items[it->index++];
+            ObjList* list = asList(source);
+            if (it->index >= list->size()) return false;
+            out = listGet(list, it->index++);
             return true;
         }
         case ObjType::Bytes: {
@@ -2601,11 +3282,11 @@ void VM::run(int baseFrame) {
             const Value target_ = (target);                                                      \
             const FunctionProto* const proto_ = frame->closure->proto;                           \
             const bool own_ = !(checked) ||                                                      \
-                              (target_.isObjType(ObjType::Instance) &&                           \
-                               ((asInstance(target_)->cls->accessBits >> (name->hash & 63) & 1) == 0 || \
-                                (asInstance(target_)->cls->number == proto_->ownClass &&         \
-                                 (asInstance(target_)->cls->accessAllOwn ||                      \
-                                  (asInstance(target_)->cls->accessSharedOwn && (name->restricted & 4) == 0))))); \
+                              (classOf(target_) != nullptr &&                                    \
+                               ((classOf(target_)->accessBits >> (name->hash & 63) & 1) == 0 ||  \
+                                (classOf(target_)->number == proto_->ownClass &&                 \
+                                 (classOf(target_)->accessAllOwn ||                              \
+                                  (classOf(target_)->accessSharedOwn && (name->restricted & 4) == 0))))); \
             if (!own_ && accessDenied(target_, name, proto_, (write))) {                         \
                 SAVE_IP();                                                                       \
                 throw accessError(target_, name, proto_);                                        \
@@ -3154,6 +3835,22 @@ void VM::run(int baseFrame) {
                                     continue;
                                 }
                             }
+                        } else if (sp[-1].isObjType(ObjType::Value) && caches != nullptr) {
+                            // A field of a value, where this place found it before (M6.6 part 2).
+                            const ObjValue* box = asValue(sp[-1]);
+                            const uint64_t seen = caches[FAST_U16(2)].load(std::memory_order_relaxed);
+                            if (static_cast<uint32_t>(seen >> 32) == box->cls->shape) {
+                                const ValueField& field = box->cls->layout.load(std::memory_order_relaxed)->fields[(seen >> 16) & 0xFFFF];
+                                if (field.kind == ValueField::Nested) {
+                                    Value read;
+                                    ip = readThrough(box->data() + field.offset, &field, ip + 4, consts, read);
+                                    sp[-1] = read;
+                                    continue;
+                                }
+                                sp[-1] = readValueField(box->data() + field.offset, field);
+                                ip += 4;
+                                continue;
+                            }
                         }
                         const bool own = static_cast<Op>(ip[-1]) == Op::GetOwn;
                         ObjString* name = asString(consts[READ_U16()]);
@@ -3179,6 +3876,24 @@ void VM::run(int baseFrame) {
                                     LOAD_FRAME();
                                     break;
                                 }
+                            }
+                        } else if (obj.isObjType(ObjType::Value)) {
+                            ObjValue* box = asValue(obj);
+                            const int64_t at = valueFieldIndex(box, name);
+                            if (at >= 0) {
+                                const ValueField& field = layoutOf(box->cls).fields[static_cast<size_t>(at)];
+                                if (field.kind == ValueField::Nested) ip = readThrough(box->data() + field.offset, &field, ip, consts, sp_[-1]);
+                                else sp_[-1] = readValueField(box->data() + field.offset, field);
+                                if (caches != nullptr && at <= 0xFFFF)
+                                    caches[cache].store(static_cast<uint64_t>(box->cls->shape) << 32 | static_cast<uint64_t>(at) << 16,
+                                                        std::memory_order_relaxed);
+                                break;
+                            }
+                            if (const Value* getter = box->cls->getters.find(name)) {
+                                SAVE_IP();
+                                callClosure(asClosure(*getter), 0);
+                                LOAD_FRAME();
+                                break;
                             }
                         }
                         sp_[-1] = getProperty(obj, name);
@@ -3244,11 +3959,28 @@ void VM::run(int baseFrame) {
 
                     case Op::GetIndex: {
                         Value index = sp_[-1], obj = sp_[-2];
-                        if (obj.isObjType(ObjType::Instance)) {
+                        if (classOf(obj) != nullptr) {
                             SAVE_IP();
                             invokeOperator(obj, names.opIndex, 1);
                             LOAD_FRAME();
                             break;
+                        }
+                        if (obj.isObjType(ObjType::List) && asList(obj)->store() == ListStore::Items && index.isInt()) {
+                            // An item of a list of values (M6.6 part 3): read with one of its fields
+                            // at once, `pts[i].x`, the field is read where it is; otherwise a copy.
+                            ObjList* list = asList(obj);
+                            size_t i;
+                            if (resolveIndex(index.as.i, list->size(), i) && !(list->pack->nullable && list->pack->nulls[i / 64] >> (i % 64) & 1)) {
+                                guardRead(obj.as.obj);
+                                ValueField whole;
+                                whole.kind = ValueField::Nested;
+                                whole.cls = list->pack->itemClass;
+                                Value read;
+                                ip = readThrough(itemAt(list, i), &whole, ip, consts, read);
+                                sp_[-2] = read;
+                                sp_--;
+                                break;
+                            }
                         }
                         sp_[-2] = getIndex(obj, index);
                         sp_--;
@@ -3256,7 +3988,7 @@ void VM::run(int baseFrame) {
                     }
                     case Op::SetIndex: {
                         Value value = sp_[-1], index = sp_[-2], obj = sp_[-3];
-                        if (obj.isObjType(ObjType::Instance)) {
+                        if (classOf(obj) != nullptr) {
                             SAVE_IP();
                             invokeOperator(obj, names.opIndexSet, 2);
                             LOAD_FRAME();
@@ -3495,7 +4227,7 @@ void VM::run(int baseFrame) {
                         Value a = sp_[-1];
                         if (a.isInt()) {
                             sp_[-1] = Value::integer(~a.as.i);
-                        } else if (a.isObjType(ObjType::Instance)) {
+                        } else if (classOf(a) != nullptr) {
                             SAVE_IP();
                             invokeOperator(a, names.opBitNot, 0);
                             LOAD_FRAME();
@@ -3511,7 +4243,7 @@ void VM::run(int baseFrame) {
                             sp_[-1] = Value::integer(static_cast<int64_t>(0 - static_cast<uint64_t>(a.as.i)));
                         } else if (a.isFloat()) {
                             sp_[-1] = Value::number(-a.as.d);
-                        } else if (a.isObjType(ObjType::Instance)) {
+                        } else if (classOf(a) != nullptr) {
                             SAVE_IP();
                             invokeOperator(a, names.opNeg, 0);
                             LOAD_FRAME();
@@ -3527,7 +4259,7 @@ void VM::run(int baseFrame) {
                     case Op::Eq:
                     plainEq: {
                         Value b = sp_[-1], a = sp_[-2];
-                        if (a.isObjType(ObjType::Instance) && asInstance(a)->cls->methods.find(names.opEq) != nullptr) {
+                        if (const ObjClass* k = classOf(a); k != nullptr && k->methods.find(names.opEq) != nullptr) {
                             SAVE_IP();
                             invokeOperator(a, names.opEq, 1);
                             LOAD_FRAME();
@@ -3550,7 +4282,13 @@ void VM::run(int baseFrame) {
                         // apart from their value.
                         Value b = sp_[-1], a = sp_[-2];
                         const bool objects = a.isObj() && b.isObj() && !a.isString();
-                        sp_[-2] = Value::boolean(objects ? a.as.obj == b.as.obj : valuesEqual(a, b));
+                        // Nor has a value (M6.6 part 2): two of the same fields are the same.
+                        if (objects && a.isObjType(ObjType::Value) && b.isObjType(ObjType::Value)) {
+                            SAVE_IP();
+                            sp_[-2] = Value::boolean(a.as.obj == b.as.obj || valuesSame(asValue(a), asValue(b), 0));
+                        } else {
+                            sp_[-2] = Value::boolean(objects ? a.as.obj == b.as.obj : valuesEqual(a, b));
+                        }
                         sp_--;
                         break;
                     }
@@ -3575,8 +4313,7 @@ void VM::run(int baseFrame) {
                         Value type = *--sp_;
                         if (!type.isObjType(ObjType::Class)) throw runtimeError("right operand of 'is' must be a class");
                         Value value = sp_[-1];
-                        sp_[-1] = Value::boolean(value.isObjType(ObjType::Instance) &&
-                                                 asInstance(value)->cls->isSubclassOf(asClass(type)));
+                        sp_[-1] = Value::boolean(classOf(value) != nullptr && classOf(value)->isSubclassOf(asClass(type)));
                         break;
                     }
 
@@ -3680,9 +4417,8 @@ void VM::run(int baseFrame) {
                             throw runtimeError("'*' in a call needs a list to spread, not a value of type " + typeName(added));
                         ObjList* list = asList(sp_[-1]);
                         guardRead(added);
-                        const std::vector<Value>& items = asList(added)->items;
-                        list->items.insert(list->items.end(), items.begin(), items.end());
-                        account(items.size() * sizeof(Value));
+                        const std::vector<Value> items = listCopy(asList(added));
+                        listInsert(list, list->size(), items.data(), items.size());
                         break;
                     }
                     case Op::CallSpread: {
@@ -3702,6 +4438,13 @@ void VM::run(int baseFrame) {
                                 (instance->core == 0 || instance->core == coreId_)) {
                                 if (const Value* method = instance->cls->methods.find(name)) QUICK_CALL(asClosure(*method), ip[2], 3)
                             }
+                        } else if (sp[-ip[2] - 1].isObjType(ObjType::Value)) {
+                            // A method of a value's type (M6.6 part 2): a value never changes, so
+                            // any core may run one on it.
+                            const ObjValue* box = asValue(sp[-ip[2] - 1]);
+                            const ObjString* name = asString(consts[FAST_U16(0)]);
+                            if ((name->restricted & 1) == 0 || static_cast<Op>(ip[-1]) == Op::InvokeOwn)
+                                if (const Value* method = box->cls->methods.find(name)) QUICK_CALL(asClosure(*method), ip[2], 3)
                         }
                         ObjString* name = asString(consts[READ_U16()]);
                         int argc = READ_U8();
@@ -3864,6 +4607,8 @@ void VM::run(int baseFrame) {
                         // The object is made once its own class's initializer has returned.
                         if (base[0].isObjType(ObjType::Instance) && asInstance(base[0])->cls->init == frame->closure)
                             asInstance(base[0])->constructing = false;
+                        else if (base[0].isObjType(ObjType::Value) && asValue(base[0])->cls->init == frame->closure)
+                            asValue(base[0])->constructing = false;  // and from now on never changes
                         // Slot 0 is the new instance: its required fields must be set by now.
                         if (base[0].isObjType(ObjType::Instance) && asInstance(base[0])->cls->anyRequired) {
                             SAVE_IP();
@@ -3916,6 +4661,12 @@ void VM::run(int baseFrame) {
                             ObjClass* type = asClass(types[i]);
                             if (type->isInterface) continue;
                             if (type->isEnum) throw runtimeError("cannot inherit from enum " + type->name->chars);
+                            if (type->isValue)
+                                throw runtimeError("'" + subclass->name->chars + "' cannot extend value '" + type->name->chars +
+                                                   "': a value type has no subclasses");
+                            if (subclass->isValue)
+                                throw runtimeError("value '" + subclass->name->chars + "' cannot extend class '" + type->name->chars +
+                                                   "': a value type may only implement interfaces");
                             if (subclass->isInterface)
                                 throw runtimeError("interface " + subclass->name->chars + " cannot extend class " + type->name->chars);
                             if (superclass != nullptr)
@@ -4007,12 +4758,12 @@ void VM::run(int baseFrame) {
                         static const char* const kOrdinals[] = {"first", "second", "third", "fourth", "fifth"};
                         const std::string which = index < 5 ? kOrdinals[index] : std::to_string(index + 1) + "th";
                         if (whole.isObjType(ObjType::List)) {
-                            const std::vector<Value>& items = asList(whole)->items;
-                            if (index >= items.size())
-                                throw runtimeError("cannot take a " + which + " part from a list of " + std::to_string(items.size()));
-                            sp_[-1] = items[index];
-                        } else if (whole.isObjType(ObjType::Instance) && asInstance(whole)->cls->isData) {
-                            const ObjClass* cls = asInstance(whole)->cls;
+                            ObjList* list = asList(whole);
+                            if (index >= list->size())
+                                throw runtimeError("cannot take a " + which + " part from a list of " + std::to_string(list->size()));
+                            sp_[-1] = listGet(list, index);
+                        } else if (classOf(whole) != nullptr && classOf(whole)->isData) {
+                            const ObjClass* cls = classOf(whole);
                             if (index >= cls->components.size())
                                 throw runtimeError("cannot take a " + which + " part from " + cls->name->chars + ", which has " +
                                                    std::to_string(cls->components.size()));
@@ -4064,6 +4815,19 @@ void VM::run(int baseFrame) {
                         if (!sp_[-1].isObjType(ObjType::Class)) throw runtimeError("invalid class declaration");
                         asClass(sp_[-1])->isAbstract = true;
                         break;
+                    case Op::MarkValue: {
+                        const bool fromHeader = READ_U8() != 0;
+                        if (!sp_[-1].isObjType(ObjType::Class)) throw runtimeError("invalid class declaration");
+                        asClass(sp_[-1])->isValue = true;
+                        asClass(sp_[-1])->madeFromHeader = fromHeader;
+                        break;
+                    }
+                    case Op::AddNew: {
+                        const int argc = READ_U8();
+                        const int target = READ_I32();
+                        if (addNew(argc)) ip = code + target;
+                        break;
+                    }
                     case Op::CheckOverride: {
                         ObjString* name = asString(consts[READ_U16()]);
                         if (!sp_[-1].isObjType(ObjType::Class)) throw runtimeError("invalid class declaration");
@@ -4254,7 +5018,7 @@ void VM::run(int baseFrame) {
                         if (!entry.isObjType(ObjType::Instance) || asInstance(entry)->cls != cls || !list->isObjType(ObjType::List))
                             throw runtimeError("invalid enum declaration");
                         nameEntry(asInstance(entry), name, ordinal);
-                        asList(*list)->items.push_back(entry);
+                        listAdd(asList(*list), entry);
                         declare(name, entry);
                         sp_--;
                         break;
@@ -4356,7 +5120,7 @@ void VM::run(int baseFrame) {
                     case Op::BuildList: {
                         int count = READ_U16();
                         ObjList* list = alloc<ObjList>();
-                        list->items.assign(sp_ - count, sp_);
+                        list->values().assign(sp_ - count, sp_);
                         account(static_cast<size_t>(count) * sizeof(Value));
                         sp_ -= count;
                         *sp_++ = Value::object(list);
@@ -4372,7 +5136,11 @@ void VM::run(int baseFrame) {
                         }
                         ObjTypeInfo* const type = reinterpret_cast<ObjTypeInfo*>(static_cast<uintptr_t>(kept));
                         const Value made = sp_[-1];
-                        if (made.isObjType(ObjType::List) && type->id == kTypeList && asList(made)->type == nullptr) asList(made)->type = type;
+                        if (made.isObjType(ObjType::List)) {
+                            ObjList* const list = asList(made);
+                            if (list->type == nullptr && type->packs.load(std::memory_order_relaxed) == 0) list->type = type;
+                            else typeList(list, type);
+                        }
                         else if (made.isObjType(ObjType::Map) && type->id == kTypeMap && asMap(made)->type == nullptr) asMap(made)->type = type;
                         ip = code + FAST_I32(2);
                         break;
@@ -4473,8 +5241,8 @@ void VM::run(int baseFrame) {
                                 }
                                 continue;
                             }
-                            if (source->type == ObjType::List) {
-                                const std::vector<Value>& items = static_cast<const ObjList*>(source)->items;
+                            if (source->type == ObjType::List && !static_cast<const ObjList*>(source)->packed()) {
+                                const std::vector<Value>& items = static_cast<const ObjList*>(source)->values();
                                 if (it->index < items.size()) {
                                     *sp++ = items[it->index++];
                                     ip += 6;
@@ -4599,7 +5367,7 @@ const uint8_t* VM::typeInstruction(Op op, const uint8_t* ip, CallFrame* frame) {
             const Value made = sp_[-2];
             // What it was made to hold, said once: a list a C++ function gave with a type of
             // its own keeps it.
-            if (made.isObjType(ObjType::List) && type->id == kTypeList && asList(made)->type == nullptr) asList(made)->type = type;
+            if (made.isObjType(ObjType::List)) typeList(asList(made), type);
             else if (made.isObjType(ObjType::Map) && type->id == kTypeMap && asMap(made)->type == nullptr) asMap(made)->type = type;
             sp_--;
             break;
@@ -4712,9 +5480,10 @@ void VM::stringifyInto(std::string& out, Value v, bool quote, int depth) {
             ObjList* list = asList(v);
             out += '[';
             // Indexed and re-checked each time round: a toString() may change the list.
-            for (size_t i = 0; i < list->items.size(); i++) {
+            for (size_t i = 0; i < list->size(); i++) {
                 if (i > 0) out += ", ";
-                Value item = list->items[i];
+                const Value item = listGet(list, i);
+                TempRoot keep(*this, item);
                 stringifyInto(out, item, true, depth + 1);
             }
             out += ']';
@@ -4779,6 +5548,38 @@ void VM::stringifyInto(std::string& out, Value v, bool quote, int depth) {
             out += "<class " + asClass(v)->name->chars + ">";
             return;
 
+        case ObjType::Value: {
+            // A value prints as a data object does, Point(x=1, y=2), unless it says otherwise.
+            ObjValue* box = asValue(v);
+            const Value* method = box->cls->methods.find(names.toString);
+            if (method != nullptr && asClosure(*method)->proto->arity == 0) {
+                Value result = callWithReceiver(v, asClosure(*method));
+                if (result.isString()) {
+                    out += asString(result)->chars;
+                } else {
+                    TempRoot root(*this, result);
+                    stringifyInto(out, result, false, depth + 1);
+                }
+                return;
+            }
+            out += box->cls->name->chars + "(";
+            if (depth > 20) {
+                out += "...)";
+                return;
+            }
+            bool first = true;
+            for (ObjString* part : box->cls->components) {
+                if (!first) out += ", ";
+                first = false;
+                out += part->chars + "=";
+                const int64_t at = valueFieldIndex(box, part);
+                const Value field = at >= 0 ? valueField(box, static_cast<size_t>(at)) : Value::null();
+                TempRoot keep(*this, field);
+                stringifyInto(out, field, true, depth + 1);
+            }
+            out += ")";
+            return;
+        }
         case ObjType::Instance: {
             ObjInstance* instance = asInstance(v);
             const Value* method = instance->cls->methods.find(names.toString);
@@ -4927,8 +5728,11 @@ void VM::blacken(Obj* obj) {
             break;
         case ObjType::List: {
             ObjList* list = static_cast<ObjList*>(obj);
-            liveBytes_ += sizeof(ObjList) + list->items.capacity() * sizeof(Value);
-            for (const Value& item : list->items) markValue(item);
+            liveBytes_ += sizeof(ObjList) + list->values().capacity() * sizeof(Value);
+            if (list->packed())
+                liveBytes_ += sizeof(PackedItems) + list->pack->block.capacity() + list->pack->nulls.capacity() * sizeof(uint64_t);
+            for (const Value& item : list->values()) markValue(item);
+            markItems(list);
             break;
         }
         case ObjType::Map: {
@@ -5022,6 +5826,25 @@ void VM::blacken(Obj* obj) {
             }
             liveBytes_ += cls->staticDeclared.capacity() * sizeof(FieldDecl);
             liveBytes_ += cls->declared.capacity() * sizeof(FieldDecl) + cls->fieldInits.capacity() * sizeof(ObjClosure*);
+            break;
+        }
+        case ObjType::Value: {
+            // What a value holds of other objects, where its type's layout says.
+            ObjValue* box = static_cast<ObjValue*>(obj);
+            markObject(box->cls);
+            const ValueLayout* layout = box->cls->layout.load(std::memory_order_acquire);
+            liveBytes_ += sizeof(ObjValue) + (layout != nullptr ? layout->size : 0);
+            if (layout == nullptr) break;
+            for (uint32_t offset : layout->objects) {
+                Obj* held;
+                std::memcpy(&held, box->data() + offset, sizeof held);
+                markObject(held);
+            }
+            for (uint32_t offset : layout->values) {
+                Value held;
+                std::memcpy(&held, box->data() + offset, sizeof held);
+                markValue(held);
+            }
             break;
         }
         case ObjType::Instance: {
