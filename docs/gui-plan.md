@@ -1618,6 +1618,22 @@ frame, and Jade's layout with `bounds` and `Sizes` inside their components, each
 against today, and the suite under the sanitizer and the stress settings, with a new setting
 that makes every read from a list of values a copy.
 
+Part 1 (built 2026-10-18): generic types kept when the program runs and the C++ functions'
+results checked, as D162 to D164 propose. Left for later, each known and tested around:
+- A generic local function written inside another generic function sees the outer one's type
+  parameters as `any` (its frame has its own type arguments, not the outer's).
+- `object : Holder<T> { }`, an anonymous object with a supertype that has type arguments, does
+  not parse yet: the look-ahead after `object :` does not skip `<...>`. When it does, the
+  anonymous class, made once, would keep the type arguments of the first call that made it;
+  a type parameter of the code around must make the class be made every time, as a variable
+  of the code around does.
+- A type parameter passed on (`isA<T>(x)` inside a generic function) has its type arguments
+  looked up in the table of types on every call, under a lock on the cores. Cheap, but it can
+  be cut (passing the frame's own when they are the same) if it shows in timings.
+- Code placement moves the `fields` benchmark by 10 to 20% under MSVC with the same loop:
+  compare against a baseline built the same way, and count instructions, before calling a
+  change slower.
+
 The second half builds, on M6.5's checker, the language choices decided in
 [language-choices.html](language-choices.html) (section 8): `byte`, with unsigned reads from `bytes` (D19); `>>>` and the unsigned helpers (D44); strings kept at
 flexible width (D20); `char` and how it adds to strings, `'c' == "c"` (D24, D25); `op ==` with
@@ -1955,18 +1971,26 @@ font metrics will need new numbers: no other font engine measures text exactly a
 | D159 | Assigning to the name of a function. | A compile error, as in Kotlin (2026-10-18): `fun area() : int` cannot be given another value, `area = { ... }` or `area += 1`; the error says to keep a function that changes in a `var` of a function type. A call of a function declared once with a return type then gives that type, so the compiler leaves out checks of values it has proved (M6.5 part 4). |
 | D160 | How the VM goes from one instruction to the next. | Decided 2026-10-18, from a measurement on M6.5 part 4's numeric loop with the instructions astra.exe emits (Clang 19, against one switch at 183 ms): a computed `goto` at the end of each instruction, through a table 108 ms, with the code threaded 103 ms; a tail call from each instruction's function 134 ms, threaded 128. Built with Clang (the one in Visual Studio), each instruction ends with its own computed `goto`, and a program's code is threaded when it is loaded: each opcode replaced by the address of its instruction's code, the operands as they are. Neither the executable nor bytecode files change (the addresses differ from run to run); the code held while running is about three times as large, some 1 MB for a program of 19,000 lines. Built with MSVC, which has no computed `goto`, the same instructions, each written once, are the cases of a switch. Built in M6.7, with the VM's loop rewritten. |
 | D161 | How a built program leaves out the compiler. | Decided 2026-10-18, at the user's question whether the bases could be kept in `astra.exe` with nothing in it twice: one `astra.exe`, its code in sections, those a running program never needs (the compiler, checker, parser, lexer, cache, shell; the standard library's source text; Jade's window, drawing and the text engine) each in a section of its own. `astra build` writes a copy without the sections the program does not need, the space they took kept empty so that no other address moves, and then the program. The build proves the rest needs nothing left out by linking it once more on its own; the tests run as programs built this way. In place of separate base executables beside `astra.exe` (2.7 MB more for every install, the common parts three times) or the compiler in a DLL (two files, and Jade could not be left out the same way). Built in M6.5 part 5. |
+| D162 | The type of `items.itemType`. | Proposed 2026-10-18 (M6.6 part 1), to be confirmed: a built-in type `Type`, a type as the program runs. `items.itemType`, `map.keyType` and `map.valueType` give one (`any` for a collection made without its type); it prints as written (`List<int>`), two are `==` when they are the same type, and `x is Type` tests for one. |
+| D163 | How the C++ functions' results are checked. | Proposed 2026-10-18 (M6.6 part 1), to be confirmed: by a test setting, not on every call. `ASTRA_CHECK_NATIVE_RESULTS=1` compiles a check after every call of an `external` function against its declaration (the standard library compiled from its source, compiled programs kept apart); the suite passes with it, and each checkpoint runs it beside the GC and thread stress settings. The C++ is fixed code, so the suite proves its declarations once, and the compiler may then trust them when the program runs. A list or map a C++ function gives is always tagged at the call with the type the checker worked out, where it has none. |
+| D164 | What checking the C++ results changed. | Proposed 2026-10-18 (M6.6 part 1), to be confirmed. The coerce functions give one of their numbers as it was, so `float.coerceIn(Number, Number)` and the like say `Number`, with forms for all ints and all floats that say `int` and `float`. A type parameter that the object a call is made on says nothing of (a `Map` written without type arguments) is unknown, not taken from the arguments: `data.get(key, "missing")` is not a `string?` there. `Deque.toList` builds a `List<T>` rather than casting its `List<T?>`, and `Set ==` gives false for a set of other things rather than failing at a cast, now that casts are checked in full. |
 | | How files are loaded under namespaces. | Importing a folder loads every `.astra` file directly in it, as one unit. Importing a file loads that file only, into its folder's namespace (5.1). |
 | | A lambda's parameter list over several lines. | Allowed, as in Kotlin (5.1). |
 
 ### Open
 
-Two. The first is for the user to decide during M6.5; the second is left for the milestone
-that raises it. (The measuring rule on scaled displays, open earlier, was settled in M4:
+Four. The language choices, all decided since; two from M6.6 for the user to answer; and one
+left for the milestone that raises it. (The measuring rule on scaled displays, open earlier, was settled in M4:
 section 4, point 8.)
 
 - **The language choices Kotlin made for the JVM** (L0 to L117 in
   [language-choices.html](language-choices.html)), written during M6.5 for the user to decide.
   Decided: D19 to D157. Every choice is decided.
+- **M6.6 part 1's proposals**, D162 to D164: the built-in type `Type`, the C++ results
+  checked by a test setting, and what that check changed in the standard library.
+- **The largest value type** (value-lists.html): decided "any, up to 64 KB"; offered on
+  2026-10-18, not yet answered, is "any size, with a copy on read past 64 KB", the limit
+  coming only from the 16-bit offset in a reference into a list item.
 - **How JadeMem's real sampling is done** (M8): on sample data, or through a way for Astra
   to call Windows system functions, which this plan does not size.
 
