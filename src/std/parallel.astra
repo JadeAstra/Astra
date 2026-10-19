@@ -31,6 +31,13 @@ class ParallelStream<T> {
     __parallel.run(items, action, false)
   }
 
+  // Each item replaced by what the function gives for it, the items dealt out to the cores. An item
+  // of a list of values is where its result goes: balls.parallelStream().replaceAll { it.moved() }
+  // builds each new ball where the old one was, with nothing made on the side.
+  fun replaceAll(transform : (T) -> T) {
+    __parallel.replace(items, transform)
+  }
+
   // What the function gives for each item, in the order of the items, as a stream to go on from.
   fun <R> map(transform : (T) -> R) : ParallelStream<R> => ParallelStream<R>(__parallel.run(items, transform, true))
 

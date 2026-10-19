@@ -250,6 +250,7 @@ struct ClassState {
     FunctionState* definedIn = nullptr;
     bool inStaticInit = false;  // the value of a static field is being compiled
     bool isEnum = false;
+    bool isValue = false;  // a value type (M6.6 part 2)
     std::vector<std::string> typeParams;  // a generic class's, which each of its objects keeps (M6.6 part 1)
 
     // Fields whose initial values the generated initializer assigns, after the header's
@@ -271,6 +272,14 @@ bool checkingNativeResults() {
         return set != nullptr && *set != '0' && *set != '\0';
     }();
     return checking;
+}
+
+bool copyingReads() {
+    static const bool copying = [] {
+        const char* set = std::getenv("ASTRA_COPY_READS");
+        return set != nullptr && *set != '\0' && *set != '0';
+    }();
+    return copying;
 }
 
 bool readFile(const std::string& path, std::string& out) {
@@ -1951,6 +1960,24 @@ private:
     // A call of a generic function or class written in Astra: its type arguments, as the
     // checker worked them out, given to it by WithTypes right before the call. Each emitter of
     // a call instruction calls this after the arguments.
+    // The call a function returns the result of, which it passes where its own result goes; and
+    // the call whose result goes to the place just under it (`pts[i] = f(...)`).
+    const CallExpr* tailCall_ = nullptr;
+    const CallExpr* destinationCall_ = nullptr;
+
+    // Right before a call: where its result goes, if anywhere (M6.6 part 4), and its type
+    // arguments. `above` is how many slots the call takes, the callee or object and the arguments;
+    // -1 where that is not so simply told.
+    void emitCallPrelude(const CallExpr& call, int above) {
+        if (&call == tailCall_) {
+            emit(Op::WithFrameDestination);
+        } else if (&call == destinationCall_ && above >= 0 && above <= 0xFF) {
+            emit(Op::WithDestinationAt);
+            emitByte(above);
+        }
+        emitTypeArguments(call);
+    }
+
     void emitTypeArguments(const CallExpr& call) {
         std::vector<RuntimeType> args;
         if (session_.checker == nullptr || !session_.checker->typeArguments(call, args) || args.empty() || args.size() > 9) return;
@@ -2358,7 +2385,13 @@ private:
                     if (s.value) throw error(s, "cannot return a value from a setter");
                     emit(Op::GetLocal, 1);
                 } else if (s.value) {
+                    // A function given where its result goes passes that on to a call it returns
+                    // the result of (M6.6 part 4).
+                    const CallExpr* savedTail = tailCall_;
+                    if ((fs_->proto->typeArgs & kTakesDestination) != 0 && s.value->kind == ExprKind::Call)
+                        tailCall_ = static_cast<const CallExpr*>(s.value.get());
                     compileExprFor(*s.value, fs_->returnType);
+                    tailCall_ = savedTail;
                     line_ = s.line;
                     emitReturnCheck(staticTypeOf(*s.value), *s.value, s.value.get());
                 } else {
@@ -2788,7 +2821,10 @@ private:
         loop.label = s.label;
         fs_->loop = &loop;
         line_ = s.line;
-        emit(counted ? Op::RangeNext : Op::IterNext, slotOf(iteratorSlot));
+        // A list of values may hand the loop its items where they are (M6.6 part 4).
+        const bool inPlace = !counted && session_.checker != nullptr && session_.checker->loopsInPlace(s) &&
+                             (!copyingReads() || session_.checker->loopPassesOn(s));
+        emit(counted ? Op::RangeNext : inPlace ? Op::IterNextRef : Op::IterNext, slotOf(iteratorSlot));
         int toExit = here();
         emitI32(0);
 
@@ -2942,6 +2978,7 @@ private:
         cls.definedIn = fs_;
         cls.hasSuper = s.hasSuper;
         cls.isEnum = s.isEnum;
+        cls.isValue = s.isValue;
         for (const TypeParam& p : s.typeParams) cls.typeParams.push_back(p.name);
         cls.id = classId(s);
         if (!s.isInterface && !s.hasSuper && !s.fields.empty()) cls.closed = &s;
@@ -3717,6 +3754,7 @@ private:
         state.isLambda = decl.isLambda;
         for (const TypeParam& p : decl.typeParams) state.typeParams.push_back(p.name);
         if (!decl.typeParams.empty()) state.proto->typeArgs |= kTypeArgsOwn;
+        if (session_.checker != nullptr && session_.checker->returnsValue(decl)) state.proto->typeArgs |= kTakesDestination;
         state.label = decl.label;
         state.calleeLabel = decl.calleeLabel;
         state.isExtension = std::exchange(nextIsExtension_, false);
@@ -3809,6 +3847,13 @@ private:
         state.proto->minArity = requiredArgs;
         line_ = decl.line;
 
+        // Given an item of a list where it is, a function that may change such lists as it runs
+        // takes a copy first (M6.6 part 4).
+        if (session_.checker != nullptr) {
+            for (int param : session_.checker->paramsOwned(decl)) emit(Op::OwnLocal, param + 1);
+            if (session_.checker->ownsThis(decl)) emit(Op::OwnLocal, 0);
+        }
+
         // Typed parameters are checked on entry: slot 0 is the callee or receiver, then the parameters.
         for (size_t i = 0; i < decl.params.size(); i++) {
             TypeSpec type = state.locals[i + 1].info.type;
@@ -3893,6 +3938,78 @@ private:
         emit(Op::Closure, index);
         emit(Op::SupertypeMaker);
         emit(Op::Pop);
+    }
+
+    // ---- Changing a value through its place (M6.6 part 4, value-lists.html section 8) ----
+
+    // The object of `obj.name`: as a value is read, or, where the checker found it to be the
+    // place of a change (`pts[i]` in `pts[i].x = 4`, `p` in `p.move()`), as that place.
+    void compileObjectOf(const MemberExpr& member) {
+        if (session_.checker != nullptr && session_.checker->isValuePlace(*member.object)) compileValuePlace(*member.object);
+        else compileExpr(*member.object);
+    }
+
+    // Pushes a Ref to where a value of a value type is kept, through which it is changed: an
+    // item of a list where it is, and a variable or field given a box of its own first.
+    void compileValuePlace(const Expr& e) {
+        line_ = e.line;
+        switch (e.kind) {
+            case ExprKind::Name: {
+                const auto& n = static_cast<const NameExpr&>(e);
+                VarInfo info;
+                const int local = resolveLocal(fs_, n.name, n, info);
+                if (local != -1) {
+                    emit(Op::PlaceLocal, slotOf(local));
+                    return;
+                }
+                const int upvalue = resolveUpvalue(fs_, n.name, n, info);
+                if (upvalue != -1 && !isCaptureMark(upvalue)) {
+                    emit(Op::PlaceUpvalue, upvalue);
+                    return;
+                }
+                if (upvalue == -1 && classSide() == ClassSide::Instance && class_->members.count(n.name) != 0 && kindHasThis(fs_->kind)) {
+                    // A field of what the method runs on.
+                    emit(Op::GetLocal, 0);
+                    emit(class_->isValue ? Op::GetOwn : Op::PlaceField, stringConstant(n.name));
+                    return;
+                }
+                if (upvalue == -1 && classSide() == ClassSide::None) {
+                    if (const GlobalName* global = findGlobal(n.name, n, true); global != nullptr && !global->isFunction) {
+                        emit(Op::PlaceGlobal, global->slot);
+                        return;
+                    }
+                }
+                break;
+            }
+            case ExprKind::This:
+                emitGet("this", e);
+                return;
+            case ExprKind::Index: {
+                const auto& index = static_cast<const IndexExpr&>(e);
+                if (index.defaultValue) break;
+                compileExpr(*index.object);
+                compileExpr(*index.index);
+                line_ = e.line;
+                emit(Op::PlaceIndex);
+                return;
+            }
+            case ExprKind::Member: {
+                const auto& member = static_cast<const MemberExpr&>(e);
+                if (session_.checker->isValuePlace(*member.object)) {
+                    compileValuePlace(*member.object);  // a value in a value: further into the same place
+                    line_ = e.line;
+                    emit(Op::GetProp, stringConstant(member.name));
+                } else {
+                    compileExpr(*member.object);
+                    line_ = e.line;
+                    emit(Op::PlaceField, stringConstant(member.name));
+                }
+                return;
+            }
+            default:
+                break;
+        }
+        compileExpr(e);  // as a value; what is changed through it then reports where it cannot be
     }
 
     // `pts.add(Point(1, 2))` on a list of a value type (M6.6 part 3): the value is written into
@@ -4197,11 +4314,11 @@ private:
                                           static_cast<const MemberExpr&>(*e.callee).name, *e.callee) == nullptr) {
                     const auto& member = static_cast<const MemberExpr&>(*e.callee);
                     if (compileAddNew(e, member)) break;
-                    compileExpr(*member.object);
+                    compileObjectOf(member);
                     // `object?.method(...)`: with no object the arguments are not worked out either.
                     int toEnd = member.safe ? emitJump(Op::JumpIfNull) : -1;
                     compileArgs(e.args);
-                    emitTypeArguments(e);
+                    emitCallPrelude(e, argc + 1);
                     line_ = member.line;
                     if (ownMember(*member.object, member.name))
                         emit(e.trailingLambda ? Op::InvokeOwnTrailing : Op::InvokeOwn, stringConstant(calledName(e, member.name)));
@@ -4218,7 +4335,7 @@ private:
                     emitGet("this", sup);
                     compileArgs(e.args);
                     emitGet("super", sup);
-                    emitTypeArguments(e);
+                    emitCallPrelude(e, argc + 2);
                     line_ = sup.line;
                     emit(e.trailingLambda ? Op::SuperInvokeTrailing : Op::SuperInvoke, stringConstant(calledName(e, sup.method)));
                     emitByte(argc);
@@ -4226,7 +4343,7 @@ private:
                 } else {
                     compileCallee(e);
                     compileArgs(e.args);
-                    emitTypeArguments(e);
+                    emitCallPrelude(e, argc + 1);
                     line_ = e.line;
                     emit(Op::Call);
                     emitByte(argc);
@@ -4256,7 +4373,9 @@ private:
                 compileExpr(*e.index);
                 if (e.defaultValue) compileExpr(*e.defaultValue);
                 line_ = e.line;
-                emit(e.defaultValue ? Op::GetIndexOr : Op::GetIndex);
+                if (e.defaultValue) emit(Op::GetIndexOr);
+                else if (session_.checker != nullptr && !copyingReads() && session_.checker->readsInPlace(e)) emit(Op::GetIndexRef);  // M6.6 part 4
+                else emit(Op::GetIndex);
                 break;
             }
 
@@ -4560,7 +4679,7 @@ private:
         if (side == ClassSide::Instance && class_->members.count(name) != 0 && kindHasThis(fs_->kind)) {
             emit(Op::GetLocal, 0);
             compileArgs(e.args);
-            emitTypeArguments(e);
+            emitCallPrelude(e, argc + 1);
             line_ = e.line;
             emit(Op::InvokeOwn, stringConstant(calledName(e, name)));
             emitByte(argc);
@@ -4573,7 +4692,7 @@ private:
             if (namesFromReceiver() || (side == ClassSide::Instance && class_->hasSuper)) return false;
             emitGet(class_->storage, callee);
             compileArgs(e.args);
-            emitTypeArguments(e);
+            emitCallPrelude(e, argc + 1);
             line_ = e.line;
             emit(Op::InvokeOwn, stringConstant(name));
             emitByte(argc);
@@ -4584,7 +4703,7 @@ private:
 
         emit(Op::Null);  // where the object, or the function, is put when the call is made
         compileArgs(e.args);
-        emitTypeArguments(e);
+        emitCallPrelude(e, argc + 1);
         line_ = e.line;
         emitImplicit(Op::InvokeImplicit, name);
         emitByte(argc);
@@ -4641,7 +4760,7 @@ private:
             compileArg(*e.args[i]);
         }
 
-        emitTypeArguments(e);
+        emitCallPrelude(e, -1);
         line_ = e.line;
         emit(e.hasSpread ? Op::CallSpread : Op::CallNamed);
         if (!e.hasSpread) emitByte(static_cast<int>(positional));
@@ -4736,7 +4855,7 @@ private:
             case ExprKind::Member: {
                 const auto& target = static_cast<const MemberExpr&>(*e.target);
                 requireDeclaredField(target);
-                compileExpr(*target.object);
+                compileObjectOf(target);
                 int toEnd = target.safe ? emitJump(Op::JumpIfNull) : -1;
                 emit(Op::Dup);
                 line_ = e.line;
@@ -4790,7 +4909,7 @@ private:
             case ExprKind::Member: {
                 const auto& target = static_cast<const MemberExpr&>(*e.target);
                 requireDeclaredField(target);
-                compileExpr(*target.object);
+                compileObjectOf(target);
                 // `object?.field = value` does nothing, and works nothing out, with no object.
                 int toEnd = target.safe ? emitJump(Op::JumpIfNull) : -1;
                 const bool own = ownMember(*target.object, target.name);
@@ -4813,6 +4932,24 @@ private:
                 const auto& target = static_cast<const IndexExpr&>(*e.target);
                 compileExpr(*target.object);
                 compileExpr(*target.index);
+                if (!compound && session_.checker != nullptr && session_.checker->buildsInPlace(e)) {
+                    // `pts[i] = pts[i].moved(1)`: the item is where the result goes (M6.6 part 4),
+                    // under the call as it is made.
+                    emit(Op::Dup2);
+                    emit(Op::PlaceIndex);
+                    const CallExpr* savedTail = tailCall_;
+                    const CallExpr* savedDestination = destinationCall_;
+                    tailCall_ = nullptr;
+                    destinationCall_ = static_cast<const CallExpr*>(e.value.get());
+                    compileExpr(*e.value);
+                    tailCall_ = savedTail;
+                    destinationCall_ = savedDestination;
+                    line_ = e.line;
+                    emit(Op::Swap);
+                    emit(Op::Pop);  // the place: the result is there already, or goes there now
+                    emit(Op::SetIndex);
+                    break;
+                }
                 if (compound) emitIndexForUpdate(target);
                 const int skip = beginNullSafe(compound && e.nullSafe);
                 compileExpr(*e.value);
@@ -5009,7 +5146,7 @@ CompilerSession::CompilerSession(VM& vm, Checker* given) : checker(given), vm_(v
     // --std`) or astra.exe is making that compiled copy.
     const std::string prelude = preludeSource();
     std::string attached;
-    if (!checker->reportStandardLibrary && !compilingPrelude && !checkingNativeResults() && attachedPrelude(attached) &&
+    if (!checker->reportStandardLibrary && !compilingPrelude && !checkingNativeResults() && !copyingReads() && attachedPrelude(attached) &&
         usePrelude(prelude, attached))
         return;
     program.modules.push_back(compileUnit(prelude, "<std>", "<builtin>", "<prelude>", false));

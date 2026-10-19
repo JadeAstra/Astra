@@ -133,6 +133,26 @@ public:
     // list's item type, so that it can be made in the list (M6.6 part 3).
     bool addsNewValue(const Node& call) const;
 
+    // Whether an expression of a value type is a place a change is made through (M6.6 part 4):
+    // `p` in `p.x = 4` for a var p, `pts[i]`, `obj.pos`.
+    bool isValuePlace(const Expr& e) const;
+
+    // Where an item of a list of values is read where it is, not copied (M6.6 part 4,
+    // value-lists.html section 6): `pts[i]`, a for loop's variable; and the parameters, and
+    // `this`, a function copies as it starts, should it be given an item where it is.
+    bool readsInPlace(const IndexExpr& index) const;
+    bool loopsInPlace(const ForInStmt& loop) const;
+    bool loopPassesOn(const ForInStmt& loop) const;  // its variable's one use is to be passed on
+    std::vector<int> paramsOwned(const FunctionDecl& fn) const;
+    bool ownsThis(const FunctionDecl& fn) const;
+
+    // Results built where they go (M6.6 part 4): whether a function or lambda gives a value of a
+    // value type, so may be given where its result goes; whether a call makes a value of a
+    // value type; whether `pts[i] = f(...)` may build the result in the item.
+    bool returnsValue(const FunctionDecl& fn) const;
+    bool constructsValue(const CallExpr& call) const;
+    bool buildsInPlace(const AssignExpr& assign) const;
+
     // For an extension function: its receiver's type as written; null for anything else.
     const TypeAnnotation* extensionReceiver(const FunctionDecl& fn) const;
 

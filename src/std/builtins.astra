@@ -122,6 +122,7 @@ external fun <T> List<T>.reverse()
 external fun <T> List<T>.sort(comparator : ((T, T) -> Number)? = null)
 external fun <T> List<T>.sortBy(selector : (T) -> any?)            // each key worked out once, each item moved once
 external fun <T> List<T>.sortByDescending(selector : (T) -> any?)
+external fun <T> List<T>.replaceAll(transform : (T) -> T)          // each item by what transform gives for it, built in place
 external fun <T> List<T>.join(separator : string = ", ") : string
 external fun <T> List<T>.fill(item : T)
 

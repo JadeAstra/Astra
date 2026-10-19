@@ -83,6 +83,12 @@ bool readFile(const std::string& path, std::string& out);
 // compiled from its source, and compiled programs are kept apart from the others.
 bool checkingNativeResults();
 
+// ASTRA_COPY_READS (M6.6 part 4, value-lists.html section 12): every read of an item of a list of
+// values that the compiler found could be made where the item is is made as a copy instead; what
+// a loop hands on to a function, which may change it through its place, stays the item. The
+// suite run so must print what it prints without.
+bool copyingReads();
+
 // Compiles source files into one Program. A session outlives a single compile so the shell
 // can keep adding code that sees earlier globals. All of its entry points throw CompileError.
 class CompilerSession {

@@ -27,7 +27,7 @@ foreach ($bench in Get-ChildItem (Join-Path $PSScriptRoot '*.astra') | Sort-Obje
         if ($null -eq $best -or $seconds -lt $best) { $best = $seconds }
     }
     $name = $bench.BaseName
-    $line = "{0,-12} {1,8:N1} ms   {2}" -f $name, ($best * 1000), $check
+    $line = "{0,-15} {1,8:N1} ms   {2}" -f $name, ($best * 1000), $check
     if ($baseline.ContainsKey($name)) {
         $was = $baseline[$name]
         $line += "   ({0:N2}x the baseline's speed{1})" -f ($was.Seconds / $best), $(if ($was.Check -ne $check) { '; the check value DIFFERS: ' + $was.Check } else { '' })

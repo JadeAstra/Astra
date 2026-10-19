@@ -1,0 +1,30 @@
+// bounce_parallel.astra's moving, without the window (M6.6 part 4): 200,000 balls moved by
+// every core, 200 frames. Here Ball is a value type that never changes, and each ball is
+// replaced by a moved copy, which is built where the old one was; bounce_classes.astra has
+// Ball a class and bounce_values.astra moves each ball with a mutating method. The time is
+// that of the moving alone.
+
+value Ball(val x : float, val y : float, val dx : float, val dy : float, val radius : float) {
+  fun moved(width : float, height : float) : Ball {
+    var nx = x + dx
+    var ny = y + dy
+    var ndx = dx
+    var ndy = dy
+    if (nx < radius) { nx = radius; ndx = -ndx }
+    if (nx > width - radius) { nx = width - radius; ndx = -ndx }
+    if (ny < radius) { ny = radius; ndy = -ndy }
+    if (ny > height - radius) { ny = height - radius; ndy = -ndy }
+    return Ball(nx, ny, ndx, ndy, radius)
+  }
+}
+
+val n = 200000
+val balls : List<Ball> = []
+for (i in 0 ..< n) { balls.add(Ball((i * 7919 % 760) * 1.0 + 10.0, (i * 104729 % 520) * 1.0 + 10.0, (i % 13 - 6) * 0.75 + 0.5, (i % 11 - 5) * 0.75 + 0.5, 3.0 + i % 4)) }
+
+val started = clock()
+for (frame in 0 ..< 200) { balls.parallelStream().replaceAll { it.moved(780.0, 560.0) } }
+val took = clock() - started
+var sum = 0.0
+for (b in balls) { sum += b.x + b.y }
+print("bounce_moved", sum.toInt(), took)

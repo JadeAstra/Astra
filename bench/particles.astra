@@ -1,0 +1,37 @@
+// A million particles moved and drawn, 100 frames (M6.6 part 4): Particle is a value type,
+// the particles one after another in the list. Every core moves its part of them where they
+// are, and one loop draws them all into a buffer, reading each where it is. The moving and
+// drawing times are printed above the total.
+
+value Particle(var x : float, var y : float, var dx : float, var dy : float) {
+  mutating fun step(w : float, h : float) {
+    x += dx
+    y += dy
+    if (x < 0.0 or x >= w) { dx = -dx; x += dx }
+    if (y < 0.0 or y >= h) { dy = -dy; y += dy }
+  }
+}
+
+val n = 1000000
+val w = 1024
+val h = 768
+val ps : List<Particle> = []
+for (i in 0 ..< n) { ps.add(Particle((i * 7919 % w) * 1.0, (i * 104729 % h) * 1.0, (i % 7 - 3) * 0.5 + 0.25, (i % 5 - 2) * 0.5 + 0.25)) }
+val pixels = Bytes(w * h)
+
+val started = clock()
+var moving = 0.0
+var drawing = 0.0
+for (frame in 0 ..< 100) {
+  var t = clock()
+  ps.parallelStream().forEach { it.step(w * 1.0, h * 1.0) }
+  moving += clock() - t
+  t = clock()
+  for (p in ps) { pixels[p.y.toInt() * w + p.x.toInt()] = 255 }
+  drawing += clock() - t
+}
+val took = clock() - started
+var lit = 0
+for (i in 0 ..< w * h) { if (pixels[i] != 0) { lit += 1 } }
+print("moving", moving, "drawing", drawing)
+print("particles", lit, ps[17].x, took)

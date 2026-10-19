@@ -268,13 +268,60 @@ public:
     void listSwap(ObjList* list, size_t i, size_t j);
     void markItems(ObjList* list);
     bool addNew(int argc);
+    void makeFromHeader(ObjClass* cls, int argc, Value dest);
     void listArrange(ObjList* list, const std::vector<size_t>& order);
+
+    // ---- References (M6.6 part 4) ----
+    // A value as it is kept: a Ref replaced by a box with a copy, anything else as it is. What
+    // is stored anywhere but a thread's stack goes through this.
+    Value own(Value v) { return v.kind == ValueKind::Ref ? ownRef(v) : v; }
+    Value ownRef(Value v);
+    void ownAll(Value* from, Value* to) {
+        for (Value* at = from; at < to; at++)
+            if (at->kind == ValueKind::Ref) *at = ownRef(*at);
+    }
+    // Where what a Ref points at is, checked: an error for an item no longer in its list, and
+    // for `write`, for a value that may not be changed there.
+    uint8_t* refAt(Value r, bool write);
+    // The bytes of a Ref of depth 0 where this core may read them (`write`: and change them);
+    // null where it may not, or the item is gone, which the slow way says (M6.6 part 4).
+    uint8_t* refQuickly(Value r, bool write) const {
+        if (r.as.obj == bandObject_) {
+            if (r.refIndex < bandFrom_ || r.refIndex >= bandTo_) return nullptr;
+        } else if (write && (r.as.obj->type == ObjType::List ? r.as.obj->core != coreId_ : !static_cast<const ObjValue*>(r.as.obj)->constructing)) {
+            return nullptr;
+        }
+        return refBytes(r);
+    }
+    // Field `name` of what a Ref points at: in place, a value held in it a Ref of its own.
+    bool refField(Value r, const ObjString* name, Value& out);
+    void setRefField(Value r, ObjString* name, Value value);
+    // The place a variable, field or item holding a value is: its value given a box of its own,
+    // writable, in `slot`, and a Ref to it (M6.6 part 4).
+    Value placeIn(Value& slot);
 
     // ---- Value types (M6.6 part 2) ----
     ObjClass* fieldClass(FieldDecl& field);
     const ValueLayout& layoutOf(ObjClass* cls);
     ObjValue* newValue(ObjClass* cls);
     Value readValueField(const uint8_t* at, const ValueField& field);
+    // An int, float or bool field read with no call, for the interpreter's quick paths.
+    Value readPlainField(const uint8_t* at, const ValueField& field) {
+        switch (field.kind) {
+            case ValueField::Float: {
+                double d;
+                std::memcpy(&d, at, sizeof d);
+                return Value::number(d);
+            }
+            case ValueField::Int: {
+                int64_t i;
+                std::memcpy(&i, at, sizeof i);
+                return Value::integer(i);
+            }
+            case ValueField::Bool: return Value::boolean(*at != 0);
+            default: return readValueField(at, field);
+        }
+    }
     void writeValueField(uint8_t* at, const ValueField& field, const ObjClass* owner, Value value);
     int64_t valueFieldIndex(const ObjValue* box, const ObjString* name) const;
     Value valueField(const ObjValue* box, size_t index);
@@ -310,6 +357,8 @@ public:
     std::string valueTypeText(const Value& v) const;
     // Runs one of the instructions of types (MakeType to InstanceTypeArg); gives where the next one is.
     const uint8_t* typeInstruction(Op op, const uint8_t* ip, CallFrame* frame);
+    const uint8_t* placeInstruction(Op op, const uint8_t* ip, CallFrame* frame);
+    Value returnedRef(Value result, ptrdiff_t frameIndex);
     // The type a MakeType shape describes, from `at`, its classes and types taken from `operand` on.
     ObjTypeInfo* typeFromShape(const std::string& shape, size_t& at, const Value*& operand);
     // The type `any`, made once.
@@ -324,6 +373,13 @@ public:
     const ObjTypeInfo*& frameTypeArgs(ptrdiff_t index) {
         return reinterpret_cast<const ObjTypeInfo**>(frames_ + maxFrames_)[index];
     }
+    // Where frame `index`'s result goes (M6.6 part 4): a place, or null; kept only for a function
+    // whose FunctionProto::typeArgs has kTakesDestination. In the block of the frames, after the
+    // type arguments.
+    Value& frameDestination(ptrdiff_t index) {
+        return reinterpret_cast<Value*>(reinterpret_cast<const ObjTypeInfo**>(frames_ + maxFrames_) + maxFrames_)[index];
+    }
+    Value pendingDestination_;  // given by WithDestination to the call that follows
     // Type argument `i` of what is in `args` (a frame's, or an object's type), or `any` where
     // that is not known.
     ObjTypeInfo* typeArgument(const ObjTypeInfo* args, int i) {
@@ -493,7 +549,8 @@ public:
 
     // Runs `function` on every item of `source` (a list, a range, anything a loop takes), the
     // items dealt out to the cores. With `keep`, gives the list of what it returned, in order.
-    Value runParallel(Value source, Value function, bool keep);
+    // With `replace`, each item of the list `source` is replaced by what the function gives for it.
+    Value runParallel(Value source, Value function, bool keep, bool replace = false);
     // Runs `function` on each of `parts` ranges that together cover a `bytes`, one core to
     // a range, each allowed to write that part of it.
     void runParallelChunks(Value buffer, Value function);
@@ -629,15 +686,29 @@ private:
     std::shared_ptr<ParallelPool> parallelPool_;
     std::mutex internMutex_;       // cores intern strings in the root's table
     uint64_t extensionEpoch_ = 0;  // goes up when an extension function is added
-    const Obj* bandBuffer_ = nullptr;  // in runParallelChunks: the bytes this core may write...
-    size_t bandFrom_ = 0, bandTo_ = 0; // ...and the part of it
+    // In a section over the parts of a buffer, or over a list of values (M6.6 part 4): the bytes
+    // or the list this core may write the part of, and that part. Of such a list it reads only
+    // its own part too, which no other core is writing.
+    const Obj* bandObject_ = nullptr;
+    size_t bandFrom_ = 0, bandTo_ = 0;
+    AstraThrow outsideBand(size_t i) const;
+    AstraThrow wholeBand() const;
+    // A built-in function or method given the list of values a section is over, which would
+    // read every core's items: refused, but for one that reads none of them.
+    void guardBand(Value v, const std::string& method = "") const {
+        if (v.isObj() && v.as.obj == bandObject_ && bandObject_->type == ObjType::List && method != "isEmpty" && method != "isNotEmpty")
+            [[unlikely]] throw wholeBand();
+    }
     void refreshFromRoot();
     void adoptObjects(VM& core);
     AstraThrow otherCores(const Obj* obj) const;
     AstraThrow notOwned(const Obj* obj) const;
     AstraThrow notOwned(const std::string& what) const;
     void guardNative(const Value* args, int argc) const {
-        for (int i = 0; i < argc; i++) guardRead(args[i]);
+        for (int i = 0; i < argc; i++) {
+            guardRead(args[i]);
+            guardBand(args[i]);
+        }
     }
     friend struct ParallelPool;
     std::atomic<bool> stopRequested_{false};
@@ -774,7 +845,7 @@ private:
 
     void collectGarbage();
     void markValue(const Value& v) {
-        if (v.kind == ValueKind::Obj) markObject(v.as.obj);
+        if (v.kind == ValueKind::Obj || v.kind == ValueKind::Ref) markObject(v.as.obj);
     }
     void markObject(Obj* obj);
     void markTable(const Table& table);

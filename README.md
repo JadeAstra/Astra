@@ -1116,7 +1116,7 @@ to themselves.
 #### Value types
 
 `value` declares a data class whose values are what they hold: they have no identity, and
-never change once made.
+change only through the place that holds them.
 
 ```astra
 value Point(val x : int, val y : int) {
@@ -1135,8 +1135,8 @@ r.origin.x                   // 1
 Everything a data class has, a value type has: printing, `==`, `copy`, coming apart, a body
 with methods, properties and fields worked out from the header, and interfaces. It extends no
 class, and no class extends it. A field is given its value when the value is made, in the
-header or where it is declared in the body, and never again: `p.x = 5` is an error, outside
-the type's `init`. A value is kept in its type's fixed layout, each field at a set place, so
+header or where it is declared in the body; a `var` field changes only through a place (below).
+A value is kept in its type's fixed layout, each field at a set place, so
 a `Point` takes one allocation of 56 bytes where an object of a class takes 80; one value type
 holds another in place, so it cannot hold itself except where that field may be null.
 
@@ -1155,8 +1155,39 @@ val list : List<any> = pts
 list.add("text")             // an error: a List<Point> keeps only points
 ```
 
-Values kept in place without a box, and changing a field through the place that holds a value
-(`pts[i].x = 4`), come in the rest of M6.6 ([value-lists.html](docs/value-lists.html)).
+A value changes through the place that holds it: a `var` variable, a `var` field of an object,
+an item of a list, or a lambda's parameter. Its `var` fields are assigned there, and its
+`mutating` methods, which may change `this`, are called there. Nothing else that held the same
+value sees the change: values are copied, not shared.
+
+```astra
+value Ball(var x : float, var dx : float) {
+    mutating fun move() { x += dx }
+    fun moved() : Ball => Ball(x + dx, dx)
+}
+
+var b = Ball(0.0, 1.5)
+val before = b
+b.x = 10.0                   // b changes; before is still Ball(x=0.0, dx=1.5)
+b.move()
+val balls : List<Ball> = [Ball(0.0, 1.0), Ball(5.0, -1.0)]
+balls[0].move()              // the item, where it is in the list
+balls.forEach { it.move() }  // every item, where it is
+balls[1] = balls[1].moved()  // the new ball built in the item
+balls.replaceAll { it.moved() }   // each item replaced by a moved copy, built where it was
+val first = balls[0]
+first.move()                 // an error: first is a val, not a place
+```
+
+Reading a value does not copy it where nothing can change it meanwhile: `pts[i]`, a loop's
+item and a lambda's `it` are read where they are in the list when the checker sees that
+nothing which may remove, insert, sort or replace items of such a list runs while they are in
+use. Otherwise, and wherever a value is kept (in a field, a list, a variable a lambda holds),
+it is copied. The program sees no difference but the time and the memory; with
+`ASTRA_COPY_READS=1` every read is a copy, for testing that.
+
+Values kept in variables without a box, and values inside objects, come in the rest of M6.6
+([value-lists.html](docs/value-lists.html)).
 
 #### Taking values apart
 
@@ -2110,6 +2141,7 @@ So a section hands its results back by returning them, and they are put together
 | | |
 | --- | --- |
 | `forEach { }` | runs the lambda on every item |
+| `replaceAll { }` | replaces every item of the list by what the lambda gives for it |
 | `map { }`, `mapNotNull { }`, `filter { }` | give a stream to go on from; `toList()`, `toSet()`, `sorted()` end it. The order of the items is kept |
 | `sumOf { }`, `maxOf { }`, `minOf { }`, `count { }`, `any { }`, `all { }`, `none { }` | one value from all the items |
 
@@ -2120,6 +2152,11 @@ how many cores a section has.
   What an item *holds* was not dealt out and is shared: to change it, put something the core
   has made in its place (`it.history = it.history + [entry]`).
 - The same object cannot be in a stream twice.
+- A list of values (`List<Ball>` with `value Ball`) is dealt out by position: each core is
+  given its own part of the list, and the items where they are. `forEach { it.move() }`
+  changes them there, `replaceAll { it.moved() }` builds each new one there, and nothing is
+  copied. A core looks only into its own part: `balls[0]` read from another core's part is an
+  error, and so is a built-in function given the whole list.
 - Nothing waits in a section: sleeping, locks, reading and writing, and setting a flow aside
   are errors there. Neither does a section start another, or touch a window.
 - An error in the lambda stops the section and comes out of the call.

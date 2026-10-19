@@ -276,6 +276,32 @@ enum class Op : uint8_t {
     // end, and on at target with true; otherwise on, the stack as it was, to the call and the add.
     AddNew,             // u8 argc, i32 target             list class args... -> [true, at target]
 
+    // A place a value is changed through (M6.6 part 4, value-lists.html section 8): a Ref to the
+    // value where it is. An item of a list of values is changed where it is; a variable or a
+    // field that holds a box is first given a box of its own, which only it holds.
+    PlaceLocal,         // u16 slot                        -> place
+    PlaceUpvalue,       // u16 index                       -> place
+    PlaceGlobal,        // u16 global                      -> place
+    PlaceField,         // u16 name                        object -> place
+    PlaceIndex,         //                                 list index -> place
+
+    // Read where it is (M6.6 part 4, value-lists.html section 6), where the compiler has found
+    // that nothing changes the list meanwhile: an item of a list of values is pushed as a Ref
+    // to it; anything else as GetIndex and IterNext give it. A function given a Ref it may not
+    // keep as it runs takes a copy as it starts (OwnLocal).
+    GetIndexRef,        //                                 list index -> item
+    IterNextRef,        // u16 slot, i32 target            -> [item]  (as IterNext)
+    OwnLocal,           // u16 slot                        ->
+
+    // Results built where they go (M6.6 part 4, value-lists.html section 7). Right before a call,
+    // WithDestinationAt gives it a place for its result, the one `depth` slots under the call's
+    // own (`pts[i] = f(...)`), and WithFrameDestination passes on the frame's own, for a call
+    // whose result it returns. A function that gives a value of a value type
+    // (FunctionProto::typeArgs has kTakesDestination) keeps it for such calls of its own; making
+    // a value from its header alone writes its fields there and gives the place.
+    WithDestinationAt,  // u8 depth                        ->
+    WithFrameDestination, //                               ->
+
     Count_,
 };
 
@@ -302,6 +328,8 @@ const uint8_t kTypeArguments = 0x7F;
 // FunctionProto::typeArgs.
 const uint8_t kTypeArgsOwn = 1;
 const uint8_t kTypeArgsKept = 2;
+// A function that gives a value of a value type, given where its result goes (M6.6 part 4).
+const uint8_t kTakesDestination = 4;
 
 const int kFieldVal = 0x100;       // the field can be assigned only once
 const int kFieldRequired = 0x200;  // the initializer has to assign it

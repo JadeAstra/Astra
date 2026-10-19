@@ -1,0 +1,103 @@
+// Values worked on where they are (M6.6 part 4, value-lists.html sections 7 to 9): results
+// built where they go, items read where they are when nothing may change their list meanwhile,
+// and parallel sections over a list of values, each core given its own part of it.
+
+value Ball(var x : float, var dx : float, val r : float) {
+  mutating fun move(w : float) {
+    x += dx
+    if (x < r or x > w - r) { dx = -dx }
+  }
+  fun moved(w : float) : Ball {
+    val nx = x + dx
+    if (nx < r or nx > w - r) { return Ball(nx, -dx, r) }
+    return Ball(nx, dx, r)
+  }
+}
+
+// A result built where it goes: in the item it replaces, every part of it worked out first.
+val balls : List<Ball> = [Ball(1.0, 1.5, 1.0), Ball(5.0, -2.0, 1.0), Ball(9.0, 0.5, 2.0)]
+balls[0] = balls[0].moved(10.0)
+balls[1] = Ball(balls[1].x + 1.0, balls[2].dx, balls[0].r)
+balls[2] = balls[2].copy(r = 7.0)
+print(balls)   // expect: [Ball(x=2.5, dx=1.5, r=1.0), Ball(x=6.0, dx=0.5, r=1.0), Ball(x=9.0, dx=0.5, r=7.0)]
+balls.replaceAll { it.moved(10.0) }
+print(balls)   // expect: [Ball(x=4.0, dx=1.5, r=1.0), Ball(x=6.5, dx=0.5, r=1.0), Ball(x=9.5, dx=-0.5, r=7.0)]
+balls.replaceAll { if (it.x > 5.0) { Ball(0.0, 0.0, 0.0) } else { it } }
+print(balls[0], balls[2])   // expect: Ball(x=4.0, dx=1.5, r=1.0) Ball(x=0.0, dx=0.0, r=0.0)
+
+// Given where its result goes only by a call that gives a value: a generic method that gives T
+// does not hand the place on to what it calls, so a failure in it leaves the item as it was.
+class Maker<T>(val make : () -> T) {
+  fun made(fail : bool) : T {
+    val v = make()
+    if (fail) { throw Error("no") }
+    return v
+  }
+}
+val maker = Maker<Ball> { Ball(7.0, 7.0, 7.0) }
+try {
+  balls[0] = maker.made(true)
+} catch (e) {
+  print(e.message)   // expect: no
+}
+balls[1] = maker.made(false)
+print(balls[0], balls[1])   // expect: Ball(x=4.0, dx=1.5, r=1.0) Ball(x=7.0, dx=7.0, r=7.0)
+
+// Read where it is in a loop that changes no list of balls; kept past the loop, a copy.
+var kept = Ball(0.0, 0.0, 0.0)
+var sum = 0.0
+for b in balls {
+  sum += b.x
+  if (b.r == 1.0) { kept = b }
+}
+balls.sortBy { it.x }
+print(sum, kept)   // expect: 11.0 Ball(x=4.0, dx=1.5, r=1.0)
+
+// A loop that waits: other code runs meanwhile, so each item is read as it was when the loop
+// came to it.
+value P(val x : int, val y : int)
+val ps : List<P> = [P(1, 10), P(2, 20), P(3, 30)]
+val seen : List<string> = []
+var waiting : Continuation? = null
+startCoroutine {
+  for p in ps {
+    val a = p.x
+    suspendCoroutine { waiting = it }
+    seen.add("$a ${p.x} ${p.y}")
+  }
+}
+while (waiting != null) {
+  val c = waiting
+  waiting = null
+  ps.sortByDescending { it.x }
+  c?.resume(null)
+}
+print(seen)   // expect: ["1 1 10", "2 2 20", "1 1 10"]
+
+// On every core: each item moved where it is, replaced where it is, and read where it is.
+val many : List<Ball> = []
+for i in 0 ..< 1000 { many.add(Ball(i * 1.0, 1.5, 1.0)) }
+many.parallelStream().forEach { it.move(2000.0) }
+print(many[0], many[999])   // expect: Ball(x=1.5, dx=1.5, r=1.0) Ball(x=1000.5, dx=1.5, r=1.0)
+many.parallelStream().replaceAll { it.moved(2000.0) }
+print(many[0], many[999])   // expect: Ball(x=3.0, dx=1.5, r=1.0) Ball(x=1002.0, dx=1.5, r=1.0)
+print(many.parallelStream().map { it.x }.toList()[10], many.parallelStream().sumOf { it.x })   // expect: 13.0 502500.0
+val ints = [1, 2, 3, 4, 5, 6, 7, 8, 9]
+ints.parallelStream().replaceAll { it * 10 }
+print(ints)   // expect: [10, 20, 30, 40, 50, 60, 70, 80, 90]
+
+// A core reads and writes its own part of the list, and changes the list itself not at all.
+fun failure(action : () -> unit) : string {
+  try {
+    action()
+  } catch (e) {
+    return e.message.substringBefore(",")
+  }
+  return "no error"
+}
+print(availableProcessors() > 1 ? failure { many.parallelStream().forEach { many[0].x } } : "item 0 is another core's in this parallel section: a core looks only into its own items")
+// expect: item 0 is another core's in this parallel section: a core looks only into its own items
+print(failure { many.parallelStream().forEach { many.sortBy { it.x } } })
+// expect: a parallel section changes only the item it was given and what it makes itself: this List is shared with the other cores
+print(failure { many.parallelStream().forEach { many.contains(it) } })
+// expect: this List is the one the section is over and is read here an item at a time: a core looks only into its own items

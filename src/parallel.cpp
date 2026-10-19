@@ -35,6 +35,8 @@ struct ParallelJob {
     const std::vector<Value>* items = nullptr;  // the function is called on each of these
     bool keep = false;                          // what it returns is wanted
     const Obj* buffer = nullptr;                // or: called once per share with the share's range of this buffer
+    ObjList* values = nullptr;                  // or: on each item of this list of values, where it is (M6.6 part 4)
+    bool replace = false;                       // each item replaced by what the function gives for it
 
     struct Share {
         size_t from = 0, to = 0;
@@ -189,11 +191,32 @@ void VM::runParallelShare(ParallelJob& job, size_t index) {
     try {
         if (job.buffer != nullptr) {
             // One call, with the part of the buffer that is this core's to write.
-            bandBuffer_ = job.buffer;
+            bandObject_ = job.buffer;
             bandFrom_ = share.from;
             bandTo_ = share.to;
             Value range = Value::object(alloc<ObjRange>(static_cast<int64_t>(share.from), static_cast<int64_t>(share.to), int64_t{1}, false));
             call(job.function, 1, &range);
+        } else if (job.values != nullptr) {
+            // The items of a list of values, each where it is; this core reads and writes its own
+            // part of the list and no other (refAt, packedGet). Replaced, an item is where the
+            // result goes, so a value made from its header alone is built there.
+            ObjList* list = job.values;
+            bandObject_ = list;
+            bandFrom_ = share.from;
+            bandTo_ = share.to;
+            if (job.keep) share.results.reserve(share.to - share.from);
+            for (size_t i = share.from; i < share.to && !job.cancelled.load(std::memory_order_relaxed); i++) {
+                Value item = Value::ref(list, static_cast<uint32_t>(i), 0, 0);
+                if (job.replace) pendingDestination_ = item;
+                Value result = call(job.function, 1, &item);
+                pendingDestination_ = Value::null();
+                if (job.replace) {
+                    const bool there = result.isRef() && result.as.obj == list && result.refIndex == i && result.refOffset == 0 && result.refDepth == 0;
+                    if (!there) listSet(list, i, result);
+                } else if (job.keep) {
+                    share.results.push_back(result);
+                }
+            }
         } else {
             if (job.keep) share.results.reserve(share.to - share.from);
             for (size_t i = share.from; i < share.to && !job.cancelled.load(std::memory_order_relaxed); i++) {
@@ -215,7 +238,8 @@ void VM::runParallelShare(ParallelJob& job, size_t index) {
         share.failed = true;
         job.cancelled = true;
     }
-    bandBuffer_ = nullptr;
+    bandObject_ = nullptr;
+    pendingDestination_ = Value::null();
 }
 
 // ---- Starting a section ----
@@ -258,29 +282,41 @@ int VM::parallelCores() {
     return parallelPool_->count;
 }
 
-Value VM::runParallel(Value source, Value function, bool keep) {
+Value VM::runParallel(Value source, Value function, bool keep, bool replace) {
+    if (replace && !source.isObjType(ObjType::List)) throw runtimeError("replaceAll is for a list, not a value of type " + typeName(source));
+    // A list of values (M6.6 part 4): each core is given its own part of the list, and the items
+    // where they are. A list that may hold null is gone through as any other.
+    ObjList* values = source.isObjType(ObjType::List) && asList(source)->store() == ListStore::Items && !asList(source)->pack->nullable
+                          ? asList(source)
+                          : nullptr;
     std::vector<Value> items;
     TempVector holdItems(*this, items);
-    collect(source, items);
-    ObjList* out = keep ? newList(*this) : nullptr;
-    TempRoot holdOut(*this, keep ? Value::object(out) : Value::null());
-    if (items.empty()) return keep ? Value::object(out) : Value::null();
+    if (values == nullptr) collect(source, items);
+    const size_t count = values != nullptr ? values->size() : items.size();
+    // Replacing the items of any other list, what the function gives is kept, and put in once
+    // every core is done: a list of numbers or objects is not written by several cores at once.
+    const bool keepAll = keep || (replace && values == nullptr);
+    ObjList* out = keepAll ? newList(*this) : nullptr;
+    TempRoot holdOut(*this, keepAll ? Value::object(out) : Value::null());
+    if (count == 0) return keep ? Value::object(out) : Value::null();
 
-    const size_t shares = std::min(static_cast<size_t>(parallelCores()), items.size());
+    const size_t shares = std::min(static_cast<size_t>(parallelCores()), count);
     ParallelJob job;
     job.function = function;
     job.items = &items;
-    job.keep = keep;
+    job.values = values;
+    job.keep = keepAll;
+    job.replace = replace && values != nullptr;
     job.shares.resize(shares);
     for (size_t k = 0; k < shares; k++) {
-        job.shares[k].from = items.size() * k / shares;
-        job.shares[k].to = items.size() * (k + 1) / shares;
+        job.shares[k].from = count * k / shares;
+        job.shares[k].to = count * (k + 1) / shares;
     }
 
     {
         // Each core owns its items for as long as the section lasts.
         Dealt dealt;
-        for (size_t k = 0; k < shares; k++) {
+        for (size_t k = 0; k < shares && values == nullptr; k++) {
             for (size_t i = job.shares[k].from; i < job.shares[k].to; i++) {
                 if (!items[i].isObj() || !ownable(items[i].as.obj)) continue;
                 Obj* obj = items[i].as.obj;
@@ -297,8 +333,16 @@ Value VM::runParallel(Value source, Value function, bool keep) {
 
     for (const ParallelJob::Share& share : job.shares)
         if (share.failed) throw share.error;
+    if (replace && values == nullptr) {
+        ObjList* list = asList(source);
+        if (list->size() != count) throw runtimeError("the list was changed while its items were replaced");
+        size_t i = 0;
+        for (const ParallelJob::Share& share : job.shares)
+            for (const Value& made : share.results) listSet(list, i++, made);
+        return Value::null();
+    }
     if (!keep) return Value::null();
-    out->values().reserve(items.size());
+    out->values().reserve(count);
     for (const ParallelJob::Share& share : job.shares) out->values().insert(out->values().end(), share.results.begin(), share.results.end());
     account(out->values().size() * sizeof(Value));
     return Value::object(out);
@@ -325,6 +369,19 @@ void VM::runParallelChunks(Value buffer, Value function) {
 }
 
 // ---- What a core is told when it oversteps ----
+
+AstraThrow VM::wholeBand() const {
+    return const_cast<VM*>(this)->runtimeError("this List is the one the section is over and is read here an item at a time: a core looks only "
+                                               "into its own items, " + std::to_string(bandFrom_) + " to " + std::to_string(bandTo_ - 1));
+}
+
+AstraThrow VM::outsideBand(size_t i) const {
+    if (bandObject_->type == ObjType::List)
+        return const_cast<VM*>(this)->runtimeError("item " + std::to_string(i) + " is another core's in this parallel section: a core looks only into its "
+                                                   "own items, " + std::to_string(bandFrom_) + " to " + std::to_string(bandTo_ - 1));
+    return notOwned("position " + std::to_string(i) + " is outside this core's part of the buffer, which is " + std::to_string(bandFrom_) + " to " +
+                    std::to_string(bandTo_ - 1));
+}
 
 AstraThrow VM::notOwned(const std::string& what) const {
     return const_cast<VM*>(this)->runtimeError("a parallel section changes only the item it was given and what it makes itself: " + what);
@@ -370,6 +427,8 @@ void registerParallel(VM& vm) {
     // run(source, function, keep): the function on every item, the items dealt out to the
     // cores. With `keep`, the list of what it gave, in the order of the items.
     def("run", 3, 3, [](VM& vm, int, Value* args) -> Value { return vm.runParallel(args[0], args[1], args[2].truthy()); });
+    // replace(list, function): each item of the list replaced by what the function gives for it.
+    def("replace", 2, 2, [](VM& vm, int, Value* args) -> Value { return vm.runParallel(args[0], args[1], false, true); });
 
     // chunks(buffer, function): the function once on each core, with the range of positions
     // of the buffer that the core may write.

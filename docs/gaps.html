@@ -78,13 +78,13 @@ td.when { min-width: 9em; }
 <body>
 <main>
 <h1>M6.6 so far: what is left open</h1>
-<p class="lede">The choices made while building parts 1 to 3 of M6.6 that are not yet confirmed, and the gaps those parts left, each with where it is to be dealt with. Written 2026-10-19. The same items are in <a href="gui-plan.md">gui-plan.md</a> (the M6.6 notes, D162 to D166 and the Open list); the design is in <a href="value-lists.html">value-lists.html</a>.</p>
+<p class="lede">The choices made while building parts 1 to 4 of M6.6 that are not yet confirmed, and the gaps those parts left, each with where it is to be dealt with. Written 2026-10-19, and brought up to date after part 4 the same day: the gaps part 4 closed are gone from the list. The same items are in <a href="gui-plan.md">gui-plan.md</a> (the M6.6 notes, D162 to D170 and the Open list); the design is in <a href="value-lists.html">value-lists.html</a>.</p>
 
 <nav>
 <h2>Contents</h2>
 <ul>
-<li><a href="#choices">Choices to confirm</a> (seven)</li>
-<li><a href="#gaps">Gaps left</a> (twelve)</li>
+<li><a href="#choices">Choices to confirm</a> (twelve)</li>
+<li><a href="#gaps">Gaps left</a> (fourteen)</li>
 </ul>
 </nav>
 
@@ -127,7 +127,7 @@ td.when { min-width: 9em; }
 
 <section class="decision" id="jade-geometry">
 <h3><span class="code">Jade</span>Jade's geometry as value types (part 2)</h3>
-<p>Jade's <code>Point</code>, <code>Dimension</code>, <code>Insets</code> and <code>Rectangle</code> are still classes. Jade changes them where they are (<code>setSize</code>, <code>translate</code>, <code>setLocation</code>), so they can become values only with changing through a place (part 4), and that changes what code sharing them means: Jade's API, which is yours to decide. Measured on a copy of Jade's layout, values were 10% faster and a <code>Sizes</code> of three <code>Dimension</code>s one allocation of 88 bytes instead of four of 336.</p>
+<p>Jade's <code>Point</code>, <code>Dimension</code>, <code>Insets</code> and <code>Rectangle</code> are still classes. Jade changes them where they are (<code>setSize</code>, <code>translate</code>, <code>setLocation</code>), so they can become values only with changing through a place, which part 4 built (those changes become mutating methods, called on a place); that changes what code sharing them means: Jade's API, which is yours to decide. Measured on a copy of Jade's layout, values were 10% faster and a <code>Sizes</code> of three <code>Dimension</code>s one allocation of 88 bytes instead of four of 336.</p>
 <div class="verdict"><span class="label">Your choice</span><span class="blank"></span></div>
 </section>
 
@@ -139,6 +139,55 @@ td.when { min-width: 9em; }
 <li>A copy of a list (<code>toList</code>, <code>slice</code>, <code>subList</code>, <code>reversed</code>, <code>+</code> of two of one type) keeps its type and how it is kept.</li>
 <li><code>sortBy</code> and <code>sortByDescending</code>, for every list, call the selector once per item rather than twice per comparison (a million items sorted in 70 to 130 ms instead of 1.5 s). A selector with side effects sees fewer calls.</li>
 </ul>
+<div class="verdict"><span class="label">Your choice</span><span class="blank"></span></div>
+</section>
+
+<section class="decision" id="d167">
+<h3><span class="code">D167</span>Changing a value through its place (part 4)</h3>
+<ul>
+<li>A <code>var</code> field of a value is changed only through a place that holds the value: a <code>var</code> variable (local, global, or one a lambda holds), a <code>var</code> field of an object, an item of a list, a value's field that is itself a place, or a lambda's parameter (what <code>forEach { it.move() }</code> is given). So <code>p.x = 4</code>, <code>p.x += 1</code>, <code>pts[i].y++</code>, <code>line.to.x = 9</code>.</li>
+<li>A <code>mutating fun</code> may change <code>this</code>'s fields and call the type's other mutating methods, and is called only on a place. <code>mutating</code> on anything but a value type is an error.</li>
+<li>A variable or field changed this way gets a value of its own first, so <code>val q = p; p.x = 10</code> leaves <code>q</code> as it was.</li>
+<li>Every part of <code>pts[next()].x += 1</code> is worked out once.</li>
+</ul>
+<div class="verdict"><span class="label">Your choice</span><span class="blank"></span></div>
+</section>
+
+<section class="decision" id="d168">
+<h3><span class="code">D168</span>Reading a value where it is (part 4)</h3>
+<ul>
+<li>A value read from a list or another value (<code>pts[i]</code>, a loop's item, a lambda's <code>it</code>, a parameter, <code>this</code>) is not copied where the checker shows that nothing which may change a list of its type runs while it is in use, through what the code calls, overrides included. Changing a list means removing, inserting, sorting, setting or replacing items; adding at the end is not, as a reference into a list is by position. A function given as an argument counts as one that may.</li>
+<li>A loop is judged by its body. If the body gives the item to a variable from outside the loop, the loop is judged by the whole function, as the item might be used after it.</li>
+<li>A call that may wait counts as one that changes every list, since other code runs meanwhile: a flow that waits in a loop reads each item as it was when the loop came to it.</li>
+<li>Whatever keeps a value longer than the stack does (a field, a list, a global, a variable a lambda holds, a C++ function) takes a copy.</li>
+<li>The test setting <code>ASTRA_COPY_READS=1</code> copies every read; the suite prints the same with it.</li>
+</ul>
+<div class="verdict"><span class="label">Your choice</span><span class="blank"></span></div>
+</section>
+
+<section class="decision" id="d169">
+<h3><span class="code">D169</span>Results built where they go (part 4)</h3>
+<ul>
+<li><code>pts[i] = f(...)</code>, where <code>f</code> gives a value of the list's type, gives <code>f</code> the item as where its result goes. A function that gives a value passes that on to a call whose result it returns, and making a value from its header alone writes its fields there, every argument worked out before any is written.</li>
+<li>So <code>pts[i] = pts[i].moved(1)</code>, <code>pts[i] = Point(...)</code> and <code>pts[i] = pts[i].copy(x = 4)</code> make no copy.</li>
+<li><code>list.replaceAll { it.moved() }</code> replaces each item by what the lambda gives, built where the item is.</li>
+</ul>
+<div class="verdict"><span class="label">Your choice</span><span class="blank"></span></div>
+</section>
+
+<section class="decision" id="d170">
+<h3><span class="code">D170</span>Parallel sections over a list of values (part 4)</h3>
+<ul>
+<li><code>pts.parallelStream()</code> deals each core its own part of the list and hands it the items where they are: <code>forEach { it.move() }</code> changes them there, <code>map</code> and the rest read them there.</li>
+<li><code>parallelStream().replaceAll { it.moved() }</code> replaces each item, on every core, built where it is. On a list of anything else it puts what the lambda gave in once every core is done.</li>
+<li>A core reads and writes only its own part (<code>pts[0]</code> from another core's part is an error saying so), and changes the list itself not at all (<code>sortBy</code>, <code>sortByDescending</code> and <code>replaceAll</code> now count as changing a list, as they should have already). A built-in function given the whole list is refused, but for <code>isEmpty</code> and <code>isNotEmpty</code>.</li>
+</ul>
+<div class="verdict"><span class="label">Your choice</span><span class="blank"></span></div>
+</section>
+
+<section class="decision" id="threads">
+<h3><span class="code">Threads</span>No scan at a thread switch (part 4)</h3>
+<p>The plan was to replace a thread's references into lists by copies whenever it gives up the lock. Not built, and proposed not to be: a thread gives the lock up only at a call or the end of a loop body, and another thread reordering a list meanwhile is a race, which Astra lets give a wrong answer but never damage anything. A reference into a list is checked against the list's length and its type of item every time it is used, so a race at worst reads or changes another item, as it would with objects. A flow is not a race (other code runs at the points where it waits, by design), and the checker handles it (D168).</p>
 <div class="verdict"><span class="label">Your choice</span><span class="blank"></span></div>
 </section>
 
@@ -157,14 +206,16 @@ td.when { min-width: 9em; }
 <tr><td class="part">1</td><td>A generic local function written inside another generic function sees the outer one's type parameters as <code>any</code>: its frame has its own type arguments, not the outer's.</td><td class="when">Not placed yet</td></tr>
 <tr><td class="part">1</td><td><code>object : Holder&lt;T&gt; { }</code>, an anonymous object whose supertype has type arguments, does not parse: the look-ahead after <code>object :</code> does not skip <code>&lt;...&gt;</code>. Once it does, the anonymous class, made once, would keep the type arguments of the first call that made it; a type parameter of the code around must make the class be made every time, as a variable of the code around does.</td><td class="when">Not placed yet</td></tr>
 <tr><td class="part">1</td><td>A type parameter passed on (<code>isA&lt;T&gt;(x)</code> inside a generic function) has its type arguments looked up in the table of types on every call, under a lock on the cores. Cheap, but it can be cut, by passing the frame's own when they are the same.</td><td class="when">If it shows in timings</td></tr>
-<tr><td class="part">2</td><td>A value held in another and read on its own (<code>val pref = sizes.pref</code>) is copied into a box of its own. Read with one of its fields in the same expression (<code>sizes.pref.width</code>) it is read in place.</td><td class="when">Part 4, the analyses</td></tr>
 <tr><td class="part">2</td><td>A generic value type keeps no type arguments when the program runs: a <code>Two&lt;int, string&gt;</code> is any <code>Two</code> to <code>is</code> and <code>as</code>.</td><td class="when">Not placed yet</td></tr>
 <tr><td class="part">2</td><td>A field of a class whose type is a value type holds a box, not the value's fields within the object.</td><td class="when">Part 5, values inside objects</td></tr>
-<tr><td class="part">3</td><td>An item read on its own, a loop's item (<code>for p in pts</code>) and a lambda's <code>it</code> are copies in a box of their own: a small allocation per item. This is why sorting and walking a million points are slower with values (127 and 77 ms) than with classes (70 and 55). Read with one of its fields in the same expression, <code>pts[i].x</code>, an item is read in place.</td><td class="when">Part 4, the analyses</td></tr>
-<tr><td class="part">3</td><td>A value made where it goes (value-lists.html section 7, rule b) only for <code>pts.add(Point(...))</code> of a value type made from its header alone; <code>pts[i] = Point(...)</code>, <code>insert</code> and <code>copy(...)</code> make a box first.</td><td class="when">Part 4, results built where they go</td></tr>
 <tr><td class="part">3</td><td>A worker is sent a list of values item by item, not as one block of memory.</td><td class="when">Not placed yet</td></tr>
-<tr><td class="part">3</td><td>Changing items in a parallel section: the items a core is given are copies, and a section only reads them.</td><td class="when">Part 4, changing through a place</td></tr>
-<tr><td class="part">3</td><td>The scan at a thread switch that replaces references into lists by copies is not built, as nothing on a stack points into a list yet.</td><td class="when">Part 4, with the references</td></tr>
+<tr><td class="part">3</td><td><code>pts.insert(i, Point(...))</code> makes a box first: only <code>add</code> at the end and <code>pts[i] = ...</code> write straight into the list.</td><td class="when">Not placed yet</td></tr>
+<tr><td class="part">4</td><td>A variable changed through its place is given a box of its own at every change (<code>p.x = 1</code> in a loop makes a box each time), since another variable may hold the box it had: on 40 million calls, <code>one.move()</code> on a variable takes 8.4 s against 2.7 for an object.</td><td class="when">Part 5, values in variables (D149)</td></tr>
+<tr><td class="part">4</td><td>A field read through a list item finds the item again each time (the list, its items, the item): on one core a mutating method on items is some 1.4 times slower than on objects (6.1 s against 4.2 in <code>bench/bounce_values.astra</code>; on 32 cores it is faster, 0.46 s against 0.78).</td><td class="when">Part 6, typed instructions</td></tr>
+<tr><td class="part">4</td><td><code>pts[i]</code> read whole is judged by the whole function, not by the statement it is in: one <code>sortBy</code> anywhere in the function makes it a copy.</td><td class="when">Not placed yet</td></tr>
+<tr><td class="part">4</td><td>A list of values that may hold null (<code>List&lt;Point?&gt;</code>) is gone through by copies in a parallel section, so <code>forEach { it?.move() }</code> cannot change its items.</td><td class="when">Not placed yet</td></tr>
+<tr><td class="part">4</td><td>A <code>float</code>'s <code>toInt()</code> and the like are method calls: drawing a million particles by one loop takes 80 ms a frame, most of it there.</td><td class="when">Part 6, typed instructions</td></tr>
+<tr><td class="part">4</td><td>Calls, field access and the simulation slice are 4 to 6% slower than in part 3, the same instructions run (with Clang and with MSVC; <code>calls</code> 19% under MSVC, where placement alone moves it): the checks for references spread over the instructions, and what they do to how the compilers lay out the loop. Value types' benchmarks and making objects of classes got faster in part 4.</td><td class="when">The VM's loop rewritten for D160, M6.7</td></tr>
 <tr><td class="part">All</td><td>Under MSVC, code placement alone moves the <code>fields</code> benchmark by 10 to 20% with the same loop. Not a gap in Astra, but a caution in reading timings: compare against a baseline built the same way, and count instructions, before calling a change slower.</td><td class="when">D160: the Clang build's dispatch, M6.7</td></tr>
 </tbody>
 </table></div>

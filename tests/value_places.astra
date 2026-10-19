@@ -1,0 +1,68 @@
+// Changing a value through its place (M6.6 part 4, value-lists.html section 8): a var field of a
+// value is given a new value through the place that holds the value, by assignment or by a
+// mutating method. An item of a list of values is changed where it is; a variable or field
+// that holds a value gets one of its own, so nothing else that held the same value sees it.
+
+value Point(var x : int, var y : int) {
+    mutating fun move(dx : int, dy : int) {
+        x += dx
+        y += dy
+    }
+    mutating fun reset() { move(-x, -y) }
+    fun moved(dx : int) : Point => copy(x = x + dx)
+}
+value Line(var from : Point, var to : Point)
+
+// A variable: `val q = p` keeps what p was.
+var p = Point(1, 2)
+val q = p
+p.x = 10
+p.y += 5
+p.move(1, 1)
+print(p, q)   // expect: Point(x=11, y=8) Point(x=1, y=2)
+
+// Items of a list of values, where they are; each part of `pts[next()]` worked out once.
+val pts : List<Point> = [Point(0, 0), Point(1, 1)]
+pts[1].x = 7
+pts[0].move(3, 4)
+pts[1].y++
+var calls = 0
+fun next() : int {
+    calls += 1
+    return 1
+}
+pts[next()].x += 100
+print(pts, calls)   // expect: [Point(x=3, y=4), Point(x=107, y=2)] 1
+
+// Values in values, in a variable and in a list.
+var line = Line(Point(0, 0), Point(5, 5))
+line.to.x = 9
+line.from.move(1, 2)
+print(line)   // expect: Line(from=Point(x=1, y=2), to=Point(x=9, y=5))
+val lines : List<Line> = [Line(Point(1, 1), Point(2, 2))]
+lines[0].to.y = 20
+lines[0].from.reset()
+print(lines)   // expect: [Line(from=Point(x=0, y=0), to=Point(x=2, y=20))]
+
+// A var field of an object, and a value read from it before.
+class Holder(var at : Point)
+val h = Holder(Point(3, 3))
+val before = h.at
+h.at.x = 30
+h.at.move(1, 1)
+print(h.at, before)   // expect: Point(x=31, y=4) Point(x=3, y=3)
+
+// A changed copy, and a value read from a list kept as it was.
+val first = pts[0]
+pts[0].reset()
+print(first, pts[0], pts[1].moved(1))   // expect: Point(x=3, y=4) Point(x=0, y=0) Point(x=108, y=2)
+
+// A global, and a variable a lambda holds.
+var counter = Point(0, 0)
+fun tick() { counter.x += 1 }
+tick()
+tick()
+var captured = Point(5, 5)
+val shift = { captured.move(1, 0) }
+shift()
+print(counter, captured)   // expect: Point(x=2, y=0) Point(x=6, y=5)

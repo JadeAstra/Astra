@@ -187,6 +187,16 @@ const OpInfo kOps[] = {
     {"SUPERTYPE_MAKER", Operand::None},
     {"CHECK_RESULT", Operand::U16},
     {"ADD_NEW", Operand::U8I32},
+    {"PLACE_LOCAL", Operand::U16},
+    {"PLACE_UPVALUE", Operand::U16},
+    {"PLACE_GLOBAL", Operand::U16},
+    {"PLACE_FIELD", Operand::U16},
+    {"PLACE_INDEX", Operand::None},
+    {"GET_INDEX_REF", Operand::None},
+    {"ITER_NEXT_REF", Operand::U16I32},
+    {"OWN_LOCAL", Operand::U16},
+    {"WITH_DESTINATION_AT", Operand::U8},
+    {"WITH_FRAME_DESTINATION", Operand::None},
 };
 
 const char* const kTypeNames[] = {"", "int", "float", "Number", "string", "bool", "List", "Map", "Range", "Function", "Bytes", "Type"};
@@ -634,6 +644,35 @@ static int analyzeStack(FunctionProto& f, const Program& program, bool partial) 
                     pops = 2;
                     pushes = 1;
                     break;
+                case Op::PlaceLocal:
+                    if (a >= depth) fail("local slot out of range");
+                    pushes = 1;
+                    break;
+                case Op::PlaceUpvalue:
+                    if (static_cast<size_t>(a) >= f.upvalues.size()) fail("captured variable out of range");
+                    pushes = 1;
+                    break;
+                case Op::PlaceGlobal:
+                    if (static_cast<size_t>(a) >= program.globalNames.size()) fail("global out of range");
+                    pushes = 1;
+                    break;
+                case Op::PlaceField:
+                    requireName(a);
+                    pops = pushes = 1;
+                    break;
+                case Op::PlaceIndex:
+                case Op::GetIndexRef:
+                    pops = 2;
+                    pushes = 1;
+                    break;
+                case Op::OwnLocal:
+                    if (a >= depth) fail("local slot out of range");
+                    break;
+                case Op::WithDestinationAt:
+                    if (depth < a + 1) fail("stack underflow");
+                    break;
+                case Op::WithFrameDestination:
+                    break;
                 case Op::AddNew:
                     // On at the target with the add's result, or on to the call, all as they were.
                     if (depth < a + 2) fail("stack underflow");
@@ -643,7 +682,7 @@ static int analyzeStack(FunctionProto& f, const Program& program, bool partial) 
                     pops = 1;
                     break;
                 case Op::TypeArg:
-                    if (f.typeArgs == 0) fail("type arguments out of reach");
+                    if ((f.typeArgs & (kTypeArgsOwn | kTypeArgsKept)) == 0) fail("type arguments out of reach");
                     pushes = 1;
                     break;
                 case Op::InstanceTypeArg:
@@ -793,7 +832,7 @@ static int analyzeStack(FunctionProto& f, const Program& program, bool partial) 
                 case Op::Closure: {
                     if (static_cast<size_t>(a) >= f.protos.size()) fail("nested function out of range");
                     // A closure keeps the type arguments of the frame it is made in, which has them.
-                    if ((f.protos[a]->typeArgs & kTypeArgsKept) != 0 && f.typeArgs == 0) fail("type arguments out of reach");
+                    if ((f.protos[a]->typeArgs & kTypeArgsKept) != 0 && (f.typeArgs & (kTypeArgsOwn | kTypeArgsKept)) == 0) fail("type arguments out of reach");
                     // A local function may capture its own slot, which is the one being pushed.
                     for (const UpvalueDesc& uv : f.protos[a]->upvalues) {
                         if (uv.fromCapture) continue;  // checked when the closure is made
@@ -833,6 +872,7 @@ static int analyzeStack(FunctionProto& f, const Program& program, bool partial) 
                     pushes = 1;
                     break;
                 case Op::IterNext:
+                case Op::IterNextRef:
                     if (a >= depth) fail("local slot out of range");
                     flow(b, depth);
                     pushes = 1;
@@ -1019,6 +1059,7 @@ void disassembleFunction(const FunctionProto& f, const Program& program, std::os
                 break;
             case Op::DefaultArg:
             case Op::IterNext:
+            case Op::IterNextRef:
             case Op::RangeNext:
                 out << " slot=" << a << " -> " << b;
                 break;
@@ -1122,7 +1163,7 @@ void disassemble(const Program& program, std::ostream& out) {
 namespace {
 
 const char kMagic[4] = {'A', 'S', 'T', 'R'};
-const uint8_t kFormatVersion = 12;
+const uint8_t kFormatVersion = 13;
 const int kMaxProtoNesting = 200;
 
 enum ConstantTag : uint8_t { TagInt = 0, TagFloat = 1, TagString = 2 };
@@ -1274,7 +1315,7 @@ struct Reader {
         f->varargIndex = static_cast<int>(vararg) - 1;
         f->classParams = u64();
         f->typeArgs = u8();
-        if ((f->typeArgs & ~(kTypeArgsOwn | kTypeArgsKept)) != 0) corrupt();
+        if ((f->typeArgs & ~(kTypeArgsOwn | kTypeArgsKept | kTakesDestination)) != 0) corrupt();
         uint32_t paramCount = count(4);
         for (uint32_t i = 0; i < paramCount; i++) f->paramNames.push_back(vm.intern(str()));
 
@@ -1530,6 +1571,7 @@ int targetOperand(Op op) {
         case Op::RangeNext:
         case Op::TryImplicit:
         case Op::IterNext:
+        case Op::IterNextRef:
         case Op::DefaultArg: return 3;
         default: return 0;
     }

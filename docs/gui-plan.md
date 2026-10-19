@@ -1669,6 +1669,43 @@ million points sorted by `it.x` in 1.5 s before, now as above. Left for later, e
 - Changing items in a parallel section waits for changing through a place (part 4): the items
   a core is given are copies, and a section only reads them.
 
+Part 4 (built 2026-10-19): the analyses, results built where they go, and changing a value
+through its place, as D167 to D170 propose. A value read where it is kept is a reference into
+the list or box (on the stack only: anything that keeps it longer takes a copy), wherever the
+checker shows that nothing which may change a list of that value type runs while it is in use;
+a loop is judged by its body, a call that may wait counting as one that changes every list.
+`pts[i] = pts[i].moved(1)`, `return Point(...)` and `replaceAll { it.moved() }` build the new
+value in the item. A parallel section over a list of values gives each core references into
+its own part of the list. Measured with `bench/bounce_classes.astra`, `bounce_values.astra`
+(a mutating `move`) and `bounce_moved.astra` (`replaceAll { it.moved() }`), 200,000 balls
+moved 200 times: 0.78 s, 0.46 and 0.59 on the 32 cores here, and 4.2 s, 6.1 and 7.6 on one;
+`bench/particles.astra`, a million particles moved on every core and drawn by one loop for 100
+frames, makes no box (five million every five frames before loops were judged by their
+bodies), moving taking 0.93 s and drawing 8.0. Against part 3 built the same way, with Clang
+and with MSVC: `points_values` 17 and 26% faster, `layout_values` 2 and 12%, `layout_classes` 2
+and 11% (a `val` field given its value in `init` is now remembered by the instruction, as a
+`var` field was); `calls`, `fields` and `simulation` 4 to 6% slower (19% for `calls` under
+MSVC, where code placement alone moves it). Left for later, each known:
+- A variable changed through its place is given a box of its own at every change (`p.x = 1`
+  in a loop makes a box each time), since another variable may hold the box it had. Values in
+  variables (D149, part 5) leave no box to copy.
+- A field read through a list item finds the item again each time (the list, its items, the
+  item), so on one core a mutating method on an item is some 1.4 times slower than on an
+  object. Reading `this`'s fields at a known place is part 6's typed instructions.
+- A thread that gives up the lock keeps its references into lists. Another thread reordering
+  a list meanwhile is a race, which gives a wrong item, never damage: every reference is
+  checked against the list's length and its type of item when it is used. So the scan at a
+  thread switch has nothing it must do; a flow, which runs other code at the points where it
+  waits, is handled by the checker (above).
+- `pts[i]` read whole is judged by the whole function, not the statement; a loop by its body.
+- A list of values that may hold null is gone through by copies in a parallel section.
+- In a parallel section, a built-in function given the list the section is over is refused
+  (it would read every core's items), but for `isEmpty` and `isNotEmpty`.
+- Calls, field access and the simulation slice are 4 to 6% slower than in part 3, the same
+  instructions run: the checks for references, spread over the instructions, and what they do to
+  how the compilers lay out the loop. The VM's loop rewritten for D160 (M6.7) is where to win
+  it back.
+
 The second half builds, on M6.5's checker, the language choices decided in
 [language-choices.html](language-choices.html) (section 8): `byte`, with unsigned reads from `bytes` (D19); `>>>` and the unsigned helpers (D44); strings kept at
 flexible width (D20); `char` and how it adds to strings, `'c' == "c"` (D24, D25); `op ==` with
@@ -2011,12 +2048,16 @@ font metrics will need new numbers: no other font engine measures text exactly a
 | D164 | What checking the C++ results changed. | Proposed 2026-10-18 (M6.6 part 1), to be confirmed. The coerce functions give one of their numbers as it was, so `float.coerceIn(Number, Number)` and the like say `Number`, with forms for all ints and all floats that say `int` and `float`. A type parameter that the object a call is made on says nothing of (a `Map` written without type arguments) is unknown, not taken from the arguments: `data.get(key, "missing")` is not a `string?` there. `Deque.toList` builds a `List<T>` rather than casting its `List<T?>`, and `Set ==` gives false for a set of other things rather than failing at a cast, now that casts are checked in full. |
 | D165 | The rules of a value type, as built. | Proposed 2026-10-19 (M6.6 part 2), to be confirmed. `value Point(val x : int, val y : int)` needs a header, every entry a field; it is a data class (printing, `==`, `copy`, coming apart) that implements interfaces and extends no class, and no class extends it. A field is given its value in the header or where it is declared in the body (one declared there with none is an error), and in the type's `init`, and never again: `p.x = 4` and `x += 1` in a method are compile errors saying to make a changed copy, until changing through a place (part 4). `===` on a value type is a compile error, as a value has no identity; through `any` it compares contents. A value type cannot hold itself but where the field may be null, which the checker reports. Every core may read a value, which never changes. |
 | D166 | Lists of values, as built. | Proposed 2026-10-19 (M6.6 part 3), to be confirmed. A list is packed when it is given its type (by its literal, by what it is declared as, or at the call of a C++ function that made it): a `List<int>`, `List<float>`, `List<bool>`, a value type's list, and the nullable ones of those. Putting in a value the list was not made to hold is an error where it is put in (`cannot put a value of type string in a List<int>`), which an unchecked cast through `List<any>` used to allow. A copy of a list (`toList`, `slice`, `subList`, `reversed`, `+` of two of one type) keeps its type and store. `sortBy` and `sortByDescending` call the selector once per item, not twice per comparison. |
+| D167 | Changing a value through its place. | Proposed 2026-10-19 (M6.6 part 4), to be confirmed. A `var` field of a value is changed only through a place that holds the value: a `var` variable (local, global, or one a lambda holds), a `var` field of an object, an item of a list, a value's field that is itself a place, or a lambda's parameter (what `forEach { it.move() }` is given); `p.x = 4`, `p.x += 1`, `pts[i].y++` and `line.to.x = 9`. A `mutating fun` may change `this`'s fields and call the type's other mutating methods, and is called only on a place; `mutating` on anything but a value type is an error. A variable or field changed this way gets a value of its own first, so `val q = p; p.x = 10` leaves `q` as it was. Every part of `pts[next()].x += 1` is worked out once. |
+| D168 | Reading a value where it is. | Proposed 2026-10-19 (M6.6 part 4), to be confirmed. A value read from a list or another value (`pts[i]`, a loop's item, a lambda's `it`, a parameter, `this`) is not copied where the checker shows that nothing which may change a list of its type (remove, insert, sort, set, `replaceAll` and the rest, but not `add` at the end) runs while it is in use, through what the code calls, overrides included; a function given as an argument counts as one that may. A loop is judged by its body; given to a variable from outside the loop, the item is judged by the whole function. A call that may wait counts as one that changes every list, since other code runs meanwhile. Whatever keeps a value longer than the stack does (a field, a list, a global, a captured variable, a C++ function) takes a copy. The test setting `ASTRA_COPY_READS=1` copies every read, and the suite prints the same with it. |
+| D169 | Results built where they go. | Proposed 2026-10-19 (M6.6 part 4), to be confirmed. `pts[i] = f(...)`, where `f` gives a value of the list's type, gives `f` the item as where its result goes; a function that gives a value passes that place on to a call whose result it returns, and making a value from its header alone writes its fields there, every argument worked out before any is written. So `pts[i] = pts[i].moved(1)`, `pts[i] = Point(...)` and `pts[i] = pts[i].copy(x = 4)` make no copy. `list.replaceAll { it.moved() }` replaces each item by what the lambda gives, built where the item is. |
+| D170 | Parallel sections over a list of values. | Proposed 2026-10-19 (M6.6 part 4), to be confirmed. `pts.parallelStream()` deals each core its own part of the list, and hands it the items where they are: `forEach { it.move() }` changes them there, `map` and the rest read them there. `parallelStream().replaceAll { it.moved() }` replaces each item on every core, built where it is. A core reads and writes only its own part (`pts[0]` from another core's part is an error saying so) and changes the list itself not at all (`sortBy`, `replaceAll` and `sortByDescending` count as changing a list); a built-in function given the whole list is refused, but for `isEmpty` and `isNotEmpty`. |
 | | How files are loaded under namespaces. | Importing a folder loads every `.astra` file directly in it, as one unit. Importing a file loads that file only, into its folder's namespace (5.1). |
 | | A lambda's parameter list over several lines. | Allowed, as in Kotlin (5.1). |
 
 ### Open
 
-Six. The language choices, all decided since; four from M6.6 for the user to answer; and one
+Seven. The language choices, all decided since; five from M6.6 for the user to answer; and one
 left for the milestone that raises it. (The measuring rule on scaled displays, open earlier, was settled in M4:
 section 4, point 8.)
 
@@ -2026,8 +2067,11 @@ section 4, point 8.)
 - **M6.6 part 1's proposals**, D162 to D164: the built-in type `Type`, the C++ results
   checked by a test setting, and what that check changed in the standard library.
 - **M6.6 part 2's proposal**, D165: the rules of a value type as built; and whether Jade's
-  geometry (`Point`, `Dimension`, `Insets`, `Rectangle`) becomes value types in part 4.
+  geometry (`Point`, `Dimension`, `Insets`, `Rectangle`) becomes value types, which part 4 made
+  possible (their changes in place are mutating methods, called on a place).
 - **M6.6 part 3's proposal**, D166: lists of values as built.
+- **M6.6 part 4's proposals**, D167 to D170: changing a value through its place, reading a
+  value where it is, results built where they go, and parallel sections over a list of values.
 - **The largest value type** (value-lists.html): decided "any, up to 64 KB"; offered on
   2026-10-18, not yet answered, is "any size, with a copy on read past 64 KB", the limit
   coming only from the 16-bit offset in a reference into a list item.

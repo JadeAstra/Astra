@@ -54,10 +54,11 @@ fs::path cacheRoot() {
 }
 
 // Where compiled programs are kept; those compiled to check what the C++ functions give
-// (ASTRA_CHECK_NATIVE_RESULTS) apart from the others.
+// (ASTRA_CHECK_NATIVE_RESULTS), or to copy every read (ASTRA_COPY_READS), apart from the others.
 fs::path cacheDirectory() {
     fs::path root = cacheRoot();
     if (!root.empty() && checkingNativeResults()) root /= "checked";
+    if (!root.empty() && copyingReads()) root /= "copies";
     return root;
 }
 

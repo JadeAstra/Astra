@@ -29,7 +29,9 @@ Context::Context(size_t stackSize, int frameLimit) : maxFrames(frameLimit) {
     stack = static_cast<Value*>(std::malloc(stackSize * sizeof(Value)));
     // Each frame's type arguments come after the frames (VM::frameTypeArgs).
     static_assert(sizeof(CallFrame) % alignof(const ObjTypeInfo*) == 0);
-    frames = static_cast<CallFrame*>(std::malloc(static_cast<size_t>(frameLimit) * (sizeof(CallFrame) + sizeof(const ObjTypeInfo*))));
+    // and their destinations (VM::frameDestination) after those.
+    frames = static_cast<CallFrame*>(
+        std::malloc(static_cast<size_t>(frameLimit) * (sizeof(CallFrame) + sizeof(const ObjTypeInfo*) + sizeof(Value))));
     if (stack == nullptr || frames == nullptr) {
         std::free(stack);
         std::free(frames);

@@ -1,16 +1,31 @@
-// Value types (M6.6 part 2): a value never changes once made, has no identity, and keeps the
-// values it holds in place, so it cannot hold itself.
+// Value types (M6.6 parts 2 and 4): a value has no identity, keeps the values it holds in place
+// so it cannot hold itself, and is changed only through the place that holds it, in its var
+// fields, by assignment or by a mutating method.
 
-value Point(var x : int, var y : int) {
-  fun bump() { x += 1 }       // check: 'x' of value Point cannot be given a new value: a value never changes once it is made; make a changed copy, copy(x = ...)
+value Point(var x : int, val y : int) {
+  fun bump() { x += 1 }       // check: 'x' of value Point can be changed only by a method marked mutating, which is called on the place that holds the value: mutating fun ...
+  mutating fun step() { x += 1 }
+  fun twice() { step() }      // check: 'step' is mutating: it can be called by its bare name only from a method that is mutating too
   fun moved(dx : int) : Point => copy(x = x + dx)
 }
 var p = Point(1, 2)
-p.y = 4                       // check: 'y' of value Point cannot be given a new value: a value never changes once it is made; make a changed copy, copy(y = ...)
+p.x = 4
+p.step()
+p.y = 4                       // check: 'y' of value Point is a val: it is given its value when the value is made; declare it var to change it through the place that holds the value
+val fixed = Point(1, 2)
+fixed.x = 3                   // check: 'x' cannot be given a new value here: this value of Point is kept nowhere that could take the change (a var, a var field or an item of a list); make a changed copy, copy(x = ...)
+fixed.step()                  // check: 'step' is mutating: it changes the value of Point it is called on, and this one is kept nowhere that could take the change (a var, a var field or an item of a list), so the change would be lost
+p.moved(1).step()             // check: 'step' is mutating: it changes the value of Point it is called on, and this one is kept nowhere that could take the change (a var, a var field or an item of a list), so the change would be lost
+val pts : List<Point> = []
+pts[0].x = 1
+pts[0].step()
 p = p.moved(3)
 print(p === Point(4, 2))      // check: a value has no identity, so === cannot tell two values of Point apart; == compares them by their fields
 
 class Moving : Point(0, 0)    // check: 'Moving' cannot extend value 'Point': a value type has no subclasses
+class Plain {
+  mutating fun no() {}        // check: 'no' is marked mutating, which only a method of a value type can be: it changes the value it is called on, where an object of a class changes its fields itself
+}
 
 value Link(val n : int, val next : Link)   // check: value Link holds itself, and would have no end: make the field that holds it nullable, Link?, which keeps it in a box
 value Fine(val n : int, val next : Fine?)

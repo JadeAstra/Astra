@@ -707,6 +707,14 @@ void sortPositions(std::vector<size_t>& order, std::vector<size_t>& scratch, siz
               order.begin() + static_cast<std::ptrdiff_t>(lo));
 }
 
+// Item `i` of a list as a function given it is handed it: an item of a list of values where it is,
+// a Ref, which the function copies itself if it may change the list while it runs (M6.6 part 4).
+Value itemWhereItIs(VM& vm, ObjList* list, size_t i) {
+    if (list->store() == ListStore::Items && !(list->pack->nullable && (list->pack->nulls[i / 64] >> (i % 64) & 1)))
+        return Value::ref(list, static_cast<uint32_t>(i), 0, 0);
+    return vm.listGet(list, i);
+}
+
 // sortBy { key } and sortByDescending { key } (M6.6 part 3, value-lists.html section 9): each
 // item's key is worked out once, the positions are sorted by the keys, and then each item is
 // moved once, to where it goes, however large it is and however many comparisons there are.
@@ -717,7 +725,7 @@ Value sortByKey(VM& vm, Value self, Value selector, bool descending) {
     keys.reserve(n);
     TempVector keepKeys(vm, keys);
     for (size_t i = 0; i < n && i < list->size(); i++) {
-        Value item = vm.listGet(list, i);
+        Value item = itemWhereItIs(vm, list, i);  // M6.6 part 4: no copy of a value to work out its key
         TempRoot keepItem(vm, item);
         keys.push_back(vm.call(selector, 1, &item));
     }
@@ -743,6 +751,25 @@ void registerListMethods(VM& vm) {
     const BuiltinType T = BuiltinType::List;
 
     vm.defineMethod(T, "sortBy", 1, 1, [](VM& vm, Value self, int, Value* args) -> Value { return sortByKey(vm, self, args[0], false); });
+
+    // replaceAll { it.moved() } (value-lists.html section 9): every item replaced by what the
+    // function gives for it. An item of a list of values is handed over where it is, and is
+    // where the result goes: a value made from its header alone is built there (section 7).
+    vm.defineMethod(T, "replaceAll", 1, 1, [](VM& vm, Value self, int, Value* args) -> Value {
+        ObjList* list = asList(self);
+        const Value transform = args[0];
+        for (size_t i = 0; i < list->size(); i++) {
+            Value item = itemWhereItIs(vm, list, i);
+            TempRoot keepItem(vm, item);
+            if (item.isRef()) vm.pendingDestination_ = item;
+            const Value made = vm.call(transform, 1, &item);
+            vm.pendingDestination_ = Value::null();
+            TempRoot keepMade(vm, made);
+            if (i >= list->size()) throw vm.runtimeError("the list was made shorter while its items were replaced");
+            vm.listSet(list, i, made);
+        }
+        return Value::null();
+    });
     vm.defineMethod(T, "sortByDescending", 1, 1, [](VM& vm, Value self, int, Value* args) -> Value {
         return sortByKey(vm, self, args[0], true);
     });

@@ -50,11 +50,20 @@ enum class ValueKind : uint8_t {
     // once it reaches a parameter declared as one. Holds the name (as.obj, an ObjString) and
     // never gets further than the start of the function called.
     EnumName,
+
+    // A value of a value type where it is kept (M6.6 part 4, value-lists.html section 6): in
+    // an item of a list of values, or in a box, held by as.obj; the item's position in
+    // `refIndex`, and where the value is within it in `refOffset`, `refDepth` values deep.
+    // Only ever on a thread's stack: storing it anywhere else stores a box with a copy.
+    Ref,
 };
 
 // An Astra runtime value: null, bool, 64-bit int, double, or a pointer to a heap object.
 struct Value {
     ValueKind kind;
+    uint8_t refDepth;    // a Ref: how many values deep in the item it is (0: the item itself)
+    uint16_t refOffset;  // a Ref: where in the item, in bytes
+    uint32_t refIndex;   // a Ref into a list: the item's position
     union {
         bool b;
         int64_t i;
@@ -115,6 +124,16 @@ struct Value {
         v.as.obj = o;
         return v;
     }
+    static Value ref(Obj* holder, uint32_t index, uint16_t offset, uint8_t depth) {
+        Value v;
+        v.kind = ValueKind::Ref;
+        v.as.obj = holder;
+        v.refIndex = index;
+        v.refOffset = offset;
+        v.refDepth = depth;
+        return v;
+    }
+    bool isRef() const { return kind == ValueKind::Ref; }
 
     bool isNull() const { return kind == ValueKind::Null; }
     bool isBool() const { return kind == ValueKind::Bool; }
@@ -665,8 +684,51 @@ struct ObjValue final : Obj {
 };
 static_assert(sizeof(ObjValue) % alignof(Value) == 0, "a value's fields follow it");
 
-// The class of an object of a class or of a value of a value type; null for anything else.
+// The value type of what a Ref points at: the holder's item type, and from there `refDepth`
+// values in, the one whose place `refOffset` is in.
+inline ObjClass* refClass(const Value& v) {
+    ObjClass* cls = v.as.obj->type == ObjType::List ? static_cast<const ObjList*>(v.as.obj)->pack->itemClass
+                                                    : static_cast<const ObjValue*>(v.as.obj)->cls;
+    uint32_t base = 0;
+    for (int d = 0; d < v.refDepth; d++) {
+        const ValueLayout* layout = cls->layout.load(std::memory_order_acquire);
+        for (const ValueField& field : layout->fields) {
+            if (field.kind != ValueField::Nested) continue;
+            const uint32_t start = base + field.offset;
+            if (v.refOffset >= start && v.refOffset < start + field.cls->layout.load(std::memory_order_acquire)->size) {
+                base = start;
+                cls = field.cls;
+                break;
+            }
+        }
+    }
+    return cls;
+}
+
+// The class of the value a Ref of depth 0 points at, a list's item or a box's value, without
+// looking further; null for a list that keeps no values now.
+inline ObjClass* refHolderClass(const Value& v) {
+    if (v.as.obj->type == ObjType::List) {
+        const ObjList* list = static_cast<const ObjList*>(v.as.obj);
+        return list->pack != nullptr ? list->pack->itemClass : nullptr;
+    }
+    return static_cast<const ObjValue*>(v.as.obj)->cls;
+}
+
+// Where the bytes of what a Ref points at are; null for an item that is no longer in its list.
+inline uint8_t* refBytes(const Value& v) {
+    if (v.as.obj->type == ObjType::List) {
+        const ObjList* list = static_cast<const ObjList*>(v.as.obj);
+        if (list->pack == nullptr || v.refIndex >= list->pack->count) return nullptr;
+        return const_cast<uint8_t*>(list->pack->block.data()) + static_cast<size_t>(v.refIndex) * list->pack->width + v.refOffset;
+    }
+    return static_cast<ObjValue*>(v.as.obj)->data() + v.refOffset;
+}
+
+// The class of an object of a class or of a value of a value type, where it is kept or where it
+// is pointed at; null for anything else.
 inline ObjClass* classOf(const Value& v) {
+    if (v.kind == ValueKind::Ref) return refClass(v);
     if (!v.isObj()) return nullptr;
     if (v.as.obj->type == ObjType::Instance) return static_cast<const ObjInstance*>(v.as.obj)->cls;
     if (v.as.obj->type == ObjType::Value) return static_cast<const ObjValue*>(v.as.obj)->cls;

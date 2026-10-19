@@ -1012,11 +1012,12 @@ void Parser::classMember(ClassStmt& s, bool inStatic) {
     bool overrides = false;
     bool suspends = false;
     bool abstracts = false;
+    bool mutates = false;
     uint8_t access = 0;
     for (; check(TokenType::Identifier) && !peekNext().newlineBefore &&
            (peek().text == "private" || peek().text == "internal" || peek().text == "public" || peek().text == "protected" ||
             peek().text == "override" || kotlinOnlyWord(peek().text) || peek().text == "abstract" ||
-            peek().text == "suspend") &&
+            peek().text == "suspend" || peek().text == "mutating") &&
            (peekNext().type == TokenType::Val || peekNext().type == TokenType::Var || peekNext().type == TokenType::Fun ||
             peekNext().type == TokenType::Class || peekNext().type == TokenType::Identifier);
          advance()) {
@@ -1024,6 +1025,7 @@ void Parser::classMember(ClassStmt& s, bool inStatic) {
         overrides = overrides || peek().text == "override";
         suspends = suspends || peek().text == "suspend";
         abstracts = abstracts || peek().text == "abstract";
+        mutates = mutates || peek().text == "mutating";
         if (accessWord(peek().text) != 0) access = accessWord(peek().text);
     }
     struct AbstractMember {
@@ -1117,6 +1119,7 @@ void Parser::classMember(ClassStmt& s, bool inStatic) {
         if (inStatic) member->isStatic = true;
         member->isOverride = overrides;
         member->isSuspend = suspends;
+        member->isMutating = mutates;
         member->access = access;
         s.methods.push_back(std::move(member));
     }

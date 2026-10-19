@@ -100,6 +100,10 @@ struct FunctionDecl : Node {
     // calls it (R1, D30).
     bool isSuspend = false;
 
+    // Written `mutating`, in a value type (M6.6 part 4): it may give the value's var fields new
+    // values, and is called on a place, which holds the result.
+    bool isMutating = false;
+
     // Where its body is among the file's tokens, from its first to past its last: what a
     // file's summary leaves out, other files seeing only what is learned from it (D145).
     size_t bodyFrom = 0, bodyTo = 0;

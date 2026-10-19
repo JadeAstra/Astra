@@ -231,6 +231,14 @@ struct Local {
     FieldInfo* constant = nullptr;
     // A val with a value, whose reads are folded where the value is constant.
     const VarStmt* val = nullptr;
+    // A lambda's parameter: a place, where a list of values hands the lambda its own item
+    // (M6.6 part 4, value-lists.html section 8).
+    bool lambdaParam = false;
+    // The variable of a for loop over a list: whose uses decide whether it may be the item
+    // itself (M6.6 part 4).
+    const ForInStmt* loopOf = nullptr;
+    // A parameter of a value type, of the function or lambda that declares it.
+    const FunctionDecl* paramOfDecl = nullptr;
 };
 
 // Why nothing may wait in some code, whatever the function around it says (R1).
@@ -1881,15 +1889,35 @@ struct Checker::Impl {
                 } else if (over.known() && over.kind != Type::Null) {
                     report(*f.iterable, "a for cannot go over " + describe(over) + ", which may be null");
                 }
+                // What the body may change is noted for the loop as well as for the function
+                // around (M6.6 part 4): an item is read where it is while the body runs.
+                const void* around = effectKeyHere();
+                activeLoops.push_back({effectKey(), &f, scopes.size()});
                 push();
                 if (f.pattern.empty()) {
                     declareLocal(f.variable, item, true);
+                    if (over.kind == Type::List && !over.nullable) {
+                        scopes.back()[f.variable].loopOf = &f;
+                        LoopCandidate& loop = loopCandidates[&f];
+                        loop.key = effectKey();
+                        loop.item = item;
+                    }
                 } else {
                     std::vector<Type> parts = partsOf(item, f.pattern.size());
                     for (size_t i = 0; i < f.pattern.size(); i++) declareLocal(f.pattern[i], parts[i], true);
                 }
                 for (const StmtPtr& st : f.body->statements) stmt(*st);
                 pop();
+                activeLoops.pop_back();
+                if (auto body = effects.find(&f); body != effects.end()) {
+                    const Effects inside = body->second;  // copied: effects may grow and move below
+                    Effects& outer = effects[around];
+                    outer.any = outer.any || inside.any;
+                    outer.callsParams = outer.callsParams || inside.callsParams;
+                    outer.types.insert(inside.types.begin(), inside.types.end());
+                    outer.calls.insert(outer.calls.end(), inside.calls.begin(), inside.calls.end());
+                    outer.methodCalls.insert(outer.methodCalls.end(), inside.methodCalls.begin(), inside.methodCalls.end());
+                }
                 break;
             }
             case StmtKind::Return:
@@ -1924,6 +1952,7 @@ struct Checker::Impl {
                 // A function declared inside another: a local whose type is a function.
                 FuncInfo* f = newFunc(*fs.fn, unit, ctx ? ctx->cls : nullptr);
                 resolveFunc(f);
+                effects[effectKeyHere()].calls.push_back(fs.fn.get());  // called through a local, which is not followed
                 declareLocal(fs.fn->name, functionValue(f), true);
                 checkFunctionBody(f, nullptr);
                 break;
@@ -2054,6 +2083,9 @@ struct Checker::Impl {
                                                     "; its default cannot be " + describe(dv));
             }
             declareLocal(d.params[i], f->params[i], true);
+            if (d.isLambda) scopes.back()[d.params[i]].lambdaParam = true;
+            scopes.back()[d.params[i]].paramOfDecl = &d;
+            noteValueParam(d, static_cast<int>(i), f->params[i]);
             if (f->params[i].kind == Type::Function) {
                 Local& l = scopes.back()[d.params[i]];
                 l.paramOf = f;
@@ -2114,6 +2146,7 @@ struct Checker::Impl {
                 c.receiverUnknown = keptLambdas.count(&d) == 0;
             }
         }
+        effects[effectKeyHere()].calls.push_back(&d);  // it may run while the code around it does
         FnCtx* saved = ctx;
         ctx = &c;
         push();
@@ -2126,6 +2159,10 @@ struct Checker::Impl {
             if (p.unknown() && typed && i < expected->args.size()) p = expected->args[i];
             ft.args.push_back(p);
             declareLocal(d.params[i], p, true);
+            Local& declared = scopes.back()[d.params[i]];
+            declared.lambdaParam = true;
+            declared.paramOfDecl = &d;
+            noteValueParam(d, static_cast<int>(i), p);
         }
         if (itLambda && typed && expected->args.empty()) ft.args.clear();
         if (!itLambda) {
@@ -2143,6 +2180,8 @@ struct Checker::Impl {
         for (const StmtPtr& s : d.body) stmt(*s);
         pop();
         ctx = saved;
+        for (const Type& given : returns)
+            if (given.kind == Type::Class && !given.nullable && given.cls != nullptr && given.cls->isValue) valueLambdas.insert(&d);
         Type r = (!d.isLambda && c.returnKnown) ? c.expected : unknownType();
         if (d.isLambda && c.returnKnown) {
             r = c.expected;  // what it ends with was checked against this, and reported there
@@ -2158,23 +2197,27 @@ struct Checker::Impl {
 
     // A value type keeps the values it holds in place, so it cannot hold itself, through others
     // or not, except where the field may be null, which keeps it in a box (M6.6 part 2).
-    bool holdsValue(ClassInfo* holder, const ClassInfo* held, std::vector<ClassInfo*>& seen) {
+    bool holdsValue(ClassInfo* holder, const ClassInfo* held, std::vector<ClassInfo*>& visited) {
         for (const auto& [name, field] : holder->fields) {
             const Type t = fieldType(field);
             if (t.kind != Type::Class || t.nullable || t.cls == nullptr || !t.cls->isValue) continue;
             if (t.cls == held) return true;
-            if (std::find(seen.begin(), seen.end(), t.cls) != seen.end()) continue;
-            seen.push_back(t.cls);
-            if (holdsValue(t.cls, held, seen)) return true;
+            if (std::find(visited.begin(), visited.end(), t.cls) != visited.end()) continue;
+            visited.push_back(t.cls);
+            if (holdsValue(t.cls, held, visited)) return true;
         }
         return false;
     }
 
     void checkClass(ClassInfo* k) {
         const ClassStmt& c = *k->decl;
+        for (const auto& m : c.methods)
+            if (m->isMutating && (!k->isValue || m->isStatic))
+                report(*m, "'" + m->name + "' is marked mutating, which only a method of a value type can be: it changes the value " +
+                               "it is called on, where an object of a class changes its fields itself");
         if (k->isValue) {
-            std::vector<ClassInfo*> seen{k};
-            if (holdsValue(k, k, seen))
+            std::vector<ClassInfo*> visited{k};
+            if (holdsValue(k, k, visited))
                 report(c, "value " + k->name + " holds itself, and would have no end: make the field that holds it nullable, " +
                               k->name + "?, which keeps it in a box");
         }
@@ -2776,6 +2819,11 @@ struct Checker::Impl {
 
     Type name(const NameExpr& n) {
         if (Local* l = findLocal(n.name)) {
+            if (l->loopOf != nullptr) {
+                LoopCandidate& loop = loopCandidates[l->loopOf];
+                loop.uses.insert(&n);
+                if (&n == passedUse || &n == valueCallArg) loop.argUses.insert(&n);
+            }
             if (&n != passedUse) noteUse(*l, ParamUse::Other);
             noteConst(n, l->constant);
             if (l->val != nullptr && silent == 0) valUses[&n] = l->val;
@@ -3038,18 +3086,93 @@ struct Checker::Impl {
 
     // ---- Assignment ----
 
-    // A field of a value is given its value when the value is made, and never again (M6.6 part
-    // 2): `p.x = 4` outside Point's initializer is an error, as `x = 4` in one of its methods.
+    // ---- Changing a value through its place (M6.6 part 4, value-lists.html section 8) ----
+
+    // The expressions of a value type that are places a change is made through, for the
+    // compiler: it reaches the value where it is kept rather than reading a copy.
+    std::unordered_set<const Expr*> valuePlaces;
+
+    // The value type the code being checked belongs to and may change `this` of: a mutating
+    // method's, or one whose value is being made.
+    ClassInfo* changesThis() {
+        for (FnCtx* c = ctx; c != nullptr; c = c->parent) {
+            if (c->cls != nullptr && c->cls->isValue &&
+                (c->noWait == ObjectMade || (c->fn != nullptr && (c->fn->name == "init" || (c->fn->decl != nullptr && c->fn->decl->isMutating)))))
+                return c->cls;
+            if (!c->isLambda) break;
+        }
+        return nullptr;
+    }
+
+    static FieldInfo* fieldNamed(ClassInfo* k, const std::string& name) {
+        for (; k != nullptr; k = k->superclass) {
+            auto found = k->fields.find(name);
+            if (found != k->fields.end()) return found->second;
+        }
+        return nullptr;
+    }
+
+    Type typeQuietly(const Expr& e) {
+        silent++;
+        Type t = withNull(expr(e), false);
+        silent--;
+        return t;
+    }
+
+    // Whether an expression of a value type is a place that keeps a change made through it: a
+    // var local, a lambda's parameter, a var global, a var field of a place or of an object, an
+    // item of a list, or `this` in a mutating method. Noted for the compiler where it is.
+    bool isPlace(const Expr& e) {
+        bool place = false;
+        switch (e.kind) {
+            case ExprKind::Name: {
+                const auto& n = static_cast<const NameExpr&>(e);
+                if (Local* l = findLocal(n.name)) {
+                    place = !l->isVal || l->lambdaParam;
+                } else if (const GlobalSym* g = meansGlobal(n) ? findGlobal(*unit, n.name) : nullptr; g != nullptr && g->var != nullptr) {
+                    place = !g->var->isVal;
+                } else if (ctx != nullptr && ctx->cls != nullptr) {
+                    // A field of the object or value the method runs on.
+                    FieldInfo* field = fieldNamed(ctx->cls, n.name);
+                    place = field != nullptr && !field->isVal && (!ctx->cls->isValue || changesThis() == ctx->cls);
+                }
+                break;
+            }
+            case ExprKind::This:
+                place = changesThis() != nullptr;
+                break;
+            case ExprKind::Index:
+                place = typeQuietly(*static_cast<const IndexExpr&>(e).object).kind == Type::List;
+                break;
+            case ExprKind::Member: {
+                const auto& m = static_cast<const MemberExpr&>(e);
+                if (m.safe) break;
+                const Type object = typeQuietly(*m.object);
+                if (object.kind != Type::Class || object.cls == nullptr) break;
+                FieldInfo* field = fieldNamed(object.cls, m.name);
+                if (field == nullptr || field->isVal) break;
+                place = !object.cls->isValue || isPlace(*m.object);
+                break;
+            }
+            default:
+                break;
+        }
+        if (place && silent == 0) valuePlaces.insert(&e);
+        return place;
+    }
+
+    // `p.x = 4` on a value: only a var field, only through a place (M6.6 part 4); a value's
+    // fields are given their values freely while it is being made.
     void checkValueFieldWrite(const Expr& target) {
         ClassInfo* owner = nullptr;
         std::string name;
+        const Expr* object = nullptr;
         if (target.kind == ExprKind::Member) {
             const auto& m = static_cast<const MemberExpr&>(target);
-            silent++;
-            const Type object = withNull(expr(*m.object), false);
-            silent--;
-            if (object.kind == Type::Class && object.cls != nullptr) owner = object.cls;
+            const Type type = typeQuietly(*m.object);
+            if (type.kind == Type::Class && type.cls != nullptr) owner = type.cls;
             name = m.name;
+            object = m.object.get();
         } else if (target.kind == ExprKind::Name) {
             const auto& n = static_cast<const NameExpr&>(target);
             bool escape = false;
@@ -3057,17 +3180,276 @@ struct Checker::Impl {
             if (ctx != nullptr) owner = ctx->cls;
             name = n.name;
         }
-        if (owner == nullptr || !owner->isValue || owner->fields.count(name) == 0) return;
+        if (owner == nullptr || !owner->isValue) return;
+        FieldInfo* field = fieldNamed(owner, name);
+        if (field == nullptr) return;
         for (FnCtx* c = ctx; c != nullptr; c = c->parent) {
             if (c->cls == owner && (c->noWait == ObjectMade || (c->fn != nullptr && c->fn->name == "init"))) return;
             if (!c->isLambda) break;
         }
-        report(target, "'" + name + "' of value " + owner->name + " cannot be given a new value: a value never changes once it is made; " +
-                           "make a changed copy, copy(" + name + " = ...)");
+        if (field->isVal) {
+            report(target, "'" + name + "' of value " + owner->name + " is a val: it is given its value when the value is made; " +
+                               "declare it var to change it through the place that holds the value");
+            return;
+        }
+        if (object == nullptr) {
+            if (changesThis() != owner)
+                report(target, "'" + name + "' of value " + owner->name + " can be changed only by a method marked mutating, " +
+                                   "which is called on the place that holds the value: mutating fun ...");
+            return;
+        }
+        if (!isPlace(*object))
+            report(target, "'" + name + "' cannot be given a new value here: this value of " + owner->name + " is kept nowhere that " +
+                               "could take the change (a var, a var field or an item of a list); make a changed copy, copy(" + name +
+                               " = ...)");
+        else
+            notePlaceChange(*object, owner);
+    }
+
+    const CallExpr* methodCall = nullptr;  // the call callFunctions is checking
+
+    // ---- Which lists a function may change (M6.6 part 4, value-lists.html section 6) ----
+    //
+    // A value may be read where it is, in an item of a list, only where nothing changes the
+    // list while it is in use: no item taken out, put in before it, replaced, changed, or moved
+    // by a sort. (Adding at the end moves none.) What each function does to lists of each value
+    // type is noted as it is checked, with what it calls and the lambdas written in it, which
+    // may run while it does; what calls reach is joined at the end.
+
+    struct Effects {
+        bool any = false;          // may change a list of any value type, or calls what is not known
+        bool callsParams = false;  // calls a function it was given, which its callers account for
+        std::unordered_set<ClassInfo*> types;
+        std::vector<const void*> calls;      // the functions it calls and the lambdas in it, by declaration
+        std::vector<FuncInfo*> methodCalls;  // methods it calls, whose overrides are added at the end
+    };
+    std::unordered_map<const void*, Effects> effects;
+    bool effectsJoined = false;
+
+    // The function the code being checked belongs to, as effects knows it: a lambda's or a
+    // function's declaration, or the file for its top level.
+    const void* effectKey() const {
+        for (const FnCtx* c = ctx; c != nullptr; c = c->parent) {
+            if (c->placeDecl != nullptr) return c->placeDecl;
+            if (c->fn != nullptr) return c->fn->decl != nullptr ? static_cast<const void*>(c->fn->decl) : static_cast<const void*>(c->fn);
+            if (c->topLevel) break;
+        }
+        return unit;
+    }
+
+    // The for loops being checked, the innermost last: the function each is in, and how many
+    // scopes there were around it. What the innermost loop of the code being checked may change
+    // is noted for it, and for the loops and the function around when it ends.
+    struct ActiveLoop {
+        const void* fn;
+        const ForInStmt* loop;
+        size_t depth;
+    };
+    std::vector<ActiveLoop> activeLoops;
+    const void* effectKeyHere() const {
+        const void* fn = effectKey();
+        if (!activeLoops.empty() && activeLoops.back().fn == fn) return activeLoops.back().loop;
+        return fn;
+    }
+
+    // `kept = p` in a loop, to a variable from outside it that may hold a value: an item read
+    // where it is might be kept past the loop, so the loops it is in are judged by the whole
+    // function instead.
+    void noteKeptPastLoops(const std::string& name, const Type& type) {
+        if (activeLoops.empty()) return;
+        if (type.known() && type.kind != Type::Any && type.kind != Type::TypeParam &&
+            !(type.kind == Type::Class && type.cls != nullptr && type.cls->isValue))
+            return;
+        size_t at = scopes.size();
+        while (at > 0 && scopes[at - 1].count(name) == 0) at--;
+        if (at == 0) return;
+        const void* fn = effectKey();
+        for (const ActiveLoop& l : activeLoops)
+            if (l.fn == fn && at - 1 < l.depth) loopCandidates[l.loop].keptPast = true;
+    }
+
+    // A change to a list of `list`'s type: of its value type's lists, or, for a list that may be
+    // seen as one of any (List<any>, List<T>), of every one.
+    void noteListChange(const Type& list) {
+        const Type l = withNull(list, false);
+        if (l.kind != Type::List) return;
+        Effects& here = effects[effectKeyHere()];
+        if (l.args.size() != 1 || l.args[0].unknown() || l.args[0].kind == Type::Any || l.args[0].kind == Type::TypeParam) {
+            here.any = true;
+            return;
+        }
+        if (l.args[0].kind == Type::Class && l.args[0].cls != nullptr && l.args[0].cls->isValue) here.types.insert(l.args[0].cls);
+    }
+
+    // A change made through a place: one that is an item of a list, or may be (a parameter, or
+    // `this` in a mutating method), changes a list of its type.
+    void notePlaceChange(const Expr& place, ClassInfo* type) {
+        const Expr* root = &place;
+        while (root->kind == ExprKind::Member) root = static_cast<const MemberExpr&>(*root).object.get();
+        if (root->kind == ExprKind::Index) {
+            noteListChange(typeQuietly(*static_cast<const IndexExpr&>(*root).object));
+            return;
+        }
+        if (root->kind == ExprKind::Name) {
+            const Local* l = findLocal(static_cast<const NameExpr&>(*root).name);
+            if (l == nullptr || l->paramOfDecl == nullptr) return;  // a variable of its own
+            placeParams.insert({l->paramOfDecl, static_cast<const NameExpr&>(*root).name});
+        }
+        const Type rootType = typeQuietly(*root);
+        if (rootType.kind == Type::Class && rootType.cls != nullptr && rootType.cls->isValue) effects[effectKeyHere()].types.insert(rootType.cls);
+        else effects[effectKeyHere()].types.insert(type);
+    }
+
+    static bool listChangingName(const std::string& name, size_t args) {
+        static const std::unordered_set<std::string> changing = {
+            "insert", "remove", "removeAt", "removeFirst", "removeLast", "removeFirstOrNull", "removeLastOrNull", "clear", "sort",
+            "sortBy", "sortByDescending", "sortWith", "sortDescending", "reverse", "fill", "set", "shuffle", "removeAll",
+            "retainAll", "removeIf", "replaceAll", "pop"};
+        return changing.count(name) != 0 || ((name == "add" || name == "addAll") && args == 2);
+    }
+
+    void noteCallEffects(FuncInfo* f, const Type* receiver, const Args& args) {
+        Effects& here = effects[effectKeyHere()];
+        if (f->isExternal) {
+            if (f->isExtension && receiver != nullptr && listChangingName(f->name, args.exprs.size())) noteListChange(*receiver);
+            return;
+        }
+        if (f->decl != nullptr) here.calls.push_back(f->decl);
+        if (f->owner != nullptr && !f->isStatic) here.methodCalls.push_back(f);
+    }
+
+    // The effects of what each function calls, joined into it, until nothing more is added.
+    void joinEffects() {
+        if (effectsJoined) return;
+        effectsJoined = true;
+        for (auto& [key, e] : effects)
+            for (FuncInfo* f : e.methodCalls)
+                for (FuncInfo* g : overridersOf(f))
+                    if (g->decl != nullptr) e.calls.push_back(g->decl);
+        for (bool changed = true; changed;) {
+            changed = false;
+            for (auto& [key, e] : effects) {
+                for (const void* callee : e.calls) {
+                    auto found = effects.find(callee);
+                    if (found == effects.end() || found->first == key) continue;
+                    const Effects& c = found->second;
+                    if (c.any && !e.any) {
+                        e.any = true;
+                        changed = true;
+                    }
+                    for (ClassInfo* t : c.types)
+                        if (e.types.insert(t).second) changed = true;
+                }
+            }
+        }
+    }
+
+    // Whether code of `key` may change a list of `type` (null: of a type it cannot tell) while
+    // it runs, a function it was given counting as one that may.
+    bool mayChangeLists(const void* key, ClassInfo* type) {
+        joinEffects();
+        auto found = effects.find(key);
+        if (found == effects.end()) return false;
+        const Effects& e = found->second;
+        return e.any || e.callsParams || type == nullptr || e.types.count(type) != 0;
+    }
+
+    struct IndexCandidate {
+        const void* key = nullptr;
+        ClassInfo* type = nullptr;
+    };
+    std::unordered_map<const IndexExpr*, IndexCandidate> indexCandidates;
+
+    struct LoopCandidate {
+        const void* key = nullptr;  // the function the loop is in
+        Type item;
+        std::unordered_set<const NameExpr*> uses, argUses;
+        bool keptPast = false;  // noteKeptPastLoops
+    };
+    std::unordered_map<const ForInStmt*, LoopCandidate> loopCandidates;
+
+    struct ParamCandidate {
+        int index;
+        std::string name;
+        ClassInfo* type;
+    };
+    std::unordered_map<const FunctionDecl*, std::vector<ParamCandidate>> paramCandidates;
+    std::unordered_set<const FunctionDecl*> valueLambdas;      // lambdas that give a value of a value type
+    std::unordered_set<const AssignExpr*> builtInPlace;        // `pts[i] = f(...)`, f giving the list's item type
+    std::set<std::pair<const FunctionDecl*, std::string>> placeParams;  // parameters changed through as places
+
+    void noteValueParam(const FunctionDecl& d, int index, const Type& t) {
+        if (t.kind != Type::Class || t.cls == nullptr || !t.cls->isValue) return;
+        auto& list = paramCandidates[&d];
+        for (const ParamCandidate& p : list)
+            if (p.index == index) return;
+        list.push_back(ParamCandidate{index, d.params[static_cast<size_t>(index)], t.cls});
+    }
+
+    // An item of a list of values read where it is (GetIndexRef): where nothing the code does
+    // may change a list of its type.
+    bool readsInPlace(const IndexExpr& i) {
+        auto found = indexCandidates.find(&i);
+        return found != indexCandidates.end() && !mayChangeLists(found->second.key, found->second.type);
+    }
+
+    // A for loop's variable the item itself, where the list keeps values: where nothing the code
+    // does may change a list of its type, or where the variable's one use is to be passed on
+    // (`for (item in this) action(item)`), the function it is passed to seeing to itself.
+    bool loopsInPlace(const ForInStmt& s) {
+        auto found = loopCandidates.find(&s);
+        if (found == loopCandidates.end()) return false;
+        const LoopCandidate& loop = found->second;
+        ClassInfo* type = nullptr;
+        if (loop.item.kind == Type::Class && loop.item.cls != nullptr && loop.item.cls->isValue) type = loop.item.cls;
+        else if (loop.item.kind != Type::TypeParam && loop.item.known()) return false;  // never a value
+        if (loop.uses.size() == 1 && loop.argUses.size() == 1) return true;
+        return type != nullptr && !mayChangeLists(loop.keptPast ? loop.key : static_cast<const void*>(&s), type);
+    }
+
+    // The parameters a function takes a copy of as it starts, should it have been given an item
+    // of a list where it is: those of a value type whose lists it may change, but for one it
+    // changes through as a place, where the change has to go to the item.
+    std::vector<int> paramsOwned(const FunctionDecl& d) {
+        std::vector<int> owned;
+        auto found = paramCandidates.find(&d);
+        if (found == paramCandidates.end()) return owned;
+        for (const ParamCandidate& p : found->second)
+            if (mayChangeLists(&d, p.type) && placeParams.count({&d, p.name}) == 0) owned.push_back(p.index);
+        return owned;
+    }
+
+    // A mutating method called on a value: what it is called on must be a place, which keeps
+    // the change; called by its bare name, the method around must change `this` too.
+    void checkMutatingCall(const FuncInfo* f, const Node& at) {
+        if (silent > 0 || f->decl == nullptr || !f->decl->isMutating || f->owner == nullptr) return;
+        const CallExpr* call = methodCall;
+        if (call == nullptr || static_cast<const Node*>(call) != &at) return;
+        if (call->callee->kind == ExprKind::Member) {
+            const auto& m = static_cast<const MemberExpr&>(*call->callee);
+            if (isPlace(*m.object)) {
+                notePlaceChange(*m.object, f->owner);
+                return;
+            }
+            report(at, "'" + f->name + "' is mutating: it changes the value of " + f->owner->name + " it is called on, and this one " +
+                           "is kept nowhere that could take the change (a var, a var field or an item of a list), so the change " +
+                           "would be lost");
+        } else if (changesThis() != f->owner) {
+            report(at, "'" + f->name + "' is mutating: it can be called by its bare name only from a method that is mutating too");
+        }
     }
 
     Type assign(const AssignExpr& a) {
         checkValueFieldWrite(*a.target);
+        if (a.target->kind == ExprKind::Index) {
+            const Type list = typeQuietly(*static_cast<const IndexExpr&>(*a.target).object);
+            noteListChange(list);
+            // `pts[i] = pts[i].moved(1)`: the result may be built in the item (M6.6 part 4).
+            if (a.op == TokenType::Eq && a.value->kind == ExprKind::Call && list.kind == Type::List && list.args.size() == 1 &&
+                list.args[0].kind == Type::Class && !list.args[0].nullable && list.args[0].cls != nullptr && list.args[0].cls->isValue &&
+                silent == 0)
+                builtInPlace.insert(&a);
+        }
         Type target = unknownType();
         std::string targetName;
         Local* local = nullptr;
@@ -3076,6 +3458,7 @@ struct Checker::Impl {
             targetName = n.name;
             local = findLocal(n.name);
             target = local != nullptr ? local->type : name(n);
+            if (local != nullptr) noteKeptPastLoops(n.name, local->type);
             // The name of a class, an object or a function is never given a value; the compiler
             // says so, which tells more than what the value's type is.
             if (local == nullptr) {
@@ -3362,6 +3745,9 @@ struct Checker::Impl {
     Type index(const IndexExpr& i) {
         Type obj = expr(*i.object);
         Type idx = expr(*i.index);
+        if (!i.defaultValue && obj.kind == Type::List && !obj.nullable && obj.args.size() == 1 && obj.args[0].kind == Type::Class &&
+            obj.args[0].cls != nullptr && obj.args[0].cls->isValue)
+            indexCandidates[&i] = IndexCandidate{effectKey(), obj.args[0].cls};
         if (i.defaultValue) {
             // `counts[word, default = 0]`: the entry, or the start value; never null (L118).
             const bool map = obj.kind == Type::Map && !obj.nullable;
@@ -3528,6 +3914,12 @@ struct Checker::Impl {
                         passedUse = args.exprs[i].get();
                     }
                 }
+                // A function value given to a function that may call it: what it does, done.
+                if (want.kind == Type::Function && args.exprs[i]->kind != ExprKind::Function && silent == 0) {
+                    const Local* given = args.exprs[i]->kind == ExprKind::Name ? findLocal(static_cast<const NameExpr&>(*args.exprs[i]).name) : nullptr;
+                    if (given != nullptr && given->paramOf != nullptr) effects[effectKeyHere()].callsParams = true;
+                    else effects[effectKeyHere()].any = true;
+                }
                 types[i] = exprExpected(*args.exprs[i], expected);
                 passedUse = nullptr;
                 unify(want, types[i], env, vars);
@@ -3544,6 +3936,8 @@ struct Checker::Impl {
         if (envOut != nullptr) *envOut = env;
         noteTypeArguments(f, env, at);
         noteNewValueAdded(f, receiver, args, at);
+        checkMutatingCall(f, at);
+        noteCallEffects(f, receiver, args);
         return finishCall(f, env, vars, at);
     }
 
@@ -3657,6 +4051,12 @@ struct Checker::Impl {
     // chosen, and the call checked against it. `envs`, when given, holds each form's own `env`.
     Type callFunctions(const std::vector<FuncInfo*>& fs, const CallExpr& c, const std::string& what, const Env& env,
                        const Type* receiver, const std::vector<Env>* envs = nullptr) {
+        struct Noted {
+            const CallExpr*& at;
+            const CallExpr* saved;
+            ~Noted() { at = saved; }
+        } noted{methodCall, methodCall};
+        methodCall = &c;
         Args args{c.args, c.names, c.trailingLambda, c.hasSpread};
         auto envOfForm = [&](size_t i) -> const Env& { return envs != nullptr && i < envs->size() ? (*envs)[i] : env; };
         if (fs.size() == 1) return callWith(fs[0], args, c.typeArgs, envOfForm(0), receiver, c, what + "(...)");
@@ -3975,6 +4375,10 @@ struct Checker::Impl {
             const std::string& n = static_cast<const NameExpr&>(*c.callee).name;
             if (Local* l = findLocal(n)) {
                 noteUse(*l, ParamUse::Called);
+                // What a function given as an argument does, its caller accounts for.
+                if (l->paramOf != nullptr) effects[effectKeyHere()].callsParams = true;
+                else effects[effectKeyHere()].any = true;
+                callingKnown = true;
                 return callValue(localType(n, *l), c, n);
             }
             if (ClassInfo* k = localClass(n); k != nullptr && !k->isObject) {
@@ -4150,7 +4554,11 @@ struct Checker::Impl {
     }
 
     // Calling a value whose type is a function.
+    bool callingKnown = false;  // the call being checked is accounted for in effects already
+    const Expr* valueCallArg = nullptr;  // an argument of a call of a function value, being checked
+
     Type callValue(const Type& t, const CallExpr& c, const std::string& name) {
+        if (!std::exchange(callingKnown, false)) effects[effectKeyHere()].any = true;  // what it runs is not known
         if (t.unknown() || t.kind == Type::Class || t.kind == Type::TypeParam) {
             for (const ExprPtr& a : c.args) expr(*a);
             return unknownType();
@@ -4171,12 +4579,18 @@ struct Checker::Impl {
                 const bool last = c.trailingLambda && i + 1 == c.args.size() && !t.args.empty();
                 const size_t p = last ? t.args.size() - 1 : i;
                 Type want = p < t.args.size() ? t.args[p] : unknownType();
+                valueCallArg = c.args[i].get();
                 Type a = exprExpected(*c.args[i], want);
+                valueCallArg = nullptr;
                 if (p < t.args.size() && !fits(a, want))
                     report(*c.args[i], who + " takes " + describe(want) + " here, not " + describe(a));
             }
         } else {
-            for (const ExprPtr& a : c.args) expr(*a);
+            for (const ExprPtr& a : c.args) {
+                valueCallArg = a.get();
+                expr(*a);
+                valueCallArg = nullptr;
+            }
         }
         if (t.kind == Type::Function && t.result) return *t.result;
         return unknownType();
@@ -4695,6 +5109,9 @@ struct Checker::Impl {
     }
 
     void noteWait(const Node& at, const std::string& callee) {
+        // While it waits, other code runs, which may change any list (M6.6 part 4): an item is not
+        // read where it is across the wait.
+        effects[effectKeyHere()].any = true;
         if (silent > 0 || unit == nullptr) return;
         WaitingCall w;
         w.unit = unit;
@@ -5022,6 +5439,36 @@ bool Checker::externalResult(const Node& call, RuntimeType& out, std::string& na
 }
 
 bool Checker::addsNewValue(const Node& call) const { return impl_->newValueAdds.count(&call) != 0; }
+
+bool Checker::isValuePlace(const Expr& e) const { return impl_->valuePlaces.count(&e) != 0; }
+
+bool Checker::readsInPlace(const IndexExpr& index) const { return impl_->readsInPlace(index); }
+
+bool Checker::returnsValue(const FunctionDecl& fn) const {
+    if (impl_->valueLambdas.count(&fn) != 0) return true;
+    auto found = impl_->funcOf.find(&fn);
+    if (found == impl_->funcOf.end() || fn.name == "init") return false;
+    const Type result = impl_->resultOf(found->second);
+    return result.kind == Type::Class && !result.nullable && result.cls != nullptr && result.cls->isValue;
+}
+bool Checker::constructsValue(const CallExpr& call) const { return impl_->constructedValues.count(&call) != 0; }
+bool Checker::buildsInPlace(const AssignExpr& assign) const { return impl_->builtInPlace.count(&assign) != 0; }
+bool Checker::loopsInPlace(const ForInStmt& loop) const { return impl_->loopsInPlace(loop); }
+bool Checker::loopPassesOn(const ForInStmt& loop) const {
+    auto found = impl_->loopCandidates.find(&loop);
+    return found != impl_->loopCandidates.end() && found->second.uses.size() == 1 && found->second.argUses.size() == 1;
+}
+std::vector<int> Checker::paramsOwned(const FunctionDecl& fn) const { return impl_->paramsOwned(fn); }
+
+// A method of a value type that is not mutating, run on an item where it is: copied as it
+// starts if it may change a list of its type, so that what it reads stays as it was.
+bool Checker::ownsThis(const FunctionDecl& fn) const {
+    auto found = impl_->funcOf.find(&fn);
+    if (found == impl_->funcOf.end()) return false;
+    const FuncInfo* f = found->second;
+    if (f->owner == nullptr || !f->owner->isValue || f->isStatic || fn.isMutating || fn.name == "init") return false;
+    return impl_->mayChangeLists(&fn, f->owner);
+}
 
 bool Checker::literalType(const Expr& literal, RuntimeType& out) const {
     auto found = impl_->literalTypes.find(&literal);
