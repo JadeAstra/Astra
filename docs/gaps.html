@@ -78,13 +78,13 @@ td.when { min-width: 9em; }
 <body>
 <main>
 <h1>M6.6 so far: what is left open</h1>
-<p class="lede">The choices made while building parts 1 to 6 of M6.6 that are not yet confirmed, and the gaps those parts left, each with where it is to be dealt with. Written 2026-10-19, and brought up to date after parts 4, 5 and 6 the same day: the gaps they closed are gone from the list. The same items are in <a href="gui-plan.md">gui-plan.md</a> (the M6.6 notes, D162 to D178 and the Open list); the design is in <a href="value-lists.html">value-lists.html</a>.</p>
+<p class="lede">The choices made while building the first half of M6.6, parts 1 to 7, that are not yet confirmed, and the gaps it left, each with where it is to be dealt with. Written 2026-10-19, and brought up to date after parts 4 to 7 the same day: the gaps they closed are gone from the list. The same items are in <a href="gui-plan.md">gui-plan.md</a> (the M6.6 notes, D162 to D180 and the Open list); the design is in <a href="value-lists.html">value-lists.html</a>.</p>
 
 <nav>
 <h2>Contents</h2>
 <ul>
 <li><a href="#choices">Choices to confirm</a> (nineteen)</li>
-<li><a href="#gaps">Gaps left</a> (twenty)</li>
+<li><a href="#gaps">Gaps left</a> (twenty-one)</li>
 </ul>
 </nav>
 
@@ -126,8 +126,13 @@ td.when { min-width: 9em; }
 </section>
 
 <section class="decision" id="jade-geometry">
-<h3><span class="code">Jade</span>Jade's geometry as value types (part 2)</h3>
-<p>Jade's <code>Point</code>, <code>Dimension</code>, <code>Insets</code> and <code>Rectangle</code> are still classes. Jade changes them where they are (<code>setSize</code>, <code>translate</code>, <code>setLocation</code>), so they can become values only with changing through a place, which part 4 built (those changes become mutating methods, called on a place); that changes what code sharing them means: Jade's API, which is yours to decide. Measured on a copy of Jade's layout, values were 10% faster and a <code>Sizes</code> of three <code>Dimension</code>s one allocation of 88 bytes instead of four of 336.</p>
+<h3><span class="code">D179</span>Jade's geometry as value types: decided (part 7)</h3>
+<p>You chose on 2026-10-19 to make Jade's <code>Point</code>, <code>Dimension</code>, <code>Insets</code> and <code>Rectangle</code> value types, and Jade's <code>Sizes</code> with them: a component's <code>bounds</code> and the sizes it keeps are inside it, and <code>setSize</code>, <code>translate</code>, <code>setLocation</code>, <code>grow</code> and <code>setBounds</code> are mutating methods. Nothing in Jade relied on sharing one; one <code>val</code> that was translated became a <code>var</code>.</p>
+</section>
+
+<section class="decision" id="d180">
+<h3><span class="code">D180</span><code>Rectangle</code> takes all four numbers (part 7)</h3>
+<p>A value type is made from its header alone, and Astra has no constructors of other forms, so <code>Rectangle(x, y, width, height)</code> takes all four with no defaults. Java's <code>Rectangle()</code> is <code>Rectangle(0, 0, 0, 0)</code> and <code>Rectangle(w, h)</code> is <code>Rectangle(0, 0, w, h)</code>: both are compile errors as written, so that <code>Rectangle(30, 40)</code> cannot quietly mean the corner. <code>Rectangle(other)</code> is <code>other</code>, which is copied wherever it is kept. <code>Point()</code>, <code>Dimension()</code> and <code>Insets()</code> keep their zeros, as in Java.</p>
 <div class="verdict"><span class="label">Your choice</span><span class="blank"></span></div>
 </section>
 
@@ -285,9 +290,10 @@ td.when { min-width: 9em; }
 <tr><td class="part">5</td><td>Through a reference into an object, a field is read by finding which of the object's values the reference is in, and reading on through a value held in it (<code>node.sizes().pref.width</code>) looks each field up by name: Jade's layout with kept sizes takes 4 to 7% longer than in part 4 for it, though it makes 47 times fewer boxes.</td><td class="when">M6.7, with instructions that name a frame's slots</td></tr>
 <tr><td class="part">5</td><td>Generic list functions that hand each item to a lambda (<code>filter</code>, <code>any</code>, <code>count</code> and the like) copy each item of a list of values, since the lambda may change the list: <code>filter</code> on a million points 98 ms, against 43 written out by hand.</td><td class="when">Inline functions (D59), the second half</td></tr>
 <tr><td class="part">5</td><td>A field is kept inside its object only when its type is written, or it is given a value made by its type's name; one whose type the checker works out from anything else keeps a box, as does one whose type names a class that does not exist yet when the first object is made.</td><td class="when">Not placed yet</td></tr>
-<tr><td class="part">5</td><td>A value type kept in the value itself holds ints, floats and bools only, up to 8 bytes; Jade's <code>Color</code> is still a class (whether it becomes a value type is yours to decide, with the rest of Jade's geometry).</td><td class="when">Storage widths (D148), the second half</td></tr>
+<tr><td class="part">5</td><td>A value type kept in the value itself holds ints, floats and bools only, up to 8 bytes; Jade's <code>Color</code> is still a class (whether it becomes a value type, as its geometry did in part 7, is yours to decide).</td><td class="when">Storage widths (D148), the second half</td></tr>
 <tr><td class="part">6</td><td>A frame's slots keep a value's kind beside its payload, and arithmetic tests its operands' kinds, where the compiler knows them.</td><td class="when">M6.7 (D178)</td></tr>
 <tr><td class="part">6</td><td>A field whose type the checker works out is kept as a payload only when it is an int, a float or a bool; one of a value type only when it is made by its type's name (part 5); any other keeps its slot.</td><td class="when">Not placed yet</td></tr>
+<tr><td class="part">7</td><td>Jade's own layout (<code>bench/jade_layout.astra</code>) is 3 to 6% slower than on M6.5: the sizes pass between functions in variables and results, which keep a box until values in variables, and a widget not yet painted asks its content for its sizes again at each layout.</td><td class="when">M6.7, values in variables (D149)</td></tr>
 <tr><td class="part">All</td><td>Under MSVC, code placement alone moves the <code>fields</code> benchmark by 10 to 20% with the same loop. Not a gap in Astra, but a caution in reading timings: compare against a baseline built the same way, and count instructions, before calling a change slower.</td><td class="when">D160: the Clang build's dispatch, M6.7</td></tr>
 </tbody>
 </table></div>

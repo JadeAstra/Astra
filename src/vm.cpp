@@ -2113,9 +2113,13 @@ const ValueLayout& VM::layoutOf(ObjClass* cls) {
 namespace {
 struct BoxCount {
     std::atomic<uint64_t> made{0};
-    ~BoxCount() { std::fprintf(stderr, "value boxes made: %llu\n", static_cast<unsigned long long>(made.load())); }
+    ~BoxCount() {
+        std::fprintf(stderr, "value boxes made: %llu\n", static_cast<unsigned long long>(made.load()));
+        std::fprintf(stderr, "objects made, boxes included: %llu\n", static_cast<unsigned long long>(VM::objectsMade.load() + made.load()));
+    }
 } boxCount;
 }  // namespace
+std::atomic<uint64_t> VM::objectsMade{0};
 #endif
 
 // A box for a value of `cls`, its fields zero: 0, 0.0, false and null.

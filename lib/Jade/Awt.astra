@@ -234,84 +234,47 @@ class FontMetrics {
 }
 
 // ---- Geometry ----
+//
+// Value types (M6.6 part 7): a Dimension, a Point, an Insets or a Rectangle is what it holds,
+// and is copied where Java's would be shared. Kept in a component's field, it is kept inside the
+// component; changing one, `bounds.translate(1, 1)` or `size.width = 4`, changes the one in that
+// place and no other. Two are == when their fields are.
 
-class Dimension {
-  var width : int
-  var height : int
-  fun init(width : int = 0, height : int = 0) {
-    this.width = width
-    this.height = height
-  }
+value Dimension(var width : int = 0, var height : int = 0) {
   fun getWidth() : int => width
   fun getHeight() : int => height
-  fun setSize(width : int, height : int) {
+  mutating fun setSize(width : int, height : int) {
     this.width = width
     this.height = height
   }
-  op ==(other : any?) : bool => other is Dimension and other.width == width and other.height == height
-  fun hashCode() : int => width * 31 + height
   override fun toString() : string => "Dimension($width x $height)"
 }
 
-class Point {
-  var x : int
-  var y : int
-  fun init(x : int = 0, y : int = 0) {
-    this.x = x
-    this.y = y
-  }
-  fun translate(dx : int, dy : int) {
+value Point(var x : int = 0, var y : int = 0) {
+  mutating fun translate(dx : int, dy : int) {
     x += dx
     y += dy
   }
-  fun setLocation(x : int, y : int) {
+  mutating fun setLocation(x : int, y : int) {
     this.x = x
     this.y = y
   }
-  op ==(other : any?) : bool => other is Point and other.x == x and other.y == y
-  fun hashCode() : int => x * 31 + y
   override fun toString() : string => "Point($x, $y)"
 }
 
 // Top, left, bottom, right: the order Java gives them in.
-class Insets {
-  var top : int
-  var left : int
-  var bottom : int
-  var right : int
-  fun init(top : int = 0, left : int = 0, bottom : int = 0, right : int = 0) {
-    this.top = top
-    this.left = left
-    this.bottom = bottom
-    this.right = right
-  }
-  op ==(other : any?) : bool => other is Insets and other.top == top and other.left == left and other.bottom == bottom and other.right == right
-  fun hashCode() : int => ((top * 31 + left) * 31 + bottom) * 31 + right
+value Insets(var top : int = 0, var left : int = 0, var bottom : int = 0, var right : int = 0) {
   override fun toString() : string => "Insets(top=$top, left=$left, bottom=$bottom, right=$right)"
 }
 
-// A rectangle: its top left corner and its size. Rectangle(), Rectangle(width, height),
-// Rectangle(x, y, width, height), Rectangle(other).
-class Rectangle {
-  var x : int
-  var y : int
-  var width : int
-  var height : int
-
-  fun init(x : any = 0, y : int = 0, width : int? = null, height : int? = null) {
-    if (x is Rectangle) {
-      this.x = x.x; this.y = x.y; this.width = x.width; this.height = x.height
-    } else if (width == null) {
-      this.x = 0; this.y = 0; this.width = x as int; this.height = y
-    } else {
-      this.x = x as int; this.y = y; this.width = width; this.height = height!!
-    }
-  }
-
+// A rectangle: its top left corner and its size, always all four: Rectangle(x, y, width,
+// height). (Java's Rectangle(width, height) is Rectangle(0, 0, width, height); its copy,
+// Rectangle(other), is the value itself, which is copied wherever it is kept.)
+value Rectangle(var x : int, var y : int, var width : int, var height : int) {
   get isEmpty() : bool => width <= 0 or height <= 0
   get location() : Point => Point(x, y)
   get size() : Dimension => Dimension(width, height)
-  get bounds() : Rectangle => Rectangle(this)
+  get bounds() : Rectangle => this
   get minX() : int => x
   get minY() : int => y
   get maxX() : int => x + width
@@ -350,33 +313,31 @@ class Rectangle {
     return Rectangle(left, top, right - left, bottom - top)
   }
 
-  fun translate(dx : int, dy : int) {
+  mutating fun translate(dx : int, dy : int) {
     x += dx
     y += dy
   }
-  fun grow(horizontal : int, vertical : int) {
+  mutating fun grow(horizontal : int, vertical : int) {
     x -= horizontal
     y -= vertical
     width += 2 * horizontal
     height += 2 * vertical
   }
-  fun setBounds(r : Rectangle) {
+  mutating fun setBounds(r : Rectangle) {
     setBounds(r.x, r.y, r.width, r.height)
   }
-  fun setBounds(x : int, y : int, width : int, height : int) {
+  mutating fun setBounds(x : int, y : int, width : int, height : int) {
     this.x = x; this.y = y; this.width = width; this.height = height
   }
-  fun setLocation(x : int, y : int) {
+  mutating fun setLocation(x : int, y : int) {
     this.x = x
     this.y = y
   }
-  fun setSize(width : int, height : int) {
+  mutating fun setSize(width : int, height : int) {
     this.width = width
     this.height = height
   }
 
-  op ==(other : any?) : bool => other is Rectangle and other.x == x and other.y == y and other.width == width and other.height == height
-  fun hashCode() : int => ((x * 31 + y) * 31 + width) * 31 + height
   override fun toString() : string => "Rectangle($x, $y, $width x $height)"
 }
 

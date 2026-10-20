@@ -28,7 +28,7 @@ class RenderLoop {
   // markDirty before or after makes it everything.
   fun markDamage(r : Rectangle) {
     if (dirty and damage == null) { return }
-    damage = damage?.union(r) ?: Rectangle(r)
+    damage = damage?.union(r) ?: r
     dirty = true
   }
 

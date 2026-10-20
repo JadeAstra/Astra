@@ -20,9 +20,11 @@ class Component {
   var prefSizeOverride : Dimension? = null
   var maxSizeOverride : Dimension? = null
   // Where it has been placed, in the canvas of what it is in.
-  var bounds = Rectangle()
+  var bounds = Rectangle(0, 0, 0, 0)
 
-  private var sizesCache : Sizes? = null
+  // What the content last said of its size, kept inside the component (M6.6 part 7).
+  private var sizesCache = Sizes(Dimension(0, 0), Dimension(0, 0), Dimension(0, 0))
+  private var sizesValid = false
   private var sizesGen = -1
 
   private var cacheStyle : Style? = null
@@ -51,15 +53,14 @@ class Component {
 
   private fun sizes() : Sizes {
     val gen = Jade.renderGeneration
-    val hit = sizesCache
-    if (hit != null and sizesGen == gen and !cacheDirty) { return hit }
-    val s = content.sizes()
-    sizesCache = s
+    if (sizesValid and sizesGen == gen and !cacheDirty) { return sizesCache }
+    sizesCache = content.sizes()   // built where it is kept
+    sizesValid = true
     sizesGen = gen
-    return s
+    return sizesCache
   }
   internal fun invalidateSizes() {
-    sizesCache = null
+    sizesValid = false
   }
   fun minSize() : Dimension => minSizeOverride ?: sizes().min
   fun prefSize() : Dimension => prefSizeOverride ?: sizes().pref

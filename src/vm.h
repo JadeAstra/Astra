@@ -221,8 +221,16 @@ public:
     // Allocates a garbage-collected object. Collection only ever runs at safe points inside
     // the interpreter loop (calls and loop back-edges), never here, so a native function may
     // hold raw object pointers freely until it calls back into the VM.
+#ifdef ASTRA_OP_COUNTS
+    // In the build that counts instructions: every object made, shown when the program ends.
+    static std::atomic<uint64_t> objectsMade;
+#define ASTRA_COUNT_OBJECT() objectsMade.fetch_add(1, std::memory_order_relaxed)
+#else
+#define ASTRA_COUNT_OBJECT() ((void)0)
+#endif
     template <class T, class... A>
     T* alloc(A&&... args) {
+        ASTRA_COUNT_OBJECT();
         T* obj = new T(std::forward<A>(args)...);
         obj->core = coreId_;  // what a core makes is its own until the section is over
         obj->next = objects_;
@@ -235,6 +243,7 @@ public:
     // value yet (M6.5 part 4).
     ObjInstance* newInstance(ObjClass* cls, uint16_t captures = 0, bool typed = false) {
         if (!cls->fieldsLaid.load(std::memory_order_acquire)) layFields(cls);
+        ASTRA_COUNT_OBJECT();
         const uint32_t count = cls->slotCount;
         // Its payloads before its slots (M6.6 part 6), the values kept inside it after (part 5).
         const bool withValues = cls->inlineLaid.load(std::memory_order_acquire) && !cls->inlineFields.empty();

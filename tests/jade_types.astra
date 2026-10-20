@@ -52,10 +52,10 @@ for (scale in [1.25, 1.5, 2, 3]) {
 // expect: 2 true true true true
 // expect: 3 true true true true
 
-// -- Dimension, Point, Insets --
-val d = Dimension(30, 20)
+// -- Dimension, Point, Insets: value types (M6.6 part 7), changed where they are kept --
+var d = Dimension(30, 20)
 d.setSize(40, 25)
-val p = Point(3, 4)
+var p = Point(3, 4)
 p.translate(10, -1)
 print(d, d.width, d.getHeight(), d == Dimension(40, 25), Dimension(), p, p == Point(13, 3), Point())   // expect: Dimension(40 x 25) 40 25 true Dimension(0 x 0) Point(13, 3) true Point(0, 0)
 val insets = Insets(1, 2, 3, 4)
@@ -64,20 +64,21 @@ print(insets, insets.top, insets.left, insets.bottom, insets.right, insets == In
 // -- Rectangle --
 val r = Rectangle(10, 20, 100, 50)
 print(r, r.x, r.y, r.width, r.height, r.maxX, r.maxY, r.centerX, r.isEmpty, r.location, r.size)   // expect: Rectangle(10, 20, 100 x 50) 10 20 100 50 110 70 60.0 false Point(10, 20) Dimension(100 x 50)
-print(Rectangle(), Rectangle(30, 40), Rectangle(r) == r, Rectangle(r) === r, Rectangle().isEmpty, Rectangle(0, 0, 5, 0).isEmpty)   // expect: Rectangle(0, 0, 0 x 0) Rectangle(0, 0, 30 x 40) true false true true
+print(Rectangle(0, 0, 0, 0), Rectangle(0, 0, 30, 40), r.copy() == r, r.copy(x = 1) == r, Rectangle(0, 0, 0, 0).isEmpty, Rectangle(0, 0, 5, 0).isEmpty)   // expect: Rectangle(0, 0, 0 x 0) Rectangle(0, 0, 30 x 40) true false true true
 // What is inside: the left and top edges are, the right and bottom ones are not.
 print(r.contains(10, 20), r.contains(109, 69), r.contains(110, 69), r.contains(9, 20), r.contains(Point(50, 50)), r.contains(Rectangle(20, 30, 10, 10)), r.contains(20, 30, 200, 10))   // expect: true true false false true true false
 val other = Rectangle(60, 0, 100, 40)
 print(r.intersects(other), r.intersection(other), r.union(other), r.intersects(Rectangle(110, 20, 5, 5)), r.intersection(Rectangle(200, 200, 5, 5)).isEmpty)   // expect: true Rectangle(60, 20, 50 x 20) Rectangle(10, 0, 150 x 70) false true
-// It can be moved and resized where it is.
-val moving = Rectangle(r)
+// It can be moved and resized where it is kept; a copy kept elsewhere stays as it was.
+var moving = r
 moving.translate(-10, -20)
 moving.grow(2, 3)
 print(moving, r)   // expect: Rectangle(-2, -3, 104 x 56) Rectangle(10, 20, 100 x 50)
+val before = moving
 moving.setBounds(1, 2, 3, 4)
 moving.width = 30
 moving.setLocation(5, 6)
-print(moving, moving.bounds == moving, moving.bounds === moving)   // expect: Rectangle(5, 6, 30 x 4) true false
+print(moving, moving.bounds == moving, before)   // expect: Rectangle(5, 6, 30 x 4) true Rectangle(-2, -3, 104 x 56)
 
 // -- Keys, buttons and modifiers --
 print(KeyCode.a, KeyCode.pageUp.name, KeyCode.named("digit7"), KeyCode.named("shiftLeft") == KeyCode.shiftLeft, KeyCode.named("no such key"), KeyCode.entries.size)   // expect: a pageUp digit7 true unknown 119

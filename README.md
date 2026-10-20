@@ -1677,16 +1677,19 @@ the members JadeUI and its apps use. Constants are in camelCase like every other
 - **`FontMetrics(font, scale = 1)`**: `stringWidth(text)`, `charWidth(c)`, `ascent`,
   `descent`, `leading`, `height`. On a dense screen the numbers are the screen's divided by
   the scale and rounded up, so text always fits the room measured for it.
-- **`Rectangle`, `Point`, `Dimension`, `Insets`**, which can be changed in place as in Java.
-  `Rectangle` has `contains`, `intersects`, `intersection`, `union`, `translate`, `grow`,
-  `setBounds`, `isEmpty`.
+- **`Rectangle`, `Point`, `Dimension`, `Insets`**, value types: two are `==` when their
+  fields are, and each is copied where Java's would be shared, so `bounds.translate(1, 1)`
+  changes the `bounds` it is called on and no other. `Rectangle(x, y, width, height)` takes all
+  four (Java's `Rectangle(w, h)` is `Rectangle(0, 0, w, h)`); `Point()`, `Dimension()` and
+  `Insets()` are all zeros. `Rectangle` has `contains`, `intersects`, `intersection`, `union`,
+  and the mutating `translate`, `grow`, `setBounds`, `setLocation`, `setSize`; `isEmpty`.
 - **`BufferedImage(width, height, type = BufferedImage.typeIntArgb)`**: `getRGB(x, y)`,
   `setRGB(x, y, argb)`, `getSubimage`, `canvas()` to draw on it, `toPicture()`,
   `BufferedImage.fromPicture(picture)`. It lives both in memory and on the graphics card,
   and each is brought up to date from the other only when it is asked for.
 
-As the key of a map these compare by being the same object, not by value: key a map by
-`color.rgb` or by a string, not by a `Color` or a `Font`.
+As the key of a map a `Color` or a `Font` compares by being the same object, not by value: key
+a map by `color.rgb` or by a string. The geometry compares by its fields.
 
 ## Standard library
 

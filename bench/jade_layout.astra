@@ -1,0 +1,25 @@
+// Jade's own layout (M6.6 part 7): a tree of grids, 4 children to a grid and 3 levels deep,
+// laid out 100 times at widths that change. Each component keeps its Sizes and its bounds; with
+// Jade's geometry as value types, both are kept inside the component. (Nothing here is painted,
+// so each layout asks every content for its sizes again, as Jade does for a widget not yet
+// drawn.) The same program runs on M6.5, where they were objects. The time is the layouts'.
+import Jade.*
+
+fun leaf(i : int) => label("x").preferredSize(Dimension(20 + i % 7, 10 + i % 3)).minimumSize(Dimension(10, 8))
+
+fun tree(depth : int, seed : int) : Grid {
+  val g = Grid()
+  for (k in 0 ..< 4) {
+    val child = depth == 0 ? leaf(seed * 4 + k) : Component(tree(depth - 1, seed * 4 + k))
+    g.add(child, row = k / 2, col = k % 2)
+  }
+  return g
+}
+
+val root = tree(2, 1)
+val started = clock()
+for (pass in 0 ..< 100) {
+  root.layout(800 + pass % 50, 600)
+}
+val seconds = clock() - started
+print("jade_layout", root.children.size, seconds)

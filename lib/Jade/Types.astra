@@ -2,8 +2,9 @@
 // events a widget is told of, what a widget's content has to provide, the things a content
 // may also be able to do, and the colours of the theme. (JadeUI: Jade.kt.)
 
-// What a content says of its size: the least it can be, what it would like, and the most.
-data Sizes(val min : Dimension, val pref : Dimension, val max : Dimension)
+// What a content says of its size: the least it can be, what it would like, and the most. A
+// value type (M6.6 part 7): a component keeps the last ones inside itself.
+value Sizes(val min : Dimension, val pref : Dimension, val max : Dimension)
 
 // How a widget is to draw itself, handed down from what it is in: a background and a
 // foreground to use where it has none of its own, whether it can be used, and whether it

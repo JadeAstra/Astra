@@ -154,7 +154,7 @@ class RecordingCanvas : Canvas {
   }
 
   override fun sub(x : int, y : int, width : int, height : int, style : Style? = null) : Canvas {
-    val visible = visibleBounds
+    var visible = visibleBounds
     visible.translate(-x, -y)
     return RecordingCanvas(width, height, style ?: this.style, ops, ox + x, oy + y, visible)
   }

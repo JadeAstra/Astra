@@ -1768,6 +1768,33 @@ MSVC. Left for later, each known:
   place of three, was tried and measured no faster, so it was left out; the item's place held
   in a frame's slot for the whole method is M6.7's.
 
+Part 7 (2026-10-19): the first half's checkpoint. Jade's `Point`, `Dimension`, `Insets` and
+`Rectangle`, and its `Sizes`, became value types, as the user chose the same day (D179): a
+component's `bounds` and the sizes it keeps are inside it, changed through their places, and
+`sizes = content.sizes()` builds the new ones there; `Rectangle` takes all four of its numbers
+(D180). `examples/bounce_values.astra` is the bounce example on every core with `Ball` a value
+type and `move`, its body unchanged, marked mutating. Measured against M6.5 (16200bd) built
+the same way, MSVC and Clang:
+- `bench/bounce_values.astra`, 200,000 balls moved 200 times on the 32 cores here: 0.59 s and
+  0.53, against 0.86 and 1.06 for the class version on M6.5; in a frame, two objects are made
+  (the parallel stream and the lambda), none for a ball, where the class version made its
+  balls as objects.
+- `points_values` against M6.5's `points_classes`: 5.7 to 7.4 times as fast; `layout_values`
+  against `layout_classes` 1.13 to 1.26; `layout_cached_values` and `colors_values` level with
+  their class versions on M6.5 (1.03 to 1.07), with no box made in a frame.
+- Programs written with classes: `points_classes` 4 to 5 times as fast (sorting through
+  positions), `layout_classes` 7 to 10% faster, `layout_cached_classes` 14 to 18%; `calls` 5
+  to 21% slower, `simulation` 4 to 13%, `colors_classes` 8 to 9% (the checks for references
+  and values spread over the instructions, part 4); `fields` 35% faster with Clang and slower
+  with MSVC, where its loop's placement moves it.
+- Jade's own layout (`bench/jade_layout.astra`, a tree of grids laid out 100 times): 3 to 6%
+  slower than M6.5. The sizes pass between functions in variables and results, which keep a
+  box until values in variables (D149, M6.7); and a widget not yet painted asks its content for
+  its sizes again at each layout, so the sizes kept inside it are written more than read.
+The suite (617 checks) passes as it is, with every read from a list of values a copy, under the
+GC and thread stress settings, with the C++ results checked, and under the sanitizer, with
+and without the GC stress setting.
+
 The second half builds, on M6.5's checker, the language choices decided in
 [language-choices.html](language-choices.html) (section 8): `byte`, with unsigned reads from `bytes` (D19); `>>>` and the unsigned helpers (D44); strings kept at
 flexible width (D20); `char` and how it adds to strings, `'c' == "c"` (D24, D25); `op ==` with
@@ -2125,12 +2152,14 @@ font metrics will need new numbers: no other font engine measures text exactly a
 | D176 | A number's conversions and Math's functions as instructions. | Proposed 2026-10-19 (M6.6 part 6), to be confirmed. `x.toInt()`, `toLong()`, `toFloat()`, `toDouble()`, `roundToInt()`, `roundToLong()`, `isNaN()`, `isInfinite()`, `isFinite()`, and `Math.sqrt`, `floor`, `ceil`, `round`, `abs`, and `min` and `max` of two ints or two floats, where the checker knows the call is the standard library's, are one instruction (Numeric), giving what the library's own gives, errors included. Drawing a million particles a frame is 34 to 40% faster. |
 | D177 | Fields kept as their payload alone. | Proposed 2026-10-19 (M6.6 part 6), to be confirmed. An int, a float or a bool field whose type is known (written, or worked out from what it is first given), and not null, is kept in its object as its 8 bytes of contents alone, before the object's slots, where every object of the class has it at the same place: an object of three `float` fields takes 72 bytes in place of 96. A val, and a field an init must set, has a bit saying whether it has been given a value, so that giving a val a second value and an init that leaves one unset are still errors; any other payload reads as 0, 0.0 or false before it is first given one, where a slot read an error. Field reads and writes are as fast as before. |
 | D178 | Frame slots, typed arithmetic and values in variables in M6.7. | Decided 2026-10-19 by the user: payload-only slots in objects now (M6.6 part 6); in frames, with instructions chosen by type for arithmetic and values of up to 32 bytes in consecutive slots (D149), in M6.7, on the rewritten loop, since each changes every instruction that touches a frame's slots and M6.7 rewrites those anyway. |
+| D179 | Jade's geometry as value types. | Decided 2026-10-19 by the user (M6.6 part 7): `Point`, `Dimension`, `Insets`, `Rectangle` and `Sizes` are value types. Two are `==` when their fields are; each is copied where JadeUI's would be shared, so `bounds.translate(1, 1)` changes the `bounds` it is called on and no other; `setSize`, `translate`, `setLocation`, `grow` and `setBounds` are mutating methods, called on a place. A component's `bounds` and the sizes it keeps are inside it. Code that changed a shared one to change another's (none in Jade) changes only its own. |
+| D180 | `Rectangle` takes all four numbers. | Proposed 2026-10-19 (M6.6 part 7), to be confirmed. A value type is made from its header alone, and Astra has no constructors of other forms (secondary constructors were left out: 4 uses), so `Rectangle(x, y, width, height)` takes all four, with no defaults: Java's `Rectangle()` is `Rectangle(0, 0, 0, 0)`, `Rectangle(w, h)` is `Rectangle(0, 0, w, h)` (both compile errors as written, so that `Rectangle(30, 40)` cannot quietly mean the corner), and `Rectangle(other)` is `other`, a value being copied wherever it is kept. `Point()`, `Dimension()` and `Insets()` keep their zeros, as in Java. |
 | | How files are loaded under namespaces. | Importing a folder loads every `.astra` file directly in it, as one unit. Importing a file loads that file only, into its folder's namespace (5.1). |
 | | A lambda's parameter list over several lines. | Allowed, as in Kotlin (5.1). |
 
 ### Open
 
-Nine. The language choices, all decided since; seven from M6.6 for the user to answer; and one
+Ten. The language choices, all decided since; eight from M6.6 for the user to answer; and one
 left for the milestone that raises it. (The measuring rule on scaled displays, open earlier, was settled in M4:
 section 4, point 8.)
 
@@ -2139,9 +2168,8 @@ section 4, point 8.)
   Decided: D19 to D157. Every choice is decided.
 - **M6.6 part 1's proposals**, D162 to D164: the built-in type `Type`, the C++ results
   checked by a test setting, and what that check changed in the standard library.
-- **M6.6 part 2's proposal**, D165: the rules of a value type as built; and whether Jade's
-  geometry (`Point`, `Dimension`, `Insets`, `Rectangle`) becomes value types, which part 4 made
-  possible (their changes in place are mutating methods, called on a place).
+- **M6.6 part 2's proposal**, D165: the rules of a value type as built. (Jade's geometry as
+  value types, open with it, was decided in part 7: D179.)
 - **M6.6 part 3's proposal**, D166: lists of values as built.
 - **M6.6 part 4's proposals**, D167 to D170: changing a value through its place, reading a
   value where it is, results built where they go, and parallel sections over a list of values.
@@ -2150,6 +2178,7 @@ section 4, point 8.)
   is, and generic functions not copied per layout for now.
 - **M6.6 part 6's proposals**, D176 and D177: a number's conversions and Math's functions as
   instructions, and fields kept as their payload alone.
+- **M6.6 part 7's proposal**, D180: `Rectangle` taking all four numbers.
 - **The largest value type** (value-lists.html): decided "any, up to 64 KB"; offered on
   2026-10-18, not yet answered, is "any size, with a copy on read past 64 KB", the limit
   coming only from the 16-bit offset in a reference into a list item.
