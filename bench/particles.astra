@@ -15,7 +15,7 @@ value Particle(var x : float, var y : float, var dx : float, var dy : float) {
 val n = 1000000
 val w = 1024
 val h = 768
-val ps : List<Particle> = []
+val ps : open List<Particle> = []
 for (i in 0 ..< n) { ps.add(Particle((i * 7919 % w) * 1.0, (i * 104729 % h) * 1.0, (i % 7 - 3) * 0.5 + 0.25, (i % 5 - 2) * 0.5 + 0.25)) }
 val pixels = Bytes(w * h)
 

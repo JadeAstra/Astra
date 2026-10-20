@@ -76,14 +76,14 @@ val log = []
 class Widget(val id : int, name : string = "widget") {
   val label = "$name#$id"
   init {
-    log.push("first: " + label)
+    log.add("first: " + label)
     registered = true                        // a field declared below already exists, as null
   }
   var registered : bool? = null
   var children = []
   init {
-    children.push(id * 10)
-    log.push("second: " + children + " " + registered)
+    children.add(id * 10)
+    log.add("second: " + children + " " + registered)
   }
   fun describe() => "$label $registered $children"
 }
@@ -93,10 +93,10 @@ print(w.describe(), log)   // expect: widget#7 null [70] ["first: widget#7", "se
 // With a superclass: its part first. With no header at all.
 class Base(val kind : string) {
   val made = []
-  init { made.push("base " + kind) }
+  init { made.add("base " + kind) }
 }
 class Derived(val n : int) : Base("derived") {
-  init { made.push("derived " + n) }
+  init { made.add("derived " + n) }
 }
 class Counter {
   var count = 0
@@ -108,7 +108,7 @@ print(Derived(5).made, Counter().count)     // expect: ["base derived", "derived
 // In an object and an enum.
 object Registry {
   val names = []
-  init { names.push("ready") }
+  init { names.add("ready") }
 }
 enum Level(val weight : int) {
   low(1), high(9)

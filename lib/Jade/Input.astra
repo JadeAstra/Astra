@@ -35,7 +35,7 @@ class Modifiers {
     if (ctrl) { held.add("ctrl") }
     if (alt) { held.add("alt") }
     if (meta) { held.add("meta") }
-    return "Modifiers(" + held.joinToString("+") + ")"
+    return "Modifiers(" + held.join("+") + ")"
   }
 }
 

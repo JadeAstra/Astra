@@ -14,7 +14,7 @@ class Account(val owner : string, var balance : int = 0) {
 
   fun deposit(amount : int) {
     balance += amount                 // a field
-    history.push(amount)
+    history.add(amount)
     return this
   }
   fun withdraw(amount : int) {
@@ -26,7 +26,7 @@ class Account(val owner : string, var balance : int = 0) {
   fun report() => describe() + (rich ? " (rich)" : "") + ", scale " + scale + ", " + helper(1)
   fun twice() {
     deposit(1).deposit(1)             // a method, called on this object
-    return history.length
+    return history.size
   }
   fun shadow(balance : int) {
     val owner = "local"
@@ -51,7 +51,7 @@ class Tally {
     count++
     total += n
     total *= 2
-    words.push("n$count")
+    words.add("n$count")
     return this
   }
 }
@@ -138,12 +138,12 @@ class Button(val text : string) {
   fun press() { clicks += 1 }
   fun handler() => fun() {
     press()
-    log.push("$text $clicks")
+    log.add("$text $clicks")
     return clicks
   }
   fun counter() => { clicks += 10; clicks }
   fun each(items : List<string>) {
-    items.each { log.push(text + ":" + it) }
+    items.forEach { log.add(text + ":" + it) }
     return log
   }
   fun nested() {
@@ -165,12 +165,12 @@ class Panel {
   var title = "panel"
   var gap = 1
   var rows = []
-  fun row(name : string) { rows.push(name) }
+  fun row(name : string) { rows.add(name) }
 }
 class Screen {
   var title = "screen"
   var built = []
-  fun note(text : string) { built.push(text) }
+  fun note(text : string) { built.add(text) }
   fun build() {
     val panel = Panel()
     panel.apply {
@@ -194,7 +194,7 @@ object Clock {
   }
   fun run(n : int) {
     var said = []
-    for i in 1..n { said.push(tick()) }
+    for i in 1..n { said.add(tick()) }
     return said
   }
 }

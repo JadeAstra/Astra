@@ -237,13 +237,13 @@ $scenarios = @(
         @{ Files = @{ 'lib.astra' = 'fun f() : int => 1'; 'main.astra' = "import lib.*`nval x : int = f()`nprint(x)" }; Out = '1' },
         @{ Files = @{ 'lib.astra' = 'fun f() : string => "s"' }; Error = "main.astra:2:16: error: 'x' is an int; it cannot start as a string" }) },
     @{ Name = 'R1: a lambda kept by an unchanged file'; Steps = @(
-        @{ Files = @{ 'lib.astra' = "val held : List<() -> unit> = []`nfun keep(action : () -> unit) { held.add(action) }`nfun run(action : () -> unit) { action() }"
+        @{ Files = @{ 'lib.astra' = "val held : open List<() -> unit> = []`nfun keep(action : () -> unit) { held.add(action) }`nfun run(action : () -> unit) { action() }"
                       'main.astra' = "import lib.*`nrun { print(1) }" }; Out = '1' },
         @{ Files = @{ 'main.astra' = "import lib.*`nsuspend fun waits() { run { delay(1) } }`nsuspend fun stores() { keep { delay(1) } }`nprint(2)" }
            Error = "main.astra:3:36: error: 'delay' may wait (it is a suspend function), and 'keep' does not run this lambda there and then: it keeps it or hands it on, and nothing waits for it. Start a task in it: task { delay() }" }) },
     @{ Name = 'R1: a function that comes to keep its lambda'; Steps = @(
         @{ Files = @{ 'lib.astra' = 'fun run(action : () -> unit) { action() }'; 'main.astra' = "import lib.*`nsuspend fun waits() { run { delay(1) } }`nprint(1)" }; Out = '1' },
-        @{ Files = @{ 'lib.astra' = "val held : List<() -> unit> = []`nfun run(action : () -> unit) { held.add(action) }" }
+        @{ Files = @{ 'lib.astra' = "val held : open List<() -> unit> = []`nfun run(action : () -> unit) { held.add(action) }" }
            Error = "main.astra:2:34: error: 'delay' may wait (it is a suspend function), and 'run' does not run this lambda there and then: it keeps it or hands it on, and nothing waits for it. Start a task in it: task { delay() }" }) },
     @{ Name = 'a folder gains a file'; Steps = @(
         @{ Files = @{ 'parts\a.astra' = 'fun a() : int => 1'; 'main.astra' = "import parts.*`nprint(a())" }; Out = '1' },

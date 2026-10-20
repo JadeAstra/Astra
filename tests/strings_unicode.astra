@@ -1,7 +1,7 @@
 // A string is a sequence of characters: every position counts characters, not bytes.
 
 val s = "naïve café"
-print(s.length, len(s), s[2], s[9], s[-1], s.slice(0, 3), s.slice(6), s.slice(-4, -1))   // expect: 10 10 ï é é naï café caf
+print(s.size, s.size, s[2], s[9], s[^1], s[0..<3], s[6..], s[^4..<^1])   // expect: 10 10 ï é é naï café caf
 print(s.indexOf("café"), s.indexOf("é"), s.indexOf("zzz"), s.indexOf("n"))   // expect: 6 9 -1 0
 
 // A loop runs once per character, and indexing agrees with it.
@@ -11,30 +11,30 @@ for c in s {
   joined += s[count]
   count += 1
 }
-print(count, joined == s, s.split("").length)   // expect: 10 true 10
+print(count, joined == s, s.split("").size)   // expect: 10 true 10
 
 // Characters of every size: 1, 2, 3 and 4 bytes in UTF-8.
 val mixed = "aé€😀z"
-print(mixed.length, mixed[0], mixed[1], mixed[2], mixed[3], mixed[4], mixed.slice(1, 4), mixed.indexOf("😀"), mixed.indexOf("z"))   // expect: 5 a é € 😀 z é€😀 3 4
-print(mixed[3].code, 128512.char == mixed[3], mixed.slice(3).length, "😀😀".length, "".length)   // expect: 128512 true 2 2 0
-try { mixed[5] } catch (e) { print(e.message) }   // expect: string index 5 is out of range (length 5)
+print(mixed.size, mixed[0], mixed[1], mixed[2], mixed[3], mixed[4], mixed[1..<4], mixed.indexOf("😀"), mixed.indexOf("z"))   // expect: 5 a é € 😀 z é€😀 3 4
+print(mixed[3].code, 128512.char == mixed[3], mixed[3..].size, "😀😀".size, "".size)   // expect: 128512 true 2 2 0
+try { mixed[5] } catch (e) { print(e.message) }   // expect: string index 5 is out of range (size 5)
 
 // Upper and lower case for all letters.
 print("Straße ÉCOLE žluťoučký Ωmega".lower(), "naïve café ñandú привет".upper())   // expect: straße école žluťoučký ωmega NAÏVE CAFÉ ÑANDÚ ПРИВЕТ
 
 // Plain ASCII text behaves as it always did.
 val plain = "hello, world"
-print(plain.length, plain[4], plain.slice(7), plain.indexOf("world"), plain.upper())   // expect: 12 o world 7 HELLO, WORLD
+print(plain.size, plain[4], plain[7..], plain.indexOf("world"), plain.upper())   // expect: 12 o world 7 HELLO, WORLD
 
 // Positions found one way can be used the other: a caret is an index.
 val text = "größer – länger"
 val caret = text.indexOf("–")
-print(caret, text.slice(0, caret).trim(), text.slice(caret + 1).trim(), text[caret - 2], text.contains("läng"), text.replace("ö", "oe"))
+print(caret, text[0..<caret].trim(), text[caret + 1..].trim(), text[caret - 2], text.contains("läng"), text.replace("ö", "oe"))
 // expect: 7 größer länger r true groeßer – länger
 
 // A long text with many positions asked for.
 var long = ""
 for i in 1..2000 { long += "é" + i % 10 }
 var total = 0
-for i in 0..<long.length step 2 { total += long[i] == "é" ? 1 : 0 }
-print(long.length, total, long.slice(1998, 2002))   // expect: 4000 2000 é0é1
+for i in 0..<long.size step 2 { total += long[i] == "é" ? 1 : 0 }
+print(long.size, total, long[1998..<2002])   // expect: 4000 2000 é0é1

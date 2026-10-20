@@ -23,6 +23,7 @@ print(1..3 == 1..3, 1..3 == 1..<4, (1..3).toList() == (1..<4).toList())   // exp
 class Plain(val n : int)
 class Point(val x : int, val y : int) {
   op ==(o : any?) => o is Point and this.x == o.x and this.y == o.y
+  fun hashCode() => hash(x, y)
 }
 val p = Plain(1)
 print(p == p, Plain(1) == Plain(1), Point(1, 2) == Point(1, 2), Point(1, 2) === Point(1, 2))   // expect: true false true false
@@ -44,13 +45,13 @@ print(rows.contains([3, 4]), rows.indexOf([5, 6]), rows.indexOf([7, 8]), rows.re
 print([Point(1, 1), Point(2, 2)].indexOf(Point(2, 2)))   // expect: 1
 
 // A list that contains itself is equal to itself, and comparing two such lists ends.
-val loop : List<any?> = [1]
-loop.push(loop)
-val other : List<any?> = [1]
-other.push(other)
+val loop : open List<any?> = [1]
+loop.add(loop)
+val other : open List<any?> = [1]
+other.add(other)
 print(loop == loop, loop == other)                       // expect: true false
 
-// As a key in a map a list goes by what it holds, as == does.
+// A frozen list is a key by what it holds, as == goes, and a list that can change finds it.
 val keyed = {:}
-keyed[a] = "first"
+keyed[a.frozen()] = "first"
 print(keyed[a], keyed[b], keyed[[1, 2]], keyed.size)             // expect: first first null 1

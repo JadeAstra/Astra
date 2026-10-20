@@ -86,7 +86,7 @@ class Node(val leafWidth : int, val leafHeight : int, val columns : int, val chi
 
 fun tree(depth : int) : Node {
   if (depth == 0) { return Node(40 + depth, 20, 1, []) }
-  val kids : List<Node> = []
+  val kids : open List<Node> = []
   for (i in 0 ..< 3) { kids.add(tree(depth - 1)) }
   return Node(0, 0, 3, kids)
 }

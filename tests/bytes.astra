@@ -2,7 +2,7 @@
 
 val zeros = Bytes(4)
 val data = Bytes([1, 2, 255])
-print(zeros, data, data.size, data.length, data[0], data[2], data[-1], zeros is Bytes, [1] is Bytes, type(data))   // expect: Bytes[0, 0, 0, 0] Bytes[1, 2, 255] 3 3 1 255 255 true false Bytes
+print(zeros, data, data.size, data.size, data[0], data[2], data[^1], zeros is Bytes, [1] is Bytes, type(data))   // expect: Bytes[0, 0, 0, 0] Bytes[1, 2, 255] 3 3 1 255 255 true false Bytes
 
 // A value whose type the checker does not see, for testing the checks made when running.
 val unknown = { value -> value }
@@ -10,7 +10,7 @@ val unknown = { value -> value }
 // Elements can be changed; nothing but a byte fits. An int constant that fits is one; byte
 // arithmetic gives an int, made a byte again with toByte().
 zeros[1] = 200
-zeros[-1] = 7
+zeros[^1] = 7
 zeros[0] = (zeros[0] + 5).toByte()
 print(zeros, zeros[1] is byte, zeros[1] + 1, zeros[1] == 200)   // expect: Bytes[5, 200, 0, 7] true 201 true
 try { zeros[0] = unknown(256) } catch (e) { print(e.message) }    // expect: a byte is a whole number from 0 to 255, not 256
@@ -25,7 +25,7 @@ try { Bytes("text") } catch (e) { print(e.message) }
 val joined = data + Bytes([9])
 val copy = Bytes(data)
 copy[0] = 100
-print(joined, joined.slice(1, 3), joined.slice(-2), data, copy, data == Bytes([1, 2, 255]), data == copy, data === data)
+print(joined, joined[1..<3], joined[^2..], data, copy, data == Bytes([1, 2, 255]), data == copy, data === data)
 // expect: Bytes[1, 2, 255, 9] Bytes[2, 255] Bytes[255, 9] Bytes[1, 2, 255] Bytes[100, 2, 255] true false true
 print(data.toList(), data.contains(255), 255 in data, 3 in data, data.indexOf(2), Bytes(2).fill(9))   // expect: [1, 2, 255] true true false 1 Bytes[9, 9]
 
@@ -36,7 +36,7 @@ print(sum)                                  // expect: 258
 
 // To and from text, as UTF-8.
 val encoded = "héllo €".toBytes()
-print(encoded.size, "héllo €".length, encoded.slice(0, 3), encoded.decodeToString(), encoded.decodeToString() == "héllo €")
+print(encoded.size, "héllo €".size, encoded[0..<3], encoded.decodeToString(), encoded.decodeToString() == "héllo €")
 // expect: 10 7 Bytes[104, 195, 169] héllo € true
 print(Bytes([72, 105]).decodeToString(), "".toBytes().size, Bytes(0))   // expect: Hi 0 Bytes[]
 

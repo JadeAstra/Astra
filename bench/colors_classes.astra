@@ -18,7 +18,7 @@ class Rgba(val argb : int) {
 
 val width = 320
 val height = 240
-val pixels : List<Rgba> = []
+val pixels : open List<Rgba> = []
 for (i in 0 ..< width * height) { pixels.add(Rgba(0xFF000000)) }
 val palette : List<Rgba> = [Rgba(0xFFFF0000), Rgba(0xFF00FF00), Rgba(0xFF0000FF), Rgba(0xFFFFFF00),
                             Rgba(0xFF00FFFF), Rgba(0xFFFF00FF), Rgba(0xFF808080), Rgba(0xFFFFFFFF)]

@@ -160,6 +160,7 @@ enum class Op : uint8_t {
     // Data classes and taking values apart. DataField adds a header field to the parts of a
     // data class; Component gives part `index` of a list or of a data object.
     DataField,          // u16 name                        class -> class
+    UnstableKey,        //                                 class -> class: its objects can change in what == sees (D26)
     Component,          // u8 index                        value -> part
 
     MissingArg,         // u16 parameter name              throws: the call left out an argument that has no default
@@ -323,6 +324,10 @@ enum class Op : uint8_t {
     // a value from its header alone writes its fields there and gives the place.
     WithDestinationAt,  // u8 depth                        ->
     WithFrameDestination, //                               ->
+    FromEnd,            //                                 k -> ^k
+    // `for ((a, b) in ...)`: as IterNext, pushing the item's two parts; a map's key and value
+    // with no entry made for them (D64, D73).
+    IterNextPair,       // u16 slot, i32 target            -> a b
 
     Count_,
 };
@@ -349,8 +354,23 @@ enum TypeId : uint8_t {
     kTypeUint16,
     kTypeUint32,
     kTypeFloat32,
+    kTypeIndex,     // a position: an int from the start, or ^k from the end (D146)
+    kTypeSet,
+    // A list, map or set made by frozen(), which nobody may change (D26).
+    kTypeFrozenList,
+    kTypeFrozenMap,
+    kTypeFrozenSet,
     kTypeCount_,
 };
+
+// For a frozen collection's type, the type it is a kind of (FrozenList, List); any other as it is.
+inline uint8_t unfrozenTypeId(uint8_t id) {
+    return id == kTypeFrozenList ? kTypeList : id == kTypeFrozenMap ? kTypeMap : id == kTypeFrozenSet ? kTypeSet : id;
+}
+// For a list's, map's or set's type, its frozen kind; 0 for any other.
+inline uint8_t frozenTypeId(uint8_t id) {
+    return id == kTypeList ? kTypeFrozenList : id == kTypeMap ? kTypeFrozenMap : id == kTypeSet ? kTypeFrozenSet : 0;
+}
 
 // Whether `id` names one of the types above other than a class's.
 inline bool isBuiltinTypeId(uint8_t id) { return id >= kTypeInt && id < kTypeCount_ && id != kTypeInstance; }

@@ -1,8 +1,8 @@
 // PNG pictures, read and written by Astra's own code.
 
 fun fromHex(text : string) {
-  val out = Bytes(text.length / 2)
-  for (i in 0..<out.size) { out[i] = text.substring(i * 2, i * 2 + 2).toInt(16).toByte() }
+  val out = Bytes(text.size / 2)
+  for (i in 0..<out.size) { out[i] = text[i * 2..<i * 2 + 2].toInt(16).toByte() }
   return out
 }
 
@@ -14,7 +14,7 @@ for (y in 0..<made.height) {
   }
 }
 val file = made.toPng()
-print(file.slice(0, 8))                              // expect: Bytes[137, 80, 78, 71, 13, 10, 26, 10]
+print(file[0..<8])                              // expect: Bytes[137, 80, 78, 71, 13, 10, 26, 10]
 val back = Picture.load(file)
 print(back, back == made, back.pixels == made.pixels)   // expect: Picture(37 x 23) true true
 print(made.get(3, 5) == Picture.rgb(21, 55, 15, 27), back.get(3, 5) == made.get(3, 5), made.get(4, 0), made.get(-1, 0), made.get(0, 99))   // expect: true true 605814784 0 0
@@ -131,8 +131,8 @@ fun attempt(block : () -> unit) {
   try { block(); return "no error" } catch (e) { return (e is IOException ? "IOException: " : "Error: ") + e.message }
 }
 print(attempt { Picture.load(Bytes([1, 2, 3])) })          // expect: IOException: not a PNG picture
-print(attempt { Picture.load(file.slice(0, 60)) })         // expect: IOException: damaged PNG picture
-val cut = Bytes(file.slice(0, file.size - 40))
+print(attempt { Picture.load(file[0..<60]) })         // expect: IOException: damaged PNG picture
+val cut = Bytes(file[0..<file.size - 40])
 print(attempt { Picture.load(cut) } != "no error")         // expect: true
 val spoiled = Bytes(file)
 for (i in 60..<90) { spoiled[i] = (255 - spoiled[i]).toByte() }
@@ -146,7 +146,7 @@ print(p.get(0, 0), p.inkBox())                             // expect: 0 null
 p.fillRect(1, 1, 3, 2, 0xFF336699)
 p.fillRect(-5, -5, 6, 6, 0x80FF0000)                       // clipped to the picture
 print(p.get(0, 0) == 0x80FF0000, p.get(1, 1) == 0xFF336699, p.get(3, 2) == 0xFF336699, p.get(4, 2), p.inkBox())   // expect: true true true 0 [0, 0, 4, 3]
-print(p.pixels.slice(0, 4), p.pixels.slice((1 * 6 + 1) * 4, (1 * 6 + 1) * 4 + 4))   // expect: Bytes[255, 0, 0, 128] Bytes[51, 102, 153, 255]
+print(p.pixels[0..<4], p.pixels[(1 * 6 + 1) * 4..<(1 * 6 + 1) * 4 + 4])   // expect: Bytes[255, 0, 0, 128] Bytes[51, 102, 153, 255]
 val part = p.crop(1, 1, 3, 2)
 print(part, part.get(0, 0) == 0xFF336699, part.inkBox(), p.copy() == p, p.copy() === p, part == p)   // expect: Picture(3 x 2) true [0, 0, 3, 2] true false false
 
@@ -156,7 +156,7 @@ val q = Picture(2, 1, Picture.black)
 q.blendRect(0, 0, 1, 1, 0x80FFFFFF)
 val r = Picture(1, 1)
 r.blendRect(0, 0, 1, 1, 0x40102030)
-print(q.pixels.slice(0, 4), q.pixels.slice(4, 8), r.get(0, 0) == 0x40102030)   // expect: Bytes[128, 128, 128, 255] Bytes[0, 0, 0, 255] true
+print(q.pixels[0..<4], q.pixels[4..<8], r.get(0, 0) == 0x40102030)   // expect: Bytes[128, 128, 128, 255] Bytes[0, 0, 0, 255] true
 
 // One picture laid over another.
 val under = Picture(4, 4, Picture.white)

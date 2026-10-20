@@ -5,35 +5,35 @@
 // -- Parts of the text --
 
 fun string.take(count : int) : string {
-  if (count < 0) { throw Error("take(" + str(count) + "): the count cannot be negative") }
-  return count >= this.size ? this : this.substring(0, count)
+  if (count < 0) { throw Error("take($count): the count cannot be negative") }
+  return count >= this.size ? this : this[0..<count]
 }
 
 fun string.takeLast(count : int) : string {
-  if (count < 0) { throw Error("takeLast(" + str(count) + "): the count cannot be negative") }
-  return count >= this.size ? this : this.substring(this.size - count)
+  if (count < 0) { throw Error("takeLast($count): the count cannot be negative") }
+  return count >= this.size ? this : this[this.size - count..]
 }
 
 fun string.drop(count : int) : string {
-  if (count < 0) { throw Error("drop(" + str(count) + "): the count cannot be negative") }
-  return count >= this.size ? "" : this.substring(count)
+  if (count < 0) { throw Error("drop($count): the count cannot be negative") }
+  return count >= this.size ? "" : this[count..]
 }
 
 fun string.dropLast(count : int) : string {
-  if (count < 0) { throw Error("dropLast(" + str(count) + "): the count cannot be negative") }
-  return count >= this.size ? "" : this.substring(0, this.size - count)
+  if (count < 0) { throw Error("dropLast($count): the count cannot be negative") }
+  return count >= this.size ? "" : this[0..<this.size - count]
 }
 
 fun string.takeWhile(predicate : (char) -> bool) : string {
   var index = 0
   while (index < this.size and predicate(this[index])) { index += 1 }
-  return this.substring(0, index)
+  return this[0..<index]
 }
 
 fun string.dropWhile(predicate : (char) -> bool) : string {
   var index = 0
   while (index < this.size and predicate(this[index])) { index += 1 }
-  return this.substring(index)
+  return this[index..]
 }
 
 // What comes before or after a delimiter. If the delimiter is not there, the whole string,
@@ -41,44 +41,44 @@ fun string.dropWhile(predicate : (char) -> bool) : string {
 fun string.substringBefore(delimiter : string, missingDelimiterValue : string? = null) : string {
   val at = this.indexOf(delimiter)
   if (at < 0) { return missingDelimiterValue == null ? this : missingDelimiterValue }
-  return this.substring(0, at)
+  return this[0..<at]
 }
 
 fun string.substringAfter(delimiter : string, missingDelimiterValue : string? = null) : string {
   val at = this.indexOf(delimiter)
   if (at < 0) { return missingDelimiterValue == null ? this : missingDelimiterValue }
-  return this.substring(at + delimiter.size)
+  return this[at + delimiter.size..]
 }
 
 fun string.substringBeforeLast(delimiter : string, missingDelimiterValue : string? = null) : string {
   val at = this.lastIndexOf(delimiter)
   if (at < 0) { return missingDelimiterValue == null ? this : missingDelimiterValue }
-  return this.substring(0, at)
+  return this[0..<at]
 }
 
 fun string.substringAfterLast(delimiter : string, missingDelimiterValue : string? = null) : string {
   val at = this.lastIndexOf(delimiter)
   if (at < 0) { return missingDelimiterValue == null ? this : missingDelimiterValue }
-  return this.substring(at + delimiter.size)
+  return this[at + delimiter.size..]
 }
 
-fun string.removePrefix(prefix : string) : string => this.startsWith(prefix) ? this.substring(prefix.size) : this
-fun string.removeSuffix(suffix : string) : string => this.endsWith(suffix) ? this.substring(0, this.size - suffix.size) : this
+fun string.removePrefix(prefix : string) : string => this.startsWith(prefix) ? this[prefix.size..] : this
+fun string.removeSuffix(suffix : string) : string => this.endsWith(suffix) ? this[0..<this.size - suffix.size] : this
 
 fun string.removeSurrounding(prefix : string, suffix : string = prefix) : string {
   if (this.size >= prefix.size + suffix.size and this.startsWith(prefix) and this.endsWith(suffix)) {
-    return this.substring(prefix.size, this.size - suffix.size)
+    return this[prefix.size..<this.size - suffix.size]
   }
   return this
 }
 
 // The text in pieces of `size` characters; the last may be shorter.
-fun string.chunked(size : int) : List<string> {
-  if (size < 1) { throw Error("chunked(" + str(size) + "): the size has to be at least 1") }
-  val out : List<string> = []
+fun string.chunked(size : int) : open List<string> {
+  if (size < 1) { throw Error("chunked($size): the size has to be at least 1") }
+  val out : open List<string> = []
   var start = 0
   while (start < this.size) {
-    out.add(this.slice(start, start + size))
+    out.add(this[start..<Math.min(start + size, this.size)])
     start += size
   }
   return out
@@ -86,16 +86,16 @@ fun string.chunked(size : int) : List<string> {
 
 fun string.replaceFirst(oldValue : string, newValue : string) : string {
   val at = this.indexOf(oldValue)
-  return at < 0 ? this : this.substring(0, at) + newValue + this.substring(at + oldValue.size)
+  return at < 0 ? this : this[0..<at] + newValue + this[at + oldValue.size..]
 }
 
-// The text with its first character put through a function: name.replaceFirstChar { it.uppercase() }
-fun string.replaceFirstChar(transform : (char) -> any?) : string => this.size == 0 ? this : str(transform(this[0])) + this.substring(1)
+// The text with its first character put through a function: name.replaceFirstChar { it.upper() }
+fun string.replaceFirstChar(transform : (char) -> any?) : string => this.size == 0 ? this : "${transform(this[0])}" + this[1..]
 
 fun string.commonPrefixWith(other : string) : string {
   var index = 0
   while (index < this.size and index < other.size and this[index] == other[index]) { index += 1 }
-  return this.substring(0, index)
+  return this[0..<index]
 }
 
 // -- Characters --
@@ -148,7 +148,7 @@ fun string.lastOrNull(predicate : (char) -> bool) : char? {
 
 fun string.get(index : int) : char {
   if (index < 0 or index >= this.size) {
-    throw Error("get: index " + str(index) + " is out of range (length " + str(this.size) + ")")
+    throw Error("get: index $index is out of range (length ${this.size})")
   }
   return this[index]
 }
@@ -221,15 +221,15 @@ fun string.count(predicate : (char) -> bool) : int {
 }
 
 // A list of what the function gives for each character.
-fun <R> string.map(transform : (char) -> R) : List<R> {
-  val out : List<R> = []
+fun <R> string.map(transform : (char) -> R) : open List<R> {
+  val out : open List<R> = []
   for character in this { out.add(transform(character)) }
   return out
 }
 
 // The characters that meet the condition, as a string.
 fun string.filter(predicate : (char) -> bool) : string {
-  val out : List<char> = []
+  val out : open List<char> = []
   for character in this {
     if (predicate(character)) { out.add(character) }
   }
@@ -237,7 +237,7 @@ fun string.filter(predicate : (char) -> bool) : string {
 }
 
 fun string.filterNot(predicate : (char) -> bool) : string {
-  val out : List<char> = []
+  val out : open List<char> = []
   for character in this {
     if (!predicate(character)) { out.add(character) }
   }
@@ -245,15 +245,15 @@ fun string.filterNot(predicate : (char) -> bool) : string {
 }
 
 // The characters, as a list.
-fun string.toList() : List<char> {
-  val out : List<char> = []
+fun string.toList() : open List<char> {
+  val out : open List<char> = []
   for character in this { out.add(character) }
   return out
 }
 
-fun string.toMutableList() : List<char> => this.toList()
-fun string.toCharArray() : List<char> => this.toList()
-fun string.toSet() : Set<char> => Set(this)
+fun string.toOpenList() : open List<char> => this.toList()
+fun string.toCharArray() : open List<char> => this.toList()
+fun string.toSet() : open Set<char> => Set(this)
 
 // The number a digit stands for, or null: '7'.digitToIntOrNull() is 7 (digitToInt() is built in).
 fun char.digitToIntOrNull(radix : int = 10) : int? {
@@ -270,13 +270,9 @@ fun string.ifEmpty(defaultValue : () -> string) : string => this.size == 0 ? def
 fun string.ifBlank(defaultValue : () -> string) : string => this.isBlank() ? defaultValue() : this
 
 // -- To other types --
-// toInt, toIntOrNull, toDouble and toDoubleOrNull are built in. Astra has one type for whole
-// numbers and one for fractions, so Kotlin's other names mean the same.
+// toInt, toIntOrNull, toFloat and toFloatOrNull are built in. Astra has one type for whole
+// numbers, 64 bits, and one for fractions, so Kotlin's toLong and toDouble are written so (D74).
 
-fun string.toLong(radix : int = 10) : int => this.toInt(radix)
-fun string.toLongOrNull(radix : int = 10) : int? => this.toIntOrNull(radix)
-fun string.toFloat() : float => this.toDouble()
-fun string.toFloatOrNull() : float? => this.toDoubleOrNull()
-fun string.toBoolean() : bool => this.lowercase() == "true"
+fun string.toBoolean() : bool => this.lower() == "true"
 fun string.encodeToByteArray() : Bytes => this.toBytes()
-fun string.plus(other : any?) : string => this + str(other)
+fun string.plus(other : any?) : string => this + "$other"

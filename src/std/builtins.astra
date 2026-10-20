@@ -13,17 +13,14 @@
 
 external fun print(vararg items : any?)
 external fun write(vararg items : any?)
-external fun str(value : any?) : string
-external fun int(value : any?) : int
-external fun float(value : any?) : float
-external fun len(value : any) : int
 external fun type(value : any?) : string
 external fun Range(first : int, end : int = 0, step : int = 1) : Range
 external fun Bytes(source : any) : Bytes
-external fun args() : List<string>
+external fun args() : open List<string>
 external fun assert(condition : bool, message : string = "assertion failed")
 // The hash of several values together, wrapping at 32 bits inside, as Java's Objects.hash (D148).
 external fun hash(vararg values : any?) : int
+external fun __hashCode(value : any?) : int
 external fun clock() : float
 external fun compareValues(a : any?, b : any?) : int
 external fun exit(code : int = 0) : nothing
@@ -36,25 +33,19 @@ external fun <T, R> with(receiver : T, block : T.() -> R) : R
 // -- string --
 
 external val string.size : int
-external val string.length : int
 external val string.lastIndex : int
 external val string.indices : Range
 external val string.code : int
 external fun string.upper() : string
 external fun string.lower() : string
-external fun string.uppercase() : string
-external fun string.lowercase() : string
 external fun string.trim() : string
 external fun string.trimStart() : string
 external fun string.trimEnd() : string
 external fun string.trimIndent() : string
 external fun string.trimMargin(marginPrefix : string = "|") : string
-external fun string.split(delimiter : string = " ") : List<string>
-external fun string.split(delimiter : char) : List<string>
-external fun string.lines() : List<string>
-external fun string.slice(start : int, end : int = 0) : string
-external fun string.substring(startIndex : int, endIndex : int = 0) : string
-external fun string.substring(range : Range) : string
+external fun string.split(delimiter : string = " ") : open List<string>
+external fun string.split(delimiter : char) : open List<string>
+external fun string.lines() : open List<string>
 external fun string.repeat(times : int) : string
 external fun string.reversed() : string
 external fun string.contains(other : string, ignoreCase : bool = false) : bool
@@ -81,95 +72,116 @@ external fun string.isLetterOrDigit() : bool
 external fun string.isWhitespace() : bool
 external fun string.isUpperCase() : bool
 external fun string.isLowerCase() : bool
-external fun string.padStart(length : int, padChar : char = ' ') : string
-external fun string.padEnd(length : int, padChar : char = ' ') : string
+external fun string.padStart(size : int, padChar : char = ' ') : string
+external fun string.padEnd(size : int, padChar : char = ' ') : string
 external fun string.toInt(radix : int = 10) : int
 external fun string.toIntOrNull(radix : int = 10) : int?
 external fun string.parseUnsigned(radix : int = 10) : int
-external fun string.toDouble() : float
-external fun string.toDoubleOrNull() : float?
+external fun string.toFloat() : float
+external fun string.toFloatOrNull() : float?
 external fun string.format(vararg values : any?) : string
 external fun string.toBytes() : Bytes
 
 // -- List --
 
 external val List.size : int
-external val List.length : int
 external val List.lastIndex : int
 external val List.indices : Range
 external val List.itemType : Type    // what it was made to hold (M6.6): `int` for a List<int>, `any` where that was not said
-external fun <T> List<T>.push(item : T, vararg more : T)
-external fun <T> List<T>.pop() : T
-external fun <T> List<T>.add(item : T) : bool
-external fun <T> List<T>.add(index : int, item : T) : bool
+external fun <T> open List<T>.add(item : T) : bool
+external fun <T> open List<T>.add(index : int, item : T) : bool
 // `items` is anything a for loop takes
-external fun <T> List<T>.addAll(items : any) : bool
-external fun <T> List<T>.addAll(index : int, items : any) : bool
-external fun <T> List<T>.insert(index : int, item : T)
+external fun <T> open List<T>.addAll(items : any) : bool
+external fun <T> open List<T>.addAll(index : int, items : any) : bool
+external fun <T> open List<T>.insert(index : int, item : T)
 external fun <T> List<T>.get(index : int) : T
 external fun <T> List<T>.getOrNull(index : int) : T?
-external fun <T> List<T>.set(index : int, item : T)
-external fun <T> List<T>.removeAt(index : int) : T
-external fun <T> List<T>.remove(item : any?) : bool
-external fun <T> List<T>.removeFirst() : T
-external fun <T> List<T>.removeLast() : T
-external fun <T> List<T>.removeFirstOrNull() : T?
-external fun <T> List<T>.removeLastOrNull() : T?
-external fun <T> List<T>.clear()
+external fun <T> open List<T>.set(index : int, item : T)
+external fun <T> open List<T>.removeAt(index : Index) : T
+external fun <T> open List<T>.remove(item : any?) : bool
+external fun <T> open List<T>.removeFirst() : T
+external fun <T> open List<T>.removeLast() : T
+external fun <T> open List<T>.removeFirstOrNull() : T?
+external fun <T> open List<T>.removeLastOrNull() : T?
+external fun <T> open List<T>.clear()
 external fun <T> List<T>.contains(item : any?) : bool
 external fun <T> List<T>.indexOf(item : any?) : int
 external fun <T> List<T>.lastIndexOf(item : any?) : int
 external fun <T> List<T>.isEmpty() : bool
 external fun <T> List<T>.isNotEmpty() : bool
-external fun <T> List<T>.slice(start : int = 0, end : int = 0) : List<T>
-external fun <T> List<T>.subList(fromIndex : int, toIndex : int) : List<T>
-external fun <T> List<T>.toList() : List<T>
-external fun <T> List<T>.toMutableList() : List<T>
-external fun <T> List<T>.reversed() : List<T>
-external fun <T> List<T>.reverse()
-external fun <T> List<T>.sort(comparator : ((T, T) -> Number)? = null)
-external fun <T> List<T>.sortBy(selector : (T) -> any?)            // each key worked out once, each item moved once
-external fun <T> List<T>.sortByDescending(selector : (T) -> any?)
-external fun <T> List<T>.replaceAll(transform : (T) -> T)          // each item by what transform gives for it, built in place
-external fun <T> List<T>.join(separator : string = ", ") : string
-external fun <T> List<T>.fill(item : T)
+external fun <T> List<T>.toList() : open List<T>
+external fun <T> List<T>.toOpenList() : open List<T>
+// A copy nobody may change, the lists, maps and sets in it copied so as well: what can be a key (D26).
+external fun <T> List<T>.frozen() : FrozenList<T>
+external fun <T> List<T>.reversed() : open List<T>
+external fun <T> open List<T>.reverse()
+external fun <T> open List<T>.sort(comparator : ((T, T) -> Number)? = null)
+external fun <T> open List<T>.sortBy(selector : (T) -> any?)            // each key worked out once, each item moved once
+external fun <T> open List<T>.sortByDescending(selector : (T) -> any?)
+external fun <T> open List<T>.replaceAll(transform : (T) -> T)          // each item by what transform gives for it, built in place
+// The items as text: names.join(", ") { it.upper() } (Kotlin's joinToString).
+external fun <T> List<T>.join(separator : string = ", ", prefix : string = "", postfix : string = "", limit : int = -1,
+                              truncated : string = "...", transform : ((T) -> any?)? = null) : string
+external fun <T> open List<T>.fill(item : T)
+
+// -- Set --
+
+// Each value once, in the order first added, two values the same one where a map would take
+// them as one key. Set() or Set(from): a list's items, a range's, a string's, another set's.
+external fun <T> Set(from : any? = null) : open Set<T>
+external val Set.size : int
+external val Set.itemType : Type
+external fun <T> open Set<T>.add(item : T) : bool                  // true if it was not there
+external fun <T> open Set<T>.remove(item : T) : bool               // true if it was
+external fun <T> Set<T>.contains(item : T) : bool
+external fun <T> Set<T>.isEmpty() : bool
+external fun <T> Set<T>.isNotEmpty() : bool
+external fun <T> Set<T>.frozen() : FrozenSet<T>
+external fun <T> open Set<T>.clear()
+external fun <T> open Set<T>.addAll(from : any) : bool
+external fun <T> open Set<T>.removeAll(from : List<T>) : bool
+external fun <T> open Set<T>.removeAll(from : Set<T>) : bool
+external fun <T> open Set<T>.removeAll(predicate : (T) -> bool) : bool
+external fun <T> open Set<T>.retainAll(from : List<T>) : bool
+external fun <T> open Set<T>.retainAll(from : Set<T>) : bool
+external fun <T> open Set<T>.retainAll(predicate : (T) -> bool) : bool
+external fun <T> Set<T>.toList() : open List<T>
+external fun <T> Set<T>.first() : T
+external fun <T> Set<T>.last() : T
 
 // -- Map --
 
 external val Map.size : int
-external val Map.length : int
-external val <K, V> Map<K, V>.keys : List<K>
+// The keys and the entries are live views (D77): sets that show the map as it is, and through
+// which nothing is changed; the values a list of them as they are.
+external val <K, V> Map<K, V>.keys : Set<K>
 external val <K, V> Map<K, V>.values : List<V>
-external val <K, V> Map<K, V>.entries : List<MapEntry<K, V>>
+external val <K, V> Map<K, V>.entries : Set<MapEntry<K, V>>
 external val Map.keyType : Type
 external val Map.valueType : Type
-external fun <K, V> Map<K, V>.keys() : List<K>
-external fun <K, V> Map<K, V>.values() : List<V>
-external fun <K, V> Map<K, V>.entries() : List<MapEntry<K, V>>
-external fun <K, V> Map<K, V>.has(key : any?) : bool
-external fun <K, V> Map<K, V>.contains(key : any?) : bool
-external fun <K, V> Map<K, V>.containsKey(key : any?) : bool
-external fun <K, V> Map<K, V>.containsValue(value : any?) : bool
+// A whole entry, `"a" to 1` or a MapEntry; a key is asked of the keys, k in map.keys (D140).
+external fun <K, V> Map<K, V>.contains(entry : MapEntry<K, V>) : bool
+external fun <K, V> Map<K, V>.contains(entry : Pair<K, V>) : bool
 external fun <K, V> Map<K, V>.get(key : K, defaultValue : V? = null) : V?
 external fun <K, V> Map<K, V>.getValue(key : K) : V
 external fun <K, V> Map<K, V>.getOrDefault(key : K, defaultValue : V) : V
-external fun <K, V> Map<K, V>.put(key : K, value : V) : V?
-external fun <K, V> Map<K, V>.set(key : K, value : V)
-external fun <K, V> Map<K, V>.remove(key : any?) : V?
-external fun <K, V> Map<K, V>.clear()
+external fun <K, V> open Map<K, V>.put(key : K, value : V) : V?
+external fun <K, V> open Map<K, V>.set(key : K, value : V)
+external fun <K, V> open Map<K, V>.remove(key : any?) : V?
+external fun <K, V> open Map<K, V>.clear()
 external fun <K, V> Map<K, V>.isEmpty() : bool
 external fun <K, V> Map<K, V>.isNotEmpty() : bool
-external fun <K, V> Map<K, V>.toMap() : Map<K, V>
-external fun <K, V> Map<K, V>.toMutableMap() : Map<K, V>
+external fun <K, V> Map<K, V>.toMap() : open Map<K, V>
+external fun <K, V> Map<K, V>.toOpenMap() : open Map<K, V>
+external fun <K, V> Map<K, V>.frozen() : FrozenMap<K, V>
 
 // -- Range --
 
 external val Range.size : int
-external val Range.length : int
 external val Range.start : int
 external val Range.end : int
 external val Range.step : int
-external fun Range.toList() : List<int>
+external fun Range.toList() : open List<int>
 external fun Range.contains(value : any?) : bool
 external fun Range.first() : int
 external fun Range.last() : int
@@ -178,9 +190,7 @@ external fun Range.isEmpty() : bool
 // -- Bytes --
 
 external val Bytes.size : int
-external val Bytes.length : int
-external fun Bytes.slice(start : int = 0, end : int = 0) : Bytes
-external fun Bytes.toList() : List<byte>
+external fun Bytes.toList() : open List<byte>
 external fun Bytes.decodeToString() : string
 external fun Bytes.fill(value : byte) : Bytes
 external fun Bytes.indexOf(value : byte) : int
@@ -197,6 +207,16 @@ external fun Bytes.putUint16(at : int, value : int, bigEndian : bool = false) : 
 external fun Bytes.putInt32(at : int, value : int, bigEndian : bool = false) : Bytes
 external fun Bytes.putUint32(at : int, value : int, bigEndian : bool = false) : Bytes
 external fun Bytes.putFloat32(at : int, value : Number, bigEndian : bool = false) : Bytes
+
+// -- Positions --
+
+// A position (D146): an int from the start, or ^k from the end (`items[^1]` is the last). A
+// function taking an Index takes either; of(size) is the position it means in that many items.
+external fun Index.of(size : int) : int
+external val Index.fromEnd : bool
+external val Index.value : int
+// A range with an end counted from the end (`2..^1`) is a slice's bounds; of(size) makes it plain.
+external fun Range.of(size : int) : Range
 
 // -- char and byte --
 
@@ -241,10 +261,7 @@ external fun float.coerceAtMost(maximumValue : Number) : Number
 external fun float.pow(exponent : Number) : float
 external fun float.mod(divisor : Number) : float
 external fun Number.roundToInt() : int
-external fun Number.roundToLong() : int
 external fun Number.toInt() : int
-external fun Number.toLong() : int
-external fun Number.toDouble() : float
 external fun Number.toFloat() : float
 external fun Number.toString(radix : int = 10) : string
 // An int's 64 bits read as unsigned (D44); Kotlin's `ushr` is `>>>`.

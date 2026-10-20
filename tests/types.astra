@@ -72,10 +72,10 @@ fun locals() {
   bump(5)
   owner = Dog("Local")
   val results = [total, owner.name]
-  results.push(attempt(fun() { total = unknown(total / 2.0) }))
-  results.push(attempt(fun() { owner = unknown("nobody") }))
-  results.push(attempt(fun() { var bad : string = unknown(base) }))
-  results.push(total)
+  results.add(attempt(fun() { total = unknown(total / 2.0) }))
+  results.add(attempt(fun() { owner = unknown("nobody") }))
+  results.add(attempt(fun() { var bad : string = unknown(base) }))
+  results.add(total)
   return results
 }
 for line in locals() { print(line) }
@@ -94,7 +94,7 @@ print(attempt(fun() { var wrong : int = make("s") }))   // expect: cannot assign
 
 // a val fixes the variable, not the object it refers to
 val bag = []
-bag.push(1)
+bag.add(1)
 print(bag)                              // expect: [1]
 
 // a type has to be a built-in type or a class

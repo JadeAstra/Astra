@@ -36,7 +36,7 @@ namespace {
 // A value is written out as bytes on the one side and built again on the other. It can hold
 // null, booleans, numbers, strings, bytes, and lists and maps of those.
 
-enum : char { kNull, kFalse, kTrue, kInt, kFloat, kString, kBytes, kList, kMap, kChar, kByte };
+enum : char { kNull, kFalse, kTrue, kInt, kFloat, kString, kBytes, kList, kMap, kChar, kByte, kSet };
 
 void putRaw(std::string& out, const void* data, size_t size) { out.append(static_cast<const char*>(data), size); }
 
@@ -77,6 +77,11 @@ void encode(VM& vm, Value v, std::string& out, int depth) {
     } else if (v.isObjType(ObjType::List)) {
         const std::vector<Value> items = vm.listCopy(asList(v));
         out += kList;
+        putSize(out, items.size());
+        for (const Value& item : items) encode(vm, item, out, depth + 1);
+    } else if (v.isObjType(ObjType::Set)) {
+        const std::vector<Value> items = vm.setItems(asSet(v));
+        out += kSet;
         putSize(out, items.size());
         for (const Value& item : items) encode(vm, item, out, depth + 1);
     } else if (v.isObjType(ObjType::Map)) {
@@ -154,6 +159,13 @@ Value decode(VM& vm, Reader& in) {
             }
             vm.account(map->map.size() * 2 * sizeof(Value));
             return Value::object(map);
+        }
+        case kSet: {
+            const uint32_t count = in.raw<uint32_t>();
+            ObjSet* set = vm.alloc<ObjSet>();
+            for (uint32_t i = 0; i < count && in.at < in.end; i++) set->items.set(decode(vm, in), Value::null());
+            vm.account(set->items.size() * 64);
+            return Value::object(set);
         }
         default: return Value::null();
     }

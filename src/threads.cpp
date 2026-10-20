@@ -141,6 +141,7 @@ void VM::yieldLock() {
 
 void VM::safePoint() {
     if (stopRequested_.load(std::memory_order_relaxed)) throw WorkerStop{};
+    if (keyCalls_ > 0) return;  // inside a key's == or hashCode (D26)
     if (bytesAllocated_ > nextGC_) collectGarbage();
     if (attention_.load(std::memory_order_relaxed)) {
         if (lockWaiters_.load() > 0) yieldLock();

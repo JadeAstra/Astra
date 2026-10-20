@@ -20,9 +20,9 @@ var name = "Astra"
 print("Hello, ${name}!")                 // expect: Hello, Astra!
 print('s', 'é', '\n'.code, '😀'.code)     // expect: s é 10 128512
 print("nested ${"in${1}ner"} done")      // expect: nested in1ner done
-print("a" + "b" + 1 + 2.5 + true + null) // expect: ab12.5truenull
+print("ab" + 1 + 2.5 + true + null) // expect: ab12.5truenull
 print("back\\slash", "q\"uote", "dollar \${x}")   // expect: back\slash q"uote dollar ${x}
-print("abc".length, "abc"[0], "abc"[-1]) // expect: 3 a c
+print("abc".size, "abc"[0], "abc"[^1]) // expect: 3 a c
 print("abc" < "abd", "b" > "a", "a" == "a")  // expect: true true true
 print("multi
 line")
@@ -51,4 +51,4 @@ print(a)                                 // expect: 1
 print(a)                                 // expect: 1
 print(type(1), type(1.0), type("s"), type(null), type(true), type([]), type({:}), type(print), type(0..<1))
 // expect: int float string null bool List Map Function Range
-print(int("42") + 1, float("1.5") * 2, int(3.9), int(-3.9), str(12) + "!")   // expect: 43 3.0 3 -3 12!
+print("42".toInt() + 1, "1.5".toFloat() * 2, 3.9.toInt(), (-3.9).toInt(), "${12}!")   // expect: 43 3.0 3 -3 12!

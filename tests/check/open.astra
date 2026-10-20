@@ -1,0 +1,73 @@
+// Collections are read-only unless marked open (D32); `accepts` (D34); new collections are
+// open (D45); no cast makes a read-only one open (D46); read-only maps and sets by their
+// types (D47).
+
+class Component(val name : string)
+class Button(name : string) : Component(name)
+class Label(name : string) : Component(name)
+
+// Read-only: read through the name, given a list of a narrower type.
+fun show(items : List<Component>) : int {
+  items.add(Label("x"))              // check: items is a List<Component>, which may only be read through it: one changed is declared open List<Component>, or toOpenList() makes a copy that can be (D32)
+  items[0] = Label("y")              // check: items is a List<Component>, which may only be read through it: one changed is declared open List<Component>, or toOpenList() makes a copy that can be (D32)
+  return items.size
+}
+// Open: changed through the name, given only a list of exactly its type.
+fun grow(items : open List<Component>) { items.add(Label("z")) }
+fun table(counts : Map<string, int>, seen : Set<int>) {
+  counts["a"] = 1                    // check: counts is a Map<string, int>, which may only be read through it: one changed is declared open Map<string, int>, or toOpenMap() makes a copy that can be (D32)
+  seen.remove(1)                     // check: seen is a Set<int>, which may only be read through it: one changed is declared open Set<int>, or toOpenSet() makes a copy that can be (D32)
+}
+
+fun uses(buttons : open List<Button>, read : List<Button>) {
+  show(buttons)
+  show(read)
+  grow(buttons)                      // check: grow(...) takes an open List<Component> for 'items', not an open List<Button>
+  grow(read)                         // check: grow(...) takes an open List<Component> for 'items', not a List<Button>
+  val mine = [Button("a")]           // a list made here is its maker's to change
+  mine.add(Button("b"))
+  val kept : open List<Component> = [Button("c")]
+  grow(kept)
+  // What making a new collection gives is open (D45).
+  val sorted = read.sortedBy { it.name }
+  sorted.add(Button("d"))
+  val names = read.map { it.name }
+  names.add("e")
+  val copy = read.toOpenList()
+  copy.add(Button("f"))
+  print(read.toMutableList())        // check: toMutableList() is written toOpenList(): a copy that can be changed (D46)
+}
+
+// accepts: an open list that a Button may be added to (D34).
+fun addButton(into : open List<accepts Button>) {
+  into.add(Button("g"))
+  into.add(Label("h"))               // check: no form of add(...) takes a Label; there are open List<accepts Button>.add(item : accepts Button) and open List<accepts Button>.add(index : int, item : accepts Button)
+  val first : Button = into[0]       // check: 'first' is a Button; it cannot start as an any?
+  print(first)
+}
+fun accepting(components : open List<Component>, buttons : open List<Button>, labels : open List<Label>, read : List<Component>) {
+  addButton(components)
+  addButton(buttons)
+  addButton(labels)                  // check: addButton(...) takes an open List<accepts Button> for 'into', not an open List<Label>
+  addButton(read)                    // check: addButton(...) takes an open List<accepts Button> for 'into', not a List<Component>
+}
+fun misplaced(items : List<accepts Button>) { print(items) }   // check: accepts goes in an open list's, set's or map's items, as in open List<accepts Button>: what may be added (D34)
+
+// No cast makes what may only be read open (D46).
+fun casts(read : List<int>, anything : any) {
+  val opened = read as open List<int>   // check: 'as' cannot make a List<int> open: what may only be read stays so; toOpenList() makes a copy that can be changed (D46)
+  print(opened, read is open List<int>)  // check: 'is' cannot make a List<int> open: what may only be read stays so; toOpenList() makes a copy that can be changed (D46)
+  val fromAny = anything as open List<int>
+  fromAny.add(1)
+}
+
+// Read-only maps and sets go where wider types are read; open ones only at their own (D47).
+fun readMap(m : Map<string, Component>, s : Set<Component>) : int => m.size + s.size
+fun openMap(m : open Map<string, Component>) { m["k"] = Label("k") }
+fun maps(buttons : Map<string, Button>, openButtons : open Map<string, Button>, set : Set<Button>) {
+  print(readMap(buttons, set), readMap(openButtons, set))
+  openMap(openButtons)               // check: openMap(...) takes an open Map<string, Component> for 'm', not an open Map<string, Button>
+}
+
+val ported : MutableList<int> = [1]  // check: MutableList is written open List: a List that may be changed through the name it has (D32)
+val notOpen : open int = 1           // check: only a List, a Map or a Set is open, which may be changed through the name it has (D32)

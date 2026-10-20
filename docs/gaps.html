@@ -83,8 +83,8 @@ td.when { min-width: 9em; }
 <nav>
 <h2>Contents</h2>
 <ul>
-<li><a href="#choices">Choices to confirm</a> (nineteen from the first half; seven from part 8, group 1)</li>
-<li><a href="#gaps">Gaps left</a> (twenty-three)</li>
+<li><a href="#choices">Choices to confirm</a> (nineteen from the first half; seven from part 8, group 1; twelve from group 2)</li>
+<li><a href="#gaps">Gaps left</a> (thirty-one)</li>
 </ul>
 </nav>
 
@@ -306,7 +306,79 @@ td.when { min-width: 9em; }
 
 <section class="decision" id="p8-hash">
 <h3><span class="code">8.1g</span>What <code>hash(a, b, ...)</code> combines (part 8, group 1)</h3>
-<p>Java's <code>Objects.hash</code> rule, <code>31 * h + hash of each</code>, wrapping at 32 bits, over Astra's own hash of each value (the one map keys use: by contents for strings, lists, data classes and values). A class's own <code>hashCode</code> is not called when running yet; when it is (D26, group 2), <code>hash</code> calls it for a value whose class has one.</p>
+<p>Java's <code>Objects.hash</code> rule, <code>31 * h + hash of each</code>, wrapping at 32 bits, over Astra's own hash of each value (the one map keys use: by contents for strings, frozen collections, data classes and values), and a class's own <code>hashCode</code> for an object of one (since group 2, 8.2d).</p>
+<div class="verdict"><span class="label">Your choice</span><span class="blank"></span></div>
+</section>
+
+<section class="decision" id="p8-frozen-names">
+<h3><span class="code">8.2a</span>The names <code>FrozenList</code> and <code>open List</code> (part 8, group 2)</h3>
+<p>D26 and D32 write <code>frozenList</code>, <code>frozenMap</code>, <code>frozenSet</code> and <code>open list</code>. Built after the naming rule, which writes every type but the fixed lowercase set in title case: <code>FrozenList&lt;T&gt;</code>, <code>FrozenMap&lt;K, V&gt;</code>, <code>FrozenSet&lt;T&gt;</code>, <code>open List&lt;T&gt;</code>, <code>open List&lt;accepts Button&gt;</code>. Kotlin's <code>MutableList&lt;T&gt;</code> is an error naming <code>open List&lt;T&gt;</code>.</p>
+<div class="verdict"><span class="label">Your choice</span><span class="blank"></span></div>
+</section>
+
+<section class="decision" id="p8-bytes-key">
+<h3><span class="code">8.2b</span><code>Bytes</code> are no key (part 8, group 2)</h3>
+<p><code>Bytes</code> can change, so by D26 they cannot be a key, and D26 names no frozen form of them. As built, a key of bytes is refused with the advice <code>key.toList().frozen()</code>, a <code>FrozenList&lt;byte&gt;</code>. The other way would be a frozen <code>Bytes</code>, <code>bytes.frozen()</code>, kept as bytes.</p>
+<div class="verdict"><span class="label">Your choice</span><span class="blank"></span></div>
+</section>
+
+<section class="decision" id="p8-key-follow">
+<h3><span class="code">8.2c</span>What the checker follows to tell a key that can change (part 8, group 2)</h3>
+<p>A class with its own <code>==</code> or <code>hashCode</code> can be a key when they read nothing that can change. The checker follows them into the methods and getters they call that have bodies, on the object or on others; a <code>var</code> field read anywhere there makes the class no key, as does a <code>val</code> field of a type that can change, or a call it cannot follow (a function of the C++, an abstract one). A value type may read its <code>var</code> fields, since a value goes into a map as a copy. Getters were followed after Jade's <code>Color</code>, whose <code>==</code> reads its <code>rgb</code> getter, would otherwise have been no key. For <code>Map&lt;any, V&gt;</code> the class carries the answer, marked when compiled (<code>Op::UnstableKey</code>), checked at each new key.</p>
+<div class="verdict"><span class="label">Your choice</span><span class="blank"></span></div>
+</section>
+
+<section class="decision" id="p8-hashcode">
+<h3><span class="code">8.2d</span><code>hashCode()</code> for every value, and what <code>hash</code> calls (part 8, group 2)</h3>
+<p>Every value has <code>hashCode()</code>: a class's own where it has one, otherwise the hash a map takes for it (by contents for strings, numbers, chars, frozen collections, data classes and values; by which object it is for any other), folded to 32 bits. <code>hash(a, b, ...)</code> now calls a class's own <code>hashCode</code> for an object of one, which settles 8.1g's question. An int's <code>hashCode()</code> is the map's hash of it, not the int itself as in Kotlin.</p>
+<div class="verdict"><span class="label">Your choice</span><span class="blank"></span></div>
+</section>
+
+<section class="decision" id="p8-frozen-deep">
+<h3><span class="code">8.2e</span>How deep <code>frozen()</code> goes (part 8, group 2)</h3>
+<p><code>frozen()</code> copies a list, map or set, and the lists, maps and sets inside it, all frozen; objects, values and <code>Bytes</code> inside are kept as they are. A frozen collection holding something that can change (a data object with a <code>var</code>, bytes) is frozen, but no key: the checker says so where the type shows it, and the program when it runs. <code>frozen()</code> of a frozen collection gives it back.</p>
+<div class="verdict"><span class="label">Your choice</span><span class="blank"></span></div>
+</section>
+
+<section class="decision" id="p8-open-results">
+<h3><span class="code">8.2f</span>Which results are open (D45) (part 8, group 2)</h3>
+<p>Open: what every standard-library function that makes a new list, map or set gives (<code>filter</code>, <code>map</code>, <code>sorted</code>, <code>toList</code>, <code>listOf</code>, <code>mapOf</code>, <code>setOf</code>, <code>split</code> and the rest), a slice, <code>+</code> of two lists, and a <code>vararg</code> parameter inside its function; <code>groupBy</code> gives an <code>open Map&lt;K, open List&lt;T&gt;&gt;</code>. Read-only: <code>emptyList()</code>, <code>emptySet()</code>, <code>emptyMap()</code> (as Kotlin's), what gives its receiver back (<code>orEmpty()</code>, <code>ifEmpty</code>, <code>onEach</code>), a map's <code>keys</code>, <code>entries</code> and <code>values</code>, and what an object hands out of its own (<code>ProcessBuilder.command()</code>).</p>
+<div class="verdict"><span class="label">Your choice</span><span class="blank"></span></div>
+</section>
+
+<section class="decision" id="p8-open-runtime">
+<h3><span class="code">8.2g</span><code>open</code> is the checker's alone (part 8, group 2)</h3>
+<p>When the program runs a list is a list: <code>x is open List&lt;int&gt;</code> and <code>x as open List&lt;int&gt;</code> on a value of type <code>any</code> test only <code>List&lt;int&gt;</code>, so a frozen list passes and fails when changed. Frozen collections are known when running: <code>is FrozenList</code> asks the list. Keeping a read-only mark on each list passed through a read-only name is the other way, at a cost on every pass.</p>
+<div class="verdict"><span class="label">Your choice</span><span class="blank"></span></div>
+</section>
+
+<section class="decision" id="p8-mutable-of">
+<h3><span class="code">8.2h</span><code>mutableListOf</code> and the like are kept (part 8, group 2)</h3>
+<p><code>listOf</code>, <code>setOf</code> and <code>mapOf</code> give open collections already, so Kotlin's <code>mutableListOf</code>, <code>mutableSetOf</code>, <code>mutableMapOf</code>, <code>arrayListOf</code>, <code>hashMapOf</code> and the rest make the same thing. They are kept for ported code; one name for each thing (D74) would make them errors naming <code>listOf</code>. Likewise <code>insert(i, x)</code> beside Kotlin's <code>add(i, x)</code>.</p>
+<div class="verdict"><span class="label">Your choice</span><span class="blank"></span></div>
+</section>
+
+<section class="decision" id="p8-live-loops">
+<h3><span class="code">8.2i</span>A set or a map's view changed while a <code>for</code> goes through it (part 8, group 2)</h3>
+<p>The loop sees it as it is: an item added while it runs is reached, one removed is not, and nothing is an error. Kotlin throws <code>ConcurrentModificationException</code>; a list in Astra already behaves as a set now does.</p>
+<div class="verdict"><span class="label">Your choice</span><span class="blank"></span></div>
+</section>
+
+<section class="decision" id="p8-open-text">
+<h3><span class="code">8.2j</span>Messages name <code>open</code> (part 8, group 2)</h3>
+<p>A type in a message is written as it is: "an open List&lt;string&gt; has no method 'nope'", "first(...) takes a List&lt;string&gt; for 'items', not an open List&lt;int&gt;". The other way would leave <code>open</code> out wherever it does not decide the error.</p>
+<div class="verdict"><span class="label">Your choice</span><span class="blank"></span></div>
+</section>
+
+<section class="decision" id="p8-accepts-read">
+<h3><span class="code">8.2k</span>What is read through <code>accepts</code> (part 8, group 2)</h3>
+<p>D34: through <code>open List&lt;accepts Button&gt;</code> reading gives <code>any</code>. Built as <code>any?</code>, since the list may be one of a nullable type above <code>Button</code>. <code>accepts</code> anywhere but an open list's, set's or map's items is an error.</p>
+<div class="verdict"><span class="label">Your choice</span><span class="blank"></span></div>
+</section>
+
+<section class="decision" id="p8-positions">
+<h3><span class="code">8.2l</span>Positions: <code>^k</code> a value, a negative one an error (part 8, group 2)</h3>
+<p><code>^k</code> is a value of type <code>Index</code>: it can be kept (<code>val last = ^1</code>) and passed, and an int is one counted from the start. A range with a <code>^</code> end (<code>2..^1</code>) is only for slicing, and a <code>for</code> over one is an error. A negative position written as a literal (<code>items[-1]</code>) is a compile error naming <code>items[^1]</code>; a computed one is out of range when running. A slice past the ends is an error, as an index is; <code>take</code> and <code>drop</code> clamp.</p>
 <div class="verdict"><span class="label">Your choice</span><span class="blank"></span></div>
 </section>
 
@@ -337,7 +409,15 @@ td.when { min-width: 9em; }
 <tr><td class="part">6</td><td>A field whose type the checker works out is kept as a payload only when it is an int, a float or a bool; one of a value type only when it is made by its type's name (part 5); any other keeps its slot.</td><td class="when">Not placed yet</td></tr>
 <tr><td class="part">7</td><td>Jade's own layout (<code>bench/jade_layout.astra</code>) is 3 to 6% slower than on M6.5: the sizes pass between functions in variables and results, which keep a box until values in variables, and a widget not yet painted asks its content for its sizes again at each layout.</td><td class="when">M6.7, values in variables (D149)</td></tr>
 <tr><td class="part">8.1</td><td>An object's field kept narrow (a byte, a char, a storage width) is read and written by the interpreter's general path, not by the quick one int, float and bool fields have, so it is slower to reach than an int field.</td><td class="when">If it shows in timings; M6.7's typed instructions</td></tr>
-<tr><td class="part">8.1</td><td>A one-character string keeps <code>code</code>, and strings their <code>isLetter()</code> and the like, beside the char's; and Kotlin's <code>uppercase()</code>, <code>lowercase()</code> beside <code>upper()</code> and <code>lower()</code>.</td><td class="when">D74, one name for each thing, a later group</td></tr>
+<tr><td class="part">8.1</td><td>A one-character string keeps <code>code</code>, and strings their <code>isLetter()</code> and the like, beside the char's. (Kotlin's <code>uppercase()</code> and <code>lowercase()</code> went with D74 in group 2.)</td><td class="when">Not placed yet</td></tr>
+<tr><td class="part">8.2</td><td>A map's <code>values</code> is a list made afresh each time it is read, not a live view as <code>keys</code> and <code>entries</code> are (D77).</td><td class="when">Not placed yet</td></tr>
+<tr><td class="part">8.2</td><td>A slice open at both ends, <code>items[..]</code>, does not parse; <code>items[0..]</code> or <code>toList()</code> copies.</td><td class="when">Not placed yet</td></tr>
+<tr><td class="part">8.2</td><td><code>type(x)</code> is still there, giving a name as text.</td><td class="when">Group 6, reflection (<code>x#.name</code>)</td></tr>
+<tr><td class="part">8.2</td><td>The <code>itemType</code> of a collection a generic function made (<code>setOf(1, 2)</code>, <code>listOf(...)</code>) is <code>any</code>: the function's type argument is not passed on to what it makes.</td><td class="when">Not placed yet</td></tr>
+<tr><td class="part">8.2</td><td>What a class's <code>==</code> and <code>hashCode</code> read is learned from bodies the checker checks, so for a file whose code comes back from the cache (D145) it knows nothing and reports no key of that class's type. The program still refuses one when it runs: the class was marked when it was compiled.</td><td class="when">With the summaries the cache keeps</td></tr>
+<tr><td class="part">8.2</td><td><code>frozen()</code> does not go into values: a frozen list of a value type whose field is a list leaves that list changeable (such a value type is no key, so keys are safe).</td><td class="when">Not placed yet</td></tr>
+<tr><td class="part">8.2</td><td>While a class's own <code>==</code> or <code>hashCode</code> runs for a map or a set, nothing is collected and no other thread is given the lock, since the C++ around it holds objects nothing roots (a map being built). One that makes much garbage, or waits, holds things up; the checker already refuses waiting in either.</td><td class="when">If it shows; roots for the map code</td></tr>
+<tr><td class="part">8.2</td><td>Through a read-only name, a standard-library function that changes its receiver gives D32's message only for names the checker knows to change a collection (<code>add</code>, <code>remove</code>, <code>sort</code>, <code>addFirst</code> and the like); for another it says no form of the function is for a read-only list.</td><td class="when">Not placed yet</td></tr>
 <tr><td class="part">All</td><td>Under MSVC, code placement alone moves the <code>fields</code> benchmark by 10 to 20% with the same loop. Not a gap in Astra, but a caution in reading timings: compare against a baseline built the same way, and count instructions, before calling a change slower.</td><td class="when">D160: the Clang build's dispatch, M6.7</td></tr>
 </tbody>
 </table></div>

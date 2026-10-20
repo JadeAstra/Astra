@@ -70,7 +70,7 @@ val whole = File(regular.path).readBytes()
 var survived = 0
 for (keep in [12, 100, 1000, 5000, 20000, 100000]) {
   try {
-    val damaged = Fonts.load(whole.slice(0, keep))
+    val damaged = Fonts.load(whole[0..<keep])
     damaged.check(7)
     damaged.font(12).width("damaged")
   } catch (e) {}

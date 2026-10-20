@@ -442,32 +442,7 @@ void registerStringMethods(VM& vm) {
         return Value::integer((order > 0) - (order < 0));
     });
 
-    // substring(start, end) or substring(range). Unlike slice, a position outside the text is an error.
-    vm.defineMethod(T, "substring", 1, 2, [](VM& vm, Value self, int argc, Value* args) -> Value {
-        const ObjString* text = asString(self);
-        const int64_t length = static_cast<int64_t>(text->length);
-        int64_t begin, end = length;
-        if (args[0].isObjType(ObjType::Range)) {
-            const ObjRange* range = asRange(args[0]);
-            if (range->step != 1) throw vm.runtimeError("substring() takes a range that counts up by one");
-            begin = range->start;
-            end = range->start + range->count();
-        } else {
-            begin = vm.toInt(args[0], "substring start");
-            if (given(argc, args, 1)) end = vm.toInt(args[1], "substring end");
-        }
-        if (begin < 0 || end > length || begin > end)
-            throw vm.runtimeError("substring(" + std::to_string(begin) + ", " + std::to_string(end) +
-                                  ") is out of range for a string of length " + std::to_string(length));
-        return vm.str(text->slice(static_cast<size_t>(begin), static_cast<size_t>(end)));
-    });
 
-    vm.defineMethod(T, "lowercase", 0, 0, [](VM& vm, Value self, int, Value*) -> Value {
-        return vm.str(changeCase(asString(self)->utf8(), false));
-    });
-    vm.defineMethod(T, "uppercase", 0, 0, [](VM& vm, Value self, int, Value*) -> Value {
-        return vm.str(changeCase(asString(self)->utf8(), true));
-    });
 
     vm.defineMethod(T, "isEmpty", 0, 0, [](VM&, Value self, int, Value*) -> Value {
         return Value::boolean(asString(self)->utf8().empty());
@@ -558,12 +533,12 @@ void registerStringMethods(VM& vm) {
             throw vm.runtimeError(vm.stringify(self).insert(0, "\"") + "\" is not a whole number from 0 to 18446744073709551615");
         return Value::integer(static_cast<int64_t>(n));
     });
-    vm.defineMethod(T, "toDouble", 0, 0, [](VM& vm, Value self, int, Value*) -> Value {
+    vm.defineMethod(T, "toFloat", 0, 0, [](VM& vm, Value self, int, Value*) -> Value {
         double d;
         if (!parseFloat(asString(self)->utf8(), d)) throw vm.runtimeError(vm.stringify(self).insert(0, "\"") + "\" is not a number");
         return Value::number(d);
     });
-    vm.defineMethod(T, "toDoubleOrNull", 0, 0, [](VM&, Value self, int, Value*) -> Value {
+    vm.defineMethod(T, "toFloatOrNull", 0, 0, [](VM&, Value self, int, Value*) -> Value {
         double d;
         return parseFloat(asString(self)->utf8(), d) ? Value::number(d) : Value::null();
     });
@@ -624,17 +599,14 @@ void registerNumberMethods(VM& vm) {
         return Value::integer(floatToInt(vm, std::floor(self.as.d + 0.5)));
     };
     vm.defineMethod(T, "roundToInt", 0, 0, round);
-    vm.defineMethod(T, "roundToLong", 0, 0, round);
 
     // The whole part: what is after the point is dropped.
     auto whole = [](VM& vm, Value self, int, Value*) -> Value {
         return self.isInt() ? self : Value::integer(floatToInt(vm, std::trunc(self.as.d)));
     };
     vm.defineMethod(T, "toInt", 0, 0, whole);
-    vm.defineMethod(T, "toLong", 0, 0, whole);
 
     auto fraction = [](VM&, Value self, int, Value*) -> Value { return Value::number(self.toDouble()); };
-    vm.defineMethod(T, "toDouble", 0, 0, fraction);
     vm.defineMethod(T, "toFloat", 0, 0, fraction);
 
     // An int as a byte (D19): an error past 0 to 255; toByteWrapped() keeps the low 8 bits.
@@ -780,6 +752,24 @@ void registerCharMethods(VM& vm) {
         const int64_t digit = c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'z' ? c - 'a' + 10 : c >= 'A' && c <= 'Z' ? c - 'A' + 10 : 99;
         if (digit >= radix) throw vm.runtimeError(quoteCharacter(static_cast<uint32_t>(c)) + " is not a digit" + (radix == 10 ? std::string() : " in base " + std::to_string(radix)));
         return Value::integer(digit);
+    });
+}
+
+// An Index's (D146): the position it means in `size` items, ^k being size - k. An int is one
+// too, a position from the start, so of() is on ints as well, for an Index that holds one.
+void registerIndexMethods(VM& vm) {
+    vm.defineMethod(BuiltinType::Index, "of", 1, 1, [](VM& vm, Value self, int, Value* args) -> Value {
+        return Value::integer(vm.toInt(args[0], "size") - self.as.i);
+    });
+    vm.defineMethod(BuiltinType::Number, "of", 1, 1, [](VM& vm, Value self, int, Value*) -> Value {
+        return Value::integer(vm.toInt(self, "position"));
+    });
+    // A range's bounds in `size` items: one with an end counted from the end made plain.
+    vm.defineMethod(BuiltinType::Range, "of", 1, 1, [](VM& vm, Value self, int, Value* args) -> Value {
+        const ObjRange* range = asRange(self);
+        const int64_t size = vm.toInt(args[0], "size");
+        return Value::object(vm.alloc<ObjRange>(range->startFromEnd ? size - range->start : range->start,
+                                                range->endFromEnd ? size - range->end : range->end, range->step, range->inclusive));
     });
 }
 
@@ -985,19 +975,10 @@ void registerListMethods(VM& vm) {
         return Value::object(made);
     };
     vm.defineMethod(T, "toList", 0, 0, copy);
-    vm.defineMethod(T, "toMutableList", 0, 0, copy);
+    vm.defineMethod(T, "toOpenList", 0, 0, copy);
+    // A copy nobody may change, which can be a key (D26).
+    vm.defineMethod(T, "frozen", 0, 0, [](VM& vm, Value self, int, Value*) -> Value { return vm.frozenCopy(self); });
 
-    // The items from `fromIndex` up to but not including `toIndex`, as a new list.
-    vm.defineMethod(T, "subList", 2, 2, [](VM& vm, Value self, int, Value* args) -> Value {
-        ObjList* list = asList(self);
-        const int64_t from = vm.toInt(args[0], "subList start"), to = vm.toInt(args[1], "subList end");
-        if (from < 0 || to > static_cast<int64_t>(list->size()) || from > to)
-            throw vm.runtimeError("subList(" + std::to_string(from) + ", " + std::to_string(to) + ") is out of range for a list of size " +
-                                  std::to_string(list->size()));
-        ObjList* part = list->packed() ? vm.listLike(list) : newList(vm);
-        vm.listCopyRange(part, list, static_cast<size_t>(from), static_cast<size_t>(to - from));
-        return Value::object(part);
-    });
 
     // A new list in the opposite order; reverse() turns the list itself round.
     vm.defineMethod(T, "reversed", 0, 0, [](VM& vm, Value self, int, Value*) -> Value {
@@ -1026,22 +1007,91 @@ void registerListMethods(VM& vm) {
 
 // ---- Maps ----
 
+// A set's own (M6.6 part 8); what a set does besides is in set.astra. A view of a map's keys
+// or entries (D77) takes all that only reads.
+void registerSetMethods(VM& vm) {
+    const BuiltinType T = BuiltinType::Set;
+    vm.defineMethod(T, "frozen", 0, 0, [](VM& vm, Value self, int, Value*) -> Value { return vm.frozenCopy(self); });
+    // Set(), or Set(from): the items of a list, a range, another set, a string or a map.
+    vm.defineNative("Set", 0, 1, [](VM& vm, int argc, Value* args) -> Value {
+        ObjSet* set = vm.newSet(nullptr);
+        TempRoot keep(vm, Value::object(set));
+        if (argc > 0 && !args[0].isNull())
+            for (const Value& item : vm.itemsOf(args[0], "Set()")) vm.setAdd(set, item);
+        return Value::object(set);
+    });
+    vm.defineMethod(T, "add", 1, 1, [](VM& vm, Value self, int, Value* args) -> Value {
+        return Value::boolean(vm.setAdd(asSet(self), args[0]));  // true if it was not there
+    });
+    vm.defineMethod(T, "remove", 1, 1, [](VM& vm, Value self, int, Value* args) -> Value {
+        return Value::boolean(vm.setRemove(asSet(self), args[0]));  // true if it was there
+    });
+    vm.defineMethod(T, "contains", 1, 1, [](VM& vm, Value self, int, Value* args) -> Value {
+        return Value::boolean(vm.setContains(asSet(self), args[0]));
+    });
+    vm.defineMethod(T, "isEmpty", 0, 0, [](VM& vm, Value self, int, Value*) -> Value { return Value::boolean(vm.setSize(asSet(self)) == 0); });
+    vm.defineMethod(T, "isNotEmpty", 0, 0, [](VM& vm, Value self, int, Value*) -> Value { return Value::boolean(vm.setSize(asSet(self)) != 0); });
+    vm.defineMethod(T, "clear", 0, 0, [](VM& vm, Value self, int, Value*) -> Value {
+        ObjSet* set = asSet(self);
+        if (set->view()) throw vm.viewChanged(set);
+        set->items.clear();
+        return Value::null();
+    });
+    vm.defineMethod(T, "addAll", 1, 1, [](VM& vm, Value self, int, Value* args) -> Value {
+        ObjSet* set = asSet(self);
+        if (set->view()) throw vm.viewChanged(set);
+        bool changed = false;
+        for (const Value& item : vm.itemsOf(args[0], "addAll()")) changed = vm.setAdd(set, item) || changed;
+        return Value::boolean(changed);
+    });
+    // removeAll and retainAll take a collection, or a condition each item is given.
+    auto removing = [](VM& vm, Value self, Value what, bool keepMatches) -> Value {
+        ObjSet* set = asSet(self);
+        if (set->view()) throw vm.viewChanged(set);
+        const bool condition = what.isObjType(ObjType::Closure) || what.isObjType(ObjType::BoundMethod) || what.isObjType(ObjType::Native) ||
+                               what.isObjType(ObjType::BoundNative);
+        ObjSet* from = nullptr;
+        if (!condition) {
+            from = vm.newSet(nullptr);
+            TempRoot keepFrom(vm, Value::object(from));
+            for (const Value& item : vm.itemsOf(what, keepMatches ? "retainAll()" : "removeAll()")) vm.setAdd(from, item);
+        }
+        TempRoot keepFrom(vm, from != nullptr ? Value::object(from) : Value::null());
+        std::vector<Value> items = vm.setItems(set);
+        TempVector keep(vm, items);
+        bool changed = false;
+        for (Value& item : items) {
+            const bool matches = condition ? vm.call(what, 1, &item).truthy() : vm.setContains(from, item);
+            if (matches != keepMatches) changed = vm.setRemove(set, item) || changed;
+        }
+        return Value::boolean(changed);
+    };
+    static const auto removeBy = removing;
+    vm.defineMethod(T, "removeAll", 1, 1, [](VM& vm, Value self, int, Value* args) -> Value { return removeBy(vm, self, args[0], false); });
+    vm.defineMethod(T, "retainAll", 1, 1, [](VM& vm, Value self, int, Value* args) -> Value { return removeBy(vm, self, args[0], true); });
+    vm.defineMethod(T, "toList", 0, 0, [](VM& vm, Value self, int, Value*) -> Value {
+        ObjSet* set = asSet(self);
+        ObjList* list = vm.alloc<ObjList>();
+        TempRoot keep(vm, Value::object(list));
+        list->values() = vm.setItems(set);
+        vm.account(list->values().size() * sizeof(Value));
+        if (set->type != nullptr && !set->type->args.empty()) vm.typeList(list, vm.typeOf(kTypeList, false, nullptr, {set->type->args[0]}));
+        return Value::object(list);
+    });
+    auto end = [](VM& vm, Value self, bool last) -> Value {
+        const std::vector<Value> items = vm.setItems(asSet(self));
+        if (items.empty()) throw vm.runtimeError(std::string(last ? "last()" : "first()") + " of an empty set");
+        return last ? items.back() : items.front();
+    };
+    static const auto endOf = end;
+    vm.defineMethod(T, "first", 0, 0, [](VM& vm, Value self, int, Value*) -> Value { return endOf(vm, self, false); });
+    vm.defineMethod(T, "last", 0, 0, [](VM& vm, Value self, int, Value*) -> Value { return endOf(vm, self, true); });
+}
+
 void registerMapMethods(VM& vm) {
     const BuiltinType T = BuiltinType::Map;
 
-    vm.defineMethod(T, "containsKey", 1, 1, [](VM&, Value self, int, Value* args) -> Value {
-        return Value::boolean(asMap(self)->map.find(args[0]) != nullptr);
-    });
 
-    vm.defineMethod(T, "containsValue", 1, 1, [](VM& vm, Value self, int, Value* args) -> Value {
-        const ObjMap* map = asMap(self);
-        // By index: comparing may run an == operator that changes the map.
-        for (size_t i = 0; i < map->map.entries().size(); i++) {
-            const ValueMap::Entry& entry = map->map.entries()[i];
-            if (entry.live && vm.equals(entry.value, args[0])) return Value::boolean(true);
-        }
-        return Value::boolean(false);
-    });
 
     // put and set store a value under a key; put gives the value that was there, or null.
     vm.defineMethod(T, "put", 2, 2, [](VM& vm, Value self, int, Value* args) -> Value {
@@ -1086,7 +1136,8 @@ void registerMapMethods(VM& vm) {
         return Value::object(made);
     };
     vm.defineMethod(T, "toMap", 0, 0, copy);
-    vm.defineMethod(T, "toMutableMap", 0, 0, copy);
+    vm.defineMethod(T, "toOpenMap", 0, 0, copy);
+    vm.defineMethod(T, "frozen", 0, 0, [](VM& vm, Value self, int, Value*) -> Value { return vm.frozenCopy(self); });
 
 }
 
@@ -1343,9 +1394,11 @@ void registerStdlib(VM& vm) {
     registerNumberMethods(vm);
     registerCharMethods(vm);
     registerByteMethods(vm);
+    registerIndexMethods(vm);
     registerNumberConstants(vm);
     registerListMethods(vm);
     registerMapMethods(vm);
+    registerSetMethods(vm);
     registerRangeMethods(vm);
     registerFiles(vm);
 }

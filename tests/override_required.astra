@@ -58,6 +58,7 @@ print(attempt(fun() {
 class Point(val x : int, val y : int) {
   override fun toString() => "($x, $y)"
   override op ==(other : any?) => other is Point and x == other.x and y == other.y
+  fun hashCode() => hash(x, y)
 }
 class Named : Base {
   var extra : string? = null

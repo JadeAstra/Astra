@@ -24,11 +24,11 @@ print(bound(), missing?.describe(), [s, Square(1)].map { it.describe() })   // e
 // On the built-in types.
 fun string.shout() => upper() + "!"                    // upper() is the string's own
 fun string.words() => split(" ")
-fun string.isLong(limit : int = 5) => length > limit
+fun string.isLong(limit : int = 5) => size > limit
 fun int.double() => this * 2
 fun int.isEven() => this % 2 == 0
 fun Number.half() => this / 2
-fun float.rounded() => int(this + 0.5)
+fun float.rounded() => (this + 0.5).toInt()
 fun bool.toInt() => this ? 1 : 0
 fun List.second() => this[1]
 fun List<int>.total() : int {
@@ -36,7 +36,7 @@ fun List<int>.total() : int {
   for n in this { sum += n }
   return sum
 }
-fun Map.keyCount() => keys().length
+fun Map.keyCount() => this.keys.size
 fun Range.middle() => (start + end) / 2
 fun Function.twice(x : int) => this(this(x))
 print("hi".shout(), "a b c".words(), "hello!".isLong(), "hey".isLong(2), 21.double(), 3.isEven(), 4.isEven())   // expect: HI! ["a", "b", "c"] true true 42 false true
@@ -46,8 +46,8 @@ print({ it + 1 }.twice(5), "x".shout().shout(), [3, 4].total().double())   // ex
 // On every value, and on null.
 fun any.tag() => "<" + this + ">"
 fun string?.orNothing() => this == null ? "" : this
-fun string?.isBlank() => this == null or this.trim().length == 0
-print(5.tag(), "x".tag(), [1].tag(), s.name.tag(), missing.orNothing().length, "kept".orNothing(), missing.isBlank(), " ".isBlank(), "a".isBlank())   // expect: <5> <x> <[1]> <rect> 0 kept true true false
+fun string?.isBlank() => this == null or this.trim().size == 0
+print(5.tag(), "x".tag(), [1].tag(), s.name.tag(), missing.orNothing().size, "kept".orNothing(), missing.isBlank(), " ".isBlank(), "a".isBlank())   // expect: <5> <x> <[1]> <rect> 0 kept true true false
 
 // On an interface, an enum, and a class declared inside another.
 interface Named { val name : string }
@@ -72,7 +72,7 @@ print(Canvas().draw(), Canvas().viaReceiver())   // expect: [dot] dot of area 1 
 print("abc".padded(6), "abc".padded(width = 5, fill = "*"), 7.clamp(0, 5), 7.clamp(low = 8, high = 9))   // expect: abc... abc** 5 8
 fun string.padded(width : int, fill : string = ".") {
   var out = this
-  while out.length < width { out += fill }
+  while out.size < width { out += fill }
   return out
 }
 fun int.clamp(low : int, high : int) => this < low ? low : this > high ? high : this

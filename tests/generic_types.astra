@@ -27,7 +27,7 @@ val word : any = listOfOne("a")
 print(one is List<int>, one is List<string>, word is List<string>, word is List<int>)   // expect: true false true false
 
 fun <T> pick(items : List<any>) : List<T> {
-    val out : List<T> = []
+    val out : open List<T> = []
     for (item in items) {
         if (item is T) { out.add(item as T) }
     }
@@ -91,7 +91,7 @@ val kind : Type = ints.itemType
 print(kind is Type, 1 is Type, kind)   // expect: true false int
 
 // A list or map the C++ gives has the type its declaration says, worked out at the call.
-print("a,b".split(",").itemType, ints.reversed().itemType, circles.slice(0, 1).itemType)   // expect: string int Circle
+print("a,b".split(",").itemType, ints.reversed().itemType, circles[0..<1].itemType)   // expect: string int Circle
 print(ages.keys.itemType, ages.values.itemType, ages.entries.itemType)   // expect: string int MapEntry<string, int>
 val split : any = "x y".split(" ")
 print(split is List<string>, split is List<int>)   // expect: true false

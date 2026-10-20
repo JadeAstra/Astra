@@ -18,11 +18,11 @@ val hsb = Color.RGBtoHSB(64, 128, 128)
 val into = []
 Color.RGBtoHSB(255, 0, 0, into)
 print(hsb[0], hsb[1] > 0.49 and hsb[1] < 0.51, hsb[2] > 0.5 and hsb[2] < 0.51, into, Color(Color.HSBtoRGB(hsb[0], hsb[1], hsb[2])))   // expect: 0.5 true true [0.0, 1.0, 1.0] Color(64, 128, 128)
-// As the key of a map a colour is itself, not its value: its number is the key to use.
+// As the key of a map a colour goes by its own == and hashCode: an equal one finds it (D26).
 val colours = {:}
 colours[Color.red] = "the constant"
 colours[Color.red.rgb] = "by number"
-print(colours[Color(255, 0, 0)], colours[Color.red], colours[Color(255, 0, 0).rgb])   // expect: null the constant by number
+print(colours[Color(255, 0, 0)], colours[Color.red], colours[Color(255, 0, 0).rgb])   // expect: the constant the constant by number
 
 // -- Font --
 val font = Font("Segoe UI", Font.bold, 13)

@@ -28,10 +28,10 @@ print(attempt(fun() { unknown(s).nickname = "A" }))       // expect: Student has
 
 // header and body fields together; untyped and nullable header fields
 class Order(val id : int, var note : any?, var customer : string?) {
-  var items : List = []
+  var items : open List = []
   val created : string = "today"
-  fun add(item : string) : Order { this.items.push(item); return this }
-  fun summary() : string => "#${this.id} for ${this.customer}: ${this.items.length} item(s), note=${this.note}"
+  fun add(item : string) : Order { this.items.add(item); return this }
+  fun summary() : string => "#${this.id} for ${this.customer}: ${this.items.size} item(s), note=${this.note}"
 }
 val o = Order(7, [1, 2], null).add("tea").add("cake")
 print(o.summary(), o.created)                    // expect: #7 for null: 2 item(s), note=[1, 2] today
@@ -72,8 +72,8 @@ print(attempt(fun() { Snake("Sid").name = "x" }))    // expect: cannot assign to
 
 // superclasses with a hand-written init, with no init at all, and one that needs arguments
 class Base {
-  var log : List = []
-  fun init(tag : string) { this.log.push(tag) }
+  var log : open List = []
+  fun init(tag : string) { this.log.add(tag) }
 }
 class Derived(val extra : int) : Base("from derived")
 val d = Derived(3)
@@ -102,13 +102,13 @@ class Scaled(factor : int) : Animal("scaled x$factor", factor * 2)
 print(Scaled(3).describe())                      // expect: scaled x3 has 6 legs
 
 // header entries can have default values, which makes those arguments optional
-class Config(val host : string = "localhost", var port : int = 8080, val tags : List = [])
+class Config(val host : string = "localhost", var port : int = 8080, val tags : open List = [])
 val c0 = Config()
 val c1 = Config("example.org")
 val c2 = Config("example.org", 443, ["tls"])
 print(c0.host, c0.port, c0.tags)                 // expect: localhost 8080 []
 print(c1.host, c1.port, c2.port, c2.tags)        // expect: example.org 8080 443 ["tls"]
-c0.tags.push("x")
+c0.tags.add("x")
 print(c0.tags, c1.tags)                          // expect: ["x"] []
 print(attempt(fun() => unknown(Config)("a", 1, [], 4)))   // expect: Config.init() expects 0 to 3 argument(s) but got 4
 print(attempt(fun() => Config("a", unknown("80"))))       // expect: cannot assign a value of type string to field 'port' of Config, which is declared as int

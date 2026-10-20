@@ -2,13 +2,13 @@
 class Counter {
   var count : int = 0
   var label : string = "counter"
-  var history : List = []
+  var history : open List = []
   var note : any?                       // anything, starts as null
   var owner : string?                   // nullable, starts as null
 
   fun bump() : Counter {
     this.count += 1
-    this.history.push(this.count)
+    this.history.add(this.count)
     return this
   }
 }
@@ -71,7 +71,7 @@ class Config {
   fun tryChange() { this.version = 4 }
 }
 val config = Config()
-config.tags.push("b")
+config.tags.add("b")
 print(config.version, config.tags)      // expect: 3 ["a", "b"]
 print(attempt(fun() { config.tryChange() }))   // expect: cannot assign to val field 'version' of Config
 
@@ -126,7 +126,7 @@ class Animal {
   fun speak() : string => "${this.name} says ${this.sound}"
 }
 class Dog : Animal {
-  var tricks : List = []
+  var tricks : open List = []
   var sound2 : string = this.sound + "!"
   fun init(name : string) {
     super.init(name)
@@ -137,7 +137,7 @@ class Puppy : Dog {
   var age : int = 0
 }
 val pup = Puppy("Bit")
-pup.tricks.push("sit")
+pup.tricks.add("sit")
 print(pup.speak(), pup.legs, pup.tricks, pup.sound2, pup.age)   // expect: Bit says woof 4 ["sit"] ...! 0
 print(attempt(fun() { pup.legs = unknown("many") }))   // expect: cannot assign a value of type string to field 'legs' of Puppy, which is declared as int
 print(attempt(fun() { pup.name = "Rex" }))    // expect: cannot assign to val field 'name' of Puppy
@@ -225,6 +225,6 @@ var total = 0
 for i in 0..<20000 {
   val n = Counter()
   n.bump()
-  total += n.count + n.history.length
+  total += n.count + n.history.size
 }
 print(total)                            // expect: 40000

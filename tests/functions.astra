@@ -44,7 +44,7 @@ var ops = [add, fun(a, b) => a - b]
 print(ops[0](1, 2), ops[1](1, 2))       // expect: 3 -1
 print(add)                              // expect: <fun add>
 print(fun(x) => x)                       // expect: <fun <lambda>>
-print(print, [].push)                   // expect: <native fun print> <native fun push>
+print(print, [].removeLast)             // expect: <native fun print> <native fun removeLast>
 
 // a local function can call itself
 fun run() {
@@ -67,7 +67,7 @@ fun shared() {
 print(shared())                         // expect: 42
 
 // bound native methods are values too
-var items = []
-var push = items.push
-push(1); push(2, 3)
-print(items)                            // expect: [1, 2, 3]
+var items = [1, 2, 3]
+var drop = items.removeLast
+drop()
+print(items)                            // expect: [1, 2]

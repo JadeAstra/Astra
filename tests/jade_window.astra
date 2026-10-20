@@ -78,7 +78,7 @@ for (event in seen) { print(event) }
 // expect: Focus(focused=true)
 // expect: Focus(focused=false)
 // expect: Hover(inside=false)
-print(seen[2].key == KeyCode.a, seen[2].letter, seen[3].repeat, seen[5].key.name, seen[7].text.length)   // expect: true A true pageUp 1
+print(seen[2].key == KeyCode.a, seen[2].letter, seen[3].repeat, seen[5].key.name, seen[7].text.size)   // expect: true A true pageUp 1
 // Every key goes through under its own name.
 var keys = 0
 window.onInput = { event -> if (event is RawInput.KeyDown) { keys += event.key.ordinal } }
@@ -179,7 +179,7 @@ fractional.close()
 Native.useOwnClipboard()
 print(Native.clipboardText == "")   // expect: true
 Native.clipboardText = "copied: é 中 😀"
-print(Native.clipboardText, Native.clipboardText.length)   // expect: copied: é 中 😀 13
+print(Native.clipboardText, Native.clipboardText.size)   // expect: copied: é 中 😀 13
 Native.clipboardText = unknown(42)
 print(Native.clipboardText)   // expect: 42
 

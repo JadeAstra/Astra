@@ -10,7 +10,7 @@
 //
 // buildString { append("a"); append(1) } does the same in one expression.
 class StringBuilder {
-  private val parts : List<string> = []
+  private val parts : open List<string> = []
   private var count = 0
 
   fun init(initial : any? = "") {
@@ -23,14 +23,13 @@ class StringBuilder {
 
   // In characters.
   get size() : int => count
-  get length() : int => count
   get lastIndex() : int => count - 1
   fun isEmpty() : bool => count == 0
   fun isNotEmpty() : bool => count != 0
 
   // Adds a value as print would show it. Gives the builder, so that calls can be chained.
   fun append(value : any?) : StringBuilder {
-    val text = str(value)
+    val text = "$value"
     parts.add(text)
     count += text.size
     return this
@@ -62,14 +61,14 @@ class StringBuilder {
   // Positions count characters, as in a string.
   fun insert(index : int, value : any?) : StringBuilder {
     val text = toString()
-    replaceWith(text.substring(0, index) + str(value) + text.substring(index))
+    replaceWith(text[0..<index] + "$value" + text[index..])
     return this
   }
 
   fun deleteRange(startIndex : int, endIndex : int) : StringBuilder {
     val text = toString()
     val end = endIndex > text.size ? text.size : endIndex
-    replaceWith(text.substring(0, startIndex) + text.substring(end))
+    replaceWith(text[0..<startIndex] + text[end..])
     return this
   }
 
@@ -79,7 +78,7 @@ class StringBuilder {
 
   // Cuts the text down to `newLength` characters; a longer length leaves it as it is.
   fun setLength(newLength : int) {
-    if (newLength < count) { replaceWith(toString().substring(0, newLength)) }
+    if (newLength < count) { replaceWith(toString()[0..<newLength]) }
   }
 
   fun reverse() : StringBuilder {
@@ -87,9 +86,10 @@ class StringBuilder {
     return this
   }
 
+  // A character, `sb[^1]` from the end, and a part, `sb[2..^1]`, as on a string (D146, D147).
   fun get(index : int) : char => toString().get(index)
-  op [](index : int) : char => toString().get(index)
-  fun substring(startIndex : int, endIndex : int? = null) : string => toString().substring(startIndex, endIndex == null ? count : endIndex)
+  op [](index : Index) : char => toString()[index]
+  op [](range : Range) : string => toString()[range]
   fun indexOf(text : string, startIndex : int = 0) : int => toString().indexOf(text, startIndex)
   fun lastIndexOf(text : string) : int => toString().lastIndexOf(text)
   fun contains(text : string) : bool => toString().contains(text)

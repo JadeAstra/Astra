@@ -19,7 +19,7 @@ fun counted() {
 
 // ?. reads a member, or gives null when there is nothing to read it from.
 print(a?.name, none?.name, a?.label(), none?.label())   // expect: a null <a> null
-print(a.next?.name, a?.next?.name, "abc"?.length, unknown(none)?.length)   // expect: null null 3 null
+print(a.next?.name, a?.next?.name, "abc"?.size, unknown(none)?.size)   // expect: null null 3 null
 
 // With no object, the arguments of the call are not worked out.
 print(none?.tag(counted()), none?.tag(suffix = counted()), calls)   // expect: null null 0
@@ -86,7 +86,7 @@ val seen = []
 for item in [1, null, 3, null, 5] {
   val doubled = [item]
   val value = item ?: continue
-  seen.push([doubled.length, 10 * value, [0, value ?: continue]])
+  seen.add([doubled.size, 10 * value, [0, value ?: continue]])
 }
 print(seen)   // expect: [[1, 10, [0, 1]], [1, 30, [0, 3]], [1, 50, [0, 5]]]
 
@@ -111,9 +111,9 @@ print(total)                                // expect: 13
 val readers = []
 for item in ["a", null, "c"] {
   val kept = item
-  readers.push(fun() => kept)
+  readers.add(fun() => kept)
   val upper = item ?: continue
-  readers.push(fun() => upper + upper)
+  readers.add(fun() => upper + upper)
 }
 print(readers.map { it() })                 // expect: ["a", "aa", null, "c", "cc"]
 
@@ -122,7 +122,7 @@ fun onlyIf(value : int?, callback : () -> string) => value == null ? null : call
 val callbacks = []
 for item in [1, 2, null, 4] {
   val self = onlyIf(item, fun() => self == null ? "unset" : "set $item") ?: break
-  callbacks.push(self)
+  callbacks.add(self)
 }
 print(callbacks.map { it() })               // expect: ["set 1", "set 2"]
 
@@ -131,10 +131,10 @@ val log = []
 fun guarded(value : int?) {
   try {
     val built = [1, 2, value ?: return "early"]
-    return built.length
+    return built.size
   } finally {
     val note = "finally"
-    log.push(note)
+    log.add(note)
   }
 }
 print(guarded(3), guarded(null), log)       // expect: 3 early ["finally", "finally"]
@@ -142,25 +142,25 @@ print(guarded(3), guarded(null), log)       // expect: 3 early ["finally", "fina
 for item in [1, null, 3] {
   try {
     val value = [item ?: continue]
-    log.push(value[0])
+    log.add(value[0])
   } finally {
-    log.push("pass")
+    log.add("pass")
   }
 }
-print(log.slice(2))                         // expect: [1, "pass", "pass", 3, "pass"]
+print(log[2..])                         // expect: [1, "pass", "pass", 3, "pass"]
 
 fun firstGap(list : List<int?>) {
   for item in list {
     try {
       val pair = [item, item ?: break]
-      log.push(pair.length)
+      log.add(pair.size)
     } finally {
-      log.push("checked")
+      log.add("checked")
     }
   }
   return "done"
 }
-print(firstGap([7, null, 9]), log.slice(7))   // expect: done [2, "checked", "checked"]
+print(firstGap([7, null, 9]), log[7..])   // expect: done [2, "checked", "checked"]
 
 // In a condition.
 var steps = 0

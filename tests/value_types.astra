@@ -34,7 +34,7 @@ print(px, py)   // expect: 1 2
 print(a.copy(y = 9), r.copy(name = "s").name, r.copy(origin = b).origin)   // expect: Point(x=1, y=9) s Point(x=3, y=4)
 
 // A map key, and in a list, by its fields.
-val names : Map<Point, string> = {:}
+val names : open Map<Point, string> = {:}
 names[a] = "a"
 names[Point(3, 4)] = "b"
 print(names[Point(1, 2)], names[b], names.size)   // expect: a b 2
@@ -92,7 +92,7 @@ value Two<A, B>(val first : A, val second : B) {
     fun swapped() : Two<B, A> => Two(second, first)
 }
 val two = Two(1, "one")
-print(two, two.swapped(), two.first + 1, two.second.length)   // expect: Two(first=1, second="one") Two(first="one", second=1) 2 3
+print(two, two.swapped(), two.first + 1, two.second.size)   // expect: Two(first=1, second="one") Two(first="one", second=1) 2 3
 var maybe : Two<int, string>? = null
 print(maybe?.first)   // expect: null
 maybe = two

@@ -3,8 +3,8 @@
 val log = []
 
 // Leaving normally, and leaving by an error that is caught.
-try { log.push("body") } finally { log.push("finally") }
-try { throw "boom" } catch (e) { log.push("caught " + e) } finally { log.push("finally") }
+try { log.add("body") } finally { log.add("finally") }
+try { throw "boom" } catch (e) { log.add("caught " + e) } finally { log.add("finally") }
 print(log)                                  // expect: ["body", "finally", "caught boom", "finally"]
 
 // An error nobody here catches: the block runs and the error carries on.
@@ -12,11 +12,11 @@ fun failing() {
   try {
     throw Error("lost")
   } finally {
-    log.push("cleanup")
+    log.add("cleanup")
   }
 }
-try { failing() } catch (e) { log.push(e.message) }
-print(log.slice(4))                         // expect: ["cleanup", "lost"]
+try { failing() } catch (e) { log.add(e.message) }
+print(log[4..])                         // expect: ["cleanup", "lost"]
 
 // return: the value is worked out first, then the block runs, then the function returns it.
 var counter = 0
@@ -44,9 +44,9 @@ for i in 1..5 {
   try {
     if i == 2 { continue }
     if i == 4 { break }
-    passes.push("body $i")
+    passes.add("body $i")
   } finally {
-    passes.push("finally $i")
+    passes.add("finally $i")
   }
 }
 print(passes)   // expect: ["body 1", "finally 1", "finally 2", "body 3", "finally 3", "finally 4"]
@@ -58,31 +58,31 @@ fun nested() {
     try {
       return "value"
     } finally {
-      order.push("inner")
+      order.add("inner")
     }
   } finally {
-    order.push("outer")
+    order.add("outer")
   }
 }
 print(nested(), order)                      // expect: value ["inner", "outer"]
 
 fun nestedError() {
   try {
-    try { throw "deep" } finally { order.push("inner again") }
+    try { throw "deep" } finally { order.add("inner again") }
   } catch (e) {
-    order.push("caught " + e)
+    order.add("caught " + e)
   } finally {
-    order.push("outer again")
+    order.add("outer again")
   }
 }
 nestedError()
-print(order.slice(2))                       // expect: ["inner again", "caught deep", "outer again"]
+print(order[2..])                       // expect: ["inner again", "caught deep", "outer again"]
 
 // An error thrown by the catch still runs the finally.
 fun catchThrows() {
-  try { throw "first" } catch (e) { throw "second" } finally { order.push("ran") }
+  try { throw "first" } catch (e) { throw "second" } finally { order.add("ran") }
 }
-try { catchThrows() } catch (e) { print(e, order[order.length - 1]) }   // expect: second ran
+try { catchThrows() } catch (e) { print(e, order[order.size - 1]) }   // expect: second ran
 
 // An error thrown by the finally block itself is the one that gets out.
 fun finallyThrows() {
@@ -123,7 +123,7 @@ fun attempt(action : () -> unit) {
   } catch (e) {
     return "other: " + e
   } finally {
-    log.push("attempted")
+    log.add("attempted")
   }
 }
 print(attempt(fun() { }), attempt(fun() { throw NotFound("key") }), attempt(fun() { throw Denied() }), attempt(fun() { throw 42 }))

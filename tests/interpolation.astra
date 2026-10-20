@@ -43,7 +43,7 @@ val ratio = 0.5
 val items = [1, "two"]
 val nothing : string? = null
 print("$count $ratio $items $nothing $true $false $null")   // expect: 3 0.5 [1, "two"] null true false null
-print("${count + 1} ${count > 2 ? "many" : "few"} ${items.length} ${items.map(fun(x) => "<$x>")}")
+print("${count + 1} ${count > 2 ? "many" : "few"} ${items.size} ${items.map(fun(x) => "<$x>")}")
 // expect: 4 many 2 ["<1>", "<two>"]
 print(session.getUser().greeting())             // expect: I am User(Grace) and my name is Grace
 print("owner: ${car.owner}, nested: ${"inner $name ${car.owner.name}"}")   // expect: owner: User(Ada), nested: inner world Ada
@@ -55,7 +55,7 @@ print("keywords stay text: $if $class $for")    // expect: keywords stay text: $
 
 // local variables, parameters and loop variables
 fun describe(label : string, values : List) : string {
-  val size = values.length
+  val size = values.size
   var out = "$label has $size:"
   for v in values { out += " $v" }
   return out

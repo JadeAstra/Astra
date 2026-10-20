@@ -7,9 +7,9 @@ val unknown = { value -> value }
 class Box(val items : List<int>) {
   fun show(separator : string = ", ", prefix : string = "", transform : Function? = null) {
     var out = prefix
-    for i in 0..<items.length {
+    for i in 0..<items.size {
       if (i > 0) { out += separator }
-      out += transform == null ? str(items[i]) : str(transform(items[i]))
+      out += transform == null ? "${items[i]}" : "${transform(items[i])}"
     }
     return out
   }
@@ -34,7 +34,7 @@ box.each { x, extra -> write(x, extra, " ") }
 print()                                         // expect: 1[] 2[] 3[] 
 box.each("a") { x, extra -> write(x, extra, " ") }
 print()                                         // expect: 1["a"] 2["a"] 3["a"] 
-box.each("a", "b") { x, extra -> write(x, extra.length, " ") }
+box.each("a", "b") { x, extra -> write(x, extra.size, " ") }
 print()                                         // expect: 12 22 32 
 
 // Static methods, extension functions and functions held in fields.
@@ -43,9 +43,9 @@ print(Box.build(4) { it }.show())               // expect: 0, 1, 2, 3
 
 fun List.joined(separator : string = "+", transform : Function? = null) {
   var out = ""
-  for i in 0..<length {
+  for i in 0..<size {
     if (i > 0) { out += separator }
-    out += transform == null ? str(this[i]) : str(transform(this[i]))
+    out += transform == null ? "${this[i]}" : "${transform(this[i])}"
   }
   return out
 }
@@ -72,7 +72,7 @@ fun List.grouped(keySelector : Function, valueTransform : Function) {
   for item in this {
     val key = keySelector(item)
     if (out[key] == null) { out[key] = [] }
-    out[key].push(valueTransform(item))
+    out[key].add(valueTransform(item))
   }
   return out
 }

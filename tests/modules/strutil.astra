@@ -5,4 +5,4 @@ val loadLog = []                 // shared by the files of this folder, and seen
 
 fun shout(s : string) => s.upper() + "!"
 
-loadLog.push("strutil")
+loadLog.add("strutil")

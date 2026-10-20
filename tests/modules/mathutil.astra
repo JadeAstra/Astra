@@ -5,11 +5,11 @@ const TAU = 6.28
 fun double(x : int) => x * 2
 
 class Pile {
-  var items : List<int> = []
+  var items : open List<int> = []
   fun init() { this.items = [] }
-  fun add(x : int) { this.items.push(x); return this }
-  fun take() { return this.items.pop() }
-  fun size() => this.items.length
+  fun add(x : int) { this.items.add(x); return this }
+  fun take() { return this.items.removeLast() }
+  fun size() => this.items.size
 }
 
-loadLog.push("mathutil")         // declared by strutil.astra, in the same folder
+loadLog.add("mathutil")         // declared by strutil.astra, in the same folder

@@ -48,7 +48,7 @@ val largest = shapes.maxBy { it.area() }
 print("largest is the ${largest.name};", Shape.made, "shapes were made")
 print("squares are rectangles:", shapes[2] is Rect, "- circles are not:", shapes[0] is Rect)
 
-print("by area:", shapes.sortedBy { it.area() }.joinToString(" < ") { it.name })
+print("by area:", shapes.sortedBy { it.area() }.join(" < ") { it.name })
 print("total area: %.1f, of which rectangles: %.1f".format(shapes.sumOf { it.area() }, shapes.filter { it is Rect }.sumOf { it.area() }))
 
 // An abstract class is never made itself.

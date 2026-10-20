@@ -25,7 +25,7 @@ enum Key {
   if, else, for, in, is, null, true, class, return
   fun label() => "<" + name + ">"
 }
-print(Key.if, Key.in.ordinal, Key.class.label(), Key.entries.length, Key.null == Key.null, Key.true != Key.null)   // expect: if 3 <class> 9 true true
+print(Key.if, Key.in.ordinal, Key.class.label(), Key.entries.size, Key.null == Key.null, Key.true != Key.null)   // expect: if 3 <class> 9 true true
 fun describe(key : Key) => when (key) {
   Key.if, Key.else -> "branch"
   Key.for -> "loop"
@@ -35,7 +35,7 @@ print(describe(Key.if), describe(Key.for), describe(Key.return))   // expect: br
 
 // Map keys, read back with a dot or an index.
 val words = {class: 1, in: 2, if: 3, "plain": 4}
-print(words.keys(), words["class"]!! + words["in"]!!, words["if"])   // expect: ["class", "in", "if", "plain"] 3 3
+print(words.keys, words["class"]!! + words["in"]!!, words["if"])   // expect: {"class", "in", "if", "plain"} 3 3
 
 // `op` and `static` are ordinary names except at the start of a class member.
 val op = "+"

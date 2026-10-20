@@ -20,7 +20,7 @@ fun <T> first(items : List<T>) : T => items[0]
 val one : int = first([1, 2])
 val text : string = first([1, 2])   // check: 'text' is a string; it cannot start as an int
 val explicit = first<string>(["a"])
-first<string>([1])                  // check: first(...) takes a List<string> for 'items', not a List<int>
+first<string>([1])                  // check: first(...) takes a List<string> for 'items', not an open List<int>
 
 fun <T> pair(a : T, b : T) : List<T> => [a, b]
 val both : List<int> = pair(1, 2)

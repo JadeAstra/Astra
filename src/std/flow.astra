@@ -87,7 +87,7 @@ class Result<T> {
     return this
   }
 
-  override fun toString() : string => ok ? "Success(" + str(held) + ")" : "Failure(" + str(held) + ")"
+  override fun toString() : string => ok ? "Success($held)" : "Failure($held)"
 }
 
 // Runs the block and gives its value, or the error it threw, as a Result.

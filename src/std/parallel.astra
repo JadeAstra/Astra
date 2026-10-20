@@ -42,14 +42,14 @@ class ParallelStream<T> {
   fun <R> map(transform : (T) -> R) : ParallelStream<R> => ParallelStream<R>(__parallel.run(items, transform, true))
 
   fun <R> mapNotNull(transform : (T) -> R?) : ParallelStream<R> {
-    val made : List<R?> = __parallel.run(items, transform, true)
+    val made : open List<R?> = __parallel.run(items, transform, true)
     return ParallelStream(made.filterNotNull())
   }
 
   // The items for which the condition holds.
   fun filter(predicate : (T) -> bool) : ParallelStream<T> {
-    val keep : List<bool> = __parallel.run(items, predicate, true)
-    val out : List<T> = []
+    val keep : open List<bool> = __parallel.run(items, predicate, true)
+    val out : open List<T> = []
     for index in 0..<items.size {
       if (keep[index]) { out.add(items[index]) }
     }
@@ -62,7 +62,7 @@ class ParallelStream<T> {
   fun all(predicate : (T) -> bool) : bool => tests(predicate).all { it }
   fun none(predicate : (T) -> bool) : bool => !tests(predicate).any { it }
 
-  private fun tests(predicate : (T) -> bool) : List<bool> => __parallel.run(items, predicate, true)
+  private fun tests(predicate : (T) -> bool) : open List<bool> => __parallel.run(items, predicate, true)
 
   fun <R : Number> sumOf(selector : (T) -> R) : R => (__parallel.run(items, selector, true) as List<R>).sum()
   fun <R> maxOf(selector : (T) -> R) : R => (__parallel.run(items, selector, true) as List<R>).max()
@@ -72,10 +72,10 @@ class ParallelStream<T> {
   fun min() : T => items.min()
 
   // The items as a list: after map or filter, what they came to.
-  fun toList() : List<T> => items.toList()
-  fun toSet() : Set<T> => Set(items)
-  fun sorted() : List<T> => items.sorted()
-  fun joinToString(separator : string = ", ") : string => items.joinToString(separator)
+  fun toList() : open List<T> => items.toList()
+  fun toSet() : open Set<T> => Set(items)
+  fun sorted() : open List<T> => items.sorted()
+  fun join(separator : string = ", ") : string => items.join(separator)
 }
 
 fun <T> List<T>.parallelStream() : ParallelStream<T> => ParallelStream(this)

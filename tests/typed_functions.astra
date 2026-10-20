@@ -18,9 +18,9 @@ print(attempt(fun() => greet(unknown(null), "!"))) // expect: argument 'name' of
 print(attempt(fun() => half(unknown("x"))))        // expect: argument 'x' of half() must be Number, got string
 
 // return types
-fun parse(text : string) : int => int(text)
+fun parse(text : string) : int => text.toInt()
 fun broken(flag : bool) : int {
-  if flag { return unknown("not a number" + "") }
+  if flag { return unknown("not a number") }
   return 1
 }
 fun forgetful(n : int) : int {
@@ -57,7 +57,7 @@ print(attempt(fun() => apply(unknown(3), 5)))      // expect: argument 'f' of ap
 fun countdown(n : int) : List {
   val seen = []
   while n > 0 {
-    seen.push(n)
+    seen.add(n)
     n -= 1
   }
   return seen
@@ -113,6 +113,7 @@ class Money {
   fun init(cents : int) { this.cents = cents }
   op +(other : Money) : Money => Money(this.cents + other.cents)
   op ==(other : any) : bool => other is Money and this.cents == other.cents
+  fun hashCode() : int => cents
   fun toString() : string => "$" + this.cents / 100 + "." + this.cents % 100
 }
 print(Money(150) + Money(200), Money(5) == Money(5), Money(5) == 5)   // expect: $3.50 true false
@@ -120,7 +121,7 @@ print(attempt(fun() => Money(1) + unknown(2)))             // expect: argument '
 
 // a method that returns the wrong thing
 class Liar {
-  fun age() : int => unknown("old" + "")
+  fun age() : int => unknown("old")
 }
 print(attempt(fun() => Liar().age()))             // expect: Liar.age() must return int, but returned string
 

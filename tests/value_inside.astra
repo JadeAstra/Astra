@@ -98,7 +98,7 @@ print(d1 == Labelled(Rect(Point(1, 1), 2, 2), 1), setOf(d1, Labelled(Rect(Point(
 
 // Items added to another list while a loop reads them where they are: copied in by `add`.
 fun evens(from : List<Rect>) : List<Rect> {
-  val out : List<Rect> = []
+  val out : open List<Rect> = []
   for (r in from) {
     if (r.w % 2 == 0) { out.add(r) }
   }

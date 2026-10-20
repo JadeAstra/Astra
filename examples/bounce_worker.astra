@@ -41,14 +41,14 @@ fun add(count : int, x : Number?, y : Number?) {
 Worker.parent!!.onMessage = { message ->
   // What a message holds is the program's to say: here a map from names to values.
   val got = message as Map<string, any?>
-  if (got.containsKey("size")) {
+  if (got.keys.contains("size")) {
     val size = got["size"] as List<Number>
     width = size[0]
     height = size[1]
   }
-  if (got.containsKey("paused")) { paused = got["paused"] as bool }
-  if (got.containsKey("add")) { add(got["add"] as int, got["x"] as Number?, got["y"] as Number?) }
-  if (got.containsKey("where")) {
+  if (got.keys.contains("paused")) { paused = got["paused"] as bool }
+  if (got.keys.contains("add")) { add(got["add"] as int, got["x"] as Number?, got["y"] as Number?) }
+  if (got.keys.contains("where")) {
     // All the places in one list, x then y for each ball.
     val places = []
     for ball in balls {

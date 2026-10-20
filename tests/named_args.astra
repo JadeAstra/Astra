@@ -38,7 +38,7 @@ print(scale(by = 3, value = 2))                  // expect: 6
 
 // arguments are evaluated in the order they are written
 var order = []
-fun <T> note(tag : string, value : T) : T { order.push(tag); return value }
+fun <T> note(tag : string, value : T) : T { order.add(tag); return value }
 describe(city = note("city", "x"), name = note("name", "y"), age = note("age", 1))
 print(order)                                     // expect: ["city", "name", "age"]
 
@@ -72,7 +72,13 @@ print(Box(width = 2).label, Box(label = "L", width = 3).height, Box(2, label = "
 // built-in functions and classes without an init have no names to match
 class Empty
 print(attempt(fun() => unknown(print)(x = 1)))   // expect: built-in function print() does not take named arguments
-print(attempt(fun() => [1].push(item = 2)))      // expect: built-in method push() does not take named arguments
+val loose = [1]
+unknown(loose).add(index = 0, item = 2)   // a built-in method declared in two forms, the right one chosen by the names
+print(loose)                                // expect: [2, 1]
+val named = [1]
+named.add(item = 2)
+named.add(index = 0, item = 0)
+print(named, named.join(postfix = "!", separator = "-"))   // expect: [0, 1, 2] 0-1-2!
 print(attempt(fun() => unknown(Empty)(x = 1)))   // expect: Empty() takes no arguments
 print(attempt(fun() => unknown(5)(x = 1)))       // expect: cannot call a value of type int
 

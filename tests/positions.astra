@@ -1,0 +1,50 @@
+// Counting from the end with ^k (D146), and slices: a range in an index (D147).
+
+fun attempt(f : () -> any?) : string {
+  try { return "${f()}" } catch (e) { return e.message }
+}
+
+val items = [10, 20, 30, 40]
+val text = "héllo"
+print(items[^1], items[^4], text[^1], items[^items.size])   // expect: 40 10 o 10
+print(items[1..], items[..^2], items[1..2], items[0..<^1], items[4..], items[0..^1])   // expect: [20, 30, 40] [10, 20, 30] [20, 30] [10, 20, 30] [] [10, 20, 30, 40]
+print(text[1..^2], text[..<2], Bytes([1, 2, 3])[1..], items[2..1])   // expect: éll hé Bytes[2, 3] []
+val k = 2
+print(items[^k], items[^k..], items[^(k + 1)..^k])   // expect: 30 [30, 40] [20, 30]
+
+// A negative number is no position; out of range and backwards are errors.
+fun minus() : int => -1
+fun zero() : int => 0
+print(attempt { items[minus()] })   // expect: list index -1 is out of range (size 4): a negative number is no position; the last is [^1]
+print(attempt { items[^5] }, attempt { items[1..9] }, attempt { items[3..1] })
+// expect: list index ^5 is out of range (size 4) the slice 1..9 is out of range (size 4) the slice 3..1 runs backwards: from 3 to 1
+print(attempt { items[^zero()] })   // expect: ^0 is no position: ^1 is the last, ^2 the one before it
+
+// A slice is a copy; changing it leaves the list as it was.
+val part = items[1..2]
+part.add(99)
+print(part, items)   // expect: [20, 30, 99] [10, 20, 30, 40]
+
+// Writing and removing at a position from the end.
+val changed = [1, 2, 3]
+changed[^1] = 9
+changed.removeAt(^2)
+print(changed, attempt { changed.insert(-1, 0) })   // expect: [1, 9] insert position -1 is out of range (size 2): a negative number is no position; the last is [^1]
+
+// An Index is an int from the start or ^k from the end; of(size) is the position it means.
+fun at(i : Index) : string => "${i.fromEnd} ${i.value} ${i.of(10)}"
+print(at(3), at(^3), ^2)   // expect: false 3 3 true 3 7 ^2
+
+// A range with an end from the end is a slice's bounds, made plain by of(size).
+val r = 1..^1
+print(r, r.of(4), r.start, r.end, items[r])   // expect: 1..^1 1..3 1 ^1 [20, 30, 40]
+print(attempt { r.size })
+// expect: the range 1..^1 has an end counted from the end (^), which size cannot work with: slice with it, items[1..^1], or make it plain with of(size)
+
+// A class of a program's own takes ^k and slices through op [].
+class Ring(val items : List<int>) {
+  op [](at : Index) : int => items[at.of(items.size)]
+  op [](range : Range) : List<int> => items[range]
+}
+val ring = Ring([5, 6, 7])
+print(ring[^1], ring[0], ring[1..])   // expect: 7 5 [6, 7]

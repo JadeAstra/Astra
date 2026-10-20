@@ -1,6 +1,6 @@
 // A plain return in a lambda would have to leave the function around it.
 fun firstEven(items : List<int>) {
-  items.each { if it % 2 == 0 { return it } }
+  items.forEach { if it % 2 == 0 { return it } }
   return null
 }
-// expect compile error: 'return' leaves the function it is written in, which a lambda cannot do except inside let, also or takeIf; to leave the lambda itself write return@each
+// expect compile error: 'return' leaves the function it is written in, which a lambda cannot do except inside let, also or takeIf; to leave the lambda itself write return@forEach

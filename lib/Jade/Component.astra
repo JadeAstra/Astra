@@ -41,7 +41,7 @@ class Component {
   // How many contents below this one draw something afresh every frame (a caret, say).
   internal var overlayDescendants = 0
     private set
-  private var attached = []
+  private var attached : List<Component> = []
 
   fun init(content : Content) {
     this.content = content
@@ -146,8 +146,8 @@ class Component {
     }
     val sx = canvas.deviceScaleX
     val sy = canvas.deviceScaleY
-    val pw = Math.max(1, int(Math.round(w * sx)))
-    val ph = Math.max(1, int(Math.round(h * sy)))
+    val pw = Math.max(1, Math.round(w * sx).toInt())
+    val ph = Math.max(1, Math.round(h * sy).toInt())
     if (pw * ph > maxCachePixels) {
       cache = null                       // one kept from when it was smaller
       cacheDirty = true
@@ -256,8 +256,8 @@ class Component {
   fun renderToImage(width : int, height : int, scaleX : float? = null, scaleY : float? = null) : BufferedImage {
     Jade.invalidateRenderCaches()
     if (scaleX == null) { return renderFrame(width, height) }
-    val pw = Math.max(1, int(Math.round(width * scaleX)))
-    val ph = Math.max(1, int(Math.round(height * (scaleY ?: scaleX))))
+    val pw = Math.max(1, Math.round(width * scaleX).toInt())
+    val ph = Math.max(1, Math.round(height * (scaleY ?: scaleX)).toInt())
     val image = BufferedImage(pw, ph, BufferedImage.typeIntArgb)
     val before = Jade.layoutScale
     Jade.layoutScale = scaleX              // measured for the screen the picture stands for
@@ -413,7 +413,7 @@ class Component {
     collectFocusables(out)
     return out
   }
-  fun collectFocusables(out : List<Component>) {
+  fun collectFocusables(out : open List<Component>) {
     if (!visible) { return }
     if (takesKeys()) {
       out.add(this)
@@ -431,7 +431,7 @@ class Component {
     collectDescendants(out, includeHidden)
     return out
   }
-  fun collectDescendants(out : List<Component>, includeHidden : bool) {
+  fun collectDescendants(out : open List<Component>, includeHidden : bool) {
     if (!includeHidden and !visible) { return }
     out.add(this)
     for (child in includeHidden ? structuralChildren() : childComponents()) { child.collectDescendants(out, includeHidden) }

@@ -1,0 +1,36 @@
+// Read-only and open collections (D32, D34, D45, D46, D47): what the checker allows runs as
+// written; a read-only name is a view of the same list, not a copy.
+
+class Component(val name : string) {
+  fun toString() : string => name
+}
+class Button(name : string) : Component(name)
+
+fun names(items : List<Component>) : string => items.map { it.name }.join(",")
+fun addTo(into : open List<accepts Button>, name : string) { into.add(Button(name)) }
+fun firstOf(into : open List<accepts Button>) : any? => into[0]
+
+val buttons = [Button("ok"), Button("cancel")]
+val view : List<Component> = buttons
+addTo(buttons, "help")
+print(names(buttons), view.size, view === buttons)   // expect: ok,cancel,help 3 true
+val components : open List<Component> = []
+addTo(components, "first")
+print(components, firstOf(components))                // expect: [first] first
+
+// New collections are open; toOpenList() copies what may only be read.
+val sorted = view.sortedBy { it.name }
+sorted.add(Component("z"))
+val copy = view.toOpenList()
+copy.removeAt(0)
+print(sorted, copy, view)                              // expect: [cancel, help, ok, z] [cancel, help] [ok, cancel, help]
+val table = {"a": 1}.toOpenMap()
+table["b"] = 2
+val seen = setOf(1).toOpenSet()
+seen.add(2)
+print(table, seen)                                     // expect: {"a": 1, "b": 2} {1, 2}
+
+// A read-only map goes where one of wider types is read.
+fun total(counts : Map<string, Number>) : float => counts.values.sumOf { it.toFloat() }
+val ints : Map<string, int> = {"x": 1, "y": 2}
+print(total(ints))                                     // expect: 3.0

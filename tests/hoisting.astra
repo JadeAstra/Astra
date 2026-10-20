@@ -17,7 +17,7 @@ fun mark() => "!"
 
 // An enum's entries, and a class's static values, are worked out the first time they are
 // asked for, so they too can be used above their declaration.
-fun go(way : Way = up) : string => way.name + "/" + Way.entries.length
+fun go(way : Way = up) : string => way.name + "/" + Way.entries.size
 print(go(), go(down), Limits.MAX, Limits.describe())   // expect: up/2 down/2 100 0..100
 enum Way { up, down }
 class Limits {
@@ -31,16 +31,16 @@ val seed = 5
 val order = []
 class Config {
   static val START = seed * 2
-  static val LOG = order.also { it.push("config") }
+  static val LOG = order.also { it.add("config") }
 }
 enum Stage(val weight : int) {
   one(seed), two(seed + 1)
   fun init(weight : int) {
     this.weight = weight
-    order.push("stage " + weight)
+    order.add("stage " + weight)
   }
 }
-order.push("after")
+order.add("after")
 print(Config.START, order, Stage.two.weight)   // expect: 10 ["config", "stage 5", "stage 6", "after"] 6
 
 // Classes that extend each other across the file, in any order, with classes inside.

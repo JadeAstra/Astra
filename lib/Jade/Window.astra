@@ -300,7 +300,7 @@ class WindowHost : WindowHandle {
       val over = ownerHost.native
       val at = over.position
       val s = over.scale
-      native.setPosition(at.x + int((over.width - native.width) * s / 2), at.y + int((over.height - native.height) * s / 2))
+      native.setPosition(at.x + ((over.width - native.width) * s / 2).toInt(), at.y + ((over.height - native.height) * s / 2).toInt())
     }
 
     if (window.focus != null) { setFocus(window.focus) }
@@ -608,8 +608,8 @@ class WindowHost : WindowHandle {
     ensureLayout()
     noteInput(false, true)
     // One click of a wheel is forty units; with Shift an up-and-down wheel goes sideways.
-    var dy = int(Math.round(-event.dy * 40))
-    var dx = int(Math.round(-event.dx * 40))
+    var dy = Math.round(-event.dy * 40).toInt()
+    var dx = Math.round(-event.dx * 40).toInt()
     if (shiftHeld and dx == 0) {
       dx = dy
       dy = 0
@@ -649,9 +649,9 @@ class WindowHost : WindowHandle {
   private static fun letterFor(event : RawInput.KeyDown) : string? {
     if (event.letter != null) { return event.letter }
     val name = event.key.name
-    if (name.length == 1) { return name.uppercase() }
+    if (name.size == 1) { return name.upper() }
     if (name.startsWith("digit") or name.startsWith("numpad")) {
-      val last = name.substring(name.length - 1)
+      val last = name[name.size - 1..]
       if (last >= "0" and last <= "9") { return last }
     }
     return null

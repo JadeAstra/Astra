@@ -1,0 +1,51 @@
+// One name for each thing (D74), size for every count (D130), contains for maps' keys and
+// values (D140): each name that went is an error saying what to write.
+
+fun names(items : open List<int>, text : string, map : Map<string, int>, n : float) {
+  items.push(1)                    // check: push() is written add(), or addAll() for several: one name for each thing (D74)
+  items.pop()                      // check: pop() is written removeLast(): one name for each thing (D74)
+  items.each { print(it) }         // check: each { } is written forEach { }: one name for each thing (D74)
+  print(items.joinToString(", "))  // check: joinToString() is written join(), which takes the same arguments: one name for each thing (D74)
+  print(text.uppercase())          // check: uppercase() is written upper(): one name for each thing (D74)
+  print(text.lowercase())          // check: lowercase() is written lower(): one name for each thing (D74)
+  print(n.toLong())                // check: toLong() is written toInt(): an int is 64 bits (D74)
+  print(n.toDouble())              // check: toDouble() is written toFloat(): a float is 64 bits (D74)
+  print(n.roundToLong())           // check: roundToLong() is written roundToInt(): an int is 64 bits (D74)
+  print(text.toDouble())           // check: toDouble() is written toFloat(): a float is 64 bits (D74)
+  print(map.has("a"))              // check: has(key) is written keys.contains(key), or key in map.keys (D140)
+  print(map.containsKey("a"))      // check: containsKey(key) is written keys.contains(key), or key in map.keys (D140)
+  print(map.containsValue(1))      // check: containsValue(value) is written values.contains(value), or value in map.values (D140)
+  print(text.length)               // check: 'length' is written 'size': every count of things is size (D130)
+  print(items.length)              // check: 'length' is written 'size': every count of things is size (D130)
+  print(Set<int>().length)         // check: 'length' is written 'size': every count of things is size (D130)
+  print(len(items))                // check: len(x) is written x.size (D74)
+  print(str(n))                    // check: str(x) is written x.toString(), or "$x" (D74)
+  print(int(n))                    // check: int(x) is written x.toInt() (D74)
+  print(float(1))                  // check: float(x) is written x.toFloat() (D74)
+  print(items.size, text.size, items.join(", ") { "<$it>" }, text.upper(), n.toInt(), map.keys.contains("a"))
+}
+
+// A program's own class may still name a member length.
+class Segment(val length : float)
+fun measured(s : Segment) : float => s.length
+
+// Counting from the end is ^k (D146); a slice is a range in the index (D147).
+fun positions(items : List<int>, text : string) {
+  print(items[-1])                 // check: [-1] is before the start: counting from the end is written [^1], the last
+  print(text[-2])                  // check: [-2] is before the start: counting from the end is written [^2]
+  print(items[^0])                 // check: ^0 is no position: ^1 is the last, ^2 the one before it
+  for i in 0..^1 { print(i) }      // check: a range with an end counted from the end (^) has no numbers of its own to loop over: loop over items.indices, or make it plain with of(size)
+  print(text.substring(1, 3))      // check: substring(a, b) is written s[a..<b], a slice; s[a..] runs to the end (D147)
+  print(items.subList(1, 3))       // check: subList(a, b) is written items[a..<b], a slice (D147)
+  print(items.slice(1))            // check: slice(a, b) is written items[a..<b], a slice; items[a..] runs to the end, and items[^k..] takes the last k (D147)
+  print(items[^1], items[1..], text[..^2])
+}
+
+// A map's keys and entries are live sets (D77); its contains and in take a whole entry (D140).
+fun maps(ages : Map<string, int>) {
+  print(ages.keys())               // check: keys() is read without brackets: map.keys, a live view of the map's keys (D77)
+  print("ann" in ages)             // check: 'in' a map asks for a whole entry, (key to value); for a key write "ann" in map.keys, and for a value "ann" in map.values (D140)
+  print(ages.contains("ann"))      // check: map.contains(...) asks for a whole entry, (key to value); for a key write map.keys.contains("ann"), and for a value map.values.contains("ann") (D140)
+  print(ages.keys[0])              // check: a set's items have no positions: first(), last(), or toList()[i] for a list of them
+  print("ann" in ages.keys, ("ann" to 31) in ages, ages.contains("ann" to 31), ages.entries.first().key)
+}

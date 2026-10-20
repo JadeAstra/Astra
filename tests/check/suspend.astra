@@ -22,7 +22,7 @@ suspend fun inPlace(keys : List<string>) : string {
   keys.run { fetch("run") }
   keys.apply { fetch("apply") }
   with(keys) { fetch("with") }
-  val upper = keys.map { fetch(it).uppercase() }
+  val upper = keys.map { fetch(it).upper() }
   return all + first + upper
 }
 
@@ -36,7 +36,7 @@ fun twiceOver(action : () -> unit) {
   twice(action)
   twice { action() }
 }
-val kept : List<() -> unit> = []
+val kept : open List<() -> unit> = []
 fun keep(action : () -> unit) {
   kept.add(action)
 }
@@ -87,7 +87,7 @@ class Page(val key : string) {
   }
   override fun toString() : string => fetch(key)   // check: 'fetch' may wait (it is a suspend function), and toString must give its text at once: whoever prints the object would be held up. Call it from a suspend function, or start it in a task and use the result when it is ready: task { fetch() }.then { ... }
   op ==(other : any?) : bool => fetch(key) == "x"   // check: 'fetch' may wait (it is a suspend function), and == must give its answer at once: every comparison would be held up. Call it from a suspend function, or start it in a task and use the result when it is ready: task { fetch() }.then { ... }
-  fun hashCode() : int => fetch(key).length   // check: 'fetch' may wait (it is a suspend function), and hashCode must give its answer at once: every map and set holding the object would be held up. Call it from a suspend function, or start it in a task and use the result when it is ready: task { fetch() }.then { ... }
+  fun hashCode() : int => fetch(key).size   // check: 'fetch' may wait (it is a suspend function), and hashCode must give its answer at once: every map and set holding the object would be held up. Call it from a suspend function, or start it in a task and use the result when it is ready: task { fetch() }.then { ... }
   static val first : string = fetch("static")   // check: 'fetch' may wait (it is a suspend function), and a static value must be there at once: the class is being set up. Call it from a suspend function, or start it in a task and use the result when it is ready: task { fetch() }.then { ... }
 }
 

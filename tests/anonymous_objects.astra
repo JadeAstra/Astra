@@ -16,7 +16,7 @@ fun makeListener(prefix : string) {
   return object : Listener {
     override fun onClick(x : int) {
       count += 1
-      log.push("$prefix $x #$count")
+      log.add("$prefix $x #$count")
     }
   }
 }

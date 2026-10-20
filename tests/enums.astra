@@ -7,7 +7,7 @@ enum Way { up, down, left, right }
 
 val w = Way.left
 print(w, w.name, w.ordinal, Way.up.ordinal, Way.right.ordinal)   // expect: left left 2 0 3
-print(Way.entries, Way.entries.length, Way.entries[1] === Way.down)   // expect: [up, down, left, right] 4 true
+print(Way.entries, Way.entries.size, Way.entries[1] === Way.down)   // expect: [up, down, left, right] 4 true
 print(w == Way.left, w != Way.left, w === Way.left, w == Way.up, w is Way, "left" is Way, type(w))   // expect: true false true false true false Way
 print("going $w", [Way.up, Way.down], {"way": Way.right})   // expect: going left [up, down] {"way": right}
 
@@ -26,7 +26,7 @@ print(current, Way.entries.indexOf(current), Way.entries.contains(Way.left))   /
 
 // Looping over the entries, and finding one by its name.
 val names = []
-for way in Way.entries { names.push(way.name + ":" + way.ordinal) }
+for way in Way.entries { names.add(way.name + ":" + way.ordinal) }
 print(names, Way.entries.find { it.name == "right" })   // expect: ["up:0", "down:1", "left:2", "right:3"] right
 
 // The entries are all there are, and they cannot be changed.
@@ -56,10 +56,10 @@ enum Planet(val mass : float, val radius : float) {
   fun heavierThan(other : Planet) => mass > other.mass
   fun visit() {
     visits += 1
-    return "$name visited $visits time(s), entry $ordinal of ${entries.length}"
+    return "$name visited $visits time(s), entry $ordinal of ${entries.size}"
   }
 }
-print(Planet.EARTH, Planet.EARTH.mass, int(Planet.EARTH.gravity * 100), Planet.JUPITER.heavierThan(Planet.EARTH))   // expect: EARTH 5.976e+24 980 true
+print(Planet.EARTH, Planet.EARTH.mass, (Planet.EARTH.gravity * 100).toInt(), Planet.JUPITER.heavierThan(Planet.EARTH))   // expect: EARTH 5.976e+24 980 true
 Planet.EARTH.visit()
 print(Planet.EARTH.visit(), Planet.heaviest(), Planet.entries)   // expect: EARTH visited 2 time(s), entry 1 of 3 JUPITER [MERCURY, EARTH, JUPITER]
 
@@ -81,7 +81,7 @@ print(Level.LOW.describe(), Level.MID.describe(), Level.of(3), Level.of(99), Lev
 val made = []
 enum Suit {
   hearts, spades
-  fun init() { made.push("made") }
+  fun init() { made.add("made") }
   fun toString() => name.upper() + "!"
 }
 print(Suit.hearts, made, Suit.spades.name)   // expect: HEARTS! ["made", "made"] spades
@@ -95,7 +95,7 @@ enum Nothing { }
 print(Nothing.entries)                      // expect: []
 fun local() {
   enum Mode { on, off }
-  return [Mode.on, Mode.entries.length]
+  return [Mode.on, Mode.entries.size]
 }
 print(local())                              // expect: [on, 2]
 
@@ -126,7 +126,7 @@ enum Rank {
   override static get entries() : List => [low, mid, high]      // leaves one out
   static fun all() => [low, mid, high, hidden]
 }
-print(Rank.entries, Rank.all().length, Rank.hidden.ordinal, Rank.hidden.name)   // expect: [low, mid, high] 4 3 hidden
+print(Rank.entries, Rank.all().size, Rank.hidden.ordinal, Rank.hidden.name)   // expect: [low, mid, high] 4 3 hidden
 
 enum Shown {
   first, second
@@ -141,7 +141,7 @@ class Journal {
   val entries = []
   static val ordinal = 1
   fun add(entry : string) {
-    entries.push(entry)
+    entries.add(entry)
     return this
   }
 }
@@ -157,7 +157,7 @@ enum Stage {
   static fun all() => super.entries
   fun plain() => super.name + "#" + super.ordinal
 }
-print(Stage.entries.length, Stage.all().length, Stage.review.name, Stage.review.ordinal, Stage.archived.plain())   // expect: 3 4 stage review 2 archived#3
+print(Stage.entries.size, Stage.all().size, Stage.review.name, Stage.review.ordinal, Stage.archived.plain())   // expect: 3 4 stage review 2 archived#3
 print(Stage.entries.map { it.plain() }, Stage.all()[3] === Stage.archived, Stage.done)   // expect: ["draft#0", "review#1", "done#2"] true done
 
 // Without an override super gives the same as the plain name.

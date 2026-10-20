@@ -16,8 +16,8 @@ for name in ["Ada", "Grace", "Linus"] {
 }
 
 // A lambda is a function written in braces; `it` is its one argument.
-val shout = { it.uppercase() + "!" }
-print(listOf("hello", "astra").joinToString(" ", transform = shout))
+val shout = { it.upper() + "!" }
+print(listOf("hello", "astra").join(" ", transform = shout))
 
 // A map gives null for a key it does not have, and ?: says what to use then.
 val nicknames = {"Ada": "the Countess"}
@@ -27,4 +27,4 @@ for name in ["Ada", "Grace"] {
 
 // A string is text: its length is in characters, whatever they are.
 val word = "naïve"
-print("\"$word\" has ${word.length} letters, the third is ${word[2]}, backwards it is ${word.reversed()}")
+print("\"$word\" has ${word.size} letters, the third is ${word[2]}, backwards it is ${word.reversed()}")

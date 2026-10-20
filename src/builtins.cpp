@@ -40,9 +40,7 @@ void VM::checkRoomFor(uint64_t bytes) {
 
 // Clamps a possibly negative position into [0, length], as slice() bounds.
 size_t clampPosition(int64_t position, size_t length) {
-    int64_t n = static_cast<int64_t>(length);
-    if (position < 0) position += n;
-    return static_cast<size_t>(std::clamp<int64_t>(position, 0, n));
+    return static_cast<size_t>(std::clamp<int64_t>(position, 0, static_cast<int64_t>(length)));
 }
 
 // Upper or lower case for all letters, not only the ASCII ones. The mapping is the
@@ -233,48 +231,9 @@ void registerGlobals(VM& vm) {
         return vm.str(std::move(line));
     });
 
-    vm.defineNative("len", 1, 1, [](VM& vm, int, Value* args) -> Value {
-        Value v = args[0];
-        if (v.isString()) return Value::integer(static_cast<int64_t>(asString(v)->length));
-        if (v.isObjType(ObjType::List)) return Value::integer(static_cast<int64_t>(asList(v)->size()));
-        if (v.isObjType(ObjType::Map)) return Value::integer(static_cast<int64_t>(asMap(v)->map.size()));
-        if (v.isObjType(ObjType::Range)) return Value::integer(asRange(v)->count());
-        throw vm.runtimeError("a value of type " + vm.typeName(v) + " has no length");
-    });
 
-    vm.defineNative("str", 1, 1, [](VM& vm, int, Value* args) -> Value {
-        if (args[0].isString()) return args[0];
-        return vm.str(vm.stringify(args[0]));
-    });
 
-    vm.defineNative("int", 1, 1, [](VM& vm, int, Value* args) -> Value {
-        Value v = args[0];
-        if (v.isInt()) return v;
-        if (v.isFloat()) return Value::integer(floatToInt(vm, std::trunc(v.as.d)));
-        if (v.isBool()) return Value::integer(v.as.b ? 1 : 0);
-        if (v.isString()) {
-            std::string_view text = trimmed(asString(v)->utf8());
-            int64_t i;
-            if (parseInt(text, i)) return Value::integer(i);
-            double d;
-            if (parseFloat(text, d) && std::isfinite(d)) return Value::integer(floatToInt(vm, std::trunc(d)));
-            throw vm.runtimeError("cannot convert " + quoteString(asString(v)->utf8()) + " to an int");
-        }
-        throw vm.runtimeError("cannot convert a value of type " + vm.typeName(v) + " to an int");
-    });
 
-    vm.defineNative("float", 1, 1, [](VM& vm, int, Value* args) -> Value {
-        Value v = args[0];
-        if (v.isFloat()) return v;
-        if (v.isInt()) return Value::number(static_cast<double>(v.as.i));
-        if (v.isBool()) return Value::number(v.as.b ? 1.0 : 0.0);
-        if (v.isString()) {
-            double d;
-            if (parseFloat(trimmed(asString(v)->utf8()), d)) return Value::number(d);
-            throw vm.runtimeError("cannot convert " + quoteString(asString(v)->utf8()) + " to a float");
-        }
-        throw vm.runtimeError("cannot convert a value of type " + vm.typeName(v) + " to a float");
-    });
 
     vm.defineNative("type", 1, 1, [](VM& vm, int, Value* args) -> Value {
         return Value::object(vm.intern(vm.typeName(args[0])));
@@ -318,6 +277,13 @@ void registerGlobals(VM& vm) {
 
     vm.defineNative("exit", 0, 1, [](VM& vm, int argc, Value* args) -> Value {
         throw AstraExit{argc > 0 ? static_cast<int>(vm.toInt(args[0], "exit code")) : 0};
+    });
+
+    // A value's own hash, as a map takes it, at 32 bits: what hashCode() gives for a value
+    // whose class has none of its own (D26).
+    vm.defineNative("__hashCode", 1, 1, [](VM&, int, Value* args) -> Value {
+        const size_t one = args[0].isNull() ? 0 : keyHash(args[0]);
+        return Value::integer(static_cast<int32_t>(static_cast<uint32_t>(one ^ (one >> 32))));
     });
 
     // The hash of several values together, as Java's Objects.hash works it out, wrapping at 32
@@ -534,13 +500,6 @@ void registerStringMethods(VM& vm) {
         return Value::object(newList(vm, std::move(parts)));
     });
 
-    vm.defineMethod(T, "slice", 1, 2, [](VM& vm, Value self, int argc, Value* args) -> Value {
-        const ObjString* text = asString(self);
-        size_t begin = clampPosition(vm.toInt(args[0], "slice start"), text->length);
-        size_t end = argc > 1 ? clampPosition(vm.toInt(args[1], "slice end"), text->length) : text->length;
-        if (begin >= end) return vm.str(std::string());
-        return vm.str(text->slice(begin, end));
-    });
 
     vm.defineMethod(T, "repeat", 1, 1, [](VM& vm, Value self, int, Value* args) -> Value {
         const std::string& s = asString(self)->utf8();
@@ -561,37 +520,20 @@ void registerStringMethods(VM& vm) {
 void registerListMethods(VM& vm) {
     const BuiltinType T = BuiltinType::List;
 
-    vm.defineMethod(T, "push", 1, -1, [](VM& vm, Value self, int argc, Value* args) -> Value {
-        ObjList* list = asList(self);
-        vm.listInsert(list, list->size(), args, static_cast<size_t>(argc));
-        return Value::null();
-    });
-
-    vm.defineMethod(T, "pop", 0, 0, [](VM& vm, Value self, int, Value*) -> Value {
-        ObjList* list = asList(self);
-        if (list->size() == 0) throw vm.runtimeError("pop() from an empty list");
-        const Value last = vm.listGet(list, list->size() - 1);
-        vm.listErase(list, list->size() - 1, 1);
-        return last;
-    });
-
     vm.defineMethod(T, "insert", 2, 2, [](VM& vm, Value self, int, Value* args) -> Value {
         ObjList* list = asList(self);
-        size_t at = clampPosition(vm.toInt(args[0], "insert position"), list->size());
-        vm.listInsert(list, at, &args[1], 1);
+        const int64_t at = vm.toInt(args[0], "insert position");
+        if (at < 0 || static_cast<uint64_t>(at) > list->size()) throw vm.outOfRange("insert position", args[0], list->size());
+        vm.listInsert(list, static_cast<size_t>(at), &args[1], 1);
         return Value::null();
     });
 
     vm.defineMethod(T, "removeAt", 1, 1, [](VM& vm, Value self, int, Value* args) -> Value {
         ObjList* list = asList(self);
-        int64_t index = vm.toInt(args[0], "list index");
-        int64_t n = static_cast<int64_t>(list->size());
-        if (index < 0) index += n;
-        if (index < 0 || index >= n)
-            throw vm.runtimeError("list index " + std::to_string(args[0].as.i) + " is out of range (length " +
-                                  std::to_string(n) + ")");
-        const Value removed = vm.listGet(list, static_cast<size_t>(index));
-        vm.listErase(list, static_cast<size_t>(index), 1);
+        size_t index;
+        if (!vm.position(args[0], list->size(), index, "list index")) throw vm.outOfRange("list index", args[0], list->size());
+        const Value removed = vm.listGet(list, index);
+        vm.listErase(list, index, 1);
         return removed;
     });
 
@@ -626,26 +568,35 @@ void registerListMethods(VM& vm) {
         return Value::integer(-1);
     });
 
-    vm.defineMethod(T, "slice", 0, 2, [](VM& vm, Value self, int argc, Value* args) -> Value {
-        ObjList* list = asList(self);
-        size_t begin = argc > 0 ? clampPosition(vm.toInt(args[0], "slice start"), list->size()) : 0;
-        size_t end = argc > 1 ? clampPosition(vm.toInt(args[1], "slice end"), list->size()) : list->size();
-        // Of the same type, and kept as the list is: a packed one's items as one block.
-        ObjList* part = list->packed() ? vm.listLike(list) : newList(vm);
-        if (begin < end) vm.listCopyRange(part, list, begin, end - begin);
-        return Value::object(part);
-    });
 
-    vm.defineMethod(T, "join", 0, 1, [](VM& vm, Value self, int argc, Value* args) -> Value {
+    // The items as text (Kotlin's joinToString, D74): a separator between them, a prefix and a
+    // postfix around them, at most `limit` of them and then `truncated`, each as `transform`
+    // makes it or as print shows it.
+    vm.defineMethod(T, "join", 0, 6, [](VM& vm, Value self, int argc, Value* args) -> Value {
         ObjList* list = asList(self);
-        std::string sep = argc > 0 ? vm.toStr(args[0], "separator") : std::string();
-        std::string result;
-        // Indexed and re-checked each time round: stringify may run a toString() that changes the list.
+        auto given = [&](int i) { return i < argc && !args[i].isNull(); };
+        // Copied before any call: running the transform may move the stack the arguments are on.
+        const std::string separator = given(0) ? vm.toStr(args[0], "separator") : ", ";
+        const std::string prefix = given(1) ? vm.toStr(args[1], "prefix") : "";
+        const std::string postfix = given(2) ? vm.toStr(args[2], "postfix") : "";
+        const int64_t limit = given(3) ? vm.toInt(args[3], "limit") : -1;
+        const std::string truncated = given(4) ? vm.toStr(args[4], "truncated") : "...";
+        const Value transform = given(5) ? args[5] : Value::null();
+        std::string result = prefix;
+        // Indexed and re-checked each time round: a toString() or the transform may change the list.
         for (size_t i = 0; i < list->size(); i++) {
-            if (i > 0) result += sep;
-            result += vm.stringify(vm.listGet(list, i));
+            if (i > 0) result += separator;
+            if (limit >= 0 && static_cast<int64_t>(i) >= limit) {
+                result += truncated;
+                break;
+            }
+            Value item = vm.listGet(list, i);
+            TempRoot keep(vm, item);
+            if (!transform.isNull()) item = vm.call(transform, 1, &item);
+            TempRoot keepShown(vm, item);
+            result += vm.stringify(item);
         }
-        return vm.str(std::move(result));
+        return vm.str(result + postfix);
     });
 
     vm.defineMethod(T, "reverse", 0, 0, [](VM& vm, Value self, int, Value*) -> Value {
@@ -695,31 +646,24 @@ void registerListMethods(VM& vm) {
 void registerMapMethods(VM& vm) {
     const BuiltinType T = BuiltinType::Map;
 
-    vm.defineMethod(T, "keys", 0, 0, [](VM& vm, Value self, int, Value*) -> Value {
-        std::vector<Value> keys;
-        for (const ValueMap::Entry& entry : asMap(self)->map.entries())
-            if (entry.live) keys.push_back(entry.key);
-        return Value::object(newList(vm, std::move(keys)));
-    });
 
-    vm.defineMethod(T, "values", 0, 0, [](VM& vm, Value self, int, Value*) -> Value {
-        std::vector<Value> values;
-        for (const ValueMap::Entry& entry : asMap(self)->map.entries())
-            if (entry.live) values.push_back(entry.value);
-        return Value::object(newList(vm, std::move(values)));
-    });
 
-    vm.defineMethod(T, "entries", 0, 0, [](VM& vm, Value self, int, Value*) -> Value {
-        return vm.mapEntries(asMap(self));
-    });
 
-    vm.defineMethod(T, "has", 1, 1, [](VM&, Value self, int, Value* args) -> Value {
-        return Value::boolean(asMap(self)->map.find(args[0]) != nullptr);
-    });
 
     // The same under the name that `key in map` looks for.
-    vm.defineMethod(T, "contains", 1, 1, [](VM&, Value self, int, Value* args) -> Value {
-        return Value::boolean(asMap(self)->map.find(args[0]) != nullptr);
+    // A whole entry, `"a" to 1` or a MapEntry, with its key and its value (D140); a key is
+    // asked of the keys.
+    vm.defineMethod(T, "contains", 1, 1, [](VM& vm, Value self, int, Value* args) -> Value {
+        const Value entry = args[0];
+        const bool whole = entry.isObjType(ObjType::Value) || entry.isSmall() || entry.isRef();
+        if (!whole)
+            throw vm.runtimeError("map.contains(...) asks for a whole entry, (key to value); for a key write map.keys.contains(" +
+                                  vm.repr(entry) + "), or " + vm.repr(entry) + " in map.keys");
+        const Value key = vm.componentOf(entry, 0);
+        TempRoot keepKey(vm, key);
+        const Value value = vm.componentOf(entry, 1);
+        const Value* held = asMap(self)->map.find(key);
+        return Value::boolean(held != nullptr && vm.equals(*held, value));
     });
 
     vm.defineMethod(T, "get", 1, 2, [](VM&, Value self, int argc, Value* args) -> Value {
@@ -864,15 +808,6 @@ void registerBytes(VM& vm) {
 
     const BuiltinType T = BuiltinType::Bytes;
 
-    vm.defineMethod(T, "slice", 0, 2, [](VM& vm, Value self, int argc, Value* args) -> Value {
-        const std::vector<uint8_t>& data = asBytes(self)->data;
-        size_t begin = argc > 0 ? clampPosition(vm.toInt(args[0], "slice start"), data.size()) : 0;
-        size_t end = argc > 1 ? clampPosition(vm.toInt(args[1], "slice end"), data.size()) : data.size();
-        ObjBytes* part = vm.alloc<ObjBytes>();
-        if (begin < end) part->data.assign(data.begin() + static_cast<std::ptrdiff_t>(begin), data.begin() + static_cast<std::ptrdiff_t>(end));
-        vm.account(part->data.size());
-        return Value::object(part);
-    });
 
     vm.defineMethod(T, "toList", 0, 0, [](VM& vm, Value self, int, Value*) -> Value {
         std::vector<Value> items;
@@ -953,10 +888,11 @@ void registerBuiltins(VM& vm) {
 
     // For parallel sections: which methods change what they are called on, and which
     // built-in functions wait, or work on something the whole program has one of.
-    vm.markMutating(BuiltinType::List, {"push", "pop", "insert", "removeAt", "remove", "clear", "reverse", "sort", "add", "addAll", "set",
+    vm.markMutating(BuiltinType::List, {"insert", "removeAt", "remove", "clear", "reverse", "sort", "add", "addAll", "set",
                                         "removeFirst", "removeLast", "removeFirstOrNull", "removeLastOrNull", "fill", "sortBy",
                                         "sortByDescending", "replaceAll"});
     vm.markMutating(BuiltinType::Map, {"remove", "clear", "put", "set"});
+    vm.markMutating(BuiltinType::Set, {"add", "remove", "clear", "addAll", "removeAll", "retainAll"});
     // Given an item of a list of values where it is, `add` copies it in at once (M6.6 part 5).
     vm.markTakesPlaces(BuiltinType::List, {"add"});
     vm.markMutating(BuiltinType::Bytes, {"fill", "putInt16", "putUint16", "putInt32", "putUint32", "putFloat32"});

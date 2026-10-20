@@ -1,5 +1,5 @@
 // return@name has to name a lambda it is in.
 fun f(items : List<int>) {
-  items.each { return@map 1 }
+  items.forEach { return@map 1 }
 }
 // expect compile error: there is no lambda called 'map' around this return

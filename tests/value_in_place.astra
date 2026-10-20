@@ -15,7 +15,7 @@ value Ball(var x : float, var dx : float, val r : float) {
 }
 
 // A result built where it goes: in the item it replaces, every part of it worked out first.
-val balls : List<Ball> = [Ball(1.0, 1.5, 1.0), Ball(5.0, -2.0, 1.0), Ball(9.0, 0.5, 2.0)]
+val balls : open List<Ball> = [Ball(1.0, 1.5, 1.0), Ball(5.0, -2.0, 1.0), Ball(9.0, 0.5, 2.0)]
 balls[0] = balls[0].moved(10.0)
 balls[1] = Ball(balls[1].x + 1.0, balls[2].dx, balls[0].r)
 balls[2] = balls[2].copy(r = 7.0)
@@ -56,8 +56,8 @@ print(sum, kept)   // expect: 11.0 Ball(x=4.0, dx=1.5, r=1.0)
 // A loop that waits: other code runs meanwhile, so each item is read as it was when the loop
 // came to it.
 value P(val x : int, val y : int)
-val ps : List<P> = [P(1, 10), P(2, 20), P(3, 30)]
-val seen : List<string> = []
+val ps : open List<P> = [P(1, 10), P(2, 20), P(3, 30)]
+val seen : open List<string> = []
 var waiting : Continuation? = null
 startCoroutine {
   for p in ps {
@@ -75,7 +75,7 @@ while (waiting != null) {
 print(seen)   // expect: ["1 1 10", "2 2 20", "1 1 10"]
 
 // On every core: each item moved where it is, replaced where it is, and read where it is.
-val many : List<Ball> = []
+val many : open List<Ball> = []
 for i in 0 ..< 1000 { many.add(Ball(i * 1.0, 1.5, 1.0)) }
 many.parallelStream().forEach { it.move(2000.0) }
 print(many[0], many[999])   // expect: Ball(x=1.5, dx=1.5, r=1.0) Ball(x=1000.5, dx=1.5, r=1.0)

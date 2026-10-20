@@ -72,11 +72,11 @@ class Typeface {
 
   // A glyph's outline as a list: "M" x y, "L" x y, "Q" cx cy x y, "C" c1x c1y c2x c2y x y,
   // "Z". In the font's units with y upwards; empty for a glyph that draws nothing.
-  fun outline(glyph : int, weight : Number? = null) : List<any?> => __text.faceOutline(handle, glyph, weight ?: this.weight)
+  fun outline(glyph : int, weight : Number? = null) : open List<any?> => __text.faceOutline(handle, glyph, weight ?: this.weight)
 
   // Reads every `step`th glyph's outline, to test the reader:
   // [how many have one, how many points, how many are damaged].
-  fun check(step : int = 1, weight : Number? = null) : List<int> => __text.faceCheck(handle, 0, step, weight ?: this.weight)
+  fun check(step : int = 1, weight : Number? = null) : open List<int> => __text.faceCheck(handle, 0, step, weight ?: this.weight)
 
   op ==(other : any?) : bool => other is Typeface and other.handle == handle
   fun hashCode() : int => handle
@@ -86,14 +86,14 @@ class Typeface {
 // The fonts installed on this machine.
 object Fonts {
   // Every family's name, in alphabetical order.
-  fun families() : List<string> => __text.families()
+  fun families() : open List<string> => __text.families()
 
   // Whether a family is installed. "SansSerif", "Serif" and "Monospaced" always are, if
   // any font is: they are the system's own font of each kind.
   fun has(family : string) : bool => __text.hasFamily(family)
 
   // The typefaces of a family, or every one installed.
-  fun typefaces(family : string? = null) : List<Typeface> => __text.typefaces(family).map { Typeface(it) }
+  fun typefaces(family : string? = null) : open List<Typeface> => __text.typefaces(family).map { Typeface(it) }
 
   // The typeface of a family nearest to a weight and style; null if it is not installed.
   fun find(family : string, weight : Number = 400, italic : bool = false) : Typeface? {
@@ -109,8 +109,8 @@ object Fonts {
 
   // A font from a file that is not installed, or from the bytes of one. A collection
   // (.ttc) holds several: `count` says how many, `index` picks one.
-  fun load(path : any, index : int = 0) : Typeface => Typeface(path is Bytes ? __text.fromBytes(path, index) : __text.load(path is File ? path.path : str(path), index))
-  fun count(path : any) : int => __text.countIn(path is File ? path.path : str(path))
+  fun load(path : any, index : int = 0) : Typeface => Typeface(path is Bytes ? __text.fromBytes(path, index) : __text.load(path is File ? path.path : "$path", index))
+  fun count(path : any) : int => __text.countIn(path is File ? path.path : "$path")
 }
 
 // A typeface at a size: what text is measured and drawn with.
@@ -152,7 +152,7 @@ class TextFont {
       fakeBold = bold and !family.isVariable and family.weight <= 500
       fakeItalic = italic and !family.isItalic
     } else {
-      val found = __text.find(str(family), wanted, italic) ?: __text.find("SansSerif", wanted, italic)
+      val found = __text.find("$family", wanted, italic) ?: __text.find("SansSerif", wanted, italic)
       if (found == null) { throw Error("no fonts are installed") }
       this.typeface = Typeface(found[0])
       set = found[1]
@@ -180,7 +180,7 @@ class TextFont {
 
   // Where each character of a text starts and where the last one ends: one more number
   // than the text has characters. offsets("abc") is [0, width("a"), width("ab"), width("abc")].
-  fun offsets(text : any?) : List<int> => __text.offsets(handle, text)
+  fun offsets(text : any?) : open List<int> => __text.offsets(handle, text)
 
   // The typeface a character is drawn from: this font's own, or another one that has the
   // character when this one does not. Null if no installed font has it.
@@ -191,7 +191,7 @@ class TextFont {
 
   // What a character's drawn shape takes up, as [left, top, width, height, isColor, advance]:
   // `left` from where the character starts, `top` above the baseline. Null if it draws nothing.
-  fun glyphBox(character : any) : List<any?>? => __text.glyphBox(handle, character)
+  fun glyphBox(character : any) : open List<any?>? => __text.glyphBox(handle, character)
 
   // The same font at another size or scale.
   fun derive(size : Number? = null, scale : Number? = null) : TextFont => TextFont(typeface, size ?: this.size, isBold, isItalic, weight, scale ?: this.scale)
@@ -279,7 +279,7 @@ class Picture {
   // Draws a line of text starting at x, with its baseline at y: letters sit on that row
   // and tails hang below it. (For text whose top is at `top`, the baseline is
   // top + font.ascent.) Returns the text's width, which is font.width(text).
-  fun drawText(text : any?, x : int, y : int, font : TextFont, color : int = 0xFF000000) : int => __text.drawText(pixels, width, height, font.handle, str(text), x, y, color)
+  fun drawText(text : any?, x : int, y : int, font : TextFont, color : int = 0xFF000000) : int => __text.drawText(pixels, width, height, font.handle, "$text", x, y, color)
 
   // Lays another picture over this one, its top-left corner at (x, y).
   fun draw(other : Picture, x : int, y : int) {
@@ -299,10 +299,11 @@ class Picture {
 
   // The same size and the same pixels.
   op ==(other : any?) : bool => other is Picture and other.width == width and other.height == height and other.pixels == pixels
+  fun hashCode() : int => hash(width, height, pixels)
 
   // The smallest rectangle outside which every pixel is `background`, as [x, y, width,
   // height]; null if the whole picture is.
-  fun inkBox(background : int = 0) : List<int>? {
+  fun inkBox(background : int = 0) : open List<int>? {
     var minX = width
     var minY = height
     var maxX = -1

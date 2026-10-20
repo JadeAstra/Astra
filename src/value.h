@@ -22,6 +22,7 @@ enum class ObjType : uint8_t {
     Resource,  // something the runtime holds for a program that is not made of values
     TypeInfo,  // a type, as the program has it when it runs (ObjTypeInfo)
     Value,     // a value of a value type, in a box (ObjValue)
+    Set,       // a set, or a live view of a map's keys or entries (ObjSet)
 };
 
 // Header shared by every garbage-collected object.
@@ -34,6 +35,10 @@ struct Obj {
     // change it. 0 for an object that is shared, which every core may read and none may change.
     // Outside a section every object is 0.
     uint8_t core = 0;
+    // A frozen list, map, set or bytes (D26): nobody may change it, which VM::guardWrite asks
+    // with the core. 1 when everything in it is a key that cannot change as well, 2 when it
+    // holds something that can (an object of a class whose == reads a var).
+    uint8_t frozen = 0;
 
     explicit Obj(ObjType t) : type(t) {}
     virtual ~Obj() = default;
@@ -67,6 +72,9 @@ enum class ValueKind : uint8_t {
     Char,
     // A number from 0 to 255 in `as.i` (D19): what an item of `Bytes` is.
     Byte,
+    // `^k`, a position counted from the end, k (1 or more) in `as.i` (D146): what an `Index`
+    // is that is not a plain int.
+    FromEnd,
 };
 
 // An Astra runtime value: null, bool, 64-bit int, double, or a pointer to a heap object.
@@ -167,6 +175,13 @@ struct Value {
         v.as.i = b;
         return v;
     }
+    static Value fromEnd(int64_t k) {
+        Value v;
+        v.kind = ValueKind::FromEnd;
+        v.as.i = k;
+        return v;
+    }
+    bool isFromEnd() const { return kind == ValueKind::FromEnd; }
     bool isChar() const { return kind == ValueKind::Char; }
     bool isByte() const { return kind == ValueKind::Byte; }
 
@@ -189,6 +204,20 @@ struct Value {
 // The core the running thread is, in a parallel section; 0 on any other thread. For code
 // that looks into objects without a VM at hand (the keys of a map).
 extern thread_local uint8_t currentCore;
+
+// A class's own == and hashCode, which maps and sets use for its objects and values as keys
+// (D26): the VM running on this thread calls them. Each answers false where the class has
+// none. refuseKey throws the error for a key that could change.
+struct ObjClass;
+struct KeyMethods {
+    virtual bool hashOf(const ObjClass* cls, const Value& v, size_t& out) = 0;
+    virtual bool equalOf(const ObjClass* cls, const Value& a, const Value& b, bool& out) = 0;
+    [[noreturn]] virtual void refuseKey(const Value& key) = 0;
+
+protected:
+    ~KeyMethods() = default;
+};
+extern thread_local KeyMethods* keyMethods;
 
 // How many characters (Unicode code points) a piece of UTF-8 text holds.
 size_t countCharacters(std::string_view s);
@@ -331,6 +360,8 @@ size_t hashValue(const Value& v);
 // A key must not be changed while it is in a map.
 bool keysEqual(const Value& a, const Value& b, int depth = 0);
 size_t keyHash(const Value& v, int depth = 0);
+// Whether a value may be a new key of a map or a set: not one that can change (D26).
+bool stableKey(const Value& v);
 
 // Shortest text that reads back as the same double, always recognisable as a float ("3.0").
 std::string formatFloat(double d);
@@ -573,6 +604,18 @@ struct ObjMap final : Obj {
     ObjMap() : Obj(ObjType::Map) {}
 };
 
+// A set (M6.6 part 8): each value once, in the order first added, two values the same one
+// when a map would take them as one key. Or a live, read-only view of a map's keys or of its
+// entries (D77): what the map holds as it is, nothing kept of its own.
+struct ObjSet final : Obj {
+    ValueMap items;              // the set's values, as keys; the values beside them unused
+    ObjTypeInfo* type = nullptr; // `Set<string>`, as for a list
+    ObjMap* viewOf = nullptr;    // a view: the map it shows
+    bool entries = false;        // a view of the map's entries, as MapEntry values, not its keys
+    ObjSet() : Obj(ObjType::Set) {}
+    bool view() const { return viewOf != nullptr; }
+};
+
 // Binary data: a fixed number of bytes, each a number from 0 to 255, that can be changed in place.
 struct ObjBytes final : Obj {
     std::vector<uint8_t> data;
@@ -599,8 +642,13 @@ int64_t rangeCount(int64_t start, int64_t end, int64_t step, bool inclusive);
 struct ObjRange final : Obj {
     const int64_t start, end, step;
     const bool inclusive;
-    ObjRange(int64_t s, int64_t e, int64_t st, bool incl)
-        : Obj(ObjType::Range), start(s), end(e), step(st), inclusive(incl) {}
+    // An end counted from the end of what it is used on, `2..^1` (D146): `start` or `end` is
+    // then k of ^k. Such a range is a slice's bounds, resolved by of(size); it has no numbers
+    // of its own to loop over.
+    const bool startFromEnd, endFromEnd;
+    ObjRange(int64_t s, int64_t e, int64_t st, bool incl, bool sFromEnd = false, bool eFromEnd = false)
+        : Obj(ObjType::Range), start(s), end(e), step(st), inclusive(incl), startFromEnd(sFromEnd), endFromEnd(eFromEnd) {}
+    bool fromEnd() const { return startFromEnd || endFromEnd; }
 
     int64_t count() const;
     bool contains(int64_t i) const;
@@ -659,8 +707,10 @@ struct NativeMethod {
     int maxArgs = 0;
     NativeMethodFn fn = nullptr;
     // What its parameters are called, for the methods that take arguments by name
-    // (`text.contains("a", ignoreCase = true)`); empty for the rest.
+    // (`text.contains("a", ignoreCase = true)`); empty for the rest. The longest form's, and
+    // every form's, for a method declared in several (`add(item)`, `add(index, item)`).
     std::vector<std::string> params;
+    std::vector<std::vector<std::string>> forms;
     // It changes the value it is called on: in a parallel section, a core's own only.
     bool mutates = false;
     // It copies a value of a value type it is given at once, so it may be given one where it is
@@ -755,6 +805,12 @@ struct ObjClass final : Obj {
     ObjClass* super = nullptr;
     ObjClosure* init = nullptr;
     Table methods;  // instance methods, including inherited ones (copied down at class creation)
+    // Keys (D26): whether `==` or `hashCode` is among the methods, 0 until asked, then 1 for
+    // neither and 2 for them; and whether an object of the class can change in a way they see
+    // (a data class with a var, an == reading one), which makes it no key. The checker works
+    // that out and the compiler says so (Op::UnstableKey).
+    uint8_t ownKeys = 0;
+    bool unstableKey = false;
     Table statics;  // static methods and values assigned on the class itself
 
     // Properties: `get name()` and `set name(value)`, including inherited ones.
@@ -1148,6 +1204,7 @@ struct ObjIterator final : Obj {
 inline ObjString* asString(const Value& v) { return static_cast<ObjString*>(v.as.obj); }
 inline ObjList* asList(const Value& v) { return static_cast<ObjList*>(v.as.obj); }
 inline ObjMap* asMap(const Value& v) { return static_cast<ObjMap*>(v.as.obj); }
+inline ObjSet* asSet(const Value& v) { return static_cast<ObjSet*>(v.as.obj); }
 inline ObjRange* asRange(const Value& v) { return static_cast<ObjRange*>(v.as.obj); }
 inline ObjBytes* asBytes(const Value& v) { return static_cast<ObjBytes*>(v.as.obj); }
 inline ObjClosure* asClosure(const Value& v) { return static_cast<ObjClosure*>(v.as.obj); }

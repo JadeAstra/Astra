@@ -10,7 +10,7 @@ class Panel(val name : string) {
     set(value) {
       if value < 0 { throw Error("gap cannot be negative") }
       field = value
-      log.push("$name gap=$value")
+      log.add("$name gap=$value")
     }
 
   var title = "untitled"
@@ -43,9 +43,9 @@ p.title = "  Settings  "
 p.width = 20
 print(p.gap, p.title, p.area, p.label, log)   // expect: 8 SETTINGS 100 main 20x5 ["main gap=8"]
 p.bump().bump()
-print(p.gap, p.visits, log.length)          // expect: 10 2 3
+print(p.gap, p.visits, log.size)          // expect: 10 2 3
 p.gap += 5
-print(p.gap, log[log.length - 1])           // expect: 15 main gap=15
+print(p.gap, log[log.size - 1])           // expect: 15 main gap=15
 
 // What the setter refuses is not stored; the declared type still holds for what is.
 try { p.gap = -1 } catch (e) { print(e.message, p.gap) }   // expect: gap cannot be negative 15

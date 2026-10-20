@@ -127,6 +127,7 @@ const OpInfo kOps[] = {
     {"REQUIRE", Operand::U16},
     {"FINISH_CLASS", Operand::None},
     {"DATA_FIELD", Operand::U16},
+    {"UNSTABLE_KEY", Operand::None},
     {"COMPONENT", Operand::U8},
     {"MISSING_ARG", Operand::U16},
     {"CLASS_INIT", Operand::None},
@@ -206,10 +207,13 @@ const OpInfo kOps[] = {
     {"OWN_LOCAL", Operand::U16},
     {"WITH_DESTINATION_AT", Operand::U8},
     {"WITH_FRAME_DESTINATION", Operand::None},
+    {"FROM_END", Operand::None},
+    {"ITER_NEXT_PAIR", Operand::U16I32},
 };
 
 const char* const kTypeNames[] = {"", "int", "float", "Number", "string", "bool", "List", "Map", "Range", "Function", "Bytes", "Type", "",
-                                   "char", "byte", "int16", "int32", "uint16", "uint32", "float32"};
+                                   "char", "byte", "int16", "int32", "uint16", "uint32", "float32", "Index", "Set",
+                                   "FrozenList", "FrozenMap", "FrozenSet"};
 static_assert(sizeof(kTypeNames) / sizeof(kTypeNames[0]) == kTypeCount_, "kTypeNames must match TypeId");
 
 static_assert(sizeof(kOps) / sizeof(kOps[0]) == static_cast<size_t>(Op::Count_), "kOps must match the Op enum");
@@ -610,6 +614,7 @@ static int analyzeStack(FunctionProto& f, const Program& program, bool partial) 
                     pops = pushes = 1;
                     break;
                 case Op::EnumSeal:
+                case Op::UnstableKey:
                 case Op::MarkInterface:
                 case Op::FinishClass:
                     pops = pushes = 1;
@@ -908,6 +913,11 @@ static int analyzeStack(FunctionProto& f, const Program& program, bool partial) 
                     flow(b, depth);
                     pushes = 1;
                     break;
+                case Op::IterNextPair:
+                    if (a >= depth) fail("local slot out of range");
+                    flow(b, depth);
+                    pushes = 2;
+                    break;
                 case Op::DefaultArg:
                     if (a >= depth) fail("local slot out of range");
                     flow(b, depth);
@@ -1094,6 +1104,7 @@ void disassembleFunction(const FunctionProto& f, const Program& program, std::os
             case Op::DefaultArg:
             case Op::IterNext:
             case Op::IterNextRef:
+            case Op::IterNextPair:
             case Op::RangeNext:
                 out << " slot=" << a << " -> " << b;
                 break;
@@ -1174,7 +1185,7 @@ int shapeOperands(const std::string& shape) {
             at++;
         } else if (c == 'P') {
             operands++;
-        } else if (std::string_view("?aifnsbyrtFLMcuhdHDg").find(c) == std::string_view::npos) {
+        } else if (std::string_view("?aifnsbyrtFLMcuhdHDgxSZ").find(c) == std::string_view::npos) {
             return -1;
         }
     }
@@ -1197,7 +1208,7 @@ void disassemble(const Program& program, std::ostream& out) {
 namespace {
 
 const char kMagic[4] = {'A', 'S', 'T', 'R'};
-const uint8_t kFormatVersion = 16;
+const uint8_t kFormatVersion = 18;
 const int kMaxProtoNesting = 200;
 
 enum ConstantTag : uint8_t { TagInt = 0, TagFloat = 1, TagString = 2, TagChar = 3, TagByte = 4 };
@@ -1621,6 +1632,7 @@ int targetOperand(Op op) {
         case Op::TryImplicit:
         case Op::IterNext:
         case Op::IterNextRef:
+        case Op::IterNextPair:
         case Op::DefaultArg: return 3;
         default: return 0;
     }

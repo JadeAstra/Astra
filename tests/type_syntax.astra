@@ -6,7 +6,7 @@ val unknown = { value -> value }
 
 class Grid
 fun shapes(items : List<string>, lookup : Map<string, List<int>>, test : (int) -> bool,
-           build : (a : int, b : string) -> List<int>) : List<int> => [items.length, lookup.length]
+           build : (a : int, b : string) -> List<int>) : List<int> => [items.size, lookup.size]
 fun later(callback : ((int) -> bool)? = null, done : () -> unit = {}) : unit { done() }
 fun run(block : Grid.() -> unit, pairs : List<Map<string, int>>?, n : Number?) : any? => n
 val add : (int, int) -> int = { x, y -> x + y }
@@ -22,7 +22,7 @@ class Box(val items : List<int> = [], var onChange : ((Box) -> unit)? = null) {
 
 print(shapes(["a"], {"k": [1]}, { true }, { x, y -> [] }), later(), run({}, null, 1.5), add(1, 2), tests)   // expect: [1, 1] null 1.5 3 []
 val seen = []
-print(Box([1, 2]).each { seen.push(it) } is Box, seen, Box().cache, Box().onChange)   // expect: true [1, 2] null null
+print(Box([1, 2]).each { seen.add(it) } is Box, seen, Box().cache, Box().onChange)   // expect: true [1, 2] null null
 
 // The outer type is enforced.
 try { shapes(unknown("a"), {:}, { true }, { x, y -> [] }) } catch (e) { print(e.message) }   // expect: argument 'items' of shapes() must be List, got string

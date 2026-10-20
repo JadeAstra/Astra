@@ -56,7 +56,7 @@ print(b, b is byte, b is int, b + 100, b * 2, -b, b == 200, b < 255, data[2] is 
 val doubled = (b.toInt() / 2).toByte()
 print(doubled, 300.toByteWrapped(), (-1).toByteWrapped(), attempt { 256.toByte() }, attempt { (-1).toByte() })
 // expect: 100 44 255 256 does not fit in a byte, which holds 0 to 255; toByteWrapped() keeps the low 8 bits -1 does not fit in a byte, which holds 0 to 255; toByteWrapped() keeps the low 8 bits
-var bs : List<byte> = [0, 128, 255]
+var bs : open List<byte> = [0, 128, 255]
 bs.add(7)
 print(bs, bs[1] is byte, bs.toList().size, data.toList(), data.toList()[0] is byte)   // expect: [0, 128, 255, 7] true 4 [1, 2, 255] true
 var sum = 0
@@ -73,12 +73,12 @@ print(buffer.float32(0), buffer.uint32(4), buffer.int32(4, true), attempt { buff
 // expect: 1.5 4294967295 -1 a 32-bit number at 6 runs past the end of 8 bytes 40000 does not fit in 16 bits signed, which hold -32768 to 32767
 
 // ---- Storage widths: ints (and a float) kept narrow, read as int and float ----
-val shorts : List<int16> = [1, -2, 300]
+val shorts : open List<int16> = [1, -2, 300]
 shorts.add(32767)
 print(shorts, shorts[1] + 1, shorts[1] is int, attempt { shorts.add(40000) })
 // expect: [1, -2, 300, 32767] -1 true 40000 does not fit in an int16, which holds -32768 to 32767; toInt16Wrapped() keeps the low 16 bits
 val halves : List<float32> = [0.5, 0.1]
-val words : List<uint32> = [4294967295, 0]
+val words : open List<uint32> = [4294967295, 0]
 print(halves, halves[0] is float, words, attempt { words.add(-1) })
 // expect: [0.5, 0.10000000149011612] true [4294967295, 0] -1 does not fit in a uint32, which holds 0 to 4294967295; toUint32Wrapped() keeps the low 32 bits
 

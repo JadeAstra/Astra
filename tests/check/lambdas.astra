@@ -6,12 +6,12 @@ apply(3) { it * 2 }
 apply(3) { it + "x" }               // check: this lambda gives an int; it cannot end with a string
 apply(3) { x -> x * 2 }
 fun each(items : List<string>, action : (string) -> unit) { }
-each(["a"]) { print(it.length) }
+each(["a"]) { print(it.size) }
 each(["a"]) { s -> val n : int = s }   // check: 'n' is an int; it cannot start as a string
 
 fun <T, R> transform(items : List<T>, f : (T) -> R) : List<R> => []
-val lengths : List<int> = transform(["a", "bb"]) { it.length }
-val wrongs : List<string> = transform(["a", "bb"]) { it.length }   // check: 'wrongs' is a List<string>; it cannot start as a List<int>
+val lengths : List<int> = transform(["a", "bb"]) { it.size }
+val wrongs : List<string> = transform(["a", "bb"]) { it.size }   // check: 'wrongs' is a List<string>; it cannot start as a List<int>
 
 // A lambda that runs on an object
 class Grid {

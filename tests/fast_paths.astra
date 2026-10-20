@@ -57,7 +57,7 @@ for i in 0..<top { top = 10; count += 1 }
 print(count, top)   // expect: 3 10
 
 // Leaving early, going on, and a function made in the loop keeping its own value.
-val kept : List<() -> int> = []
+val kept : open List<() -> int> = []
 for i in 0..<10 {
   if (i % 2 == 1) { continue }
   if (i > 6) { break }

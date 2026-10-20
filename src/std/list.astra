@@ -5,22 +5,18 @@
 
 // -- The oldest ones --
 
-fun <T, R> List<T>.map(transform : (T) -> R) : List<R> {
-  val out : List<R> = []
+fun <T, R> List<T>.map(transform : (T) -> R) : open List<R> {
+  val out : open List<R> = []
   for item in this { out.add(transform(item)) }
   return out
 }
 
-fun <T> List<T>.filter(predicate : (T) -> bool) : List<T> {
-  val out : List<T> = []
+fun <T> List<T>.filter(predicate : (T) -> bool) : open List<T> {
+  val out : open List<T> = []
   for item in this {
     if (predicate(item)) { out.add(item) }
   }
   return out
-}
-
-fun <T> List<T>.each(action : (T) -> unit) {
-  for item in this { action(item) }
 }
 
 fun <T> List<T>.find(predicate : (T) -> bool) : T? {
@@ -184,7 +180,7 @@ fun <T> List<T>.findLast(predicate : (T) -> bool) : T? => this.lastOrNull(predic
 
 // The only item, or the only one that meets the condition.
 fun <T> List<T>.single() : T {
-  if (this.size != 1) { throw Error("single(): expected one item but found " + str(this.size)) }
+  if (this.size != 1) { throw Error("single(): expected one item but found ${this.size}") }
   return this[0]
 }
 
@@ -200,8 +196,8 @@ fun <T> List<T>.elementAtOrNull(index : int) : T? => this.getOrNull(index)
 
 // -- Making another list --
 
-fun <T, R> List<T>.mapIndexed(transform : (int, T) -> R) : List<R> {
-  val out : List<R> = []
+fun <T, R> List<T>.mapIndexed(transform : (int, T) -> R) : open List<R> {
+  val out : open List<R> = []
   var index = 0
   for item in this {
     out.add(transform(index, item))
@@ -210,8 +206,8 @@ fun <T, R> List<T>.mapIndexed(transform : (int, T) -> R) : List<R> {
   return out
 }
 
-fun <T, R> List<T>.mapNotNull(transform : (T) -> R?) : List<R> {
-  val out : List<R> = []
+fun <T, R> List<T>.mapNotNull(transform : (T) -> R?) : open List<R> {
+  val out : open List<R> = []
   for item in this {
     val made = transform(item)
     if (made != null) { out.add(made) }
@@ -219,8 +215,8 @@ fun <T, R> List<T>.mapNotNull(transform : (T) -> R?) : List<R> {
   return out
 }
 
-fun <T, R> List<T>.mapIndexedNotNull(transform : (int, T) -> R?) : List<R> {
-  val out : List<R> = []
+fun <T, R> List<T>.mapIndexedNotNull(transform : (int, T) -> R?) : open List<R> {
+  val out : open List<R> = []
   var index = 0
   for item in this {
     val made = transform(index, item)
@@ -230,36 +226,36 @@ fun <T, R> List<T>.mapIndexedNotNull(transform : (int, T) -> R?) : List<R> {
   return out
 }
 
-fun <T, R> List<T>.flatMap(transform : (T) -> List<R>) : List<R> {
-  val out : List<R> = []
+fun <T, R> List<T>.flatMap(transform : (T) -> List<R>) : open List<R> {
+  val out : open List<R> = []
   for item in this { out.addAll(transform(item)) }
   return out
 }
 
-fun <T> List<List<T>>.flatten() : List<T> {
-  val out : List<T> = []
+fun <T> List<List<T>>.flatten() : open List<T> {
+  val out : open List<T> = []
   for item in this { out.addAll(item) }
   return out
 }
 
-fun <T> List<T>.filterNot(predicate : (T) -> bool) : List<T> {
-  val out : List<T> = []
+fun <T> List<T>.filterNot(predicate : (T) -> bool) : open List<T> {
+  val out : open List<T> = []
   for item in this {
     if (!predicate(item)) { out.add(item) }
   }
   return out
 }
 
-fun <T> List<T?>.filterNotNull() : List<T> {
-  val out : List<T> = []
+fun <T> List<T?>.filterNotNull() : open List<T> {
+  val out : open List<T> = []
   for item in this {
     if (item != null) { out.add(item) }
   }
   return out
 }
 
-fun <T> List<T>.filterIndexed(predicate : (int, T) -> bool) : List<T> {
-  val out : List<T> = []
+fun <T> List<T>.filterIndexed(predicate : (int, T) -> bool) : open List<T> {
+  val out : open List<T> = []
   var index = 0
   for item in this {
     if (predicate(index, item)) { out.add(item) }
@@ -270,36 +266,36 @@ fun <T> List<T>.filterIndexed(predicate : (int, T) -> bool) : List<T> {
 
 // The items that meet the condition and those that do not, as a Pair of lists.
 fun <T> List<T>.partition(predicate : (T) -> bool) : Pair<List<T>, List<T>> {
-  val yes : List<T> = []
-  val no : List<T> = []
+  val yes : open List<T> = []
+  val no : open List<T> = []
   for item in this {
     if (predicate(item)) { yes.add(item) } else { no.add(item) }
   }
   return Pair(yes, no)
 }
 
-fun <T> List<T>.take(count : int) : List<T> {
-  if (count < 0) { throw Error("take(" + str(count) + "): the count cannot be negative") }
-  return this.slice(0, count)
+fun <T> List<T>.take(count : int) : open List<T> {
+  if (count < 0) { throw Error("take($count): the count cannot be negative") }
+  return this[0..<Math.min(count, this.size)]
 }
 
-fun <T> List<T>.takeLast(count : int) : List<T> {
-  if (count < 0) { throw Error("takeLast(" + str(count) + "): the count cannot be negative") }
-  return count >= this.size ? this.toList() : this.slice(this.size - count)
+fun <T> List<T>.takeLast(count : int) : open List<T> {
+  if (count < 0) { throw Error("takeLast($count): the count cannot be negative") }
+  return count >= this.size ? this.toList() : this[this.size - count..]
 }
 
-fun <T> List<T>.drop(count : int) : List<T> {
-  if (count < 0) { throw Error("drop(" + str(count) + "): the count cannot be negative") }
-  return count >= this.size ? [] : this.slice(count)
+fun <T> List<T>.drop(count : int) : open List<T> {
+  if (count < 0) { throw Error("drop($count): the count cannot be negative") }
+  return count >= this.size ? [] : this[count..]
 }
 
-fun <T> List<T>.dropLast(count : int) : List<T> {
-  if (count < 0) { throw Error("dropLast(" + str(count) + "): the count cannot be negative") }
-  return count >= this.size ? [] : this.slice(0, this.size - count)
+fun <T> List<T>.dropLast(count : int) : open List<T> {
+  if (count < 0) { throw Error("dropLast($count): the count cannot be negative") }
+  return count >= this.size ? [] : this[0..<this.size - count]
 }
 
-fun <T> List<T>.takeWhile(predicate : (T) -> bool) : List<T> {
-  val out : List<T> = []
+fun <T> List<T>.takeWhile(predicate : (T) -> bool) : open List<T> {
+  val out : open List<T> = []
   for item in this {
     if (!predicate(item)) { break }
     out.add(item)
@@ -307,57 +303,57 @@ fun <T> List<T>.takeWhile(predicate : (T) -> bool) : List<T> {
   return out
 }
 
-fun <T> List<T>.dropWhile(predicate : (T) -> bool) : List<T> {
+fun <T> List<T>.dropWhile(predicate : (T) -> bool) : open List<T> {
   var index = 0
   while (index < this.size and predicate(this[index])) { index += 1 }
-  return this.slice(index)
+  return this[index..]
 }
 
 // The list cut into lists of `size` items; the last may be shorter.
-fun <T> List<T>.chunked(size : int) : List<List<T>> {
-  if (size < 1) { throw Error("chunked(" + str(size) + "): the size has to be at least 1") }
-  val out : List<List<T>> = []
+fun <T> List<T>.chunked(size : int) : open List<List<T>> {
+  if (size < 1) { throw Error("chunked($size): the size has to be at least 1") }
+  val out : open List<List<T>> = []
   var start = 0
   while (start < this.size) {
-    out.add(this.slice(start, start + size))
+    out.add(this[start..<Math.min(start + size, this.size)])
     start += size
   }
   return out
 }
 
 // Every run of `size` items in a row, moving along by `step`.
-fun <T> List<T>.windowed(size : int, step : int = 1, partialWindows : bool = false) : List<List<T>> {
+fun <T> List<T>.windowed(size : int, step : int = 1, partialWindows : bool = false) : open List<List<T>> {
   if (size < 1 or step < 1) { throw Error("windowed: the size and the step have to be at least 1") }
-  val out : List<List<T>> = []
+  val out : open List<List<T>> = []
   var start = 0
   while (start < this.size) {
     if (start + size > this.size and !partialWindows) { break }
-    out.add(this.slice(start, start + size))
+    out.add(this[start..<Math.min(start + size, this.size)])
     start += step
   }
   return out
 }
 
 // Pairs each item with the one at the same position in `other`, as far as the shorter goes.
-fun <T, U> List<T>.zip(other : List<U>) : List<Pair<T, U>> => this.zip(other) { a, b -> Pair(a, b) }
+fun <T, U> List<T>.zip(other : List<U>) : open List<Pair<T, U>> => this.zip(other) { a, b -> Pair(a, b) }
 
-fun <T, U, R> List<T>.zip(other : List<U>, transform : (T, U) -> R) : List<R> {
-  val out : List<R> = []
+fun <T, U, R> List<T>.zip(other : List<U>, transform : (T, U) -> R) : open List<R> {
+  val out : open List<R> = []
   val count = this.size < other.size ? this.size : other.size
   for index in 0..<count { out.add(transform(this[index], other[index])) }
   return out
 }
 
-fun <T> List<T>.zipWithNext() : List<Pair<T, T>> => this.zipWithNext { a, b -> Pair(a, b) }
+fun <T> List<T>.zipWithNext() : open List<Pair<T, T>> => this.zipWithNext { a, b -> Pair(a, b) }
 
-fun <T, R> List<T>.zipWithNext(transform : (T, T) -> R) : List<R> {
-  val out : List<R> = []
+fun <T, R> List<T>.zipWithNext(transform : (T, T) -> R) : open List<R> {
+  val out : open List<R> = []
   for index in 0..<this.size - 1 { out.add(transform(this[index], this[index + 1])) }
   return out
 }
 
-fun <T> List<T>.withIndex() : List<IndexedValue<T>> {
-  val out : List<IndexedValue<T>> = []
+fun <T> List<T>.withIndex() : open List<IndexedValue<T>> {
+  val out : open List<IndexedValue<T>> = []
   var index = 0
   for item in this {
     out.add(IndexedValue(index, item))
@@ -366,11 +362,11 @@ fun <T> List<T>.withIndex() : List<IndexedValue<T>> {
   return out
 }
 
-fun <T> List<T>.distinct() : List<T> {
-  val seen : Map<T, bool> = {:}
-  val out : List<T> = []
+fun <T> List<T>.distinct() : open List<T> {
+  val seen : open Map<T, bool> = {:}
+  val out : open List<T> = []
   for item in this {
-    if (!seen.has(item)) {
+    if (seen.get(item) == null) {
       seen[item] = true
       out.add(item)
     }
@@ -378,12 +374,12 @@ fun <T> List<T>.distinct() : List<T> {
   return out
 }
 
-fun <T> List<T>.distinctBy(selector : (T) -> any?) : List<T> {
-  val seen : Map<any?, bool> = {:}
-  val out : List<T> = []
+fun <T> List<T>.distinctBy(selector : (T) -> any?) : open List<T> {
+  val seen : open Map<any?, bool> = {:}
+  val out : open List<T> = []
   for item in this {
     val key = selector(item)
-    if (!seen.has(key)) {
+    if (seen.get(key) == null) {
       seen[key] = true
       out.add(item)
     }
@@ -391,42 +387,42 @@ fun <T> List<T>.distinctBy(selector : (T) -> any?) : List<T> {
   return out
 }
 
-fun <T> List<T>.plus(other : List<T>) : List<T> => this + other
-fun <T> List<T>.plus(item : T) : List<T> => this + [item]
+fun <T> List<T>.plus(other : List<T>) : open List<T> => this + other
+fun <T> List<T>.plus(item : T) : open List<T> => this + [item]
 
-fun <T> List<T>.minus(other : List<T>) : List<T> => this.filter { !other.contains(it) }
-fun <T> List<T>.minus(other : Set<T>) : List<T> => this.filter { !other.contains(it) }
+fun <T> List<T>.minus(other : List<T>) : open List<T> => this.filter { !other.contains(it) }
+fun <T> List<T>.minus(other : Set<T>) : open List<T> => this.filter { !other.contains(it) }
 
-fun <T> List<T>.minus(item : T) : List<T> {
+fun <T> List<T>.minus(item : T) : open List<T> {
   val out = this.toList()
   out.remove(item)
   return out
 }
 
 fun <T> List<T>.asReversed() : List<T> => this.reversed()
-fun <T> List<T>.copyOf() : List<T> => this.toList()
+fun <T> List<T>.copyOf() : open List<T> => this.toList()
 
 // -- Order --
 
-fun <T> List<T>.sorted() : List<T> {
+fun <T> List<T>.sorted() : open List<T> {
   val out = this.toList()
   out.sort()
   return out
 }
 
-fun <T> List<T>.sortedDescending() : List<T> => this.sortedWith { a, b -> compareValues(b, a) }
-fun <T> List<T>.sortedBy(selector : (T) -> any?) : List<T> {
+fun <T> List<T>.sortedDescending() : open List<T> => this.sortedWith { a, b -> compareValues(b, a) }
+fun <T> List<T>.sortedBy(selector : (T) -> any?) : open List<T> {
   val out = this.toList()
   out.sortBy(selector)
   return out
 }
-fun <T> List<T>.sortedByDescending(selector : (T) -> any?) : List<T> {
+fun <T> List<T>.sortedByDescending(selector : (T) -> any?) : open List<T> {
   val out = this.toList()
   out.sortByDescending(selector)
   return out
 }
 
-fun <T> List<T>.sortedWith(comparator : (T, T) -> int) : List<T> {
+fun <T> List<T>.sortedWith(comparator : (T, T) -> int) : open List<T> {
   val out = this.toList()
   out.sort(comparator)
   return out
@@ -435,15 +431,15 @@ fun <T> List<T>.sortedWith(comparator : (T, T) -> int) : List<T> {
 // These sort the list itself. sortBy and sortByDescending are the C++'s (builtins.astra): each
 // item's key is worked out once, and each item moved once.
 
-fun <T> List<T>.sortWith(comparator : (T, T) -> int) {
+fun <T> open List<T>.sortWith(comparator : (T, T) -> int) {
   this.sort(comparator)
 }
 
-fun <T> List<T>.sortDescending() {
+fun <T> open List<T>.sortDescending() {
   this.sort { a, b -> compareValues(b, a) }
 }
 
-fun <T> List<T>.shuffle() {
+fun <T> open List<T>.shuffle() {
   var index = this.size - 1
   while (index > 0) {
     val other = Math.randomInt(0, index)
@@ -454,7 +450,7 @@ fun <T> List<T>.shuffle() {
   }
 }
 
-fun <T> List<T>.shuffled() : List<T> {
+fun <T> List<T>.shuffled() : open List<T> {
   val out = this.toList()
   out.shuffle()
   return out
@@ -486,7 +482,7 @@ fun <T, R : Number> List<T>.sumOf(selector : (T) -> R) : R {
   return total as R
 }
 
-fun <T : Number> List<T>.average() : float => this.size == 0 ? Double.nan : this.sum().toDouble() / this.size
+fun <T : Number> List<T>.average() : float => this.size == 0 ? float.nan : this.sum().toFloat() / this.size
 
 fun <T> List<T>.maxOrNull() : T? {
   if (this.size == 0) { return null }
@@ -586,29 +582,11 @@ fun <T, R> List<T>.minOf(selector : (T) -> R) : R {
   return this.minOfOrNull(selector) as R
 }
 
-// The items as text, one after another. A lambda after the call says how each is shown:
-// names.joinToString(", ") { it.upper() }
-fun <T> List<T>.joinToString(separator : string = ", ", prefix : string = "", postfix : string = "", limit : int = -1,
-                             truncated : string = "...", transform : ((T) -> any?)? = null) : string {
-  if (transform == null and limit < 0) { return prefix + this.join(separator) + postfix }
-  val parts : List<string> = []
-  var count = 0
-  for item in this {
-    if (limit >= 0 and count >= limit) {
-      parts.add(truncated)
-      break
-    }
-    parts.add(transform == null ? str(item) : str(transform(item)))
-    count += 1
-  }
-  return prefix + parts.join(separator) + postfix
-}
-
 // -- Maps and sets from a list --
 
 // A map from pairs: by the transform, or with no argument from a list that holds pairs.
-fun <T, K, V> List<T>.associate(transform : (T) -> Pair<K, V>) : Map<K, V> {
-  val out : Map<K, V> = {:}
+fun <T, K, V> List<T>.associate(transform : (T) -> Pair<K, V>) : open Map<K, V> {
+  val out : open Map<K, V> = {:}
   for item in this {
     val (key, value) = transform(item)
     out[key] = value
@@ -616,64 +594,64 @@ fun <T, K, V> List<T>.associate(transform : (T) -> Pair<K, V>) : Map<K, V> {
   return out
 }
 
-fun <K, V> List<Pair<K, V>>.toMap() : Map<K, V> {
-  val out : Map<K, V> = {:}
+fun <K, V> List<Pair<K, V>>.toMap() : open Map<K, V> {
+  val out : open Map<K, V> = {:}
   for (key, value) in this { out[key] = value }
   return out
 }
 
-fun <T, K> List<T>.associateBy(keySelector : (T) -> K) : Map<K, T> {
-  val out : Map<K, T> = {:}
+fun <T, K> List<T>.associateBy(keySelector : (T) -> K) : open Map<K, T> {
+  val out : open Map<K, T> = {:}
   for item in this { out[keySelector(item)] = item }
   return out
 }
 
-fun <T, K, V> List<T>.associateBy(keySelector : (T) -> K, valueTransform : (T) -> V) : Map<K, V> {
-  val out : Map<K, V> = {:}
+fun <T, K, V> List<T>.associateBy(keySelector : (T) -> K, valueTransform : (T) -> V) : open Map<K, V> {
+  val out : open Map<K, V> = {:}
   for item in this { out[keySelector(item)] = valueTransform(item) }
   return out
 }
 
-fun <T, V> List<T>.associateWith(valueSelector : (T) -> V) : Map<T, V> {
-  val out : Map<T, V> = {:}
+fun <T, V> List<T>.associateWith(valueSelector : (T) -> V) : open Map<T, V> {
+  val out : open Map<T, V> = {:}
   for item in this { out[item] = valueSelector(item) }
   return out
 }
 
 // A map from each key to the list of items that gave it, or of what the transform makes of them.
-fun <T, K> List<T>.groupBy(keySelector : (T) -> K) : Map<K, List<T>> => this.groupBy(keySelector) { it }
+fun <T, K> List<T>.groupBy(keySelector : (T) -> K) : open Map<K, open List<T>> => this.groupBy(keySelector) { it }
 
-fun <T, K, V> List<T>.groupBy(keySelector : (T) -> K, valueTransform : (T) -> V) : Map<K, List<V>> {
-  val out : Map<K, List<V>> = {:}
+fun <T, K, V> List<T>.groupBy(keySelector : (T) -> K, valueTransform : (T) -> V) : open Map<K, open List<V>> {
+  val out : open Map<K, open List<V>> = {:}
   for item in this {
     out.getOrPut(keySelector(item)) { [] }.add(valueTransform(item))
   }
   return out
 }
 
-fun <T> List<T>.toSet() : Set<T> => Set(this)
-fun <T> List<T>.toMutableSet() : Set<T> => Set(this)
+fun <T> List<T>.toSet() : open Set<T> => Set(this)
+fun <T> List<T>.toOpenSet() : open Set<T> => Set(this)
 
 // -- Changing the list itself --
 
-fun <T> List<T>.addFirst(item : T) {
+fun <T> open List<T>.addFirst(item : T) {
   this.insert(0, item)
 }
 
-fun <T> List<T>.addLast(item : T) {
+fun <T> open List<T>.addLast(item : T) {
   this.add(item)
 }
 
 // removeAll and retainAll take a condition or a collection of items. True if anything went.
-fun <T> List<T>.removeAll(predicate : (T) -> bool) : bool => __keepOnly(this, this.filterNot(predicate))
-fun <T> List<T>.removeAll(items : List<T>) : bool => __keepOnly(this, this.filter { !items.contains(it) })
-fun <T> List<T>.removeAll(items : Set<T>) : bool => __keepOnly(this, this.filter { !items.contains(it) })
-fun <T> List<T>.retainAll(predicate : (T) -> bool) : bool => __keepOnly(this, this.filter(predicate))
-fun <T> List<T>.retainAll(items : List<T>) : bool => __keepOnly(this, this.filter { items.contains(it) })
-fun <T> List<T>.retainAll(items : Set<T>) : bool => __keepOnly(this, this.filter { items.contains(it) })
+fun <T> open List<T>.removeAll(predicate : (T) -> bool) : bool => __keepOnly(this, this.filterNot(predicate))
+fun <T> open List<T>.removeAll(items : List<T>) : bool => __keepOnly(this, this.filter { !items.contains(it) })
+fun <T> open List<T>.removeAll(items : Set<T>) : bool => __keepOnly(this, this.filter { !items.contains(it) })
+fun <T> open List<T>.retainAll(predicate : (T) -> bool) : bool => __keepOnly(this, this.filter(predicate))
+fun <T> open List<T>.retainAll(items : List<T>) : bool => __keepOnly(this, this.filter { items.contains(it) })
+fun <T> open List<T>.retainAll(items : Set<T>) : bool => __keepOnly(this, this.filter { items.contains(it) })
 
 // The list made to hold just `kept`; true if that changed it.
-fun <T> __keepOnly(list : List<T>, kept : List<T>) : bool {
+fun <T> __keepOnly(list : open List<T>, kept : List<T>) : bool {
   val changed = kept.size != list.size
   if (changed) {
     list.clear()
@@ -682,4 +660,4 @@ fun <T> __keepOnly(list : List<T>, kept : List<T>) : bool {
   return changed
 }
 
-fun <T> List<T>.removeIf(predicate : (T) -> bool) : bool => this.removeAll(predicate)
+fun <T> open List<T>.removeIf(predicate : (T) -> bool) : bool => this.removeAll(predicate)

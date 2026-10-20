@@ -78,7 +78,7 @@ fun paint(canvas : Canvas) {
   inner.drawRect(0, 0, inner.width - 1, inner.height - 1)
   inner.color = ink
   inner.font = mono
-  inner.drawString("a sub-canvas clips: " + "the quick brown fox jumps over the lazy dog. ".repeat(6), 8, 18)
+  inner.drawString("a sub-canvas clips: the quick brown fox jumps over the lazy dog. ".repeat(6), 8, 18)
 
   // The events.
   canvas.font = small
@@ -142,7 +142,7 @@ if (arguments.contains("picture")) {
     // Movements are too many to print; everything else is echoed.
     if (event !is RawInput.PointerMove) {
       print(event)
-      note(str(event))
+      note("$event")
     }
     if (window.isOpen) { redraw() }
   }
@@ -153,7 +153,7 @@ if (arguments.contains("picture")) {
   window.onScaleChanged = { scale -> print("now $scale pixels to the unit") }
   window.onFilesDropped = { paths, x, y ->
     print("dropped at $x, $y: $paths")
-    note("dropped: " + paths.joinToString(", "))
+    note("dropped: " + paths.join(", "))
     redraw()
   }
 
@@ -164,7 +164,7 @@ if (arguments.contains("picture")) {
   // A number on the command line closes the window after that many seconds.
   val seconds = arguments.firstOrNull { it.toFloatOrNull() != null }
   if (seconds != null) {
-    EventLoop.after(int(float(seconds) * 1000)) {
+    EventLoop.after((seconds.toFloat() * 1000).toInt()) {
       if (window.isOpen) { window.close() }
     }
   }

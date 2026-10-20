@@ -24,7 +24,7 @@ class Grid {
   var insets = Insets(0, 0, 0, 0)
   var hgap = 0
   var vgap = 0
-  val cells : List = []
+  val cells : open List = []
   var nextRow = 0
 
   // A property with a setter, to show that assignment through a block reaches it.
@@ -33,7 +33,7 @@ class Grid {
   set viewId(value) { this._id = "view:" + value }
 
   fun add(component : Component, row : int, col : int, fill : string, weightX : float) {
-    this.cells.push("r${row}c${col} ${component} fill=${fill} weightX=${weightX}")
+    this.cells.add("r${row}c${col} ${component} fill=${fill} weightX=${weightX}")
     return component
   }
   fun row(build : RowScope.() -> unit) {
@@ -80,7 +80,7 @@ print(clicks)                                     // expect: 8
 
 // apply runs the block on the object and gives the object back; also and let pass it as `it`.
 val configured = Grid().apply { hgap = 3 }
-print(configured.hgap, 5.let { it + 1 }, [1].also { it.push(2) })   // expect: 3 6 [1, 2]
+print(configured.hgap, 5.let { it + 1 }, [1].also { it.add(2) })   // expect: 3 6 [1, 2]
 
 // ---- The layout DSL, as in the examples' Launcher.kt -------------------------------------
 

@@ -14,7 +14,7 @@ class TimeoutException(message : string = "the time ran out") : Error(message)
 class CancellationException(message : string = "the task was cancelled") : Error(message)
 
 // Thrown by get() on a future whose task failed; `cause` is what the task threw.
-class ExecutionException(val cause : any?) : Error(cause is Error ? cause.message : str(cause))
+class ExecutionException(val cause : any?) : Error(cause is Error ? cause.message : "$cause")
 
 // What a time limit is counted in. A limit is a number and one of these; with no unit it is
 // milliseconds: future.get(2, TimeUnit.seconds)
@@ -55,7 +55,7 @@ class Thread {
     this.task = (swapped ? name : task) as (() -> any?)?
     val named = swapped ? task : name
     Thread.made += 1
-    this.name = named == null ? "Thread-${Thread.made}" : str(named)
+    this.name = named == null ? "Thread-${Thread.made}" : "$named"
   }
 
   // What the thread does. A class that extends Thread can replace this instead of being
@@ -208,7 +208,7 @@ class AtomicInteger(private var held : int = 0) {
     if (held === expected) { held = value; return true }
     return false
   }
-  override fun toString() : string => str(held)
+  override fun toString() : string => "$held"
 }
 
 class AtomicLong(initial : int = 0) : AtomicInteger(initial)
@@ -223,7 +223,7 @@ class AtomicBoolean(private var held : bool = false) {
     if (held === expected) { held = value; return true }
     return false
   }
-  override fun toString() : string => str(held)
+  override fun toString() : string => "$held"
 }
 
 class AtomicReference<T>(private var held : T? = null) {
@@ -237,7 +237,7 @@ class AtomicReference<T>(private var held : T? = null) {
     if (held === expected) { held = value; return true }
     return false
   }
-  override fun toString() : string => str(held)
+  override fun toString() : string => "$held"
 }
 
 // ---- A queue that threads hand things over on ----
@@ -340,8 +340,8 @@ class BlockingQueue<T> {
     }
   }
 
-  fun toList() : List<T> => items.toList()
-  override fun toString() : string => str(items.toList())
+  fun toList() : open List<T> => items.toList()
+  override fun toString() : string => "${items.toList()}"
 }
 
 // ---- Waiting for other threads ----
@@ -398,7 +398,7 @@ class Future<T> {
   private val lock = Lock()
   private var state = 0       // 0 not done, 1 has a value, 2 failed, 3 cancelled
   private var held : any? = null
-  private val listeners : List<(T?, any?) -> unit> = []
+  private val listeners : open List<(T?, any?) -> unit> = []
   var runner : Thread? = null  // the thread working on it, which cancel(true) interrupts
 
   get isDone() : bool => state != 0
@@ -406,7 +406,7 @@ class Future<T> {
   get isCompletedExceptionally() : bool => state >= 2
 
   private fun finish(newState : int, value : any?) : bool {
-    var waiting : List<(T?, any?) -> unit> = []
+    var waiting : open List<(T?, any?) -> unit> = []
     __thread.enter(lock)
     try {
       if (state != 0) { return false }
@@ -538,7 +538,7 @@ class Executor {
 
   // Each job is a task and the future for it; null tells a thread to end.
   private val queue : BlockingQueue<List<any?>?> = BlockingQueue()
-  private val workers : List<Thread> = []
+  private val workers : open List<Thread> = []
   private val lock = Lock()
   private var limit : int?                                  // how many threads at most; null for as many as are needed
   private var threadFactory : ((() -> unit) -> Thread)?     // makes a Thread for a function; null for a plain one
@@ -634,8 +634,8 @@ class Executor {
 
   // Stops now: the tasks still waiting are not run (they are returned), and the threads are
   // interrupted, which a task notices if it is waiting or asks.
-  fun shutdownNow() : List<() -> any?> {
-    val waiting : List<() -> any?> = []
+  fun shutdownNow() : open List<() -> any?> {
+    val waiting : open List<() -> any?> = []
     __thread.enter(lock)
     try {
       stopped = true

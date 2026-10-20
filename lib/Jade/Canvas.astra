@@ -79,12 +79,12 @@ class RecordingCanvas : Canvas {
   override val style : Style
   override var color = Color.black
   override var font = defaultFont
-  private val ops : List<DrawOp>
+  private val ops : open List<DrawOp>
   private val ox : int
   private val oy : int
   private val clip : Rectangle?
 
-  fun init(width : int, height : int, style : Style, ops : List<DrawOp>, ox : int = 0, oy : int = 0, clip : Rectangle? = null) {
+  fun init(width : int, height : int, style : Style, ops : open List<DrawOp>, ox : int = 0, oy : int = 0, clip : Rectangle? = null) {
     this.width = width
     this.height = height
     this.style = style

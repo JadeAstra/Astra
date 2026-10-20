@@ -286,6 +286,12 @@ StmtPtr Parser::declaration() {
                 if (check(TokenType::Lt)) typeParams = typeParameters();
                 TypeParamScope typeParamsInReach(*this, typeParams);
                 const Token* name = &expect(TokenType::Identifier, "the name of the function");
+                // `fun <T> open List<T>.shuffle()`: a function that changes the list (D32).
+                bool openReceiver = false;
+                if (name->text == "open" && check(TokenType::Identifier)) {
+                    openReceiver = true;
+                    name = &advance();
+                }
                 auto s = node<FunctionStmt>(kw);
                 // fun Shape.describe(), fun list<Shape>.total(), fun string?.orEmpty(): what stands
                 // before the last dot is the type the function is added to.
@@ -311,6 +317,7 @@ StmtPtr Parser::declaration() {
                     }
                     s->receiverType.name = s->receiver;
                     s->receiverType.nullable = s->receiverNullable;
+                    s->receiverType.isOpen = openReceiver;
                     if (isTypeParam(s->receiver)) s->receiverType.typeParam = true;
                 }
                 s->fn = functionRest(name->text, kw);
@@ -437,6 +444,11 @@ TypeAnnotation Parser::typeExpression() {
             throw error(peek(), "expected '->' after the parameter types of a function type");
         }
     } else {
+        // `open List<int>`: changed through this name (D32).
+        if (check(TokenType::Identifier) && peek().text == "open" && peekNext().type == TokenType::Identifier) {
+            advance();
+            type.isOpen = true;
+        }
         const Token& name = expect(TokenType::Identifier, "a type name after ':'");
         if (const char* titled = oldTypeName(name.text)) throw error(name, oldTypeMessage(name.text, titled));
         type.name = name.text;
@@ -460,6 +472,7 @@ TypeAnnotation Parser::typeExpression() {
             type.receiver.push_back(std::move(receiver));
             type.args.clear();
             type.name = "Function";
+            type.isOpen = false;  // the receiver's, not the function's
         }
     }
     if (suspends) {
@@ -486,7 +499,14 @@ std::vector<TypeAnnotation> Parser::typeArgumentsRest() {
             any.star = true;
             args.push_back(std::move(any));
         } else {
+            // `open List<accepts Button>` (D34).
+            bool accepts = false;
+            if (check(TokenType::Identifier) && peek().text == "accepts" && peekNext().type == TokenType::Identifier) {
+                advance();
+                accepts = true;
+            }
             args.push_back(typeExpression());
+            args.back().accepts = accepts;
         }
     } while (match(TokenType::Comma));
     if (check(TokenType::Shr) || check(TokenType::Ushr)) {
@@ -1703,7 +1723,12 @@ ExprPtr Parser::range() {
         e->inclusive = op.type == TokenType::DotDot || downTo;
         e->descending = downTo;
         e->start = std::move(left);
-        e->end = bitOr();
+        if (inIndex_ > 0 && check(TokenType::RBracket)) {
+            // `items[1..]`: from 1 to the end (D147).
+            if (!e->inclusive || downTo) throw error(op, "a slice to the end is written a.., with nothing after it");
+        } else {
+            e->end = bitOr();
+        }
         if (word("step") && !peek().newlineBefore) {
             advance();
             e->step = bitOr();
@@ -1792,7 +1817,8 @@ ExprPtr Parser::cast() {
 }
 
 ExprPtr Parser::unary() {
-    if (check(TokenType::Bang) || check(TokenType::Minus) || check(TokenType::Tilde)) {
+    // `^k`: a position counted from the end (D146).
+    if (check(TokenType::Bang) || check(TokenType::Minus) || check(TokenType::Tilde) || check(TokenType::Caret)) {
         DepthGuard guard(*this);
         const Token& op = advance();
         auto e = node<UnaryExpr>(op);
@@ -1911,7 +1937,18 @@ ExprPtr Parser::postfix() {
             advance();
             auto index = node<IndexExpr>(t);
             HeaderGuard inside(*this, false);
-            index->index = expression();
+            inIndex_++;
+            if (check(TokenType::DotDot) || check(TokenType::DotDotLt)) {
+                // `items[..^2]`: from the start (D147).
+                const Token& op = advance();
+                auto range = node<RangeExpr>(op);
+                range->inclusive = op.type == TokenType::DotDot;
+                range->end = bitOr();
+                index->index = std::move(range);
+            } else {
+                index->index = expression();
+            }
+            inIndex_--;
             // `counts[word, default = 0]`: a start value for a key that is not there (L118).
             if (check(TokenType::Comma) && peekNext().type == TokenType::Identifier && peekNext().text == "default") {
                 advance();

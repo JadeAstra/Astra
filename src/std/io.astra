@@ -33,8 +33,8 @@ class InputStream {
   fun readLine() : string? => __io.readLine(handle)
 
   // The lines that are left.
-  fun readLines() : List<string> {
-    val lines : List<string> = []
+  fun readLines() : open List<string> {
+    val lines : open List<string> = []
     while (true) {
       val line : string? = __io.readLine(handle)
       if (line == null) { break }
@@ -43,7 +43,7 @@ class InputStream {
     return lines
   }
 
-  fun lines() : List<string> => readLines()
+  fun lines() : open List<string> => readLines()
 
   fun forEachLine(action : (string) -> unit) {
     while (true) {
@@ -98,11 +98,11 @@ class OutputStream {
   }
 
   fun print(value : any?) {
-    __io.write(handle, str(value))
+    __io.write(handle, "$value")
   }
 
   fun println(value : any? = "") {
-    __io.write(handle, str(value) + "\n")
+    __io.write(handle, "$value\n")
   }
 
   fun newLine() {
@@ -110,7 +110,7 @@ class OutputStream {
   }
 
   fun append(value : any?) : OutputStream {
-    __io.write(handle, str(value))
+    __io.write(handle, "$value")
     return this
   }
 
@@ -189,7 +189,7 @@ class Process {
 
   // What started this program: the path of its executable and, when it is a script run by
   // astra, the script. ProcessBuilder(Process.currentCommand() + ["--second"]) starts it again.
-  static fun currentCommand() : List<string> => __io.selfCommand()
+  static fun currentCommand() : open List<string> => __io.selfCommand()
   static fun currentPid() : int => __io.currentPid()
 }
 
@@ -207,7 +207,7 @@ class ProcessBuilder {
   private var input = "pipe"
   private var output = "pipe"
   private var error = "pipe"
-  private val variables : Map<string, string?> = {:}
+  private val variables : open Map<string, string?> = {:}
 
   // ProcessBuilder("git", "status") or ProcessBuilder(["git", "status"]).
   fun init(vararg command : any) {
@@ -218,13 +218,13 @@ class ProcessBuilder {
 
   // The folder the program starts in; this program's own if none is given.
   fun directory(folder : any) : ProcessBuilder {
-    this.folder = folder is File ? folder.path : str(folder)
+    this.folder = folder is File ? folder.path : "$folder"
     return this
   }
 
   // Changes to the environment the program gets, which is otherwise this program's: a map
   // to put names and values in. A value of null takes the name out.
-  fun environment() : Map<string, string?> => variables
+  fun environment() : open Map<string, string?> => variables
 
   // Sends what the program writes as errors to the same place as its ordinary output.
   fun redirectErrorStream(merge : bool = true) : ProcessBuilder {
@@ -234,17 +234,17 @@ class ProcessBuilder {
 
   // Each takes ProcessBuilder.pipe, .inherit or .discard, or a File to read from or write to.
   fun redirectInput(source : any) : ProcessBuilder {
-    input = source is File ? "<" + source.path : str(source)
+    input = source is File ? "<" + source.path : "$source"
     return this
   }
 
   fun redirectOutput(target : any) : ProcessBuilder {
-    output = target is File ? ">" + target.path : str(target)
+    output = target is File ? ">" + target.path : "$target"
     return this
   }
 
   fun redirectError(target : any) : ProcessBuilder {
-    error = target is File ? ">" + target.path : str(target)
+    error = target is File ? ">" + target.path : "$target"
     return this
   }
 

@@ -69,12 +69,12 @@ print(when (next()) { 5 -> "five"; 1 -> "one"; else -> "?" }, asked)   // expect
 // Conditions are only worked out until one matches.
 var tried = []
 fun probe(value : int) {
-  tried.push(value)
+  tried.add(value)
   return value
 }
 when (2) {
-  probe(1), probe(2), probe(3) -> tried.push("hit")
-  probe(4) -> tried.push("never")
+  probe(1), probe(2), probe(3) -> tried.add("hit")
+  probe(4) -> tried.add("never")
 }
 print(tried)                                // expect: [1, 2, "hit"]
 
@@ -97,7 +97,7 @@ print(area(Circle(2)), area(Square(3)), area(Shape("blob")))   // expect: 12 9 0
 print(when (1) { 1 -> { } else -> 5 }, when (1) { 1 -> { var n = 1; n += 1 } })   // expect: null 2
 
 // Naming the subject.
-fun measure(text : string) => when (val n = text.length) {
+fun measure(text : string) => when (val n = text.size) {
   0 -> "empty"
   1 -> "a character"
   else -> "$n characters"
@@ -141,23 +141,23 @@ for n in [1, 2, 3] {
   val label = "n" + when (n) {
     2 -> {
       val doubled = n * 2
-      readers.push(fun() => doubled)
+      readers.add(fun() => doubled)
       "two"
     }
     else -> {
-      readers.push(fun() => n)
+      readers.add(fun() => n)
       "other"
     }
   }
-  readers.push(fun() => label)
+  readers.add(fun() => label)
 }
 print(readers.map { it() })                 // expect: [1, "nother", 4, "ntwo", 3, "nother"]
 
 val held = []
 for word in ["a", "bb"] {
-  when (val n = word.length) {
-    1 -> held.push(fun() => n)
-    else -> held.push(fun() => n * 10)
+  when (val n = word.size) {
+    1 -> held.add(fun() => n)
+    else -> held.add(fun() => n * 10)
   }
 }
 print(held.map { it() })                    // expect: [1, 20]
@@ -173,7 +173,7 @@ for n in [1, 2, 3, 4, 5, 6] {
       "two"
     }
   }]
-  picked.push(entry)
+  picked.add(entry)
 }
 print(picked)                               // expect: [[1, "one"], [2, "two"], [4, "one"]]
 
@@ -203,12 +203,12 @@ print(lookup({"a": 1}, "a"), lookup({:}, "b"), lookup({:}, "missing"))   // expe
 val log = []
 fun guarded(n : int) => 100 + when (n) {
   1 -> {
-    try { throw "one" } catch (e) { log.push("caught " + e) } finally { log.push("finally") }
+    try { throw "one" } catch (e) { log.add("caught " + e) } finally { log.add("finally") }
     10
   }
   else -> {
     var result = 0
-    try { result = 20 } finally { log.push("done") }
+    try { result = 20 } finally { log.add("done") }
     result
   }
 }

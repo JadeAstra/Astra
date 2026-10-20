@@ -2,7 +2,7 @@
 // The methods a map has besides the built-in ones. A function given to one of them takes an
 // entry, which has a `key` and a `value` and can be taken apart: { (key, value) -> ... }
 
-fun <K, V> Map<K, V>.getOrPut(key : K, defaultValue : () -> V) : V {
+fun <K, V> open Map<K, V>.getOrPut(key : K, defaultValue : () -> V) : V {
   val had = this[key]
   if (had != null) { return had }
   val made = defaultValue()
@@ -17,18 +17,18 @@ fun <K, V> Map<K, V>.getOrElse(key : K, defaultValue : () -> V) : V {
 
 // Changing what a key holds, where a key that is not there starts from `start`, for a change
 // that is not one operator (L118; counting is counts[word, default = 0]++). Gives the new value.
-fun <K, V> Map<K, V>.update(key : K, start : V, change : (V) -> V) : V {
-  val value = change(this.containsKey(key) ? this[key] as V : start)
+fun <K, V> open Map<K, V>.update(key : K, start : V, change : (V) -> V) : V {
+  val value = change(this.keys.contains(key) ? this[key] as V : start)
   this[key] = value
   return value
 }
 
 // Takes another map, or a list of pairs.
-fun <K, V> Map<K, V>.putAll(from : Map<K, V>) {
+fun <K, V> open Map<K, V>.putAll(from : Map<K, V>) {
   for key in from.keys { this[key] = from[key] as V }
 }
 
-fun <K, V> Map<K, V>.putAll(pairs : List<Pair<K, V>>) {
+fun <K, V> open Map<K, V>.putAll(pairs : List<Pair<K, V>>) {
   for (key, value) in pairs { this[key] = value }
 }
 
@@ -84,14 +84,14 @@ fun <K, V> Map<K, V>.count(predicate : (MapEntry<K, V>) -> bool) : int {
 
 // -- Making a list --
 
-fun <K, V, R> Map<K, V>.map(transform : (MapEntry<K, V>) -> R) : List<R> {
-  val out : List<R> = []
+fun <K, V, R> Map<K, V>.map(transform : (MapEntry<K, V>) -> R) : open List<R> {
+  val out : open List<R> = []
   for entry in this.entries { out.add(transform(entry)) }
   return out
 }
 
-fun <K, V, R> Map<K, V>.mapNotNull(transform : (MapEntry<K, V>) -> R?) : List<R> {
-  val out : List<R> = []
+fun <K, V, R> Map<K, V>.mapNotNull(transform : (MapEntry<K, V>) -> R?) : open List<R> {
+  val out : open List<R> = []
   for entry in this.entries {
     val made = transform(entry)
     if (made != null) { out.add(made) }
@@ -99,59 +99,59 @@ fun <K, V, R> Map<K, V>.mapNotNull(transform : (MapEntry<K, V>) -> R?) : List<R>
   return out
 }
 
-fun <K, V, R> Map<K, V>.flatMap(transform : (MapEntry<K, V>) -> List<R>) : List<R> {
-  val out : List<R> = []
+fun <K, V, R> Map<K, V>.flatMap(transform : (MapEntry<K, V>) -> List<R>) : open List<R> {
+  val out : open List<R> = []
   for entry in this.entries { out.addAll(transform(entry)) }
   return out
 }
 
 // The entries as a list of pairs.
-fun <K, V> Map<K, V>.toList() : List<Pair<K, V>> {
-  val out : List<Pair<K, V>> = []
+fun <K, V> Map<K, V>.toList() : open List<Pair<K, V>> {
+  val out : open List<Pair<K, V>> = []
   for entry in this.entries { out.add(Pair(entry.key, entry.value)) }
   return out
 }
 
 // -- Making another map --
 
-fun <K, V, R> Map<K, V>.mapValues(transform : (MapEntry<K, V>) -> R) : Map<K, R> {
-  val out : Map<K, R> = {:}
+fun <K, V, R> Map<K, V>.mapValues(transform : (MapEntry<K, V>) -> R) : open Map<K, R> {
+  val out : open Map<K, R> = {:}
   for entry in this.entries { out[entry.key] = transform(entry) }
   return out
 }
 
-fun <K, V, R> Map<K, V>.mapKeys(transform : (MapEntry<K, V>) -> R) : Map<R, V> {
-  val out : Map<R, V> = {:}
+fun <K, V, R> Map<K, V>.mapKeys(transform : (MapEntry<K, V>) -> R) : open Map<R, V> {
+  val out : open Map<R, V> = {:}
   for entry in this.entries { out[transform(entry)] = entry.value }
   return out
 }
 
-fun <K, V> Map<K, V>.filter(predicate : (MapEntry<K, V>) -> bool) : Map<K, V> {
-  val out : Map<K, V> = {:}
+fun <K, V> Map<K, V>.filter(predicate : (MapEntry<K, V>) -> bool) : open Map<K, V> {
+  val out : open Map<K, V> = {:}
   for entry in this.entries {
     if (predicate(entry)) { out[entry.key] = entry.value }
   }
   return out
 }
 
-fun <K, V> Map<K, V>.filterNot(predicate : (MapEntry<K, V>) -> bool) : Map<K, V> {
-  val out : Map<K, V> = {:}
+fun <K, V> Map<K, V>.filterNot(predicate : (MapEntry<K, V>) -> bool) : open Map<K, V> {
+  val out : open Map<K, V> = {:}
   for entry in this.entries {
     if (!predicate(entry)) { out[entry.key] = entry.value }
   }
   return out
 }
 
-fun <K, V> Map<K, V>.filterKeys(predicate : (K) -> bool) : Map<K, V> {
-  val out : Map<K, V> = {:}
+fun <K, V> Map<K, V>.filterKeys(predicate : (K) -> bool) : open Map<K, V> {
+  val out : open Map<K, V> = {:}
   for entry in this.entries {
     if (predicate(entry.key)) { out[entry.key] = entry.value }
   }
   return out
 }
 
-fun <K, V> Map<K, V>.filterValues(predicate : (V) -> bool) : Map<K, V> {
-  val out : Map<K, V> = {:}
+fun <K, V> Map<K, V>.filterValues(predicate : (V) -> bool) : open Map<K, V> {
+  val out : open Map<K, V> = {:}
   for entry in this.entries {
     if (predicate(entry.value)) { out[entry.key] = entry.value }
   }
@@ -159,38 +159,38 @@ fun <K, V> Map<K, V>.filterValues(predicate : (V) -> bool) : Map<K, V> {
 }
 
 // A new map with a pair, a list of pairs or another map added.
-fun <K, V> Map<K, V>.plus(pair : Pair<K, V>) : Map<K, V> {
-  val out = this.toMutableMap()
+fun <K, V> Map<K, V>.plus(pair : Pair<K, V>) : open Map<K, V> {
+  val out = this.toOpenMap()
   out[pair.first] = pair.second
   return out
 }
 
-fun <K, V> Map<K, V>.plus(pairs : List<Pair<K, V>>) : Map<K, V> {
-  val out = this.toMutableMap()
+fun <K, V> Map<K, V>.plus(pairs : List<Pair<K, V>>) : open Map<K, V> {
+  val out = this.toOpenMap()
   out.putAll(pairs)
   return out
 }
 
-fun <K, V> Map<K, V>.plus(other : Map<K, V>) : Map<K, V> {
-  val out = this.toMutableMap()
+fun <K, V> Map<K, V>.plus(other : Map<K, V>) : open Map<K, V> {
+  val out = this.toOpenMap()
   out.putAll(other)
   return out
 }
 
 // A new map without a key, or without each key of a list or a set.
-fun <K, V> Map<K, V>.minus(key : K) : Map<K, V> {
-  val out = this.toMutableMap()
+fun <K, V> Map<K, V>.minus(key : K) : open Map<K, V> {
+  val out = this.toOpenMap()
   out.remove(key)
   return out
 }
 
-fun <K, V> Map<K, V>.minus(keys : List<K>) : Map<K, V> {
-  val out = this.toMutableMap()
+fun <K, V> Map<K, V>.minus(keys : List<K>) : open Map<K, V> {
+  val out = this.toOpenMap()
   for each in keys { out.remove(each) }
   return out
 }
 
-fun <K, V> Map<K, V>.minus(keys : Set<K>) : Map<K, V> => this.minus(keys.toList())
+fun <K, V> Map<K, V>.minus(keys : Set<K>) : open Map<K, V> => this.minus(keys.toList())
 
 // -- Picking an entry --
 

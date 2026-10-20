@@ -40,8 +40,8 @@ class Grid : Content, OwnedContent {
   // One widget's place in the grid.
   class Cell(val component : Component, val row : int, val col : int, val rowSpan : int, val colSpan : int, val fill : Fill, val anchor : Anchor, val weightX : float, val weightY : float)
 
-  private val cellList : List<Cell> = []
-  private val occupied : Set<int> = mutableSetOf()
+  private val cellList : open List<Cell> = []
+  private val occupied : open Set<int> = mutableSetOf()
   private var builderRow = 0
 
   fun init(insets : Insets? = null, hgap : int = 0, vgap : int = 0) {
@@ -254,7 +254,7 @@ class Grid : Content, OwnedContent {
   }
 
   static fun positions(sizes : List<int>, start : int, gap : int) : List<int> {
-    val pos : List<int> = []
+    val pos : open List<int> = []
     var x = start
     for (size in sizes) {
       pos.add(x)
@@ -269,14 +269,14 @@ class Grid : Content, OwnedContent {
     return s
   }
 
-  static fun distributeDeficit(arr : List<int>, start : int, span : int, gap : int, need : int, weight : List<float>) {
+  static fun distributeDeficit(arr : open List<int>, start : int, span : int, gap : int, need : int, weight : open List<float>) {
     var cur = gap * (span - 1)
     for (i in start..<start + span) { cur += arr[i] }
     if (need > cur) { Grid.distribute(arr, start, span, need - cur, weight) }
   }
 
   // Shares an amount among some tracks: by weight if any has one, evenly if none has.
-  static fun distribute(arr : List<int>, start : int, span : int, amount : int, weight : List<float>) {
+  static fun distribute(arr : open List<int>, start : int, span : int, amount : int, weight : open List<float>) {
     var wsum = 0.0
     for (i in start..<start + span) { wsum += weight[i] }
     if (wsum > 0.0) {
@@ -284,7 +284,7 @@ class Grid : Content, OwnedContent {
       var last = start
       for (i in start..<start + span) {
         if (weight[i] > 0.0) {
-          val add = int(amount * (weight[i] / wsum))
+          val add = (amount * (weight[i] / wsum)).toInt()
           arr[i] += add
           used += add
           last = i
@@ -299,7 +299,7 @@ class Grid : Content, OwnedContent {
   }
 
   // A weight given to a cell that spans tracks none of which has one is shared among them.
-  static fun spreadWeight(weight : List<float>, start : int, span : int, w : float) {
+  static fun spreadWeight(weight : open List<float>, start : int, span : int, w : float) {
     if (w <= 0.0) { return }
     for (i in start..<start + span) {
       if (weight[i] > 0.0) { return }
@@ -310,7 +310,7 @@ class Grid : Content, OwnedContent {
 
   // The size of each track for the room there is: room to spare goes to the weighted
   // ones, and too little is taken from each by how much it can give up.
-  static fun resolveSizes(pref : List<int>, min : List<int>, weight : List<float>, available : int) : List<int> {
+  static fun resolveSizes(pref : List<int>, min : List<int>, weight : open List<float>, available : int) : List<int> {
     val n = pref.size
     val sizes = pref.toList()
     val extra = available - pref.sum()
@@ -321,7 +321,7 @@ class Grid : Content, OwnedContent {
         var last = -1
         for (i in 0..<n) {
           if (weight[i] > 0.0) {
-            val add = int(extra * (weight[i] / wsum))
+            val add = (extra * (weight[i] / wsum)).toInt()
             sizes[i] += add
             used += add
             last = i

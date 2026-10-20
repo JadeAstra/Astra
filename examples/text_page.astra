@@ -9,13 +9,13 @@
 //
 // A scale (1.5, 2) draws the page as a dense screen would show it.
 
-val scale = len(args()) > 0 ? float(args()[0]) : 1
+val scale = args().size > 0 ? args()[0].toFloat() : 1
 val ink = 0xFF1B1F23
 val faint = 0xFF8A9199
 val rule = 0xFF2F81F7
 val paper = 0xFFFFFFFF
 
-fun px(n : Number) : int => int(Math.round(n * scale))
+fun px(n : Number) : int => Math.round(n * scale).toInt()
 
 val page = Picture(px(900), px(1070), paper)
 var y = px(24)

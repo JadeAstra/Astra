@@ -21,7 +21,7 @@ value Ball(var x : float, var y : float, var dx : float, var dy : float, val rad
 }
 
 val palette = [Color.red, Color.blue, Color.green, Color.orange, Color(160, 60, 200), Color.cyan, Color.pink]
-val balls : List<Ball> = []
+val balls : open List<Ball> = []
 
 fun addBall(x : Number, y : Number) {
   val speed = 1 + Math.random() * 30

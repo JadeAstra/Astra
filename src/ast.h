@@ -39,6 +39,11 @@ using StmtPtr = std::unique_ptr<Stmt>;
 struct TypeAnnotation : Node {
     std::string name;       // empty when no type was written; "Function" for a function type
     bool nullable = false;  // ends in '?'
+    // `open List<int>`: a list, map or set that may be changed through this name; one written
+    // without it may only be read (D32). `accepts Button`: a type argument of an open type
+    // that takes a Button, the list holding Button or any type above it (D34).
+    bool isOpen = false;
+    bool accepts = false;
 
     // `list<int>`, `map<string, Shape>`: the type arguments. `list<*>` has one star.
     std::vector<TypeAnnotation> args;

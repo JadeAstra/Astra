@@ -34,6 +34,7 @@ bool valuesEqual(const Value& a, const Value& b) {
             case ValueKind::Int:
             case ValueKind::Char:
             case ValueKind::Byte:
+            case ValueKind::FromEnd:
                 return a.as.i == b.as.i;
             case ValueKind::Float:
                 return a.as.d == b.as.d;
@@ -79,6 +80,8 @@ size_t hashValue(const Value& v) {
             return std::hash<int64_t>()(v.as.i);
         case ValueKind::Char:
             return hashCharacter(kEmptyStringHash, static_cast<uint32_t>(v.as.i));  // as the string of it alone
+        case ValueKind::FromEnd:
+            return std::hash<int64_t>()(v.as.i) ^ 0x9e3779b97f4a7c15ULL;
         case ValueKind::Float: {
             // Integral floats must hash like the equal int so 1 and 1.0 are the same map key.
             double d = v.as.d;
@@ -107,6 +110,9 @@ bool hasContentKey(const Value& v) {
         case ObjType::Bytes: return true;
         case ObjType::Instance: return asInstance(v)->cls->isData;
         case ObjType::Value: return true;
+        // A key only frozen (D26); anything else asks by what it holds.
+        case ObjType::Map:
+        case ObjType::Set: return true;
         default: return false;
     }
 }
@@ -273,7 +279,37 @@ size_t keyItemHash(const KeyItem& a, int depth) {
 // for one that another core owns.
 static bool readableHere(const Value& v) { return v.as.obj->core == 0 || v.as.obj->core == currentCore; }
 
+// Whether a value is of a kind whose class may have an == and a hashCode of its own: an object
+// or a value. Asked first, so that keys of other kinds never look at the thread's VM.
+static inline bool mayOwnKeys(const Value& v) {
+    return v.kind == ValueKind::Small || v.kind == ValueKind::Ref ||
+           (v.kind == ValueKind::Obj && (v.as.obj->type == ObjType::Instance || v.as.obj->type == ObjType::Value));
+}
+
+// The class of an object or a value, where the class may have an == and a hashCode of its own
+// (D26); null otherwise.
+static const ObjClass* keyClassOf(const Value& v) {
+    const ObjClass* cls = nullptr;
+    if (v.kind == ValueKind::Small) {
+        cls = smallClassOf(v);
+    } else if (v.kind == ValueKind::Ref) {
+        if (refBytes(v) != nullptr) cls = refClass(v);
+    } else if (v.isObjType(ObjType::Instance)) {
+        cls = asInstance(v)->cls;
+    } else if (v.isObjType(ObjType::Value)) {
+        cls = asValue(v)->cls;
+    }
+    return cls != nullptr && cls->ownKeys != 1 ? cls : nullptr;
+}
+
 bool keysEqual(const Value& a, const Value& b, int depth) {
+    // An object whose class has its own == (D26).
+    if (mayOwnKeys(a) && keyMethods != nullptr) {
+        if (const ObjClass* cls = keyClassOf(a)) {
+            bool same = false;
+            if (keyMethods->equalOf(cls, a, b, same)) return same;
+        }
+    }
     // Values of value types, whatever form each is in (M6.6 part 5).
     if ((a.isSmall() || b.isSmall() || a.isRef() || b.isRef()) && depth < kMaxKeyDepth) {
         const ObjClass *ca = nullptr, *cb = nullptr;
@@ -302,6 +338,25 @@ bool keysEqual(const Value& a, const Value& b, int depth) {
         }
         case ObjType::Bytes:
             return asBytes(a)->data == asBytes(b)->data;
+        case ObjType::Map: {
+            const ValueMap& x = static_cast<const ObjMap*>(a.as.obj)->map;
+            const ValueMap& y = static_cast<const ObjMap*>(b.as.obj)->map;
+            if (x.size() != y.size()) return false;
+            for (const ValueMap::Entry& entry : x.entries()) {
+                if (!entry.live) continue;
+                const Value* other = y.find(entry.key);
+                if (other == nullptr || !keysEqual(entry.value, *other, depth + 1)) return false;
+            }
+            return true;
+        }
+        case ObjType::Set: {
+            const ValueMap& x = static_cast<const ObjSet*>(a.as.obj)->items;
+            const ValueMap& y = static_cast<const ObjSet*>(b.as.obj)->items;
+            if (x.size() != y.size()) return false;
+            for (const ValueMap::Entry& entry : x.entries())
+                if (entry.live && y.find(entry.key) == nullptr) return false;
+            return true;
+        }
         case ObjType::Value: {
             const ObjValue* x = asValue(a);
             const ObjValue* y = asValue(b);
@@ -325,6 +380,13 @@ bool keysEqual(const Value& a, const Value& b, int depth) {
 }
 
 size_t keyHash(const Value& v, int depth) {
+    // An object whose class has its own hashCode (D26).
+    if (mayOwnKeys(v) && keyMethods != nullptr) {
+        if (const ObjClass* cls = keyClassOf(v)) {
+            size_t own = 0;
+            if (keyMethods->hashOf(cls, v, own)) return own;
+        }
+    }
     if (v.isSmall() || v.isRef()) {
         const ObjClass* cls = nullptr;
         const uint8_t* bytes = nullptr;
@@ -349,6 +411,16 @@ size_t keyHash(const Value& v, int depth) {
             for (uint8_t b : asBytes(v)->data) h = h * 131 + b;
             return h;
         }
+        case ObjType::Map:
+        case ObjType::Set: {
+            // Whatever the order: the entries' hashes added.
+            const bool map = v.as.obj->type == ObjType::Map;
+            const ValueMap& m = map ? static_cast<const ObjMap*>(v.as.obj)->map : static_cast<const ObjSet*>(v.as.obj)->items;
+            size_t h = map ? 0x6d6170 : 0x736574;
+            for (const ValueMap::Entry& entry : m.entries())
+                if (entry.live) h += mix(keyHash(entry.key, depth + 1), map ? keyHash(entry.value, depth + 1) : 0);
+            return h;
+        }
         case ObjType::Value: {
             const ObjValue* box = asValue(v);
             return mix(std::hash<const void*>()(box->cls), valueBytesHash(*box->cls->layout.load(std::memory_order_acquire), box->data(), depth));
@@ -364,6 +436,24 @@ size_t keyHash(const Value& v, int depth) {
         }
         default:
             return hashValue(v);
+    }
+}
+
+bool stableKey(const Value& v) {
+    if (v.kind == ValueKind::Small || v.kind == ValueKind::Ref) {
+        const ObjClass* cls = nullptr;
+        const uint8_t* bytes = nullptr;
+        return !valueForm(v, cls, bytes) || !cls->unstableKey;
+    }
+    if (!v.isObj()) return true;
+    switch (v.as.obj->type) {
+        case ObjType::List:
+        case ObjType::Map:
+        case ObjType::Set:
+        case ObjType::Bytes: return v.as.obj->frozen == 1;
+        case ObjType::Instance: return !asInstance(v)->cls->unstableKey;
+        case ObjType::Value: return !asValue(v)->cls->unstableKey;
+        default: return true;
     }
 }
 
@@ -754,6 +844,7 @@ Characters ObjString::slice(size_t begin, size_t end) const {
 }
 
 thread_local uint8_t currentCore = 0;
+thread_local KeyMethods* keyMethods = nullptr;
 
 // ---- ValueMap ----
 
@@ -770,6 +861,8 @@ void ValueMap::set(const Value& key, const Value& value) {
     }
     // The entry first, then its place in the index; if the index cannot grow, the entry goes
     // again, so that the two never disagree.
+    // A new key, which must not be able to change (D26).
+    if (!stableKey(key) && keyMethods != nullptr) keyMethods->refuseKey(key);
     entries_.push_back(Entry{key, value, true});
     try {
         index_.emplace(key, static_cast<uint32_t>(entries_.size() - 1));

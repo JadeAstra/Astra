@@ -202,11 +202,11 @@ fun frame() {
       canvas.color = dot.color.withAlpha(110)
       canvas.drawOval(dot.x - ring, dot.y - ring, 2 * ring, 2 * ring)
     }
-    canvas.color = dot.color.withAlpha(int(255 * dot.alpha))
+    canvas.color = dot.color.withAlpha((255 * dot.alpha).toInt())
     canvas.fillOval(dot.x - dot.radius, dot.y - dot.radius, 2 * dot.radius, 2 * dot.radius)
   }
   for spark in sparks {
-    canvas.color = spark.color.withAlpha(int(255 * spark.life))
+    canvas.color = spark.color.withAlpha((255 * spark.life).toInt())
     canvas.fillOval(spark.x - 3, spark.y - 3, 6, 6)
   }
 

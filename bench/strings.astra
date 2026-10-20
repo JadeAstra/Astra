@@ -6,9 +6,9 @@ fun build(rounds : int) : int {
     var total = 0
     for (r in 0..<rounds) {
         for (t in texts) {
-            val joined = t + "/" + r + " " + t.substring(4, 9)
-            val shown = "${t}:${r}:${joined.length}"
-            total += joined.length + shown.length
+            val joined = t + "/" + r + " " + t[4..<9]
+            val shown = "${t}:${r}:${joined.size}"
+            total += joined.size + shown.size
         }
     }
     return total
@@ -19,7 +19,7 @@ fun read(rounds : int) : int {
     for (r in 0..<rounds) {
         for (t in texts) {
             var i = 0
-            while (i < t.length) {
+            while (i < t.size) {
                 if (t[i] == " ") { total += i }
                 i += 1
             }
@@ -60,7 +60,7 @@ fun sorting(rounds : int) : int {
         var words = []
         for (t in texts) { for (w in t.split(" ")) { words.add(w) } }
         words.sort()
-        total += words[0].length
+        total += words[0].size
     }
     return total
 }

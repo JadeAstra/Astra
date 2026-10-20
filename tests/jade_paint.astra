@@ -278,4 +278,4 @@ print((off.record(60, 30).first { it is DrawOp.Text } as DrawOp.Text).color == P
 val font = Font(Font.sansSerif, Font.plain, 12)
 val long = "a text that is too long for the room it has"
 val cut = elide(long, font, 100)
-print(elide("short", font, 500), cut.endsWith("…"), FontMetrics(font).stringWidth(cut) <= 100, cut.length < long.length, elide(long, font, 0) == "", elide(long, font, 3) == "")   // expect: short true true true true true
+print(elide("short", font, 500), cut.endsWith("…"), FontMetrics(font).stringWidth(cut) <= 100, cut.size < long.size, elide(long, font, 0) == "", elide(long, font, 3) == "")   // expect: short true true true true true

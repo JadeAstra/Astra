@@ -14,8 +14,8 @@ class File {
   // File(path), or File(folder, name) for something inside a folder. The folder may be a
   // File or a path.
   fun init(path : any, child : any? = null) {
-    val base = path is File ? path.path : str(path)
-    this.path = child == null ? base : __file.join(base, child is File ? child.path : str(child))
+    val base = path is File ? path.path : "$path"
+    this.path = child == null ? base : __file.join(base, child is File ? child.path : "$child")
   }
 
   // By path, without making a File: File.read("a.txt")
@@ -34,13 +34,13 @@ class File {
   get extension() : string {
     val whole : string = __file.name(this.path)
     val dot = whole.lastIndexOf(".")
-    return dot < 0 ? "" : whole.substring(dot + 1)
+    return dot < 0 ? "" : whole[dot + 1..]
   }
 
   get nameWithoutExtension() : string {
     val whole : string = __file.name(this.path)
     val dot = whole.lastIndexOf(".")
-    return dot < 0 ? whole : whole.substring(0, dot)
+    return dot < 0 ? whole : whole[0..<dot]
   }
 
   // The folder it is in, as a path and as a File; null if the path names none.
@@ -65,14 +65,14 @@ class File {
 
   // The size in bytes, and when it was last written in milliseconds since the start of
   // 1970. Both are 0 for a file that is not there.
-  fun length() : int => __file.size(this.path)
+  fun size() : int => __file.size(this.path)
   fun lastModified() : int => __file.lastModified(this.path)
 
   // The names in a folder, in order, and the same as Files. Null if it is not a folder.
-  fun list() : List<string>? => __file.list(this.path)
+  fun list() : open List<string>? => __file.list(this.path)
 
-  fun listFiles() : List<File>? {
-    val names : List<string>? = __file.list(this.path)
+  fun listFiles() : open List<File>? {
+    val names : open List<string>? = __file.list(this.path)
     if (names == null) { return null }
     val folder = this.path
     return names.map { File(folder, it) }
@@ -84,7 +84,7 @@ class File {
   fun readText() : string => __file.read(this.path)
 
   // The lines of the file, without their line ends.
-  fun readLines() : List<string> {
+  fun readLines() : open List<string> {
     val text : string = __file.read(this.path)
     val lines = text.lines()
     // A file that ends in a line end has no empty last line.
@@ -123,7 +123,7 @@ class File {
   fun deleteRecursively() : bool => __file.deleteRecursively(this.path)
   fun mkdirs() : bool => __file.mkdirs(this.path)
   fun mkdir() : bool => __file.mkdirs(this.path)
-  fun renameTo(target : any) : bool => __file.rename(this.path, target is File ? target.path : str(target))
+  fun renameTo(target : any) : bool => __file.rename(this.path, target is File ? target.path : "$target")
 
   // Gives the File it was copied to. It is an error if that is there already, unless
   // `overwrite` is true.
@@ -134,5 +134,6 @@ class File {
   }
 
   op ==(other : any?) : bool => other is File and other.path == this.path
+  fun hashCode() : int => path.hashCode()
   fun toString() : string => this.path
 }

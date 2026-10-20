@@ -29,8 +29,8 @@ print(c.tooltip, c.tooltip("Again").tooltip, c.changes)   // expect: Changed Aga
 class Label {
   var text = "label"
   var colours = []
-  get foreground() => colours.length > 0 ? colours[colours.length - 1] : "black"
-  set foreground(colour) { colours.push(colour) }
+  get foreground() => colours.size > 0 ? colours[colours.size - 1] : "black"
+  set foreground(colour) { colours.add(colour) }
   fun foreground(colour : string) {
     foreground = colour
     return this

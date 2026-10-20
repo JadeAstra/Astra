@@ -60,6 +60,8 @@ private:
     // How many more type argument lists the '>>' or '>>>' at hand closes, besides the inner one
     // that read it.
     int pendingTypeClose_ = 0;
+    // Inside an index's brackets, where a range may leave out an end: `items[1..]` (D147).
+    int inIndex_ = 0;
     std::vector<TypeAnnotation> typeArgumentsRest();  // after '<': the type arguments and '>'
     std::vector<TypeParam> typeParameters();            // `<T, U : Bound>`; the '<' is next
 

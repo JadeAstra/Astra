@@ -41,7 +41,7 @@ const char* const kPrelude = R"(class Error {
     this.message = message
   }
   fun toString() : string {
-    return type(this) + ": " + str(this.message)
+    return type(this) + ": " + this.message
   }
 }
 
@@ -112,6 +112,7 @@ uint8_t staticTypeOf(const Expr& expr) {
         case ExprKind::Unary: {
             const auto& unary = static_cast<const UnaryExpr&>(expr);
             if (unary.op == TokenType::Bang) return kTypeBool;
+            if (unary.op == TokenType::Caret) return kTypeIndex;
             uint8_t operand = staticTypeOf(*unary.operand);
             if (unary.op == TokenType::Tilde) return operand == kTypeInt ? kTypeInt : 0;
             return operand == kTypeInt || operand == kTypeFloat ? operand : 0;
@@ -1785,6 +1786,10 @@ private:
         if (!s.present() || s.typeParam || s.name == "any" || s.name == "unit" || s.name == "nothing") return type;
 
         uint8_t id = builtinTypeId(s.name);
+        // Kotlin's MutableList and the others: the checker says what to write (D32).
+        if (s.name == "MutableList") id = kTypeList;
+        else if (s.name == "MutableMap") id = kTypeMap;
+        else if (s.name == "MutableSet") id = kTypeSet;
         if (id == 0) {
             id = kTypeInstance;
             type.className = s.name;
@@ -1866,6 +1871,7 @@ private:
                 return true;
             case RuntimeType::Char: shape += 'c'; return true;
             case RuntimeType::Byte: shape += 'u'; return true;
+            case RuntimeType::Index: shape += 'x'; return true;
             case RuntimeType::Number: shape += 'n'; return true;
             case RuntimeType::String: shape += 's'; return true;
             case RuntimeType::Bool: shape += 'b'; return true;
@@ -1874,9 +1880,15 @@ private:
             case RuntimeType::TypeValue: shape += 't'; return true;
             case RuntimeType::Function: shape += 'F'; return true;
             case RuntimeType::List:
+                if (t.frozen) shape += 'Z';
                 shape += 'L';
                 return t.args.size() == 1 && shapeOf(t.args[0], shape, operands);
+            case RuntimeType::Set:
+                if (t.frozen) shape += 'Z';
+                shape += 'S';
+                return t.args.size() == 1 && shapeOf(t.args[0], shape, operands);
             case RuntimeType::Map:
+                if (t.frozen) shape += 'Z';
                 shape += 'M';
                 return t.args.size() == 2 && shapeOf(t.args[0], shape, operands) && shapeOf(t.args[1], shape, operands);
             case RuntimeType::Class: {
@@ -2021,8 +2033,9 @@ private:
         std::string name;
         if (session_.checker == nullptr || !session_.checker->externalResult(call, result, name)) return;
         if (checkingNativeResults() && emitRuntimeType(result, call)) emit(Op::CheckResult, stringConstant(name));
-        if (result.kind != RuntimeType::List && result.kind != RuntimeType::Map) return;
+        if (result.kind != RuntimeType::List && result.kind != RuntimeType::Map && result.kind != RuntimeType::Set) return;
         result.nullable = false;  // a list it gave, or null, which is left as it is
+        result.frozen = false;    // its items' type, whether frozen or not
         emitTag(result, call);
     }
 
@@ -2048,9 +2061,18 @@ private:
             shape += 'F';
             return;
         }
-        const uint8_t id = builtinTypeId(t.name);
+        uint8_t id = builtinTypeId(t.name);
+        if (unfrozenTypeId(id) != id) {
+            shape += 'Z';  // FrozenList<T>: as List<T>, frozen (D26)
+            id = unfrozenTypeId(id);
+        }
         if (id == kTypeList && t.args.size() == 1) {
             shape += 'L';
+            emitWrittenType(t.args[0], shape);
+            return;
+        }
+        if (id == kTypeSet && t.args.size() == 1) {
+            shape += 'S';
             emitWrittenType(t.args[0], shape);
             return;
         }
@@ -2062,7 +2084,7 @@ private:
         }
         // The others, and a list or map with nothing said of what it holds: of anything.
         static const char* const kShapes[] = {"", "i", "f", "n", "s", "b", "La", "Maa", "r", "F", "y", "t", "",
-                                              "c", "u", "h", "d", "H", "D", "g"};
+                                              "c", "u", "h", "d", "H", "D", "g", "x", "Sa", "ZLa", "ZMaa", "ZSa"};
         static_assert(sizeof kShapes / sizeof kShapes[0] == kTypeCount_, "a shape for each type");
         if (isBuiltinTypeId(id)) {
             shape += kShapes[id];
@@ -2105,7 +2127,8 @@ private:
     static bool staticFits(uint8_t declared, uint8_t actual) {
         return declared == actual || (declared == kTypeNumber && (actual == kTypeInt || actual == kTypeFloat)) ||
                (isIntStorage(declared) && actual == kTypeInt) || (declared == kTypeFloat32 && actual == kTypeFloat) ||
-               (declared == kTypeByte && actual == kTypeInt);  // the checker says why an int is not a byte there
+               (declared == kTypeByte && actual == kTypeInt) ||  // the checker says why an int is not a byte there
+               unfrozenTypeId(declared) == actual;                  // and why a list is not a FrozenList (D26)
     }
 
     bool checkInitializer(const VarStmt& s, const TypeSpec& type) {
@@ -2664,7 +2687,7 @@ private:
         uint8_t type = 0;
         // `fun <T> T.describe()`: a type parameter as the receiver is for every value, as `any` is.
         if (s.receiver != "any" && !s.receiverType.typeParam) {
-            type = builtinTypeId(s.receiver);
+            type = unfrozenTypeId(builtinTypeId(s.receiver));  // a FrozenList's are a List's
             if (type == 0) {
                 type = kTypeInstance;
                 emitTypeName(s.receiver, s);
@@ -2695,6 +2718,8 @@ private:
         else if (name == "Number" || name == "int" || name == "float") type = BuiltinType::Number;
         else if (name == "char") type = BuiltinType::Char;
         else if (name == "byte") type = BuiltinType::Byte;
+        else if (name == "Index") type = BuiltinType::Index;
+        else if (name == "Set") type = BuiltinType::Set;
         else return false;
         return true;
     }
@@ -2831,7 +2856,8 @@ private:
     void compileForIn(const ForInStmt& s) {
         beginScope();
         int iteratorSlot;
-        const bool counted = s.iterable->kind == ExprKind::Range;
+        const bool counted = s.iterable->kind == ExprKind::Range && static_cast<const RangeExpr&>(*s.iterable).start &&
+                             static_cast<const RangeExpr&>(*s.iterable).end;
         if (counted) {
             // A range written in place is counted through, with nothing made for it.
             const auto& range = static_cast<const RangeExpr&>(*s.iterable);
@@ -2858,7 +2884,10 @@ private:
         // A list of values may hand the loop its items where they are (M6.6 part 4).
         const bool inPlace = !counted && session_.checker != nullptr && session_.checker->loopsInPlace(s) &&
                              (!copyingReads() || session_.checker->loopPassesOn(s));
-        emit(counted ? Op::RangeNext : inPlace ? Op::IterNextRef : Op::IterNext, slotOf(iteratorSlot));
+        // Two names taking the item apart, `for ((key, value) in map)`: both parts at once, with
+        // nothing made for a map's entry (D64, D73).
+        const bool pair = !counted && !inPlace && s.pattern.size() == 2;
+        emit(counted ? Op::RangeNext : pair ? Op::IterNextPair : inPlace ? Op::IterNextRef : Op::IterNext, slotOf(iteratorSlot));
         int toExit = here();
         emitI32(0);
 
@@ -2867,6 +2896,9 @@ private:
         beginScope();
         if (s.pattern.empty()) {
             addLocal(s.variable, false, s, true);
+        } else if (pair) {
+            addLocal(s.pattern[0] == "_" ? "(first)" : s.pattern[0], false, s, true);
+            addLocal(s.pattern[1] == "_" ? "(second)" : s.pattern[1], false, s, true);
         } else {
             int item = addLocal("(item)", true, s, true);
             declareParts(s.pattern, item, false, s);
@@ -3122,6 +3154,8 @@ private:
         if (s.isData) {
             for (const HeaderParam& param : s.header) emit(Op::DataField, stringConstant(param.name));
         }
+        // Its objects can change in what == sees, so they are no keys (D26).
+        if (session_.checker != nullptr && session_.checker->unstableKey(s)) emit(Op::UnstableKey);
         if (s.isInterface) {
             // An interface holds no values: a `val` or `var` in it is a property that the
             // implementing class has to have.
@@ -4210,7 +4244,7 @@ private:
                 const auto& e = static_cast<const UnaryExpr&>(expr);
                 compileExpr(*e.operand);
                 line_ = e.line;
-                emit(e.op == TokenType::Minus ? Op::Neg : e.op == TokenType::Tilde ? Op::BitNot :
+                emit(e.op == TokenType::Minus ? Op::Neg : e.op == TokenType::Tilde ? Op::BitNot : e.op == TokenType::Caret ? Op::FromEnd :
                      e.op == TokenType::BangBang ? Op::AssertNotNull : Op::Not);
                 break;
             }
@@ -4357,8 +4391,30 @@ private:
                 noteWorkerScript(e);
                 // A lambda after the call belongs to the last parameter, which only the
                 // function being called knows the position of.
+                const std::vector<int>* order = session_.checker != nullptr && !e.hasSpread && e.callee->kind == ExprKind::Member &&
+                                                        importedMember(*static_cast<const MemberExpr&>(*e.callee).object,
+                                                                       static_cast<const MemberExpr&>(*e.callee).name, *e.callee) == nullptr
+                                                    ? session_.checker->argumentOrder(e)
+                                                    : nullptr;
                 if (compileScopeCall(e)) {
                     // let, also or takeIf with a lambda: done in place
+                } else if (order != nullptr) {
+                    // A C++ method given named arguments or a lambda after the call: each in its
+                    // parameter's place, as the form the checker chose has them.
+                    const auto& member = static_cast<const MemberExpr&>(*e.callee);
+                    compileObjectOf(member);
+                    int toEnd = member.safe ? emitJump(Op::JumpIfNull) : -1;
+                    for (int at : *order) {
+                        if (at < 0) emit(Op::Null);
+                        else compileArg(*e.args[static_cast<size_t>(at)]);
+                    }
+                    argc = static_cast<int>(order->size());
+                    emitCallPrelude(e, argc + 1);
+                    line_ = member.line;
+                    emit(ownMember(*member.object, member.name) ? Op::InvokeOwn : Op::Invoke, stringConstant(calledName(e, member.name)));
+                    emitByte(argc);
+                    emitExternalResult(e);
+                    if (toEnd >= 0) patchJump(toEnd);
                 } else if (e.namedCount > 0 || e.hasSpread ||
                            (e.trailingLambda &&
                             (e.callee->kind != ExprKind::Member ||
@@ -4375,12 +4431,13 @@ private:
                     // `object?.method(...)`: with no object the arguments are not worked out either.
                     int toEnd = member.safe ? emitJump(Op::JumpIfNull) : -1;
                     compileArgs(e.args);
+                    const bool trailing = e.trailingLambda;
                     emitCallPrelude(e, argc + 1);
                     line_ = member.line;
                     if (ownMember(*member.object, member.name))
-                        emit(e.trailingLambda ? Op::InvokeOwnTrailing : Op::InvokeOwn, stringConstant(calledName(e, member.name)));
+                        emit(trailing ? Op::InvokeOwnTrailing : Op::InvokeOwn, stringConstant(calledName(e, member.name)));
                     else
-                        emit(e.trailingLambda ? Op::InvokeTrailing : Op::Invoke, stringConstant(calledName(e, member.name)));
+                        emit(trailing ? Op::InvokeTrailing : Op::Invoke, stringConstant(calledName(e, member.name)));
                     emitByte(argc);
                     emitExternalResult(e);
                     if (toEnd >= 0) patchJump(toEnd);
@@ -4465,8 +4522,15 @@ private:
 
             case ExprKind::Range: {
                 const auto& e = static_cast<const RangeExpr&>(expr);
-                compileExpr(*e.start);
-                compileExpr(*e.end);
+                // A slice's range may leave out its start, 0, or its end, ^1 (D147).
+                if (e.start) compileExpr(*e.start);
+                else emit(Op::Const, intConstant(0));
+                if (e.end) {
+                    compileExpr(*e.end);
+                } else {
+                    emit(Op::Const, intConstant(1));
+                    emit(Op::FromEnd);
+                }
                 if (e.step) compileExpr(*e.step);
                 line_ = e.line;
                 emit(Op::Range);
@@ -4967,9 +5031,9 @@ private:
         const bool ints = result.kind == RuntimeType::Int, floats = result.kind == RuntimeType::Float;
         bool onReceiver = true;  // a Number method, on what it is called on; else Math's, on its arguments
         NumericOp op;
-        if ((name == "Number.toInt" || name == "Number.toLong") && argc == 0) op = NumericOp::ToInt;
-        else if ((name == "Number.toFloat" || name == "Number.toDouble") && argc == 0) op = NumericOp::ToFloat;
-        else if ((name == "Number.roundToInt" || name == "Number.roundToLong") && argc == 0) op = NumericOp::RoundToInt;
+        if (name == "Number.toInt" && argc == 0) op = NumericOp::ToInt;
+        else if (name == "Number.toFloat" && argc == 0) op = NumericOp::ToFloat;
+        else if (name == "Number.roundToInt" && argc == 0) op = NumericOp::RoundToInt;
         else if (name == "Number.isNaN" && argc == 0) op = NumericOp::IsNaN;
         else if (name == "Number.isInfinite" && argc == 0) op = NumericOp::IsInfinite;
         else if (name == "Number.isFinite" && argc == 0) op = NumericOp::IsFinite;

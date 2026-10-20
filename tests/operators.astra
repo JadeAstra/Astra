@@ -12,6 +12,7 @@ class Vec {
   op %(k : int) { return Vec(this.x % k, this.y % k) }
   op -() { return Vec(-this.x, -this.y) }
   op ==(o : any?) { return o is Vec and this.x == o.x and this.y == o.y }
+  fun hashCode() { return hash(this.x, this.y) }
   op <(o : Vec) { return this.len2() < o.len2() }
   op <=(o : Vec) { return this.len2() <= o.len2() }
   op >(o : Vec) { return this.len2() > o.len2() }

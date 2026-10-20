@@ -20,31 +20,31 @@ while i < 5 {
 print(sum, i)                           // expect: 8 5
 
 var out = []
-for x in 0..<5 { out.push(x) }
+for x in 0..<5 { out.add(x) }
 print(out)                              // expect: [0, 1, 2, 3, 4]
 out = []
-for x in 1..3 { out.push(x) }
+for x in 1..3 { out.add(x) }
 print(out)                              // expect: [1, 2, 3]
 out = []
-for x in Range(10, 0, -3) { out.push(x) }
+for x in Range(10, 0, -3) { out.add(x) }
 print(out)                              // expect: [10, 7, 4, 1]
 print((5..<0).toList(), (0..<0).toList(), (3..3).toList())   // expect: [] [] [3]
-print(len(0..<10), (0..<10).contains(5), (0..<10).contains(10), Range(0, 10, 2).contains(3))   // expect: 10 true false false
+print((0..<10).size, (0..<10).contains(5), (0..<10).contains(10), Range(0, 10, 2).contains(3))   // expect: 10 true false false
 print(0..<3, 1..4, Range(0, 10, 2))     // expect: 0..<3 1..4 0..<10 step 2
 
 // a..b includes b; a..<b stops before it. (Kotlin's `a until b` is a compile error: error_until.astra.)
 print((1..3).toList(), (1..<3).toList())   // expect: [1, 2, 3] [1, 2]
-print(len(0..10), (0..10).contains(10), len(0..<10), (0..<10).contains(10))   // expect: 11 true 10 false
+print((0..10).size, (0..10).contains(10), (0..<10).size, (0..<10).contains(10))   // expect: 11 true 10 false
 val until = 5                           // still an ordinary name
 print(until, (0..<until).toList())      // expect: 5 [0, 1, 2, 3, 4]
 
 var chars = []
-for c in "abc" { chars.push(c) }
+for c in "abc" { chars.add(c) }
 print(chars)                            // expect: ['a', 'b', 'c']
 
 var keys = []
 var m = {one: 1, two: 2, three: 3}
-for k in m { keys.push(k + "=" + m[k]) }
+for (k, v) in m { keys.add(k + "=" + v) }
 print(keys)                             // expect: ["one=1", "two=2", "three=3"]
 
 // nested loops with break and continue
@@ -53,21 +53,21 @@ for a in 0..<4 {
   for b in 0..<4 {
     if b > a { break }
     if (a + b) % 2 == 1 { continue }
-    pairs.push("${a}${b}")
+    pairs.add("${a}${b}")
   }
 }
 print(pairs.join(" "))                  // expect: 00 11 20 22 31 33
 
 // the loop variable is fresh on every iteration
 var fns = []
-for n in 0..<3 { fns.push(fun() => n * 10) }
+for n in 0..<3 { fns.add(fun() => n * 10) }
 print(fns.map(fun(f) => f()))            // expect: [0, 10, 20]
 
 var gs = []
 var j = 0
 while j < 3 {
   var captured = j
-  gs.push(fun() => captured)
+  gs.add(fun() => captured)
   j += 1
 }
 print(gs[0](), gs[1](), gs[2]())        // expect: 0 1 2
@@ -77,6 +77,6 @@ var growing = [1, 2, 3]
 var visited = 0
 for g in growing {
   visited += 1
-  if g < 3 { growing.push(10) }
+  if g < 3 { growing.add(10) }
 }
 print(visited, growing)                 // expect: 5 [1, 2, 3, 10, 10]

@@ -61,6 +61,7 @@ VM::VM(bool worker) : output(&std::cout), input(&std::cin), rng(std::random_devi
     names.value = intern("value");
     names.code = intern("code");
     names.character = intern("char");
+    names.fromEnd = intern("fromEnd");
     names.iterator = intern("iterator");
     names.first = intern("first");
     names.last = intern("last");
@@ -82,6 +83,7 @@ VM::VM(bool worker) : output(&std::cout), input(&std::cin), rng(std::random_devi
     names.opDiv = intern("/");
     names.opMod = intern("%");
     names.opEq = intern("==");
+    names.hashCode = intern("hashCode");
     names.opLt = intern("<");
     names.opLe = intern("<=");
     names.opGt = intern(">");
@@ -195,6 +197,7 @@ ObjTypeInfo* VM::typeFromShape(const std::string& shape, size_t& at, const Value
         case 'H': return typeOf(kTypeUint16, nullable, nullptr, {});
         case 'D': return typeOf(kTypeUint32, nullable, nullptr, {});
         case 'g': return typeOf(kTypeFloat32, nullable, nullptr, {});
+        case 'x': return typeOf(kTypeIndex, nullable, nullptr, {});
         case 'r': return typeOf(kTypeRange, nullable, nullptr, {});
         case 't': return typeOf(kTypeType, nullable, nullptr, {});
         case 'F': return typeOf(kTypeFunction, nullable, nullptr, {});
@@ -202,10 +205,20 @@ ObjTypeInfo* VM::typeFromShape(const std::string& shape, size_t& at, const Value
             ObjTypeInfo* item = typeFromShape(shape, at, operand);
             return typeOf(kTypeList, nullable, nullptr, {item});
         }
+        case 'S': {
+            ObjTypeInfo* item = typeFromShape(shape, at, operand);
+            return typeOf(kTypeSet, nullable, nullptr, {item});
+        }
         case 'M': {
             ObjTypeInfo* key = typeFromShape(shape, at, operand);
             ObjTypeInfo* value = typeFromShape(shape, at, operand);
             return typeOf(kTypeMap, nullable, nullptr, {key, value});
+        }
+        case 'Z': {
+            // FrozenList<T> and the others (D26): the list's type, frozen.
+            const ObjTypeInfo* plain = typeFromShape(shape, at, operand);
+            if (frozenTypeId(plain->id) == 0) throw runtimeError("invalid type shape");
+            return typeOf(frozenTypeId(plain->id), nullable, nullptr, plain->args);
         }
         case 'C': {
             const int count = shape[at++] - '0';
@@ -291,7 +304,8 @@ bool VM::isSubtype(const ObjTypeInfo* a, const ObjTypeInfo* b) {
     if (b->id == 0) return true;  // any
     if (a->id == 0) return false;
     if (b->id == kTypeNumber && (a->id == kTypeInt || a->id == kTypeFloat || a->id == kTypeNumber)) return true;
-    if (a->id != b->id) return false;
+    // A FrozenList is a List (D26).
+    if (a->id != b->id && unfrozenTypeId(a->id) != b->id) return false;
     if (a->id == kTypeInstance && !a->cls->isSubclassOf(b->cls)) return false;
     if (a->id == kTypeInstance && !b->args.empty() && a->cls != b->cls) {
         // A subclass's type, seen as the class's: `Pair<int>` as the `Base<List<int>>` it extends.
@@ -324,7 +338,9 @@ bool VM::fitsType(const Value& v, const ObjTypeInfo* type) {
     if (!matchesType(v, type->id, nullptr)) return false;
     if (type->args.empty()) return true;
     // A list or map made before its type was kept, or by code that did not say, takes anything.
-    const ObjTypeInfo* made = v.isObjType(ObjType::List) ? asList(v)->type : v.isObjType(ObjType::Map) ? asMap(v)->type : nullptr;
+    const ObjTypeInfo* made = v.isObjType(ObjType::List) ? asList(v)->type : v.isObjType(ObjType::Map) ? asMap(v)->type
+                              : v.isObjType(ObjType::Set)                         ? asSet(v)->type
+                                                                                  : nullptr;
     if (made == nullptr || made->args.size() != type->args.size()) return true;
     for (size_t i = 0; i < made->args.size(); i++)
         if (!isSubtype(made->args[i], type->args[i])) return false;
@@ -401,6 +417,8 @@ void VM::nameParams(BuiltinType type, const std::string& method, const std::vect
     auto found = methods_[static_cast<int>(type)].find(intern(method));
     if (found == methods_[static_cast<int>(type)].end()) return;
     if (params.size() > found->second.params.size()) found->second.params = params;
+    auto& forms = found->second.forms;
+    if (std::find(forms.begin(), forms.end(), params) == forms.end()) forms.push_back(params);
 }
 
 void VM::nameFunctionParams(const std::string& function, const std::vector<std::string>& params) {
@@ -419,6 +437,8 @@ bool VM::builtinTypeNamed(const std::string& name, BuiltinType& type) {
     else if (name == "Number" || name == "int" || name == "float") type = BuiltinType::Number;
     else if (name == "char") type = BuiltinType::Char;
     else if (name == "byte") type = BuiltinType::Byte;
+    else if (name == "Index") type = BuiltinType::Index;
+    else if (name == "Set") type = BuiltinType::Set;
     else return false;
     return true;
 }
@@ -583,11 +603,13 @@ const Value* VM::findExtension(Value receiver, const ObjString* name) const {
         case ValueKind::Float: found = typeExtensions_[kTypeFloat].find(name); break;
         case ValueKind::Char: found = typeExtensions_[kTypeChar].find(name); break;
         case ValueKind::Byte: found = typeExtensions_[kTypeByte].find(name); break;
+        case ValueKind::FromEnd: found = typeExtensions_[kTypeIndex].find(name); break;
         case ValueKind::Obj:
             switch (receiver.as.obj->type) {
                 case ObjType::String: found = typeExtensions_[kTypeString].find(name); break;
                 case ObjType::List: found = typeExtensions_[kTypeList].find(name); break;
                 case ObjType::Map: found = typeExtensions_[kTypeMap].find(name); break;
+                case ObjType::Set: found = typeExtensions_[kTypeSet].find(name); break;
                 case ObjType::Range: found = typeExtensions_[kTypeRange].find(name); break;
                 case ObjType::Bytes: found = typeExtensions_[kTypeBytes].find(name); break;
                 case ObjType::Closure:
@@ -640,9 +662,9 @@ bool VM::hasMember(Value candidate, const ObjString* name) const {
     if (findNativeMethod(candidate, name) != nullptr || findExtension(candidate, name) != nullptr) return true;
     if (!candidate.isObj()) return false;
     const ObjType type = candidate.as.obj->type;
-    if (name == names.length || name == names.size)
+    if (name == names.size)
         return type == ObjType::String || type == ObjType::List || type == ObjType::Map || type == ObjType::Range ||
-               type == ObjType::Bytes;
+               type == ObjType::Bytes || type == ObjType::Set;
     if (name == names.indices || name == names.lastIndex) return type == ObjType::String || type == ObjType::List;
     if (name == names.itemType) return type == ObjType::List;
     if (name == names.keyType || name == names.valueType) return type == ObjType::Map;
@@ -964,6 +986,7 @@ std::string VM::typeName(Value v) const {
         case ValueKind::Int: return "int";
         case ValueKind::Char: return "char";
         case ValueKind::Byte: return "byte";
+        case ValueKind::FromEnd: return "Index";
         case ValueKind::Float: return "float";
         case ValueKind::Undefined: return "undefined";
         case ValueKind::Obj: break;
@@ -972,6 +995,7 @@ std::string VM::typeName(Value v) const {
         case ObjType::String: return "string";
         case ObjType::List: return "List";
         case ObjType::Map: return "Map";
+        case ObjType::Set: return "Set";
         case ObjType::Range: return "Range";
         case ObjType::Bytes: return "Bytes";
         case ObjType::Closure:
@@ -1367,9 +1391,10 @@ bool VM::callValue(Value callee, int argc, bool packed) {
                 const NativeMethod* method = bound->method;
                 checkArity(method->name, method->minArgs, method->maxArgs, argc);
                 if (pendingEnums_ > 0) rejectPendingNames(sp_ - argc, argc);
+                // What changes its receiver: not one that is another core's, or frozen (D26).
+                if (method->mutates && bound->receiver.isObj()) guardWrite(bound->receiver.as.obj);
                 if (coreId_ != 0) {
                     guardRead(bound->receiver);
-                    if (method->mutates && bound->receiver.isObj()) guardWrite(bound->receiver.as.obj);
                     guardBand(bound->receiver, method->name);
                     guardNative(sp_ - argc, argc);
                 }
@@ -1535,7 +1560,21 @@ bool VM::callNativeNamed(int positional, int named) {
                                        asBoundNative(callee)->method->minArgs, asBoundNative(callee)->method->maxArgs}
                               : Native{asNative(callee)->params, asNative(callee)->name, asNative(callee)->minArgs,
                                        asNative(callee)->maxArgs};
-    const Native* method = &native;
+    const std::vector<std::string>* best = nullptr;
+    if (callee.isObjType(ObjType::BoundNative) && asBoundNative(callee)->method->forms.size() > 1) {
+        // Declared in several forms: the smallest that has a parameter for each name given.
+        for (const std::vector<std::string>& form : asBoundNative(callee)->method->forms) {
+            bool fits = static_cast<int>(form.size()) >= positional;
+            const Value* pair = first + positional;
+            for (int i = 0; fits && i < named; i++, pair += 2) {
+                const std::string& name = pair[0].isString() ? asString(pair[0])->utf8() : std::string();
+                fits = name.empty() ? !form.empty() : std::find(form.begin(), form.end(), name) != form.end();
+            }
+            if (fits && (best == nullptr || form.size() < best->size())) best = &form;
+        }
+    }
+    const Native chosen{best != nullptr ? *best : native.params, native.name, native.minArgs, native.maxArgs};
+    const Native* method = &chosen;
     const int count = static_cast<int>(method->params.size());
     if (positional > count) checkArity(method->name, method->minArgs, method->maxArgs, positional + named);
 
@@ -1591,6 +1630,8 @@ const NativeMethod* VM::findNativeMethod(Value receiver, const ObjString* name) 
         type = BuiltinType::Char;
     } else if (receiver.isByte()) {
         type = BuiltinType::Byte;
+    } else if (receiver.isFromEnd()) {
+        type = BuiltinType::Index;
     } else if (!receiver.isObj()) {
         return nullptr;
     } else {
@@ -1598,6 +1639,7 @@ const NativeMethod* VM::findNativeMethod(Value receiver, const ObjString* name) 
             case ObjType::String: type = BuiltinType::String; break;
             case ObjType::List: type = BuiltinType::List; break;
             case ObjType::Map: type = BuiltinType::Map; break;
+            case ObjType::Set: type = BuiltinType::Set; break;
             case ObjType::Range: type = BuiltinType::Range; break;
             case ObjType::Bytes: type = BuiltinType::Bytes; break;
             default: return nullptr;
@@ -1723,10 +1765,12 @@ bool VM::invoke(ObjString* name, int argc, bool trailing) {
         if (const int done = scopeFunction(name, argc)) return done == 2;
         throw runtimeError("undefined method '" + name->utf8() + "' on a value of type " + typeName(receiver));
     }
+    if (receiver.isObjType(ObjType::Range) && asRange(receiver)->fromEnd() && method->name != "of")
+        throw rangeFromEnd(asRange(receiver), method->name + "()");
     checkArity(method->name, method->minArgs, method->maxArgs, argc);
     if (pendingEnums_ > 0) rejectPendingNames(sp_ - argc, argc);
+    if (method->mutates && receiver.isObj()) guardWrite(receiver.as.obj);  // nor frozen (D26)
     if (coreId_ != 0) {
-        if (method->mutates && receiver.isObj()) guardWrite(receiver.as.obj);
         guardBand(receiver, method->name);
         guardNative(sp_ - argc, argc);
     }
@@ -1892,7 +1936,19 @@ bool VM::equals(Value a, Value b, int depth) {
         case ObjType::Range: {
             const ObjRange* x = asRange(a);
             const ObjRange* y = asRange(b);
-            return x->start == y->start && x->end == y->end && x->step == y->step && x->inclusive == y->inclusive;
+            return x->start == y->start && x->end == y->end && x->step == y->step && x->inclusive == y->inclusive &&
+                   x->startFromEnd == y->startFromEnd && x->endFromEnd == y->endFromEnd;
+        }
+        case ObjType::Set: {
+            // The same items, whatever their order.
+            const ObjSet* x = asSet(a);
+            const ObjSet* y = asSet(b);
+            if (setSize(x) != setSize(y)) return false;
+            const std::vector<Value> items = setItems(x);
+            TempVector keep(*this, const_cast<std::vector<Value>&>(items));
+            for (const Value& item : items)
+                if (!setContains(y, item)) return false;
+            return true;
         }
         default:
             return valuesEqual(a, b);
@@ -1967,7 +2023,7 @@ Value VM::getProperty(Value obj, ObjString* name) {
                 throw runtimeError("undefined static member '" + name->utf8() + "' on class " + cls->name->utf8());
             }
             case ObjType::String:
-                if (name == names.length || name == names.size) return Value::integer(static_cast<int64_t>(asString(obj)->length));
+                if (name == names.size) return Value::integer(static_cast<int64_t>(asString(obj)->length));
                 if (name == names.indices)
                     return Value::object(alloc<ObjRange>(int64_t{0}, static_cast<int64_t>(asString(obj)->length), int64_t{1}, false));
                 if (name == names.lastIndex) return Value::integer(static_cast<int64_t>(asString(obj)->length) - 1);
@@ -1978,26 +2034,31 @@ Value VM::getProperty(Value obj, ObjString* name) {
                 }
                 break;
             case ObjType::List:
-                if (name == names.length || name == names.size) return Value::integer(static_cast<int64_t>(asList(obj)->size()));
+                if (name == names.size) return Value::integer(static_cast<int64_t>(asList(obj)->size()));
                 if (name == names.indices)
                     return Value::object(alloc<ObjRange>(int64_t{0}, static_cast<int64_t>(asList(obj)->size()), int64_t{1}, false));
                 if (name == names.lastIndex) return Value::integer(static_cast<int64_t>(asList(obj)->size()) - 1);
                 if (name == names.itemType) return Value::object(typeArgument(asList(obj)->type, 0));  // M6.6 part 1
                 break;
             case ObjType::Map:
-                if (name == names.length || name == names.size) return Value::integer(static_cast<int64_t>(asMap(obj)->map.size()));
+                if (name == names.size) return Value::integer(static_cast<int64_t>(asMap(obj)->map.size()));
                 if (name == names.keyType) return Value::object(typeArgument(asMap(obj)->type, 0));
                 if (name == names.valueType) return Value::object(typeArgument(asMap(obj)->type, 1));
-                if (name == names.keys) return mapKeys(asMap(obj));
+                if (name == names.keys) return mapView(asMap(obj), false);  // live views (D77)
                 if (name == names.values) return mapValues(asMap(obj));
-                if (name == names.entries) return mapEntries(asMap(obj));
+                if (name == names.entries) return mapView(asMap(obj), true);
+                break;
+            case ObjType::Set:
+                if (name == names.size) return Value::integer(static_cast<int64_t>(setSize(asSet(obj))));
+                if (name == names.itemType) return Value::object(typeArgument(asSet(obj)->type, 0));
                 break;
             case ObjType::Range: {
                 ObjRange* range = asRange(obj);
-                if (name == names.start) return Value::integer(range->start);
-                if (name == names.end) return Value::integer(range->end);
+                if (name == names.start) return range->startFromEnd ? Value::fromEnd(range->start) : Value::integer(range->start);
+                if (name == names.end) return range->endFromEnd ? Value::fromEnd(range->end) : Value::integer(range->end);
+                if (range->fromEnd()) throw rangeFromEnd(range, name->utf8());
                 if (name == names.step) return Value::integer(range->step);
-                if (name == names.length || name == names.size) return Value::integer(range->count());
+                if (name == names.size) return Value::integer(range->count());
                 // The numbers it starts and finishes on, when it holds any.
                 if (name == names.first && range->count() > 0) return Value::integer(range->start);
                 if (name == names.last && range->count() > 0)
@@ -2005,7 +2066,7 @@ Value VM::getProperty(Value obj, ObjString* name) {
                 break;
             }
             case ObjType::Bytes:
-                if (name == names.length || name == names.size) return Value::integer(static_cast<int64_t>(asBytes(obj)->data.size()));
+                if (name == names.size) return Value::integer(static_cast<int64_t>(asBytes(obj)->data.size()));
                 break;
             default:
                 break;
@@ -2013,6 +2074,9 @@ Value VM::getProperty(Value obj, ObjString* name) {
     }
 
     if (obj.isChar() && name == names.code) return Value::integer(obj.as.i);  // the character's number (D24)
+    // An Index (D146): ^k, or an int from the start.
+    if ((obj.isFromEnd() || obj.isInt()) && name == names.fromEnd) return Value::boolean(obj.isFromEnd());
+    if ((obj.isFromEnd() || obj.isInt()) && name == names.value) return Value::integer(obj.as.i);
     if (obj.isInt() && name == names.character) {
         // The character numbered n (D142).
         if (!isCharacter(obj.as.i))
@@ -2096,7 +2160,7 @@ const ValueLayout& VM::layoutOf(ObjClass* cls) {
             field.cls = fieldClass(declared);
             field.kind = !nullable && field.cls->isValue ? ValueField::Nested : ValueField::Object;
         } else if (id == kTypeString || id == kTypeList || id == kTypeMap || id == kTypeRange || id == kTypeBytes ||
-                   id == kTypeFunction || id == kTypeType) {
+                   id == kTypeFunction || id == kTypeType || id == kTypeSet || id == kTypeFrozenList || id == kTypeFrozenMap || id == kTypeFrozenSet) {
             field.kind = ValueField::Object;  // null is a null pointer, where the type takes it
         } else {
             field.kind = ValueField::Any;  // Number, and an int, float or bool that may be null
@@ -3097,9 +3161,12 @@ Value VM::makeEntry(Value key, Value value) {
         pair->values() = {key, value};
         return Value::object(pair);
     }
-    ObjInstance* entry = newInstance(mapEntryClass_);
-    entry->setField(names.key, key);
-    entry->setField(names.value, value);
+    // A value (D73): a box holding the key and the value, in MapEntry's layout.
+    TempRoot keepKey(*this, key), keepValue(*this, value);
+    ObjValue* entry = newValue(mapEntryClass_);
+    const ValueLayout& layout = layoutOf(mapEntryClass_);
+    writeValueField(entry->data() + layout.fields[0].offset, layout.fields[0], mapEntryClass_, key);
+    writeValueField(entry->data() + layout.fields[1].offset, layout.fields[1], mapEntryClass_, value);
     return Value::object(entry);
 }
 
@@ -3245,35 +3312,94 @@ void VM::setProperty(Value obj, ObjString* name, Value value) {
 namespace {
 
 // Resolves a possibly negative index against a length; returns false if out of range.
+// A position from the start: a negative one is never one counted from the end (D146).
 bool resolveIndex(int64_t index, size_t length, size_t& out) {
-    int64_t n = static_cast<int64_t>(length);
-    if (index < 0) index += n;
-    if (index < 0 || index >= n) return false;
+    if (index < 0 || static_cast<uint64_t>(index) >= length) return false;
     out = static_cast<size_t>(index);
     return true;
 }
 
 }  // namespace
 
+// Where `index` is in `size` items: an int from the start, or ^k from the end (D146); false
+// past either end. A negative int is no position, never one counted from the end.
+bool VM::position(Value index, size_t size, size_t& out, const char* what) {
+    if (index.isFromEnd()) {
+        if (static_cast<uint64_t>(index.as.i) > size) return false;
+        out = size - static_cast<size_t>(index.as.i);
+        return true;
+    }
+    return resolveIndex(toInt(index, what), size, out);
+}
+
+AstraThrow VM::outOfRange(const char* what, Value index, size_t size) {
+    std::string message = std::string(what) + " " + stringify(index) + " is out of range (size " + std::to_string(size) + ")";
+    if (index.isInt() && index.as.i < 0) message += ": a negative number is no position; the last is [^1]";
+    return runtimeError(message);
+}
+
+// The positions a range in an index takes in `size` items (D147): from `begin` up to `end`,
+// left out. Inclusive as `..` is; an end counted from the end resolved; an error past either
+// end or running backwards.
+void VM::sliceBounds(const ObjRange* range, size_t size, size_t& begin, size_t& end) {
+    if (range->step != 1) throw runtimeError("a slice takes a range that counts up by one, not " + stringify(Value::object(const_cast<ObjRange*>(range))));
+    const int64_t n = static_cast<int64_t>(size);
+    const int64_t first = range->startFromEnd ? n - range->start : range->start;
+    const int64_t last = (range->endFromEnd ? n - range->end : range->end) + (range->inclusive ? 1 : 0);
+    const std::string shown = stringify(Value::object(const_cast<ObjRange*>(range)));
+    if (first < 0 || first > n || last < 0 || last > n)
+        throw runtimeError("the slice " + shown + " is out of range (size " + std::to_string(size) + ")");
+    if (last < first) throw runtimeError("the slice " + shown + " runs backwards: from " + std::to_string(first) + " to " + std::to_string(last - 1));
+    begin = static_cast<size_t>(first);
+    end = static_cast<size_t>(last);
+}
+
+// A range with an end counted from the end, used where its own numbers are wanted.
+AstraThrow VM::rangeFromEnd(const ObjRange* range, const std::string& use) {
+    const std::string shown = stringify(Value::object(const_cast<ObjRange*>(range)));
+    return runtimeError("the range " + shown + " has an end counted from the end (^), which " + use +
+                        " cannot work with: slice with it, items[" + shown + "], or make it plain with of(size)");
+}
+
 Value VM::getIndex(Value obj, Value index) {
     if (obj.isObj()) {
         guardRead(obj.as.obj);
+        // A range in the index: that part, a copy (D147).
+        if (index.isObjType(ObjType::Range) && (obj.as.obj->type == ObjType::List || obj.as.obj->type == ObjType::String ||
+                                                obj.as.obj->type == ObjType::Bytes)) {
+            size_t begin, end;
+            if (obj.isObjType(ObjType::List)) {
+                ObjList* list = asList(obj);
+                sliceBounds(asRange(index), list->size(), begin, end);
+                ObjList* part = listLike(list);
+                TempRoot keep(*this, Value::object(part));
+                listCopyRange(part, list, begin, end - begin);
+                return Value::object(part);
+            }
+            if (obj.isString()) {
+                const ObjString* text = asString(obj);
+                sliceBounds(asRange(index), text->length, begin, end);
+                return str(text->slice(begin, end));
+            }
+            const std::vector<uint8_t>& data = asBytes(obj)->data;
+            sliceBounds(asRange(index), data.size(), begin, end);
+            ObjBytes* part = alloc<ObjBytes>();
+            part->data.assign(data.begin() + static_cast<std::ptrdiff_t>(begin), data.begin() + static_cast<std::ptrdiff_t>(end));
+            account(part->data.size());
+            return Value::object(part);
+        }
         switch (obj.as.obj->type) {
             case ObjType::List: {
                 ObjList* list = asList(obj);
                 size_t i;
-                if (!resolveIndex(toInt(index, "list index"), list->size(), i))
-                    throw runtimeError("list index " + std::to_string(index.as.i) + " is out of range (length " +
-                                       std::to_string(list->size()) + ")");
+                if (!position(index, list->size(), i, "list index")) throw outOfRange("list index", index, list->size());
                 return listGet(list, i);
             }
             case ObjType::String: {
                 // One character, wherever it is: positions count characters, not bytes.
                 const ObjString* text = asString(obj);
                 size_t i;
-                if (!resolveIndex(toInt(index, "string index"), text->length, i))
-                    throw runtimeError("string index " + std::to_string(index.as.i) + " is out of range (length " +
-                                       std::to_string(text->length) + ")");
+                if (!position(index, text->length, i, "string index")) throw outOfRange("string index", index, text->length);
                 return Value::character(text->at(i));  // a char (D24)
             }
             case ObjType::Map: {
@@ -3283,9 +3409,7 @@ Value VM::getIndex(Value obj, Value index) {
             case ObjType::Bytes: {
                 const std::vector<uint8_t>& data = asBytes(obj)->data;
                 size_t i;
-                if (!resolveIndex(toInt(index, "bytes index"), data.size(), i))
-                    throw runtimeError("bytes index " + std::to_string(index.as.i) + " is out of range (size " +
-                                       std::to_string(data.size()) + ")");
+                if (!position(index, data.size(), i, "bytes index")) throw outOfRange("bytes index", index, data.size());
                 return Value::byte(data[i]);  // a byte (D19)
             }
             default:
@@ -3300,9 +3424,7 @@ void VM::setIndex(Value obj, Value index, Value value) {
         guardWrite(obj.as.obj);
         ObjList* list = asList(obj);
         size_t i;
-        if (!resolveIndex(toInt(index, "list index"), list->size(), i))
-            throw runtimeError("list index " + std::to_string(index.as.i) + " is out of range (length " +
-                               std::to_string(list->size()) + ")");
+        if (!position(index, list->size(), i, "list index")) throw outOfRange("list index", index, list->size());
         listSet(list, i, value);
     } else if (obj.isObjType(ObjType::Map)) {
         guardWrite(obj.as.obj);
@@ -3311,9 +3433,7 @@ void VM::setIndex(Value obj, Value index, Value value) {
     } else if (obj.isObjType(ObjType::Bytes)) {
         std::vector<uint8_t>& data = asBytes(obj)->data;
         size_t i;
-        if (!resolveIndex(toInt(index, "bytes index"), data.size(), i))
-            throw runtimeError("bytes index " + std::to_string(index.as.i) + " is out of range (size " +
-                               std::to_string(data.size()) + ")");
+        if (!position(index, data.size(), i, "bytes index")) throw outOfRange("bytes index", index, data.size());
         if (!value.isByte() && (!value.isInt() || value.as.i < 0 || value.as.i > 255))
             throw runtimeError("a byte is a whole number from 0 to 255, not " + stringify(value));
         // In a parallel section over the parts of a buffer, a core writes its own part of it.
@@ -3336,6 +3456,25 @@ bool VM::binarySlow(Op op) {
     guardRead(a);
     guardRead(b);
     ObjString* symbol = opNames_[static_cast<int>(op)];
+
+    // set + x and set - x: a new set, with x or without it, or with or without what a list, a
+    // range or another set holds.
+    if (a.isObjType(ObjType::Set) && (op == Op::Add || op == Op::Sub)) {
+        const ObjSet* from = asSet(a);
+        ObjSet* made = newSet(from->type);
+        TempRoot keep(*this, Value::object(made));
+        for (const Value& item : setItems(from)) setAdd(made, item);
+        const bool many = b.isObjType(ObjType::List) || b.isObjType(ObjType::Set) || b.isObjType(ObjType::Range);
+        const std::vector<Value> others = many ? itemsOf(b, "set + and -") : std::vector<Value>{b};
+        TempVector keepOthers(*this, others);
+        for (const Value& item : others) {
+            if (op == Op::Add) setAdd(made, item);
+            else setRemove(made, item);
+        }
+        sp_[-2] = Value::object(made);
+        sp_--;
+        return false;
+    }
 
     // A byte in arithmetic is the int it holds, so byte + byte is an int (D19).
     if ((a.isByte() && (b.isNumber() || b.isByte())) || (b.isByte() && a.isNumber())) {
@@ -3497,6 +3636,10 @@ bool VM::matchesType(const Value& v, uint8_t type, const ObjClass* cls) const {
         case kTypeString: return v.isString();
         case kTypeList: return v.isObjType(ObjType::List);
         case kTypeMap: return v.isObjType(ObjType::Map);
+        case kTypeSet: return v.isObjType(ObjType::Set);
+        case kTypeFrozenList: return v.isObjType(ObjType::List) && v.as.obj->frozen != 0;
+        case kTypeFrozenMap: return v.isObjType(ObjType::Map) && v.as.obj->frozen != 0;
+        case kTypeFrozenSet: return v.isObjType(ObjType::Set) && v.as.obj->frozen != 0;
         case kTypeRange: return v.isObjType(ObjType::Range);
         case kTypeBytes: return v.isObjType(ObjType::Bytes);
         case kTypeChar: return v.isChar();
@@ -3511,6 +3654,7 @@ bool VM::matchesType(const Value& v, uint8_t type, const ObjClass* cls) const {
             return v.as.i >= low && v.as.i <= high;
         }
         case kTypeFloat32: return v.isFloat();
+        case kTypeIndex: return v.isInt() || v.isFromEnd();
         case kTypeType: return v.isObjType(ObjType::TypeInfo);
         case kTypeFunction:
             return v.isObjType(ObjType::Closure) || v.isObjType(ObjType::Native) ||
@@ -3643,8 +3787,10 @@ Value VM::makeIterator(Value iterable) {
             case ObjType::Map:
             case ObjType::String:
             case ObjType::Bytes:
+            case ObjType::Set:
                 return Value::object(alloc<ObjIterator>(iterable));
             case ObjType::Range: {
+                if (asRange(iterable)->fromEnd()) throw rangeFromEnd(asRange(iterable), "a for loop");
                 ObjIterator* it = alloc<ObjIterator>(iterable);
                 it->nextValue = asRange(iterable)->start;
                 it->remaining = asRange(iterable)->count();
@@ -3668,6 +3814,206 @@ Value VM::makeIterator(Value iterable) {
         }
     }
     throw runtimeError("a value of type " + typeName(iterable) + " is not iterable");
+}
+
+// Part `index` of a value taken apart (D64): a list's item, or a data object's or a value's
+// field, in the order of its header.
+Value VM::componentOf(Value whole, size_t index) {
+    guardRead(whole);
+    static const char* const kOrdinals[] = {"first", "second", "third", "fourth", "fifth"};
+    const std::string which = index < 5 ? kOrdinals[index] : std::to_string(index + 1) + "th";
+    if (whole.isObjType(ObjType::List)) {
+        ObjList* list = asList(whole);
+        if (index >= list->size()) throw runtimeError("cannot take a " + which + " part from a list of " + std::to_string(list->size()));
+        return listGet(list, index);
+    }
+    if (classOf(whole) != nullptr && classOf(whole)->isData) {
+        const ObjClass* cls = classOf(whole);
+        if (index >= cls->components.size())
+            throw runtimeError("cannot take a " + which + " part from " + cls->name->utf8() + ", which has " +
+                               std::to_string(cls->components.size()));
+        return getProperty(whole, cls->components[index]);
+    }
+    throw runtimeError("cannot take apart a value of type " + typeName(whole) + ": only a list, a data object or a value has parts");
+}
+
+// ---- Sets (M6.6 part 8), and views of a map's keys and entries (D77) ----
+
+ObjSet* VM::newSet(ObjTypeInfo* type) {
+    ObjSet* set = alloc<ObjSet>();
+    set->type = type;
+    return set;
+}
+
+// A map's keys, or its entries, as a set that shows the map as it is and cannot be changed.
+Value VM::mapView(ObjMap* map, bool entries) {
+    ObjTypeInfo* item = mapPartType(map, entries ? 2 : 0);
+    ObjSet* view = newSet(item != nullptr && !item->args.empty() ? typeOf(kTypeSet, false, nullptr, {item->args[0]}) : nullptr);
+    view->viewOf = map;
+    view->entries = entries;
+    return Value::object(view);
+}
+
+bool VM::setContains(const ObjSet* set, Value item) {
+    if (!set->view()) return set->items.find(item) != nullptr;
+    if (!set->entries) return set->viewOf->map.find(item) != nullptr;
+    // An entry, a MapEntry or a pair, is there when its key is, with its value.
+    if (!item.isObjType(ObjType::Value) && !item.isSmall() && !item.isRef()) return false;
+    const ObjClass* cls = classOf(item);
+    if (cls == nullptr || cls->components.size() != 2) return false;
+    const Value key = componentOf(item, 0), value = componentOf(item, 1);
+    const Value* held = set->viewOf->map.find(key);
+    return held != nullptr && equals(*held, value);
+}
+
+AstraThrow VM::viewChanged(const ObjSet* view) {
+    return runtimeError(std::string("a map's ") + (view->entries ? "entries" : "keys") +
+                        " show the map and cannot be changed through it: change the map, with remove, removeAll { (k, v) -> } or retainAll");
+}
+
+bool VM::setAdd(ObjSet* set, Value item) {
+    if (set->view()) throw viewChanged(set);
+    if (set->items.find(item) != nullptr) return false;
+    set->items.set(own(item), Value::null());
+    account(64);
+    return true;
+}
+
+bool VM::setRemove(ObjSet* set, Value item) {
+    if (set->view()) throw viewChanged(set);
+    return set->items.remove(item);
+}
+
+// ---- Keys and frozen collections (D26) ----
+
+// While a key's == or hashCode runs, nothing is collected (VM::keyCalls_).
+struct KeyCall {
+    VM& vm;
+    explicit KeyCall(VM& v) : vm(v) { vm.keyCalls_++; }
+    ~KeyCall() { vm.keyCalls_--; }
+};
+
+// Whether the class has an == or a hashCode of its own, asked once.
+static bool hasOwnKeys(const ObjClass* cls, const Names& names) {
+    if (cls->ownKeys == 0)
+        const_cast<ObjClass*>(cls)->ownKeys = cls->methods.find(names.opEq) != nullptr || cls->methods.find(names.hashCode) != nullptr ? 2 : 1;
+    return cls->ownKeys == 2;
+}
+
+bool VM::hashOf(const ObjClass* cls, const Value& v, size_t& out) {
+    if (!hasOwnKeys(cls, names)) return false;
+    const Value* method = cls->methods.find(names.hashCode);
+    if (method == nullptr || !method->isObjType(ObjType::Closure)) return false;
+    TempRoot receiver(*this, boxed(v));
+    TempRoot bound(*this, Value::object(alloc<ObjBoundMethod>(receiver.get(), asClosure(*method))));
+    KeyCall inKey(*this);
+    const Value result = call(bound.get(), 0, nullptr);
+    if (!result.isInt()) throw runtimeError(cls->name->utf8() + ".hashCode() gave " + typeName(result) + ", not an int");
+    out = static_cast<size_t>(result.as.i);
+    return true;
+}
+
+bool VM::equalOf(const ObjClass* cls, const Value& a, const Value& b, bool& out) {
+    if (!hasOwnKeys(cls, names)) return false;
+    const Value* method = cls->methods.find(names.opEq);
+    if (method == nullptr || !method->isObjType(ObjType::Closure)) return false;
+    TempRoot receiver(*this, boxed(a));
+    TempRoot other(*this, boxed(b));
+    TempRoot bound(*this, Value::object(alloc<ObjBoundMethod>(receiver.get(), asClosure(*method))));
+    const Value given = other.get();
+    KeyCall inKey(*this);
+    out = call(bound.get(), 1, &given).truthy();
+    return true;
+}
+
+void VM::refuseKey(const Value& key) {
+    if (key.isObj() && key.as.obj->frozen == 2)
+        throw runtimeError("this frozen " + typeName(key) + " holds something that can change, so it cannot be a key");
+    if (key.isObjType(ObjType::Bytes))
+        throw runtimeError("bytes can change, so they cannot be a key: a frozen list of them can, key.toList().frozen()");
+    if (key.isObjType(ObjType::List) || key.isObjType(ObjType::Map) || key.isObjType(ObjType::Set))
+        throw runtimeError("a " + typeName(key) + " can change, so it cannot be a key: a frozen copy can, key.frozen()");
+    throw runtimeError("a " + typeName(key) + " can change in what its == looks at, so it cannot be a key");
+}
+
+Value VM::frozenCopy(Value v, int depth) {
+    if (!v.isObj() || v.as.obj->frozen != 0) return v;
+    const ObjType type = v.as.obj->type;
+    if (type != ObjType::List && type != ObjType::Map && type != ObjType::Set) return v;
+    if (depth >= kMaxEqualsDepth) throw runtimeError("frozen(): the " + typeName(v) + " holds itself, or is nested too deeply to copy");
+    guardRead(v);
+    // Whether all it holds could be a key as well.
+    bool stable = true;
+    auto inner = [&](Value item) {
+        const Value made = frozenCopy(item, depth + 1);
+        stable = stable && stableKey(made);
+        return made;
+    };
+    if (type == ObjType::List) {
+        ObjList* list = asList(v);
+        ObjList* made = listLike(list);
+        TempRoot keep(*this, Value::object(made));
+        if (list->packed()) {
+            listCopyRange(made, list, 0, list->size());
+            if (list->store() == ListStore::Items && list->pack->itemClass->unstableKey) stable = false;
+        } else {
+            for (size_t i = 0; i < list->size(); i++) {
+                const Value item = inner(list->values()[i]);
+                made->values().push_back(item);
+            }
+        }
+        made->frozen = stable ? 1 : 2;
+        return keep.get();
+    }
+    if (type == ObjType::Map) {
+        ObjMap* map = asMap(v);
+        ObjMap* made = alloc<ObjMap>();
+        made->type = map->type;
+        TempRoot keep(*this, Value::object(made));
+        // By position: a key's hashCode, run as it goes in, may change the map.
+        for (size_t i = 0; i < map->map.entries().size(); i++) {
+            const ValueMap::Entry entry = map->map.entries()[i];
+            if (!entry.live) continue;
+            const Value value = inner(entry.value);
+            made->map.set(entry.key, value);
+        }
+        account(made->map.size() * 2 * sizeof(Value));
+        made->frozen = stable ? 1 : 2;
+        return keep.get();
+    }
+    const ObjSet* set = asSet(v);
+    ObjSet* made = newSet(set->type);
+    TempRoot keep(*this, Value::object(made));
+    for (const Value& item : setItems(set)) made->items.set(item, Value::null());
+    made->frozen = 1;
+    return keep.get();
+}
+
+std::vector<Value> VM::setItems(const ObjSet* set) {
+    std::vector<Value> out;
+    const ValueMap& from = set->view() ? set->viewOf->map : set->items;
+    out.reserve(from.size());
+    TempVector keep(*this, out);
+    for (size_t i = 0; i < from.entries().size(); i++) {
+        const ValueMap::Entry& entry = from.entries()[i];
+        if (!entry.live) continue;
+        out.push_back(set->entries ? makeEntry(entry.key, entry.value) : entry.key);
+    }
+    return out;
+}
+
+std::vector<Value> VM::itemsOf(Value from, const char* what) {
+    if (from.isObjType(ObjType::List)) return listCopy(asList(from));
+    if (from.isObjType(ObjType::Set)) return setItems(asSet(from));
+    const bool iterable = from.isObjType(ObjType::Range) || from.isString() || from.isObjType(ObjType::Bytes) || from.isObjType(ObjType::Map);
+    if (!iterable) throw runtimeError(std::string(what) + " takes a list, a set, a range, a string, bytes or a map, not a value of type " + typeName(from));
+    std::vector<Value> out;
+    TempVector keep(*this, out);
+    const Value iterator = makeIterator(from);
+    TempRoot keepIterator(*this, iterator);
+    Value item;
+    while (iteratorNext(asIterator(iterator), item)) out.push_back(item);
+    return out;
 }
 
 bool VM::iteratorNext(ObjIterator* it, Value& out) {
@@ -3698,12 +4044,24 @@ bool VM::iteratorNext(ObjIterator* it, Value& out) {
             out = Value::character(text->at(it->index++));
             return true;
         }
+        case ObjType::Set: {
+            // A set's items; a view's, the map's keys or entries as they are (D77).
+            const ObjSet* set = asSet(source);
+            const std::vector<ValueMap::Entry>& entries = set->view() ? set->viewOf->map.entries() : set->items.entries();
+            while (it->index < entries.size()) {
+                const ValueMap::Entry& entry = entries[it->index++];
+                if (!entry.live) continue;
+                out = set->entries ? makeEntry(entry.key, entry.value) : entry.key;
+                return true;
+            }
+            return false;
+        }
         case ObjType::Map: {
             const std::vector<ValueMap::Entry>& entries = asMap(source)->map.entries();
             while (it->index < entries.size()) {
                 const ValueMap::Entry& entry = entries[it->index++];
                 if (entry.live) {
-                    out = entry.key;
+                    out = makeEntry(entry.key, entry.value);  // a map gives its entries (D64)
                     return true;
                 }
             }
@@ -3827,6 +4185,12 @@ inline int32_t operandI32(const uint8_t* at) {
 }
 
 void VM::run(int baseFrame) {
+    // Maps and sets on this thread call this VM for a class's own == and hashCode (D26).
+    struct KeysHere {
+        KeyMethods* const saved = keyMethods;
+        explicit KeysHere(KeyMethods* here) { keyMethods = here; }
+        ~KeysHere() { keyMethods = saved; }
+    } keysHere(this);
     CallFrame* frame = nullptr;
     const uint8_t* ip = nullptr;
     const uint8_t* code = nullptr;
@@ -5611,28 +5975,48 @@ void VM::run(int baseFrame) {
                         asClass(sp_[-1])->components.push_back(name);
                         break;
                     }
+                    case Op::UnstableKey:
+                        if (!sp_[-1].isObjType(ObjType::Class)) throw runtimeError("invalid class declaration");
+                        asClass(sp_[-1])->unstableKey = true;
+                        break;
                     case Op::Component: {
                         const size_t index = READ_U8();
-                        Value whole = sp_[-1];
-                        guardRead(whole);
-                        static const char* const kOrdinals[] = {"first", "second", "third", "fourth", "fifth"};
-                        const std::string which = index < 5 ? kOrdinals[index] : std::to_string(index + 1) + "th";
-                        if (whole.isObjType(ObjType::List)) {
-                            ObjList* list = asList(whole);
-                            if (index >= list->size())
-                                throw runtimeError("cannot take a " + which + " part from a list of " + std::to_string(list->size()));
-                            sp_[-1] = listGet(list, index);
-                        } else if (classOf(whole) != nullptr && classOf(whole)->isData) {
-                            const ObjClass* cls = classOf(whole);
-                            if (index >= cls->components.size())
-                                throw runtimeError("cannot take a " + which + " part from " + cls->name->utf8() + ", which has " +
-                                                   std::to_string(cls->components.size()));
-                            SAVE_IP();
-                            sp_[-1] = getProperty(whole, cls->components[index]);
-                        } else {
-                            throw runtimeError("cannot take apart a value of type " + typeName(whole) +
-                                               ": only a list or a data object has parts");
+                        SAVE_IP();
+                        sp_[-1] = componentOf(sp_[-1], index);
+                        break;
+                    }
+                    case Op::IterNextPair: {
+                        const int slot = READ_U16();
+                        const int target = READ_I32();
+                        const Value iterator = base[slot];
+                        if (!iterator.isObjType(ObjType::Iterator)) throw runtimeError("invalid loop state");
+                        ObjIterator* it = asIterator(iterator);
+                        SAVE_IP();
+                        if (it->source.isObjType(ObjType::Map)) {
+                            // A map's key and value, as they are: no entry made (D73).
+                            const std::vector<ValueMap::Entry>& entries = asMap(it->source)->map.entries();
+                            while (it->index < entries.size() && !entries[it->index].live) it->index++;
+                            if (it->index >= entries.size()) {
+                                ip = code + target;
+                                break;
+                            }
+                            const ValueMap::Entry& entry = entries[it->index++];
+                            sp_[0] = entry.key;
+                            sp_[1] = entry.value;
+                            sp_ += 2;
+                            break;
                         }
+                        Value item;
+                        if (!iteratorNext(it, item)) {
+                            ip = code + target;
+                            break;
+                        }
+                        // Its parts read with the item where the collector sees it.
+                        sp_[0] = item;
+                        sp_[1] = item;
+                        sp_ += 2;
+                        sp_[-2] = componentOf(item, 0);
+                        sp_[-1] = componentOf(item, 1);
                         break;
                     }
                     case Op::MarkInterface:
@@ -6057,6 +6441,7 @@ void VM::run(int baseFrame) {
                             else typeList(list, type);
                         }
                         else if (made.isObjType(ObjType::Map) && type->id == kTypeMap && asMap(made)->type == nullptr) asMap(made)->type = type;
+                        else if (made.isObjType(ObjType::Set) && type->id == kTypeSet && asSet(made)->type == nullptr) asSet(made)->type = type;
                         ip = code + FAST_I32(2);
                         break;
                     }
@@ -6112,10 +6497,23 @@ void VM::run(int baseFrame) {
                             step = given.as.i;
                         }
                         Value end = sp_[-1], start = sp_[-2];
-                        if (!start.isInt() || !end.isInt())
+                        // An end may count from the end, `2..^1`, for a slice (D146, D147).
+                        if (!(start.isInt() || start.isFromEnd()) || !(end.isInt() || end.isFromEnd()))
                             throw runtimeError("range bounds must be ints, got " + typeName(start) + " and " + typeName(end));
-                        sp_[-2] = Value::object(alloc<ObjRange>(start.as.i, end.as.i, (flags & 2) ? -step : step, (flags & 1) != 0));
+                        if ((start.isFromEnd() || end.isFromEnd()) && (flags & 6) != 0)
+                            throw runtimeError("a range with an end counted from the end (^) has no step and does not count down");
+                        sp_[-2] = Value::object(alloc<ObjRange>(start.as.i, end.as.i, (flags & 2) ? -step : step, (flags & 1) != 0,
+                                                                start.isFromEnd(), end.isFromEnd()));
                         sp_--;
+                        break;
+                    }
+                    case Op::FromEnd: {
+                        // `^k`: k from the end; ^1 is the last (D146).
+                        const Value k = sp_[-1];
+                        if (!k.isInt()) throw runtimeError("^ takes an int, not " + typeName(k));
+                        if (k.as.i < 1)
+                            throw runtimeError("^" + std::to_string(k.as.i) + " is no position: ^1 is the last, ^2 the one before it");
+                        sp_[-1] = Value::fromEnd(k.as.i);
                         break;
                     }
 
@@ -6361,9 +6759,7 @@ const uint8_t* VM::placeInstruction(Op op, const uint8_t* ip, CallFrame* frame) 
             ObjList* list = asList(obj);
             guardWrite(list);
             size_t i;
-            if (!resolveIndex(toInt(index, "list index"), list->size(), i))
-                throw runtimeError("list index " + std::to_string(index.as.i) + " is out of range (length " +
-                                   std::to_string(list->size()) + ")");
+            if (!position(index, list->size(), i, "list index")) throw outOfRange("list index", index, list->size());
             sp_--;
             if (list->store() == ListStore::Items) {
                 if (list->pack->nullable && (list->pack->nulls[i / 64] >> (i % 64) & 1)) throw runtimeError("cannot change a field of null");
@@ -6426,6 +6822,7 @@ const uint8_t* VM::typeInstruction(Op op, const uint8_t* ip, CallFrame* frame) {
             // its own keeps it.
             if (made.isObjType(ObjType::List)) typeList(asList(made), type);
             else if (made.isObjType(ObjType::Map) && type->id == kTypeMap && asMap(made)->type == nullptr) asMap(made)->type = type;
+                        else if (made.isObjType(ObjType::Set) && type->id == kTypeSet && asSet(made)->type == nullptr) asSet(made)->type = type;
             sp_--;
             break;
         }
@@ -6525,6 +6922,7 @@ void VM::stringifyInto(std::string& out, Value v, bool quote, int depth) {
             if (quote) out += quoteCharacter(static_cast<uint32_t>(v.as.i));
             else appendUtf8(out, static_cast<uint32_t>(v.as.i));
             return;
+        case ValueKind::FromEnd: out += "^" + std::to_string(v.as.i); return;
         case ValueKind::Undefined: out += "undefined"; return;
         case ValueKind::Obj: break;
     }
@@ -6575,6 +6973,22 @@ void VM::stringifyInto(std::string& out, Value v, bool quote, int depth) {
             return;
         }
 
+        case ObjType::Set: {
+            if (depth > 16) {
+                out += "{...}";
+                return;
+            }
+            out += '{';
+            const std::vector<Value> items = setItems(asSet(v));
+            TempVector keep(*this, const_cast<std::vector<Value>&>(items));
+            for (size_t i = 0; i < items.size(); i++) {
+                if (i > 0) out += ", ";
+                stringifyInto(out, items[i], true, depth + 1);
+            }
+            out += '}';
+            return;
+        }
+
         case ObjType::Bytes: {
             const std::vector<uint8_t>& data = asBytes(v)->data;
             out += "Bytes[";
@@ -6589,9 +7003,9 @@ void VM::stringifyInto(std::string& out, Value v, bool quote, int depth) {
 
         case ObjType::Range: {
             ObjRange* range = asRange(v);
-            out += std::to_string(range->start);
+            out += (range->startFromEnd ? "^" : "") + std::to_string(range->start);
             out += range->inclusive ? ".." : "..<";
-            out += std::to_string(range->end);
+            out += (range->endFromEnd ? "^" : "") + std::to_string(range->end);
             if (range->step != 1) out += " step " + std::to_string(range->step);
             return;
         }
@@ -6809,6 +7223,15 @@ void VM::blacken(Obj* obj) {
                 liveBytes_ += sizeof(PackedItems) + list->pack->block.capacity() + list->pack->nulls.capacity() * sizeof(uint64_t);
             for (const Value& item : list->values()) markValue(item);
             markItems(list);
+            break;
+        }
+        case ObjType::Set: {
+            ObjSet* set = static_cast<ObjSet*>(obj);
+            liveBytes_ += sizeof(ObjSet) + set->items.entries().size() * 64;
+            for (const ValueMap::Entry& entry : set->items.entries())
+                if (entry.live) markValue(entry.key);
+            markObject(set->viewOf);
+            markObject(set->type);
             break;
         }
         case ObjType::Map: {

@@ -16,17 +16,17 @@ print(factorialOf(10))                           // expect: 3628800
 
 // a callback that refers to the thing it was registered as
 class Timers {
-  val pending : List = []
+  val pending : open List = []
   fun every(action : Function) : int {
-    this.pending.push(action)
-    return this.pending.length
+    this.pending.add(action)
+    return this.pending.size
   }
   fun fire() { for action in this.pending { action() } }
 }
 fun schedule() {
   val timers = Timers()
   val log = []
-  val id : int = timers.every(fun() { log.push("timer $id fired") })
+  val id : int = timers.every(fun() { log.add("timer $id fired") })
   timers.fire()
   return log
 }
@@ -37,7 +37,7 @@ fun counters() {
   val results = []
   for i in 0..<3 {
     val countdown : Function = fun(n) => n == 0 ? "done $i" : countdown(n - 1)
-    results.push(countdown(i))
+    results.add(countdown(i))
   }
   return results
 }
@@ -75,7 +75,7 @@ print(stepper())                                 // expect: ["first", "second"]
 
 // a typed variable is still checked once its value is known
 fun typed() {
-  val name : string = unknown([fun() => name].length)
+  val name : string = unknown([fun() => name].size)
   return name
 }
 print(attempt(typed))                            // expect: cannot assign a value of type int to 'name', which is declared as string

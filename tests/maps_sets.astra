@@ -1,0 +1,42 @@
+// A map's keys and entries are live views, sets that show the map as it is (D77); a for over a
+// map gives its entries (D64), which are values, as pairs are (D73); a map's contains takes a
+// whole entry (D140). Sets are built in.
+
+fun attempt(f : () -> any?) : string {
+  try { return "${f()}" } catch (e) { return e.message }
+}
+
+val ages = {"ann": 31, "bob": 25}
+val keys = ages.keys
+val entries = ages.entries
+ages["cy"] = 40
+print(keys, keys.size, "cy" in keys, entries.size, ("cy" to 40) in entries, ("cy" to 41) in entries)
+// expect: {"ann", "bob", "cy"} 3 true 3 true false
+ages.remove("ann")
+print(keys, entries, ages.values)   // expect: {"bob", "cy"} {MapEntry(key="bob", value=25), MapEntry(key="cy", value=40)} [25, 40]
+print(attempt { (keys as any as open Set<string>).add("zed") })
+// expect: a map's keys show the map and cannot be changed through it: change the map, with remove, removeAll { (k, v) -> } or retainAll
+
+// Looping over a map gives its entries; taking them apart makes nothing.
+var shown = []
+for (name, age) in ages { shown.add("$name=$age") }
+for entry in ages { shown.add(entry.key) }
+for name in ages.keys { shown.add(name.upper()) }
+print(shown)   // expect: ["bob=25", "cy=40", "bob", "cy", "BOB", "CY"]
+
+// Entries and pairs are values: equal by what they hold.
+val first = ages.entries.first()
+print(first, first == MapEntry("bob", 25), ("a" to 1) == Pair("a", 1), ages.contains("bob" to 25), ages.contains("bob" to 1))
+// expect: MapEntry(key="bob", value=25) true true true false
+
+// Sets: each value once, in the order first added.
+val seen = Set<string>()
+print(seen.add("x"), seen.add("y"), seen.add("x"), seen, seen.size, "x" in seen, seen.contains("z"))   // expect: true true false {"x", "y"} 2 true false
+val numbers = setOf(3, 1, 2, 1)
+print(numbers, numbers + 4, numbers - 1, numbers + [5, 6], numbers - setOf(1, 2), numbers == setOf(1, 2, 3), numbers.sorted())
+// expect: {3, 1, 2} {3, 1, 2, 4} {3, 2} {3, 1, 2, 5, 6} {3} true [1, 2, 3]
+numbers.removeAll { it > 2 }
+numbers.retainAll([1, 9])
+print(numbers, numbers.toList(), Set<int>().itemType, [1, 1, 2].toSet(), "hello".toSet(), (1..3).toSet())   // expect: {1} [1] int {1, 2} {'h', 'e', 'l', 'o'} {1, 2, 3}
+print(numbers.union([7]), setOf(1, 2, 3).intersect([2, 3, 4]), setOf(1, 2, 3).subtract(listOf(1)), setOf(4, 5).map { it * 2 }, setOf("a", "b").join("+"))
+// expect: {1, 7} {2, 3} {2, 3} [8, 10] a+b

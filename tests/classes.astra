@@ -115,17 +115,17 @@ print(makeClass()().value())            // expect: 42
 
 // polymorphism through a shared interface
 class Stack {
-  var items : List<int> = []
+  var items : open List<int> = []
   fun init() { this.items = [] }
-  fun add(x : int) { this.items.push(x); return this }
-  fun take() { return this.items.pop() }
+  fun add(x : int) { this.items.add(x); return this }
+  fun take() { return this.items.removeLast() }
 }
 class Queue : Stack {
   override fun take() { return this.items.removeAt(0) }
 }
 fun drain(box : Stack) {
   var seen = []
-  seen.push(box.take()); seen.push(box.take())
+  seen.add(box.take()); seen.add(box.take())
   return seen
 }
 print(drain(Stack().add(1).add(2).add(3)), drain(Queue().add(1).add(2).add(3)))   // expect: [3, 2] [1, 2]

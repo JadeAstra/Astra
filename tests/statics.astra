@@ -31,7 +31,7 @@ print(Color.last)                           // expect: null
 // Values are worked out once, in the order written, and may use what came before.
 val order = []
 fun <T> note(label : string, value : T) : T {
-  order.push(label)
+  order.add(label)
   return value
 }
 class Sizes {
@@ -42,7 +42,7 @@ class Sizes {
 }
 print(order, Sizes.ALL, Sizes.LARGE)        // expect: ["small", "large", "all"] [10, 40, 20] 40
 Sizes(); Sizes()
-print(order.length)                         // expect: 3
+print(order.size)                         // expect: 3
 
 // A static block holds the same declarations without the word on each.
 class Grid {
@@ -59,8 +59,8 @@ class Grid {
 val grid = Grid()
 grid.put(2, 3, "x")
 Grid()
-print(Grid.MAX_TRACK, Grid.key(1, 2), grid.cells.keys(), Grid.created, Grid.description)
-// expect: 100000 100002 [200003] 2 grid of up to 100000 tracks
+print(Grid.MAX_TRACK, Grid.key(1, 2), grid.cells.keys, Grid.created, Grid.description)
+// expect: 100000 100002 {200003} 2 grid of up to 100000 tracks
 try { Grid.MAX_TRACK = 1 } catch (e) { print(e.message) }   // expect: cannot assign to static val 'MAX_TRACK' of Grid
 
 // Static properties.
@@ -115,7 +115,7 @@ fun makeClass(start : int) {
   class Local {
     static val START = start
     static var seen = [start]
-    static fun add(n : int) { Local.seen.push(n + Local.START) }
+    static fun add(n : int) { Local.seen.add(n + Local.START) }
   }
   return Local
 }
@@ -162,13 +162,13 @@ print(Origin.describe(), Origin.x, Origin is Shape)   // expect: a point 0 true
 
 object Registry {
   val entries = []
-  fun init() { this.entries.push("ready") }
+  fun init() { this.entries.add("ready") }
   fun add(entry : string) {
-    this.entries.push(entry)
-    return this.entries.length
+    this.entries.add(entry)
+    return this.entries.size
   }
 }
-print(Registry.entries.length, Registry.add("one"), Registry.entries)   // expect: 1 2 ["ready", "one"]
+print(Registry.entries.size, Registry.add("one"), Registry.entries)   // expect: 1 2 ["ready", "one"]
 
 fun scoped(seed : int) {
   object Local {

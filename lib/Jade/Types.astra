@@ -220,11 +220,11 @@ fun elide(text : string, font : Font, maxWidth : int) : string {
   val room = maxWidth - fm.stringWidth(ellipsis)
   if (room <= 0) { return "" }
   var lo = 0
-  var hi = text.length
+  var hi = text.size
   while (lo < hi) {
     val mid = (lo + hi + 1) / 2
-    if (fm.stringWidth(text.substring(0, mid)) <= room) { lo = mid } else { hi = mid - 1 }
+    if (fm.stringWidth(text[0..<mid]) <= room) { lo = mid } else { hi = mid - 1 }
   }
-  return text.substring(0, lo) + ellipsis
+  return text[0..<lo] + ellipsis
 }
 

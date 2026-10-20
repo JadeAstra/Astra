@@ -2,10 +2,10 @@
 
 // Three quotes: quotes and backslashes are just text, and the string can run over lines.
 val html = """<div class="box">C:\temp\new</div>"""
-print(html, html.length)                    // expect: <div class="box">C:\temp\new</div> 34
+print(html, html.size)                    // expect: <div class="box">C:\temp\new</div> 34
 val name = "Ann"
 print("""Hello, $name! You have ${1 + 2} "new" messages.""")   // expect: Hello, Ann! You have 3 "new" messages.
-print("""a "quoted" word""", """ends with a quote"""", """""".length)   // expect: a "quoted" word ends with a quote" 0
+print("""a "quoted" word""", """ends with a quote"""", """""".size)   // expect: a "quoted" word ends with a quote" 0
 
 val css = """
     .button {
@@ -16,7 +16,7 @@ print(css)
 // expect: .button {
 // expect:     color: red;
 // expect: }
-print(css.split("\n").length, """one line""".trimIndent(), """
+print(css.split("\n").size, """one line""".trimIndent(), """
   first
 
   third
@@ -42,7 +42,7 @@ fun tabs(vararg items : Pair<string, int>) => items.map { (title, content) -> "$
 print(tabs("A" to 1, "B" to 2))             // expect: ["A: 1", "B: 2"]
 val table = ["one" to 1, "two" to 2, "three" to 3]
 val names = []
-for (word, number) in table { if number > 1 { names.push(word) } }
+for (word, number) in table { if number > 1 { names.add(word) } }
 print(names, table[0].first, (1 to 2) to 3, 1 + 1 to 2 * 2)   // expect: ["two", "three"] one Pair(first=Pair(first=1, second=2), second=3) Pair(first=2, second=4)
 print(null ?: 1 to 2, (1 to 2) == (1 to 2), 1 to 2 == 3)   // expect: Pair(first=1, second=2) true false
 

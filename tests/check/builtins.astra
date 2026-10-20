@@ -7,7 +7,7 @@ fun names() : List<string> {
   words.sort()
   print(words.size, "x".isLetter(), 5.coerceIn(1..3), 7.coerceIn(0.5, 9.5))
   print("x".shout())          // check: a string has no method 'shout'
-  print(words.nope())         // check: a List<string> has no method 'nope'
+  print(words.nope())         // check: an open List<string> has no method 'nope'
   print("x".repeat("2"))      // check: repeat(...) takes an int for 'times', not a string
   return words
 }
@@ -35,12 +35,12 @@ fun counting(maybe : Visits?) {
 }
 
 // A name with several forms: the call means the most specific one its arguments fit.
-fun forms(words : List<string>) {
+fun forms(words : open List<string>) {
   val low : int = 5.coerceIn(1, 10)
   val ranged : int = 5.coerceIn(1..3)
   val mixed : int = 5.coerceIn(0.5, 9.5)   // check: 'mixed' is an int; it cannot start as a Number
   words.add("a")
   words.add(0, "b")
-  words.add(1)                // check: no form of add(...) takes an int; there are List<string>.add(item : string) and List<string>.add(index : int, item : string)
+  words.add(1)                // check: no form of add(...) takes an int; there are open List<string>.add(item : string) and open List<string>.add(index : int, item : string)
   print(low, ranged, mixed, 5.coerceIn("a", "b"))   // check: no form of coerceIn(...) takes a string, a string; there are int.coerceIn(minimumValue : int, maximumValue : int), int.coerceIn(range : Range) and int.coerceIn(minimumValue : Number, maximumValue : Number)
 }

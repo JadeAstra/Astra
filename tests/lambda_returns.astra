@@ -7,7 +7,7 @@ class Node(val name : string, val children : List<Node> = []) {
 val tree = Node("root", [Node("a", [Node("a1"), Node("a2")]), Node("b")])
 
 // let: the value becomes `it`, or a name of your choosing, and the block's value is the result.
-print(5.let { it + 1 }, "abc".let { text -> text.upper() }, [1, 2].let { it.length })   // expect: 6 ABC 2
+print(5.let { it + 1 }, "abc".let { text -> text.upper() }, [1, 2].let { it.size })   // expect: 6 ABC 2
 val none : int? = null
 var ran = 0
 print(none?.let { ran += 1; "ran" }, tree.name?.let { it + "!" }, ran)   // expect: null root! 0
@@ -22,7 +22,7 @@ print(find(tree, "a2")?.name, find(tree, "b")?.name, find(tree, "zzz"))   // exp
 
 fun firstLong(words : List<string>) {
   for word in words {
-    word.takeIf { it.length > 3 }?.let { return "found " + it }
+    word.takeIf { it.size > 3 }?.let { return "found " + it }
   }
   return "none"
 }
@@ -34,32 +34,32 @@ for n in [1, 2, null, 4, 5, 6] {
   n?.let {
     if it == 2 { continue }
     if it == 5 { break }
-    kept.push(it * 10)
+    kept.add(it * 10)
   }
 }
 print(kept)                                 // expect: [10, 40]
 
 // also gives the value back; takeIf gives it back or null.
 val log = []
-val made = [1, 2].also { log.push("made " + it.length) }.also { list -> list.push(3) }
+val made = [1, 2].also { log.add("made " + it.size) }.also { list -> list.add(3) }
 print(made, log, 7.takeIf { it > 5 }, 3.takeIf { it > 5 }, "x".takeIf { false } ?: "fallback")   // expect: [1, 2, 3] ["made 2"] 7 null fallback
-print(none?.also { log.push("never") }, none?.takeIf { true }, log.length)   // expect: null null 1
+print(none?.also { log.add("never") }, none?.takeIf { true }, log.size)   // expect: null null 1
 
 // In the middle of an expression, with variables of its own, and one inside another.
 fun describe(node : Node) => "node " + node.name.let {
   val upper = it.upper()
-  val count = node.children.length
+  val count = node.children.size
   "$upper($count)"
 } + "."
 print(describe(tree), [1, 2.let { val twice = it * 2; twice + 1 }, 3])   // expect: node ROOT(2). [1, 5, 3]
 print(10.let { outer -> 20.let { inner -> outer + inner + 1.let { it + outer } } })   // expect: 41
-print(4.let { it * 2 }.let { it + 1 }.also { log.push(it) }.takeIf { it == 9 }, log[1])   // expect: 9 9
+print(4.let { it * 2 }.let { it + 1 }.also { log.add(it) }.takeIf { it == 9 }, log[1])   // expect: 9 9
 
 // The variable is this function's own, so a function made in the block keeps it.
 val readers = []
 for n in [1, 2, 3] {
-  n.let { readers.push(fun() => it * 100) }
-  (n * 2).also { doubled -> readers.push({ doubled }) }
+  n.let { readers.add(fun() => it * 100) }
+  (n * 2).also { doubled -> readers.add({ doubled }) }
 }
 print(readers.map { it() })                 // expect: [100, 2, 200, 4, 300, 6]
 
@@ -75,7 +75,7 @@ fun checked(items : List<int?>) {
   for item in items {
     item.also {
       if it == null { return@also }
-      seen.push(it)
+      seen.add(it)
     }
   }
   return seen
@@ -91,7 +91,7 @@ fun guarded(value : int) {
       if it < 0 { return "negative" }
       return@let "positive"
     } finally {
-      order.push("finally $it")
+      order.add("finally $it")
     }
   }
   return "result: " + result
@@ -103,7 +103,7 @@ print(guarded(0), guarded(-1), guarded(1), order)   // expect: result: zero nega
 val evens = [1, 2, 3, 4].filter { if it % 2 == 1 { return@filter false }; true }
 val labels = [1, 2, 3].map { if it == 2 { return@map "two" }; "n$it" }
 val shown = []
-[1, 2, 3, 4].each { if it == 3 { return@each }; shown.push(it) }
+[1, 2, 3, 4].forEach { if it == 3 { return@forEach }; shown.add(it) }
 val pick = chosen@ { a, b -> if a > b { return@chosen a }; b }
 fun apply2(f : (int, int) -> string, x : int, y : int) => f(x, y)
 print(evens, labels, shown, pick(3, 9), pick(8, 2), apply2({ a, b -> if a == b { return@apply2 "same" }; "different" }, 1, 1))
@@ -135,7 +135,7 @@ fun <T, R> fold(items : List<T>, start : R, step : (R, T) -> R) : R {
   for item in items { acc = step(acc, item) }
   return acc
 }
-print(fold(pairs, 0) { total, (_, n) -> total + n }, [3, 4].let { (a, b) -> a * b }, pairs[0].also { (name, _) -> log.push(name) }[1], log[2])   // expect: 3 12 1 one
+print(fold(pairs, 0) { total, (_, n) -> total + n }, [3, 4].let { (a, b) -> a * b }, pairs[0].also { (name, _) -> log.add(name) }[1], log[2])   // expect: 3 12 1 one
 
 // A value with a method of its own called let is still taken as the scope function when a
 // lambda follows; called with ordinary arguments it is the method.

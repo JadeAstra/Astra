@@ -32,7 +32,7 @@ print(xs, xs.contains(5), 25 in xs, xs.containsAll([5, 20]), xs.indexOf(25), [1,
 try { [].first() } catch (e) { print(e.message) }                        // expect: first() of an empty list
 try { [1].first { it > 5 } } catch (e) { print(e.message) }              // expect: first(): no item of the list meets the condition
 try { [1, 2].get(2) } catch (e) { print(e.message) }                     // expect: get: index 2 is out of range (size 2)
-try { [1, 2].subList(1, 5) } catch (e) { print(e.message) }              // expect: subList(1, 5) is out of range for a list of size 2
+try { [1, 2][1..<5] } catch (e) { print(e.message) }              // expect: the slice 1..<5 is out of range (size 2)
 try { [1, 2].single() } catch (e) { print(e.message) }                   // expect: single(): expected one item but found 2
 try { [].max() } catch (e) { print(e.message) }                          // expect: max() of an empty list
 
@@ -59,10 +59,10 @@ print(ns.map { it * 2 }.take(3), ns.mapIndexed { i, n -> i * n }.takeLast(2), ns
 print(ns.filter { it > 3 }, ns.filterNot { it > 3 }, [1, null, 2].filterNotNull(), ns.filterIndexed { i, n -> i % 3 == 0 })   // expect: [4, 5, 9, 6] [3, 1, 1, 2] [1, 2] [3, 1, 2]
 print([[1, 2], [3]].flatten(), [1, 2].flatMap { [it, it * 10] }, ns.partition { it > 3 })   // expect: [1, 2, 3] [1, 10, 2, 20] Pair(first=[4, 5, 9, 6], second=[3, 1, 1, 2])
 print(ns.take(2), ns.take(99).size, ns.drop(6), ns.drop(99), ns.dropLast(6), ns.takeLast(1))   // expect: [3, 1] 8 [2, 6] [] [3, 1] [6]
-print(ns.takeWhile { it != 4 }, ns.dropWhile { it != 9 }, ns.subList(1, 3), ns.slice(-2))   // expect: [3, 1] [9, 2, 6] [1, 4] [2, 6]
+print(ns.takeWhile { it != 4 }, ns.dropWhile { it != 9 }, ns[1..<3], ns[^2..])   // expect: [3, 1] [9, 2, 6] [1, 4] [2, 6]
 print([1, 2, 3, 4, 5].chunked(2), [1, 2, 3, 4].windowed(2), [1, 2, 3, 4, 5].windowed(3, 2, true))   // expect: [[1, 2], [3, 4], [5]] [[1, 2], [2, 3], [3, 4]] [[1, 2, 3], [3, 4, 5], [5]]
 print([1, 2, 3].zip(["a", "b"]), [1, 2].zip([10, 20]) { a, b -> a + b }, [1, 4, 9].zipWithNext { a, b -> b - a })   // expect: [Pair(first=1, second="a"), Pair(first=2, second="b")] [11, 22] [3, 5]
-print(["a", "b"].withIndex(), ns.distinct(), ["aa", "b", "cc"].distinctBy { it.length })   // expect: [IndexedValue(index=0, value="a"), IndexedValue(index=1, value="b")] [3, 1, 4, 5, 9, 2, 6] ["aa", "b"]
+print(["a", "b"].withIndex(), ns.distinct(), ["aa", "b", "cc"].distinctBy { it.size })   // expect: [IndexedValue(index=0, value="a"), IndexedValue(index=1, value="b")] [3, 1, 4, 5, 9, 2, 6] ["aa", "b"]
 print([1, 2].plus(3), [1, 2].plus([3, 4]), [1, 2, 3, 2].minus(2), [1, 2, 3].minus([1, 3]))   // expect: [1, 2, 3] [1, 2, 3, 4] [1, 3, 2] [2]
 for (index, value) in ["x", "y"].withIndex() { write(index, value, " ") }
 print()                                                  // expect: 0x 1y
@@ -71,15 +71,15 @@ print()                                                  // expect: 0x 1y
 val original = [1, 2, 3]
 val copy = original.toList()
 copy.add(4)
-print(original, copy, original.reversed(), original, original.toMutableList() == original, original.copyOf() === original)   // expect: [1, 2, 3] [1, 2, 3, 4] [3, 2, 1] [1, 2, 3] true false
+print(original, copy, original.reversed(), original, original.toOpenList() == original, original.copyOf() === original)   // expect: [1, 2, 3] [1, 2, 3, 4] [3, 2, 1] [1, 2, 3] true false
 
 // Order.
 val words = ["pear", "fig", "banana", "kiwi"]
 print(words.sorted(), words.sortedDescending())          // expect: ["banana", "fig", "kiwi", "pear"] ["pear", "kiwi", "fig", "banana"]
-print(words.sortedBy { it.length }, words.sortedByDescending { it.length })   // expect: ["fig", "pear", "kiwi", "banana"] ["banana", "pear", "kiwi", "fig"]
-print(words.sortedWith { a, b -> a.length - b.length }, words)   // expect: ["fig", "pear", "kiwi", "banana"] ["pear", "fig", "banana", "kiwi"]
-print(words.sortedWith(compareBy({ it.length }, { it })))        // expect: ["fig", "kiwi", "pear", "banana"]
-print(words.sortedWith(compareByDescending { it.length }.thenBy { it }))   // expect: ["banana", "kiwi", "pear", "fig"]
+print(words.sortedBy { it.size }, words.sortedByDescending { it.size })   // expect: ["fig", "pear", "kiwi", "banana"] ["banana", "pear", "kiwi", "fig"]
+print(words.sortedWith { a, b -> a.size - b.size }, words)   // expect: ["fig", "pear", "kiwi", "banana"] ["pear", "fig", "banana", "kiwi"]
+print(words.sortedWith(compareBy({ it.size }, { it })))        // expect: ["fig", "kiwi", "pear", "banana"]
+print(words.sortedWith(compareByDescending { it.size }.thenBy { it }))   // expect: ["banana", "kiwi", "pear", "fig"]
 print([3, 1, 2].sortedWith(reverseOrder()), [3, 1, 2].sortedWith(naturalOrder().reversed()), naturalOrder().compare(1, 2))   // expect: [3, 2, 1] [3, 2, 1] -1
 val sortable = [3, 1, 2]
 sortable.sortDescending()
@@ -97,16 +97,16 @@ print(shuffled.sorted(), shuffled.size, [1, 2, 3].random() in [1, 2, 3])   // ex
 // Working a value out.
 print(ns.sum(), ns.sumOf { it * 2 }, ns.fold(100) { acc, n -> acc - n }, ns.reduce { a, b -> a > b ? a : b })   // expect: 31 62 69 9
 print(ns.max(), ns.min(), [].maxOrNull(), ["b", "a"].minOrNull(), [1, 2, 3, 4].average(), [1.5, 2.5].sum())   // expect: 9 1 null a 2.5 4.0
-print(words.maxBy { it.length }, words.minBy { it.length }, words.maxOf { it.length }, words.minOf { it.length }, [].maxByOrNull { it }, [].minOfOrNull { it })   // expect: banana fig 6 3 null null
+print(words.maxBy { it.size }, words.minBy { it.size }, words.maxOf { it.size }, words.minOf { it.size }, [].maxByOrNull { it }, [].minOfOrNull { it })   // expect: banana fig 6 3 null null
 print(ns.reduce({ a, b -> a + b }, 1000))                // expect: 1031
 
 // As text.
-print([1, 2, 3].joinToString(), [1, 2, 3].joinToString("-"), [1, 2, 3].joinToString(prefix = "<", postfix = ">"))   // expect: 1, 2, 3 1-2-3 <1, 2, 3>
-print([1, 2, 3].joinToString { "#$it" }, [1, 2, 3].joinToString(" + ") { it * 2 }, [1, 2, 3, 4].joinToString(limit = 2))   // expect: #1, #2, #3 2 + 4 + 6 1, 2, ...
-print([1, 2, 3].joinToString(separator = "", transform = { it + 1 }), ["a", null].joinToString())   // expect: 234 a, null
+print([1, 2, 3].join(), [1, 2, 3].join("-"), [1, 2, 3].join(prefix = "<", postfix = ">"))   // expect: 1, 2, 3 1-2-3 <1, 2, 3>
+print([1, 2, 3].join { "#$it" }, [1, 2, 3].join(" + ") { it * 2 }, [1, 2, 3, 4].join(limit = 2))   // expect: #1, #2, #3 2 + 4 + 6 1, 2, ...
+print([1, 2, 3].join(separator = "", transform = { it + 1 }), ["a", null].join())   // expect: 234 a, null
 
 // Maps and sets from a list.
-print(words.associate { it to it.length })               // expect: {"pear": 4, "fig": 3, "banana": 6, "kiwi": 4}
-print(words.associateBy { it[0] }, words.associateBy({ it[0] }, { it.length }))   // expect: {'p': "pear", 'f': "fig", 'b': "banana", 'k': "kiwi"} {'p': 4, 'f': 3, 'b': 6, 'k': 4}
-print(words.associateWith { it.length }["fig"], words.groupBy { it.length })   // expect: 3 {4: ["pear", "kiwi"], 3: ["fig"], 6: ["banana"]}
-print(words.groupBy({ it.length }, { it.upper() })[4], [1 to "a", 2 to "b"].toMap(), [1, 1, 2].toSet())   // expect: ["PEAR", "KIWI"] {1: "a", 2: "b"} {1, 2}
+print(words.associate { it to it.size })               // expect: {"pear": 4, "fig": 3, "banana": 6, "kiwi": 4}
+print(words.associateBy { it[0] }, words.associateBy({ it[0] }, { it.size }))   // expect: {'p': "pear", 'f': "fig", 'b': "banana", 'k': "kiwi"} {'p': 4, 'f': 3, 'b': 6, 'k': 4}
+print(words.associateWith { it.size }["fig"], words.groupBy { it.size })   // expect: 3 {4: ["pear", "kiwi"], 3: ["fig"], 6: ["banana"]}
+print(words.groupBy({ it.size }, { it.upper() })[4], [1 to "a", 2 to "b"].toMap(), [1, 1, 2].toSet())   // expect: ["PEAR", "KIWI"] {1: "a", 2: "b"} {1, 2}

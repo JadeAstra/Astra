@@ -33,9 +33,9 @@ Worker.parent!!.onMessage = { message ->
       val answer = Future.supplyAsync { 6 * 7 }.await()
       Worker.parent!!.post("a flow and a thread inside the worker: $answer, on its loop: ${EventLoop.isLoopThread}")
     }
-  } else if (message is Map and message.containsKey("primes")) {
+  } else if (message is Map and message.keys.contains("primes")) {
     Worker.parent!!.post(primesUpTo(message["primes"]))
-  } else if (message is List and message.size > 0 and message[0] == "keep") {
+  } else if (message is open List and message.size > 0 and message[0] == "keep") {
     seen.add(message)
     message.add("changed in the worker")
     Worker.parent!!.post(seen.size)

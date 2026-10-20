@@ -17,8 +17,8 @@ class Event(val source : string) {
   object Bus {
     val log = []
     fun post(event : Event) {
-      log.push(event.describe())
-      return log.length
+      log.add(event.describe())
+      return log.size
     }
   }
 
@@ -49,7 +49,7 @@ print(route(click), route(key, capture), route(Event.Hover("x"), Event.Phase.tar
 try { route(unknown(5)) } catch (e) { print(e.message) }   // expect: argument 'event' of route() must be Event, got int
 class Printer : Event.Handler {
   val seen = []
-  override fun handle(event : Event) { seen.push(route(event)) }
+  override fun handle(event : Event) { seen.add(route(event)) }
 }
 val printer = Printer()
 printer.handle(click)
@@ -74,7 +74,7 @@ class DrawOp {
   static fun both() => [Text("a").kind(), Line(2).kind()]
 }
 class Doc {
-  class Text(val words : List<string>) { fun kind() => "doc text of ${words.length} words" }
+  class Text(val words : List<string>) { fun kind() => "doc text of ${words.size} words" }
   enum Mode { edit, view }
   var mode : Mode = view
 }
@@ -102,8 +102,8 @@ class Grid {
 
   val cells = []
   fun add(row : int, col : int) {
-    cells.push(Cell(row, col))
-    return cells[cells.length - 1]
+    cells.add(Cell(row, col))
+    return cells[cells.size - 1]
   }
 }
 val cell = Grid().add(2, 3)

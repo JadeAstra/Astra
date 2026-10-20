@@ -38,7 +38,7 @@ class Color {
   }
 
   private static fun part(value : Number) : int {
-    val whole = int(Math.round(value))
+    val whole = Math.round(value).toInt()
     return whole < 0 ? 0 : (whole > 255 ? 255 : whole)
   }
 
@@ -54,10 +54,10 @@ class Color {
   fun brighter() : Color {
     val least = 3
     if (red == 0 and green == 0 and blue == 0) { return Color(least, least, least, alpha) }
-    val up = { v -> Math.min(int((v > 0 and v < least ? least : v) / 0.7), 255) }
+    val up = { v -> Math.min(((v > 0 and v < least ? least : v) / 0.7).toInt(), 255) }
     return Color(up(red), up(green), up(blue), alpha)
   }
-  fun darker() : Color => Color(int(red * 0.7), int(green * 0.7), int(blue * 0.7), alpha)
+  fun darker() : Color => Color((red * 0.7).toInt(), (green * 0.7).toInt(), (blue * 0.7).toInt(), alpha)
 
   // The same colour, as see-through as `alpha` says.
   fun withAlpha(alpha : int) : Color => Color(red, green, blue, alpha)
@@ -82,7 +82,7 @@ class Color {
 
   // "#RRGGBB" or "0xRRGGBB".
   static fun decode(text : string) : Color {
-    val digits = text.startsWith("#") ? text.substring(1) : (text.startsWith("0x") or text.startsWith("0X") ? text.substring(2) : text)
+    val digits = text.startsWith("#") ? text[1..] : (text.startsWith("0x") or text.startsWith("0X") ? text[2..] : text)
     return Color(digits.toInt(16))
   }
 
@@ -97,7 +97,7 @@ class Color {
       val p = brightness * (1.0 - saturation)
       val q = brightness * (1.0 - saturation * f)
       val t = brightness * (1.0 - saturation * (1.0 - f))
-      val sector = int(h)
+      val sector = h.toInt()
       if (sector == 0) { r = brightness; g = t; b = p }
       else if (sector == 1) { r = q; g = brightness; b = p }
       else if (sector == 2) { r = p; g = brightness; b = t }
@@ -105,20 +105,20 @@ class Color {
       else if (sector == 4) { r = t; g = p; b = brightness }
       else { r = brightness; g = p; b = q }
     }
-    return 0xFF000000 | (int(r * 255 + 0.5) << 16) | (int(g * 255 + 0.5) << 8) | int(b * 255 + 0.5)
+    return 0xFF000000 | ((r * 255 + 0.5).toInt() << 16) | ((g * 255 + 0.5).toInt() << 8) | (b * 255 + 0.5).toInt()
   }
   static fun getHSBColor(hue : float, saturation : float, brightness : float) : Color => Color(Color.HSBtoRGB(hue, saturation, brightness))
 
   // The other way: [hue, saturation, brightness]. (Java fills an array given to it; here
   // the list is the result, and a list given as the fourth argument is filled as well.)
-  static fun RGBtoHSB(r : int, g : int, b : int, into : List<float>? = null) : List<float> {
+  static fun RGBtoHSB(r : int, g : int, b : int, into : open List<float>? = null) : List<float> {
     val most = Math.max(r, Math.max(g, b))
     val least = Math.min(r, Math.min(g, b))
     val brightness = most / 255.0
-    val saturation = most != 0 ? (most - least) / float(most) : 0.0
+    val saturation = most != 0 ? (most - least) / most.toFloat() : 0.0
     var hue = 0.0
     if (saturation != 0) {
-      val span = float(most - least)
+      val span = (most - least).toFloat()
       val rc = (most - r) / span
       val gc = (most - g) / span
       val bc = (most - b) / span
@@ -164,7 +164,7 @@ class Font {
   get isPlain() : bool => style == 0
   get isBold() : bool => style & 1 != 0
   get isItalic() : bool => style & 2 != 0
-  get size2D() : float => float(size)
+  get size2D() : float => size.toFloat()
   fun getSize() : Number => size
   fun getStyle() : int => style
   fun getName() : string => name
@@ -182,7 +182,7 @@ class Font {
   }
 
   op ==(other : any?) : bool => other is Font and other.name == name and other.style == style and other.size == size
-  fun hashCode() : int => name.hashCode() * 31 + style * 7 + int(size * 16)
+  fun hashCode() : int => name.hashCode() * 31 + style * 7 + (size * 16).toInt()
   override fun toString() : string => "Font($name, ${isBold ? (isItalic ? "bolditalic" : "bold") : (isItalic ? "italic" : "plain")}, $size)"
 
   // The engine's font for this one on a screen of some scale: what measures and draws it.
@@ -212,7 +212,7 @@ class FontMetrics {
     this.engine = font.textFont(scale)
   }
 
-  private fun units(device : int) : int => scale == 1 ? device : int(Math.ceil(device / float(scale)))
+  private fun units(device : int) : int => scale == 1 ? device : Math.ceil(device / scale.toFloat()).toInt()
 
   get ascent() : int => units(engine.ascent)
   get descent() : int => units(engine.descent)

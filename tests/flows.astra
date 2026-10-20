@@ -35,7 +35,7 @@ print(log, worker.isAlive)                                   // expect: ["from t
 val questions = []
 fun ask(question : string, callback : (string) -> unit) {
   questions.add(question)
-  EventLoop.after(2) { callback(question.uppercase()) }
+  EventLoop.after(2) { callback(question.upper()) }
 }
 
 // The same question as a suspending function: it is called like any other.
@@ -123,11 +123,11 @@ startCoroutine {
   val answers = ["a", "b"].map { answerTo(it) }
   ["c"].forEach { log.add(answerTo(it)) }
   val form = Form().apply { name = answerTo("name") }
-  with(form) { size = answerTo("12345").length }
+  with(form) { size = answerTo("12345").size }
   val viaLet = "q".let { answerTo(it) }
   val viaRun = form.run { answerTo(name) }
   val nested = deeper("1")
-  val counted = (1..3).sumOf { answerTo("x").length }
+  val counted = (1..3).sumOf { answerTo("x").size }
   var twice = ""
   eachTwice { twice += answerTo("t$it") }
   log.add([answers, form.name, form.size, viaLet, viaRun, nested, counted, {"k": 1}.map { answerTo(it.key) }, twice])
@@ -176,7 +176,7 @@ print(onThread)                                              // expect: answered
 val unknown = { value -> value }
 startCoroutine {
   try {
-    [2, 1].sort(unknown({ a, b -> answerTo("s").length }))
+    [2, 1].sort(unknown({ a, b -> answerTo("s").size }))
   } catch (e) {
     print(e.message)
   }

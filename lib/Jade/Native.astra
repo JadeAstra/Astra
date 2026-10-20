@@ -45,7 +45,7 @@ object Native {
 
   // The text on the clipboard ("" if it holds none).
   get clipboardText() : string => __jade.clipboardGet()
-  set clipboardText(text) { __jade.clipboardSet(str(text)) }
+  set clipboardText(text) { __jade.clipboardSet("$text") }
 
   // For tests: a clipboard of the program's own, so that the system's is left alone.
   fun useOwnClipboard(own : bool = true) {
@@ -65,7 +65,7 @@ object Native {
 // is told again only when another canvas draws.
 internal var jadeActiveCanvas : NativeCanvas? = null
 
-internal val jadeWindows : Map<int, NativeWindow> = {:}
+internal val jadeWindows : open Map<int, NativeWindow> = {:}
 
 internal fun jadeDispatch(id : int, kind : string, x : int, y : int, n1 : int, n2 : int, f1 : float, f2 : float, extra : any?) {
   val window = jadeWindows[id]
@@ -90,8 +90,8 @@ class Surface {
     this.width = width
     this.height = height
     this.scale = scale
-    this.deviceWidth = Math.max(1, int(Math.round(width * scale)))
-    this.deviceHeight = Math.max(1, int(Math.round(height * scale)))
+    this.deviceWidth = Math.max(1, Math.round(width * scale).toInt())
+    this.deviceHeight = Math.max(1, Math.round(height * scale).toInt())
     this.handle = __jade.surfaceCreate(deviceWidth, deviceHeight)
   }
 
@@ -171,8 +171,8 @@ class NativeCanvas : Canvas {
     this.owner = owner
   }
 
-  override get deviceScaleX() : float => float(scale)
-  override get deviceScaleY() : float => float(scale)
+  override get deviceScaleX() : float => scale.toFloat()
+  override get deviceScaleY() : float => scale.toFloat()
 
   override get color() : Color => currentColor
   override set color(value) {
@@ -251,8 +251,8 @@ class NativeCanvas : Canvas {
       __jade.font(engine.handle)
       fontSent = true
     }
-    val device = __jade.text(str(text), x, y)
-    return scale == 1 ? device : int(Math.ceil(device / float(scale)))
+    val device = __jade.text("$text", x, y)
+    return scale == 1 ? device : Math.ceil(device / scale.toFloat()).toInt()
   }
 
   // A BufferedImage or a Surface at (x, y): at its own size, or scaled into w by h units.
@@ -288,10 +288,10 @@ class NativeCanvas : Canvas {
 
   // The part of the canvas that can be drawn on: the rest is clipped away.
   override get visibleBounds() : Rectangle {
-    val left = Math.max(0, int(Math.floor((clipLeft - originX) / float(scale))))
-    val top = Math.max(0, int(Math.floor((clipTop - originY) / float(scale))))
-    val right = Math.min(width, int(Math.ceil((clipRight - originX) / float(scale))))
-    val bottom = Math.min(height, int(Math.ceil((clipBottom - originY) / float(scale))))
+    val left = Math.max(0, Math.floor((clipLeft - originX) / scale.toFloat()).toInt())
+    val top = Math.max(0, Math.floor((clipTop - originY) / scale.toFloat()).toInt())
+    val right = Math.min(width, Math.ceil((clipRight - originX) / scale.toFloat()).toInt())
+    val bottom = Math.min(height, Math.ceil((clipBottom - originY) / scale.toFloat()).toInt())
     return Rectangle(left, top, Math.max(0, right - left), Math.max(0, bottom - top))
   }
 
@@ -307,10 +307,10 @@ class NativeCanvas : Canvas {
 
   // The same canvas, drawing only inside a rectangle of it.
   fun clipped(x : Number, y : Number, w : Number, h : Number) : NativeCanvas {
-    val left = originX + int(Math.round(x * scale))
-    val top = originY + int(Math.round(y * scale))
-    val right = originX + int(Math.round((x + w) * scale))
-    val bottom = originY + int(Math.round((y + h) * scale))
+    val left = originX + Math.round(x * scale).toInt()
+    val top = originY + Math.round(y * scale).toInt()
+    val right = originX + Math.round((x + w) * scale).toInt()
+    val bottom = originY + Math.round((y + h) * scale).toInt()
     val same = NativeCanvas(target, width, height, scale, originX, originY,
                             Math.max(clipLeft, left), Math.max(clipTop, top), Math.min(clipRight, right), Math.min(clipBottom, bottom), owner, style)
     same.color = currentColor
@@ -319,10 +319,10 @@ class NativeCanvas : Canvas {
   }
 
   override fun sub(x : int, y : int, width : int, height : int, style : Style? = null) : NativeCanvas {
-    val left = originX + int(Math.round(x * scale))
-    val top = originY + int(Math.round(y * scale))
-    val right = originX + int(Math.round((x + width) * scale))
-    val bottom = originY + int(Math.round((y + height) * scale))
+    val left = originX + Math.round(x * scale).toInt()
+    val top = originY + Math.round(y * scale).toInt()
+    val right = originX + Math.round((x + width) * scale).toInt()
+    val bottom = originY + Math.round((y + height) * scale).toInt()
     val child = NativeCanvas(target, width, height, scale, left, top,
                              Math.max(clipLeft, left), Math.max(clipTop, top), Math.min(clipRight, right), Math.min(clipBottom, bottom), owner, style ?: this.style)
     child.color = currentColor
@@ -364,7 +364,7 @@ class NativeWindow {
   fun init(title : string = "", width : int = 900, height : int = 640, resizable : bool = true, dialog : bool = false, owner : NativeWindow? = null,
            scale : Number? = null) {
     __jade.setDispatcher(jadeDispatch)
-    this.currentTitle = str(title)
+    this.currentTitle = "$title"
     this.canResize = resizable
     this.id = __jade.windowCreate(currentTitle, width, height, resizable, dialog, owner == null ? 0 : owner.id, scale ?: 0)
     jadeWindows[id] = this
@@ -376,7 +376,7 @@ class NativeWindow {
 
   get title() : string => currentTitle
   set title(text) {
-    currentTitle = str(text)
+    currentTitle = "$text"
     __jade.windowTitle(id, currentTitle)
   }
   fun setTitle(text : string) {
@@ -479,7 +479,7 @@ class NativeWindow {
       is RawInput.PointerMove -> __jade.windowSend(id, "pointerMove", event.x, event.y, NativeWindow.buttonBits(event.buttons), event.mods.bits, 0.0, 0.0, null)
       is RawInput.PointerDown -> __jade.windowSend(id, "pointerDown", event.x, event.y, event.button.ordinal, event.mods.bits, 0.0, 0.0, null)
       is RawInput.PointerUp -> __jade.windowSend(id, "pointerUp", event.x, event.y, event.button.ordinal, event.mods.bits, 0.0, 0.0, null)
-      is RawInput.Wheel -> __jade.windowSend(id, "wheel", event.x, event.y, 0, event.mods.bits, float(event.dx), float(event.dy), null)
+      is RawInput.Wheel -> __jade.windowSend(id, "wheel", event.x, event.y, 0, event.mods.bits, event.dx.toFloat(), event.dy.toFloat(), null)
       is RawInput.KeyDown -> __jade.windowSend(id, "keyDown", event.letter == null ? 0 : event.letter[0].code, 0, event.repeat ? 1 : 0, event.mods.bits, 0.0, 0.0, event.key.name)
       is RawInput.KeyUp -> __jade.windowSend(id, "keyUp", event.letter == null ? 0 : event.letter[0].code, 0, 0, event.mods.bits, 0.0, 0.0, event.key.name)
       is RawInput.Text -> __jade.windowSend(id, "text", 0, 0, 0, 0, 0.0, 0.0, event.text)

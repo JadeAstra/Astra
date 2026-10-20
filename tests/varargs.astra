@@ -4,13 +4,13 @@
 val unknown = { value -> value }
 
 // Any number of arguments arrive as a list.
-fun count(vararg items : any?) => items.length
+fun count(vararg items : any?) => items.size
 fun join(vararg parts : string) => parts.join("-")
 print(count(), count(1), count(1, 2, 3), join("a", "b", "c"), join())   // expect: 0 1 3 a-b-c
 print(count([1, 2]), count(null), count(null, null))   // expect: 1 1 2
 
 // After ordinary parameters.
-fun tag(name : string, vararg classes : string) => name + (classes.length > 0 ? "." + classes.join(".") : "")
+fun tag(name : string, vararg classes : string) => name + (classes.size > 0 ? "." + classes.join(".") : "")
 print(tag("div"), tag("div", "wide"), tag("div", "wide", "dark"))   // expect: div div.wide div.wide.dark
 try { unknown(tag)() } catch (e) { print(e.message) }   // expect: tag() expects at least 1 argument(s) but got 0
 
@@ -23,7 +23,7 @@ fun sum(vararg numbers : int) : int {
 print(sum(), sum(4), sum(1, 2, 3), sum(1, 2, 3) is int)   // expect: 0 4 6 true
 
 // Parameters after it are passed by name, and keep their defaults otherwise.
-fun chart(vararg series : List<int>, labels : List<string> = [], title : string = "untitled") => "$title: ${series.length} series, ${labels.length} labels"
+fun chart(vararg series : List<int>, labels : List<string> = [], title : string = "untitled") => "$title: ${series.size} series, ${labels.size} labels"
 print(chart())                              // expect: untitled: 0 series, 0 labels
 print(chart([1, 2], [3, 4]))                // expect: untitled: 2 series, 0 labels
 print(chart([1, 2], title = "Sales"))       // expect: Sales: 1 series, 0 labels
@@ -39,8 +39,8 @@ fun each(vararg items : any?, action : Function) {
   for item in items { action(item) }
 }
 val seen = []
-each(1, 2, 3) { seen.push(it * 10) }
-each("a", action = fun(x) { seen.push(x) })
+each(1, 2, 3) { seen.add(it * 10) }
+each("a", action = fun(x) { seen.add(x) })
 print(seen)                                 // expect: [10, 20, 30, "a"]
 try { unknown(each)(1, 2) } catch (e) { print(e.message) }   // expect: each() is missing argument 'action'
 
@@ -57,8 +57,8 @@ print(join(*["x", "y"]), tag("b", *["bold"]), call("h", *three, limit = 1))   //
 
 // The function gets a list of its own, not the caller's.
 fun mutate(vararg items : any?) {
-  items.push("added")
-  return items.length
+  items.add("added")
+  return items.size
 }
 print(mutate(*three), three)                // expect: 4 [1, 2, 3]
 
@@ -80,13 +80,13 @@ print(nothing?.all(*three), v?.all(*[9]))   // expect: null [1, 2, 9]
 
 val lambda = { a, b -> a * b }
 val pushed = [0]
-pushed.push(*three)
+pushed.addAll(three)
 print(lambda(*[6, 7]), Range(*[1, 7, 2]).toList(), pushed, "a-b-c".replace(*["-", "+"]))   // expect: 42 [1, 3, 5] [0, 1, 2, 3] a+b+c
 print(*three, *["and", "more"])             // expect: 1 2 3 and more
 
 class Stack {
   val items = []
-  fun init(vararg initial : int) { for item in initial { this.items.push(item) } }
+  fun init(vararg initial : int) { for item in initial { this.items.add(item) } }
 }
 print(Stack().items, Stack(1, 2).items, Stack(*three).items)   // expect: [] [1, 2] [1, 2, 3]
 
@@ -101,7 +101,7 @@ print(vararg, plain(1))                     // expect: a name 1
 // A star still multiplies.
 val k = 2
 print(add3(k * 2, k
-  * 3, 1), [k * k].length)                  // expect: 11 1
+  * 3, 1), [k * k].size)                  // expect: 11 1
 
 // Many arguments, many calls.
 val big = Range(0, 500).toList()

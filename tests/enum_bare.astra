@@ -74,7 +74,7 @@ print(Cell.standard)                        // expect: BOTH
 class Grid {
   val cells = []
   fun cell(content : string, fill : Fill = NONE, anchor : Way = up) {
-    cells.push(Cell(content, fill, anchor))
+    cells.add(Cell(content, fill, anchor))
     return this
   }
   fun add(vararg contents : string, fill : Fill = NONE) {
@@ -110,7 +110,7 @@ fun typedOther(n : int) => n
 fun takesShape(s : Cell) => s
 try { untyped(up) } catch (e) { print(e.message) }       // expect: undefined variable 'up'
 try { print(up) } catch (e) { print(e.message) }         // expect: undefined variable 'up'
-try { [].push(down) } catch (e) { print(e.message) }     // expect: undefined variable 'down'
+try { [].add(down) } catch (e) { print(e.message) }     // expect: undefined variable 'down'
 try { typedOther(up) } catch (e) { print(e.message) }    // expect: undefined variable 'up'
 try { takesShape(up) } catch (e) { print(e.message) }    // expect: undefined variable 'up'
 try { step(sideways) } catch (e) { print(e.message) }    // expect: 'sideways' is not an entry of enum Way

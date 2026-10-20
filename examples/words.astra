@@ -8,14 +8,14 @@ val text = """
 
 // A string is text: every position counts characters, not bytes.
 val first = text.lines().first()
-print("first line: ${first.length} characters, ${first.toBytes().size} bytes as UTF-8")
+print("first line: ${first.size} characters, ${first.toBytes().size} bytes as UTF-8")
 print("it starts \"${first.take(8)}\" and ends \"${first.takeLast(5)}\"")
 print("'café' is at", text.indexOf("café"), "and, ignoring case, 'THE' at", text.indexOf("THE", ignoreCase = true))
 
 // Words: split on anything that is not a letter, drop what is empty, lower the case.
-val words = text.map { it.isLetter() ? it : " " }.joinToString("").split(" ")
+val words = text.map { it.isLetter() ? it : " " }.join("").split(" ")
     .filter { it.isNotEmpty() }
-    .map { it.lowercase() }
+    .map { it.lower() }
 print()
 print(words.size, "words,", words.toSet().size, "different ones")
 
@@ -28,11 +28,11 @@ for (word, count) in ranked.take(4) {
 }
 
 // Grouping, and working values out of the groups.
-val byLength = words.distinct().groupBy { it.length }
+val byLength = words.distinct().groupBy { it.size }
 val longest = byLength.keys.max()
 print()
-print("longest (${longest} letters):", byLength.getValue(longest).sorted().joinToString())
-print("average length: %.2f".format(words.sumOf { it.length }.toDouble() / words.size))
+print("longest (${longest} letters):", byLength.getValue(longest).sorted().join())
+print("average length: %.2f".format(words.sumOf { it.size }.toFloat() / words.size))
 print("with an accent:", words.filter { word -> word.any { it.code > 127 } }.distinct())
 
 // A set tells what has been seen; a list, a pair or a data object can be an item or a key.
@@ -50,8 +50,8 @@ var widest = ""
 for word in words {
   recent.addLast(word)
   if (recent.size > 3) { recent.removeFirst() }
-  val window = recent.joinToString(" ")
-  if (window.length > widest.length) { widest = window }
+  val window = recent.join(" ")
+  if (window.size > widest.size) { widest = window }
 }
 print("the longest three words in a row: \"$widest\"")
 
@@ -65,7 +65,7 @@ val file = File("words-report.csv")
 file.writeText(report.toString())
 val rows = file.readLines().drop(1).map { it.split(",") }
 print()
-print("${file.name}: ${file.length()} bytes, ${rows.size} rows; the last is", rows.last())
+print("${file.name}: ${file.size()} bytes, ${rows.size} rows; the last is", rows.last())
 print("total from the file:", rows.sumOf { it[1].toInt() }, "- and from the list:", words.size)
 file.delete()
 print("deleted:", !file.exists())

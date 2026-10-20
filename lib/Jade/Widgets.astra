@@ -5,8 +5,8 @@ internal val defaultFont = Font(Font.sansSerif, Font.plain, 12)
 
 // A colour part of the way from one to another: a share of 0 is the first, of 1 the second.
 internal fun mixed(from : Color, to : Color, share : float) : Color =>
-  Color(int(from.red + (to.red - from.red) * share), int(from.green + (to.green - from.green) * share),
-        int(from.blue + (to.blue - from.blue) * share), from.alpha)
+  Color((from.red + (to.red - from.red) * share).toInt(), (from.green + (to.green - from.green) * share).toInt(),
+        (from.blue + (to.blue - from.blue) * share).toInt(), from.alpha)
 
 // One line of text.
 class Label : Content, OwnedContent {
@@ -74,7 +74,7 @@ class WrappedLabel : Content, OwnedContent, HeightForWidth {
     if (text.isEmpty()) { return [] }
     if (width <= 0) { return [text] }
     val fm = metrics(font)
-    val out : List<string> = []
+    val out : open List<string> = []
     for (paragraph in text.split("\n")) {
       if (paragraph.isEmpty()) {
         out.add("")

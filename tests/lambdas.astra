@@ -36,7 +36,7 @@ print(count, apply3(4) { it * it })               // expect: 22 16
 // Methods take them too, and they chain.
 val evens = [1, 2, 3, 4, 5, 6].filter { it % 2 == 0 }.map { it * 10 }
 print(evens)                                      // expect: [20, 40, 60]
-[1, 2].each { x -> write(x, " ") }
+[1, 2].forEach { x -> write(x, " ") }
 print("")                                         // expect: 1 2
 
 // Typed parameters, and the unused marker.
@@ -50,11 +50,11 @@ fun yes() => true
 val items = [1, 2, 3]
 if yes() { print("if body") }                     // expect: if body
 var n = 0
-while n < items.length { n += 1 }
+while n < items.size { n += 1 }
 for item in items { n += item }
 print(n)                                          // expect: 9
 // Parentheses make a lambda possible again inside a condition.
-if (items.filter { it > 1 }.length == 2) { print("two are greater than 1") }   // expect: two are greater than 1
+if (items.filter { it > 1 }.size == 2) { print("two are greater than 1") }   // expect: two are greater than 1
 for (item in items.map { it + 1 }) { write(item, " ") }
 print("")                                         // expect: 2 3 4
 

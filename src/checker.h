@@ -13,10 +13,11 @@ struct Namespace;
 // A type as the compiler writes it into a program for when it runs (M6.6 part 1): what a list
 // or map literal is made to hold, and the like.
 struct RuntimeType {
-    enum Kind : uint8_t { Unknown, Any, Int, Float, Number, String, Bool, Bytes, Range, TypeValue, Function, List, Map, Class, TypeParam, Char, Byte };
+    enum Kind : uint8_t { Unknown, Any, Int, Float, Number, String, Bool, Bytes, Range, TypeValue, Function, List, Map, Class, TypeParam, Char, Byte, Index, Set };
     Kind kind = Unknown;
     bool nullable = false;
     uint8_t storage = 0;  // Int or Float kept at a storage width (D148): kTypeInt16 and the rest
+    bool frozen = false;  // a List, Map or Set: FrozenList and the others (D26)
     // A class: where its global is, in a namespace by `global` or, for a private one, in the
     // file `privateFile`; its type arguments in `args`.
     const Namespace* ns = nullptr;
@@ -106,10 +107,18 @@ public:
     bool folded(const Expr& e, ConstValue& out);
     // Whether `e` is an int constant given where a byte goes, and which byte (D19).
     bool byteAt(const Expr& e, uint8_t& out) const;
+    // For a call of a C++ function with named arguments or a lambda after it: the argument
+    // each parameter takes in turn (-1 for one not given, passed as null); null otherwise.
+    const std::vector<int>* argumentOrder(const CallExpr& call) const;
 
     // For a call of a name with several forms (overloads, D56): the declaration of the form it
     // means, where that could be told; null otherwise, and the form is chosen when it runs.
     const FunctionDecl* chosenForm(const CallExpr& call) const;
+
+    // Whether an object of the class can change in what its == and hashCode see, so that it
+    // cannot be a key of a map or a set (D26): the compiler marks the class so for the checks
+    // made when the program runs.
+    bool unstableKey(const ClassStmt& cls);
 
     // For a method whose name has several forms among the classes it is related to: the
     // declaration, as high up as it goes, of the form it is (the one it overrides, or itself),

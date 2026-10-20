@@ -49,6 +49,6 @@ for move in [Vec2(1, 0), Vec2(0, 1), Vec2(-1, 0), Vec2(0, -1), Vec2(1, 0)] {
   visited.add(here)
   here += move
 }
-print("visited", visited.size, "squares:", visited.joinToString(" "), "- back at the start:", Vec2(0, 0) in visited)
+print("visited", visited.size, "squares:", visited.join(" "), "- back at the start:", Vec2(0, 0) in visited)
 
 // Types are enforced when compiling: a + 1 is an error, since Vec2's + takes a Vec2.

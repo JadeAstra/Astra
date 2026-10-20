@@ -1,0 +1,65 @@
+// Keys (D26): a class's own == and hashCode decide keys; a key cannot change, so collections
+// are keys only frozen; frozen() makes a copy nobody may change.
+
+fun attempt(f : () -> any?) : string {
+  try { return "${f()}" } catch (e) { return e.message }
+}
+// A value whose type the checker does not see, for the checks made when running.
+fun hidden(value : any?) : any? => value
+
+// frozen(): a copy, the lists, maps and sets inside it frozen too; one already frozen is itself.
+val items = [[1, 2], [3]]
+val frozen = items.frozen()
+items[0].add(9)
+print(items, frozen, frozen == [[1, 2], [3]], frozen is FrozenList, items is FrozenList, frozen[0] is FrozenList, frozen.frozen() === frozen)
+// expect: [[1, 2, 9], [3]] [[1, 2], [3]] true true false true true
+val table = {"a": [1]}.frozen()
+val seen = setOf(1, 2).frozen()
+print(table, table is FrozenMap, table["a"] is FrozenList, seen, seen is FrozenSet, seen is Set, setOf(2, 1) == seen)
+// expect: {"a": [1]} true true {1, 2} true true true
+print(attempt { (hidden(frozen) as open List<any>).add(1) }, attempt { (hidden(table) as open Map<string, any>)["b"] = 2 }, attempt { (hidden(seen) as open Set<int>).add(3) })
+// expect: a frozen list cannot be changed: toOpenList() makes a copy that can be a frozen map cannot be changed: toOpenMap() makes a copy that can be a frozen set cannot be changed: toOpenSet() makes a copy that can be
+val copy = frozen.toOpenList()
+copy.add([4])
+print(copy, copy is FrozenList, frozen.size)   // expect: [[1, 2], [3], [4]] false 2
+val typed : FrozenList<int> = [3, 1, 2].frozen()
+print(typed.sorted(), typed.map { it * 2 }, typed.first(), typed.itemType)   // expect: [1, 2, 3] [6, 2, 4] 3 int
+
+// Frozen collections are keys by what they hold; a list that can change finds one.
+val byList : open Map<FrozenList<int>, string> = {:}
+byList[[1, 2].frozen()] = "one two"
+print(byList[[1, 2]], byList[[2, 1]], byList[[1, 2].frozen()])   // expect: one two null one two
+val bySet = {:}
+bySet[setOf("x", "y").frozen()] = "xy"
+bySet[{"k": 1}.frozen()] = "map"
+print(bySet[setOf("y", "x")], bySet[{"k": 1}], bySet[{"k": 2}])   // expect: xy map null
+
+// What can change is no key, which is told when the program runs where the checker cannot tell.
+data Moving(var x : int)
+val anyKeys : open Map<any, string> = {:}
+print(attempt { anyKeys[hidden([1]) as any] = "list" })   // expect: a List can change, so it cannot be a key: a frozen copy can, key.frozen()
+print(attempt { anyKeys[hidden(Bytes([1])) as any] = "bytes" })   // expect: bytes can change, so they cannot be a key: a frozen list of them can, key.toList().frozen()
+print(attempt { anyKeys[hidden(Moving(1)) as any] = "moving" })   // expect: a Moving can change in what its == looks at, so it cannot be a key
+print(attempt { setOf(hidden([1])) }, attempt { listOf(hidden(Moving(2))).toSet() })
+// expect: a List can change, so it cannot be a key: a frozen copy can, key.frozen() a Moving can change in what its == looks at, so it cannot be a key
+val holdsMoving = [Moving(3)].frozen()
+print(attempt { anyKeys[hidden(holdsMoving) as any] = "x" }, anyKeys.size)   // expect: this frozen List holds something that can change, so it cannot be a key 0
+
+// A class's own == and hashCode decide; an object of a class without them is a key as itself.
+class Version(val major : int, val minor : int) {
+  op ==(other : any?) : bool => other is Version and other.major == major and other.minor == minor
+  fun hashCode() : int => hash(major, minor)
+}
+class Plain(val n : int)
+value Spot(val x : int, val y : int)
+val versions = {[Version(1, 2)]: "one two"}
+val plain = Plain(1)
+val objects = {[plain]: "plain"}
+val spots = {[Spot(1, 2)]: "spot"}
+print(versions[Version(1, 2)], versions[Version(2, 1)], objects[plain], objects[Plain(1)], spots[Spot(1, 2)])   // expect: one two null plain null spot
+
+// hashCode for every value: equal values hash alike.
+print("ab".hashCode() == ("a" + "b").hashCode(), [1, 2].hashCode() == [1, 2].frozen().hashCode(), 1.hashCode() == 1.0.hashCode())   // expect: true true true
+print(Version(1, 2).hashCode() == hash(1, 2), Spot(1, 2).hashCode() == Spot(1, 2).hashCode(), plain.hashCode() == plain.hashCode(), null.hashCode())   // expect: true true true 0
+// hash(...) calls a class's own hashCode.
+print(hash(Version(1, 2)) == hash(Version(1, 2)), hash(Version(1, 2)) == hash(Version(2, 1)))   // expect: true false

@@ -1,0 +1,57 @@
+// Keys (D26): == and hashCode both or neither; a key of a map or a set cannot change; what
+// frozen() makes nobody may change.
+
+class OnlyEquals(val n : int) {
+  op ==(other : any?) : bool => other is OnlyEquals and other.n == n   // check: OnlyEquals has its own == and no hashCode: a map or a set finds an object by its hash, so equal objects must hash alike; add fun hashCode() : int => hash(...) of what == compares (D26)
+}
+class OnlyHash(val n : int) {
+  fun hashCode() : int => n   // check: OnlyHash has its own hashCode and no ==: the two go together, so that equal objects hash alike; add op ==(other : any?) : bool comparing what hashCode reads (D26)
+}
+
+// What == reads decides whether an object can be a key.
+data Moving(var x : int)
+data Holding(val items : List<int>)
+class ReadsVar(var n : int) {
+  op ==(other : any?) : bool => other is ReadsVar and other.n == n
+  fun hashCode() : int => n
+}
+class Follows(val n : int, var seen : int) {
+  op ==(other : any?) : bool => other is Follows and other.key() == key()
+  fun hashCode() : int => key()
+  fun key() : int => n * 2
+}
+class FollowsVar(var n : int) {
+  op ==(other : any?) : bool => other is FollowsVar and other.doubled == doubled
+  fun hashCode() : int => doubled
+  get doubled() : int => n * 2
+}
+value Spot(var x : int, var y : int)
+
+fun keys(list : List<int>, frozen : FrozenList<int>, bytes : Bytes, set : Set<string>) {
+  val m : open Map<any, string> = {:}
+  m[list] = "a"                     // check: a List<int> can change, so it cannot be a key: a frozen copy can, list.frozen() (D26)
+  m[frozen] = "b"
+  m[bytes] = "c"                    // check: Bytes can change, so they cannot be a key: a frozen list of them can, bytes.toList().frozen() (D26)
+  m[set] = "d"                      // check: a Set<string> can change, so it cannot be a key: a frozen copy can, set.frozen() (D26)
+  m[Moving(1)] = "e"                // check: a Moving cannot be a key: its var 'x' can change (D26)
+  m[Holding([1])] = "f"             // check: a Holding cannot be a key: 'items' is a List<int>, which can change (D26)
+  m[ReadsVar(1)] = "g"              // check: a ReadsVar cannot be a key: its == or hashCode reads the var 'n', which can change (D26)
+  m[Follows(1, 2)] = "h"
+  m[FollowsVar(1)] = "i"            // check: a FollowsVar cannot be a key: its == or hashCode reads the var 'n', which can change (D26)
+  m[Spot(1, 2)] = "j"
+  val s = Set<any>()
+  s.add([1, 2])                     // check: a List<int> can change, so it cannot be a key: a frozen copy can, key.frozen() (D26)
+  val literal = {[list]: "x"}       // check: a List<int> can change, so it cannot be a key: a frozen copy can, list.frozen() (D26)
+  print(m[list], literal)
+}
+
+// What nobody may change.
+fun frozenOnes(items : FrozenList<int>, table : FrozenMap<string, int>, seen : FrozenSet<int>) {
+  items.add(1)                      // check: a FrozenList cannot be changed: toOpenList() makes a copy that can be (D26)
+  items[0] = 2                      // check: a FrozenList cannot be changed: toOpenList() makes a copy that can be (D26)
+  table["a"] = 1                    // check: a FrozenMap cannot be changed: toOpenMap() makes a copy that can be (D26)
+  seen.remove(1)                    // check: a FrozenSet cannot be changed: toOpenSet() makes a copy that can be (D26)
+  val open : List<int> = items
+  val notFrozen : FrozenList<int> = [1, 2]   // check: 'notFrozen' is a FrozenList<int>; it cannot start as an open List<int>
+  print(open, notFrozen, items.size, table["a"], 1 in seen)
+}

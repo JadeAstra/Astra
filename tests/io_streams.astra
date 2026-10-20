@@ -7,7 +7,7 @@ if (args().contains("echo")) {
   while (true) {
     val line = input()                // input() sends on what has been printed first
     if (line == null or line == "quit") { break }
-    print("echo: " + line.uppercase())
+    print("echo: " + line.upper())
   }
   exit(7)
 }
@@ -36,7 +36,7 @@ try { stream.readLine() } catch (e : IOException) { print(e.message, e is Error)
 file.outputStream(append = true).use { it.newLine(); it.append("four").append(4) }
 print(file.bufferedReader().use { it.readLines() }, file.inputStream().use { it.readBytes().size })   // expect: ["one", "two", "three", "four4"] 19
 val seen = []
-file.reader().use { it.forEachLine { line -> seen.add(line.length) } }
+file.reader().use { it.forEachLine { line -> seen.add(line.size) } }
 print(seen, file.inputStream().useLines { it.size }, file.delete())   // expect: [3, 3, 5, 5] 4 true
 try { File("no-such-folder/x.txt").inputStream() } catch (e : IOException) { print(e.message.startsWith("cannot read file 'no-such-folder/x.txt'")) }   // expect: true
 try { File("no-such-file.txt").readText() } catch (e : IOException) { print(e.message) }   // expect: cannot read file 'no-such-file.txt'

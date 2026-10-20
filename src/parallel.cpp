@@ -254,7 +254,8 @@ int coreCount() {
 }
 
 bool ownable(const Obj* obj) {
-    return obj->type == ObjType::Instance || obj->type == ObjType::List || obj->type == ObjType::Map || obj->type == ObjType::Bytes;
+    return obj->type == ObjType::Instance || obj->type == ObjType::List || obj->type == ObjType::Map || obj->type == ObjType::Bytes ||
+           obj->type == ObjType::Set;
 }
 
 // Gives back, when the section is over however it ends, the items that were dealt out.
@@ -388,6 +389,11 @@ AstraThrow VM::notOwned(const std::string& what) const {
 }
 
 AstraThrow VM::notOwned(const Obj* obj) const {
+    if (obj->frozen != 0) {
+        const char* const kind = obj->type == ObjType::List ? "list" : obj->type == ObjType::Map ? "map" : obj->type == ObjType::Set ? "set" : "value";
+        const char* const copy = obj->type == ObjType::List ? "toOpenList()" : obj->type == ObjType::Map ? "toOpenMap()" : "toOpenSet()";
+        return const_cast<VM*>(this)->runtimeError(std::string("a frozen ") + kind + " cannot be changed: " + copy + " makes a copy that can be");
+    }
     if (obj->core != 0) return otherCores(obj);
     return notOwned(describe(*this, obj) + " is shared with the other cores, so here it can be read and not changed");
 }

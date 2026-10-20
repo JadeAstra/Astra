@@ -8,21 +8,21 @@
 // ---- Small values that functions hand out ----
 
 // Two values, made with `a to b` or Pair(a, b).
-data Pair<A, B>(val first : A, val second : B) {
-  fun toList() : List<any?> => [first, second]
+value Pair<A, B>(val first : A, val second : B) {
+  fun toList() : open List<any?> => [first, second]
 }
 
-data Triple<A, B, C>(val first : A, val second : B, val third : C) {
-  fun toList() : List<any?> => [first, second, third]
+value Triple<A, B, C>(val first : A, val second : B, val third : C) {
+  fun toList() : open List<any?> => [first, second, third]
 }
 
 // One key of a map with its value: what map.entries holds.
-data MapEntry<K, V>(val key : K, val value : V) {
+value MapEntry<K, V>(val key : K, val value : V) {
   fun toPair() : Pair<K, V> => Pair(key, value)
 }
 
 // An item with its position: what withIndex() gives.
-data IndexedValue<T>(val index : int, val value : T)
+value IndexedValue<T>(val index : int, val value : T)
 
 // Thrown when the system cannot give the program the memory it asks for: a list, a string or
 // a buffer too large. Like any error, it can be caught.
@@ -33,25 +33,25 @@ class OutOfMemoryError(message : string = "out of memory") : Error(message)
 // Each throws an Error unless the condition holds. The message is a function, so that it is
 // only worked out when it is needed: require(n > 0) { "n is $n" }
 fun require(condition : bool, lazyMessage : (() -> any?)? = null) {
-  if (!condition) { throw Error(lazyMessage == null ? "Failed requirement." : str(lazyMessage())) }
+  if (!condition) { throw Error(lazyMessage == null ? "Failed requirement." : "${lazyMessage()}") }
 }
 
 fun check(condition : bool, lazyMessage : (() -> any?)? = null) {
-  if (!condition) { throw Error(lazyMessage == null ? "Check failed." : str(lazyMessage())) }
+  if (!condition) { throw Error(lazyMessage == null ? "Check failed." : "${lazyMessage()}") }
 }
 
 fun <T> requireNotNull(value : T?, lazyMessage : (() -> any?)? = null) : T {
-  if (value == null) { throw Error(lazyMessage == null ? "Required value was null." : str(lazyMessage())) }
+  if (value == null) { throw Error(lazyMessage == null ? "Required value was null." : "${lazyMessage()}") }
   return value
 }
 
 fun <T> checkNotNull(value : T?, lazyMessage : (() -> any?)? = null) : T {
-  if (value == null) { throw Error(lazyMessage == null ? "Required value was null." : str(lazyMessage())) }
+  if (value == null) { throw Error(lazyMessage == null ? "Required value was null." : "${lazyMessage()}") }
   return value
 }
 
 fun error(message : any?) : nothing {
-  throw Error(str(message))
+  throw Error("$message")
 }
 
 // Runs `action` that many times, giving it 0, 1, 2 and so on.
@@ -61,8 +61,11 @@ fun repeat(times : int, action : (int) -> unit) {
 
 // ---- Every value ----
 
-fun any?.toString() : string => str(this)
+fun any?.toString() : string => "$this"
 fun any?.equals(other : any?) : bool => this == other
+// Equal values give equal hashes: by what they hold for strings, numbers, frozen collections,
+// data classes and values; an object of any other class by which object it is (D26).
+fun any?.hashCode() : int => __hashCode(this)
 fun any.compareTo(other : any?) : int => compareValues(this, other)
 fun <T> T.takeIf(predicate : (T) -> bool) : T? => predicate(this) ? this : null
 fun <T> T.takeUnless(predicate : (T) -> bool) : T? => predicate(this) ? null : this
@@ -144,55 +147,55 @@ fun <T> Function.reversed() : (T, T) -> int {
 
 // ---- Making collections ----
 
-fun <T> listOf(vararg items : T) : List<T> => items
-fun <T> mutableListOf(vararg items : T) : List<T> => items
-fun <T> arrayListOf(vararg items : T) : List<T> => items
+fun <T> listOf(vararg items : T) : open List<T> => items
+fun <T> mutableListOf(vararg items : T) : open List<T> => items
+fun <T> arrayListOf(vararg items : T) : open List<T> => items
 fun <T> emptyList() : List<T> => []
-fun <T> listOfNotNull(vararg items : T?) : List<T> => items.filterNotNull()
+fun <T> listOfNotNull(vararg items : T?) : open List<T> => items.filterNotNull()
 
 // List(3) { it * 2 } is [0, 2, 4]: `size` items, each worked out from its position.
-fun <T> List(size : int, init : (int) -> T) : List<T> {
-  val out : List<T> = []
+fun <T> List(size : int, init : (int) -> T) : open List<T> {
+  val out : open List<T> = []
   for index in 0..<size { out.add(init(index)) }
   return out
 }
 
-fun <T> MutableList(size : int, init : (int) -> T) : List<T> => List(size, init)
+fun <T> MutableList(size : int, init : (int) -> T) : open List<T> => List(size, init)
 
 // mapOf("a" to 1, "b" to 2)
-fun <K, V> mapOf(vararg pairs : Pair<K, V>) : Map<K, V> {
-  val out : Map<K, V> = {:}
+fun <K, V> mapOf(vararg pairs : Pair<K, V>) : open Map<K, V> {
+  val out : open Map<K, V> = {:}
   for (key, value) in pairs { out[key] = value }
   return out
 }
 
-fun <K, V> mutableMapOf(vararg pairs : Pair<K, V>) : Map<K, V> => mapOf(*pairs)
-fun <K, V> hashMapOf(vararg pairs : Pair<K, V>) : Map<K, V> => mapOf(*pairs)
-fun <K, V> linkedMapOf(vararg pairs : Pair<K, V>) : Map<K, V> => mapOf(*pairs)
+fun <K, V> mutableMapOf(vararg pairs : Pair<K, V>) : open Map<K, V> => mapOf(*pairs)
+fun <K, V> hashMapOf(vararg pairs : Pair<K, V>) : open Map<K, V> => mapOf(*pairs)
+fun <K, V> linkedMapOf(vararg pairs : Pair<K, V>) : open Map<K, V> => mapOf(*pairs)
 fun <K, V> emptyMap() : Map<K, V> => {:}
 
-fun <T> setOf(vararg items : T) : Set<T> => Set(items)
-fun <T> mutableSetOf(vararg items : T) : Set<T> => Set(items)
-fun <T> hashSetOf(vararg items : T) : Set<T> => Set(items)
-fun <T> linkedSetOf(vararg items : T) : Set<T> => Set(items)
+fun <T> setOf(vararg items : T) : open Set<T> => Set(items)
+fun <T> mutableSetOf(vararg items : T) : open Set<T> => Set(items)
+fun <T> hashSetOf(vararg items : T) : open Set<T> => Set(items)
+fun <T> linkedSetOf(vararg items : T) : open Set<T> => Set(items)
 fun <T> emptySet() : Set<T> => Set()
 
 // Each runs the lambda on a new collection, so that add(...), put(...) or append(...) inside
 // it fill that collection, and gives what was built.
-fun <T> buildList(builder : List<T>.() -> unit) : List<T> {
-  val out : List<T> = []
+fun <T> buildList(builder : open List<T>.() -> unit) : open List<T> {
+  val out : open List<T> = []
   with(out, builder)
   return out
 }
 
-fun <K, V> buildMap(builder : Map<K, V>.() -> unit) : Map<K, V> {
-  val out : Map<K, V> = {:}
+fun <K, V> buildMap(builder : open Map<K, V>.() -> unit) : open Map<K, V> {
+  val out : open Map<K, V> = {:}
   with(out, builder)
   return out
 }
 
-fun <T> buildSet(builder : Set<T>.() -> unit) : Set<T> {
-  val out : Set<T> = Set()
+fun <T> buildSet(builder : open Set<T>.() -> unit) : open Set<T> {
+  val out : open Set<T> = Set()
   with(out, builder)
   return out
 }

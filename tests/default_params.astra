@@ -22,7 +22,7 @@ var calls = 0
 fun next() { calls += 1; return calls }
 fun stamp(label : string, id : int = next(), tag : string = "$label-$id") => tag
 print(stamp("a"), stamp("b"), stamp("c", 10), stamp("d", tag = "custom"), calls)   // expect: a-1 b-2 c-10 custom 3
-fun collect(item : int, into : List = []) : List { into.push(item); return into }
+fun collect(item : int, into : open List = []) : List { into.add(item); return into }
 print(collect(1), collect(2), collect(3, [0]))   // expect: [1] [2] [0, 3]
 
 // lambdas, methods, static methods and initializers

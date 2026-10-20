@@ -167,6 +167,7 @@ struct Names {
     ObjString* value;
     ObjString* code;
     ObjString* character;  // `n.char`
+    ObjString* fromEnd;    // an Index's
     ObjString* iterator;
     ObjString* first;
     ObjString* last;
@@ -188,6 +189,7 @@ struct Names {
     ObjString* opDiv;
     ObjString* opMod;
     ObjString* opEq;
+    ObjString* hashCode;
     ObjString* opLt;
     ObjString* opLe;
     ObjString* opGt;
@@ -203,9 +205,9 @@ struct Names {
     ObjString* opBitNot;
 };
 
-enum class BuiltinType { String, List, Map, Range, Bytes, Number, Char, Byte, Count_ };
+enum class BuiltinType { String, List, Map, Range, Bytes, Number, Char, Byte, Index, Set, Count_ };
 
-class VM {
+class VM : public KeyMethods {
 public:
     // `worker`: this VM is a worker's, running beside the one that started it. It has no
     // windows: what belongs to the one user interface stays with the main program.
@@ -266,6 +268,20 @@ public:
     // ---- Lists (M6.6 part 3): see "Lists" in vm.cpp ----
     ListStore storeFor(const ObjTypeInfo* item, uint32_t& width, ObjClass*& itemClass);
     void typeList(ObjList* list, ObjTypeInfo* type);
+
+    // ---- Sets (M6.6 part 8), and views of a map's keys and entries (D77) ----
+    // Part `index` of a value taken apart (D64).
+    Value componentOf(Value whole, size_t index);
+    ObjSet* newSet(ObjTypeInfo* type);
+    Value mapView(ObjMap* map, bool entries);
+    size_t setSize(const ObjSet* set) const { return set->view() ? set->viewOf->map.size() : set->items.size(); }
+    bool setContains(const ObjSet* set, Value item);
+    bool setAdd(ObjSet* set, Value item);
+    bool setRemove(ObjSet* set, Value item);
+    std::vector<Value> setItems(const ObjSet* set);
+    // Every item of a list, a range, a set, a string, bytes or a map (its entries).
+    std::vector<Value> itemsOf(Value from, const char* what);
+    AstraThrow viewChanged(const ObjSet* view);
     uint8_t* itemAt(ObjList* list, size_t i);
     // Item `i` of a list, `i` already checked against its size: a value type's item copied into a box.
     Value listGet(ObjList* list, size_t i) { return !list->packed() ? list->values()[i] : packedGet(list, i); }
@@ -362,6 +378,11 @@ public:
     }
     void writeValueField(uint8_t* at, const ValueField& field, const ObjClass* owner, Value value);
     std::string storageMismatch(Narrow narrow, Value v);
+    // Positions and slices (D146, D147).
+    bool position(Value index, size_t size, size_t& out, const char* what);
+    AstraThrow outOfRange(const char* what, Value index, size_t size);
+    void sliceBounds(const ObjRange* range, size_t size, size_t& begin, size_t& end);
+    AstraThrow rangeFromEnd(const ObjRange* range, const std::string& use);
     // An int given where a storage width it does not fit is declared: an error saying so, with
     // `where` after it. Returns normally for anything else.
     void checkRange(uint8_t type, Value v, const std::string& where);
@@ -609,8 +630,16 @@ public:
         if (v.kind == ValueKind::Obj) guardRead(v.as.obj);
     }
     void guardWrite(const Obj* obj) const {
-        if (obj->core != coreId_) [[unlikely]] throw notOwned(obj);
+        if (obj->core != coreId_ || obj->frozen != 0) [[unlikely]] throw notOwned(obj);
     }
+    // A frozen copy of a list, a map or a set (D26), which nobody may change; the lists, maps
+    // and sets inside it are frozen copies too. One already frozen is itself.
+    Value frozenCopy(Value v, int depth = 0);
+    // Keys (D26): a class's own == and hashCode, called for a map or a set, and the error
+    // for a key that can change.
+    bool hashOf(const ObjClass* cls, const Value& v, size_t& out) override;
+    bool equalOf(const ObjClass* cls, const Value& a, const Value& b, bool& out) override;
+    [[noreturn]] void refuseKey(const Value& key) override;
     // Says which of a type's built-in methods change the value they are called on, and which
     // built-in functions are not for a parallel section (by the object they belong to).
     void markMutating(BuiltinType type, std::initializer_list<const char*> methods);
@@ -813,6 +842,11 @@ private:
     size_t bytesAllocated_ = 0;
     size_t nextGC_ = kMinHeap;
     bool gcStress_ = false;  // ASTRA_GC_STRESS: collect at every safe point, to expose rooting bugs
+    // A class's own == or hashCode running for a map or a set (D26): the C++ around it holds
+    // objects nothing roots (a map being built, its entries), so meanwhile nothing is collected
+    // and the lock is not handed to another thread.
+    int keyCalls_ = 0;
+    friend struct KeyCall;
     size_t liveBytes_ = 0;
     std::vector<Obj*> gray_;
     std::unordered_map<std::string_view, ObjString*> interned_;
@@ -896,6 +930,7 @@ private:
     Value getIndex(Value obj, Value index);
     void setIndex(Value obj, Value index, Value value);
     bool binarySlow(Op op);
+
     bool numberArithmetic(Op op);
     bool compareSlow(Op op);
     bool shift(Op op);

@@ -49,23 +49,23 @@ print(spread(Point(3, 4)), spread([5, 6]))  // expect: [4, 3, 7] [6, 5, 11]
 
 val pairs = [["one", 1], ["two", 2], ["three", 3]]
 val seen = []
-for (name, number) in pairs { seen.push("$name=$number") }
-for ((name, number) in pairs) { if number > 1 { seen.push(name.upper()) } }
-for (x, y) in [Point(1, 2), Point(3, 4)] { seen.push(x * y) }
-for (key, value) in {"k": "v", "n": 1}.entries() { seen.push(key + ":" + value) }
+for (name, number) in pairs { seen.add("$name=$number") }
+for ((name, number) in pairs) { if number > 1 { seen.add(name.upper()) } }
+for (x, y) in [Point(1, 2), Point(3, 4)] { seen.add(x * y) }
+for (key, value) in {"k": "v", "n": 1}.entries { seen.add(key + ":" + value) }
 print(seen)   // expect: ["one=1", "two=2", "three=3", "TWO", "THREE", 2, 12, "k:v", "n:1"]
 
 val closures = []
-for (label, _) in pairs { closures.push(fun() => label) }
+for (label, _) in pairs { closures.add(fun() => label) }
 print(closures.map { it() })                // expect: ["one", "two", "three"]
 
 // Asking for a part that is not there, or of something that has none.
 try { val (x, y, z) = p } catch (e) { print(e.message) }   // expect: cannot take a third part from Point, which has 2
 try { val (x, y) = [1] } catch (e) { print(e.message) }    // expect: cannot take a second part from a list of 1
-try { val (x, y) = 5 } catch (e) { print(e.message) }      // expect: cannot take apart a value of type int: only a list or a data object has parts
+try { val (x, y) = 5 } catch (e) { print(e.message) }      // expect: cannot take apart a value of type int: only a list, a data object or a value has parts
 class Plain(val x : int, val y : int)
 try { val (x, y) = Plain(1, 2) } catch (e) { print(e.message) }
-// expect: cannot take apart a value of type Plain: only a list or a data object has parts
+// expect: cannot take apart a value of type Plain: only a list, a data object or a value has parts
 print(Plain(1, 2) == Plain(1, 2))           // expect: false
 
 // A data class is a class: a body, defaults, a superclass, interfaces, statics.
@@ -87,6 +87,7 @@ print(w, h, label)                          // expect: 2 3 mine
 // Its own ==, toString or copy takes the place of the given one.
 data Version(val major : int, val minor : int, val note : string = "") {
   op ==(other : any?) => other is Version and major == other.major and minor == other.minor
+  fun hashCode() => hash(major, minor)
   fun toString() => "v$major.$minor"
   fun copy(major : int = this.major) => Version(major, 0)
 }
@@ -115,4 +116,4 @@ print(Shapes.square(2), Shapes.Size(1, 2) == Shapes.Size(1, 2), local())   // ex
 
 // `data` is still an ordinary name.
 val data = [1, 2]
-print(data, data.length)                    // expect: [1, 2] 2
+print(data, data.size)                    // expect: [1, 2] 2

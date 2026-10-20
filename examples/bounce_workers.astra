@@ -18,7 +18,7 @@ val palette = [Color.red, Color.blue, Color.green, Color.orange, Color(160, 60, 
 // What this program knows of one worker's balls: how big each is, told once when it is made,
 // and where each was when the worker last said (x then y for each, in one list).
 class Share(val worker : Worker, val number : int) {
-  val radii : List<Number> = []
+  val radii : open List<Number> = []
   var places : List<Number> = []
   var moves = 0          // how often the worker has moved its balls since this was last looked at
   var asked = false      // a request for the places is on its way, or its answer is
@@ -29,8 +29,8 @@ val shares = (0..<workerCount).map { n ->
   val share = Share(Worker("bounce_worker.astra", isDaemon = true), n)
   share.worker.onMessage = { message ->
     val got = message as Map<string, any?>
-    if (got.containsKey("added")) { share.radii.addAll(got["added"] as List<Number>) }
-    if (got.containsKey("at")) {
+    if (got.keys.contains("added")) { share.radii.addAll(got["added"] as List<Number>) }
+    if (got.keys.contains("at")) {
       share.places = got["at"] as List<Number>
       share.moves += got["moves"] as int
       share.asked = false

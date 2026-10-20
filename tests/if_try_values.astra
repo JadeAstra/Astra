@@ -10,11 +10,11 @@ print(width, label, if false { 1 }, [1, if wide { 2 } else { 0 }, 3])   // expec
 
 // A block can do more before giving its value, and has its own variables.
 fun describe(items : List<string>) {
-  return if items.length == 0 {
+  return if items.size == 0 {
     "nothing"
   } else {
     val first = items[0]
-    val rest = items.length - 1
+    val rest = items.size - 1
     "$first and $rest more"
   }
 }
@@ -22,16 +22,16 @@ print(describe([]), describe(["a", "b", "c"]))   // expect: nothing a and 2 more
 
 // try gives the value of its block, or of the catch that ran; finally still runs.
 val log = []
-fun parse(text : string) => try { int(text) } catch (e) { -1 }
+fun parse(text : string) => try { text.toInt() } catch (e) { -1 }
 fun guarded(text : string) {
   val n = 10 + try {
-    val parsed = int(text)
+    val parsed = text.toInt()
     parsed * 2
   } catch (e) {
-    log.push("bad " + text)
+    log.add("bad " + text)
     0
   } finally {
-    log.push("checked " + text)
+    log.add("checked " + text)
   }
   return n
 }
@@ -44,11 +44,11 @@ fun lookup(table : Map<string, int>, key : string) => try {
   "default"
 }
 print(lookup({"a": 1}, "a"), lookup({:}, "b"))   // expect: 1 default
-try { print(try { throw "inner" } finally { log.push("finally") }) } catch (e) { print("caught", e, log.length) }   // expect: caught inner 4
+try { print(try { throw "inner" } finally { log.add("finally") }) } catch (e) { print("caught", e, log.size) }   // expect: caught inner 4
 
 // As the last thing in a lambda, in a when branch, and with jumps inside.
 val grades = [95, 72, 40].map { if it >= 90 { "A" } else if it >= 60 { "C" } else { "F" } }
-val parsed = ["1", "x", "3"].map { try { int(it) } catch (e) { 0 } }
+val parsed = ["1", "x", "3"].map { try { it.toInt() } catch (e) { 0 } }
 fun kind(x : any?) => when (x) {
   null -> "none"
   else -> if x is string { "text" } else { "other" }
@@ -58,17 +58,17 @@ print(grades, parsed, kind(null), kind("s"), kind(1))   // expect: ["A", "C", "F
 fun firstPositive(items : List<int?>) {
   for item in items {
     val checked = if item == null { continue } else if item < 0 { 0 } else { return item }
-    log.push(checked)
+    log.add(checked)
   }
-  return if items.length > 3 { "long" } else { "none" }
+  return if items.size > 3 { "long" } else { "none" }
 }
 print(firstPositive([null, -1, 5]), firstPositive([null, -2]), firstPositive([-1, -1, -1, -1]))   // expect: 5 none long
 
 // A function captures a variable of a branch.
 val readers = []
 for n in [1, 2] {
-  val doubled = if n > 0 { val twice = n * 2; readers.push(fun() => twice); twice } else { 0 }
-  readers.push(fun() => doubled + 100)
+  val doubled = if n > 0 { val twice = n * 2; readers.add(fun() => twice); twice } else { 0 }
+  readers.add(fun() => doubled + 100)
 }
 print(readers.map { it() })                 // expect: [2, 102, 4, 104]
 

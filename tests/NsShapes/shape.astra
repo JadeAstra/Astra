@@ -23,7 +23,7 @@ fun shapeSecret() => secret + ", " + hidden()
 
 internal val registry = []
 internal fun <T : Shape> register(shape : T) : T {
-  registry.push(shape.name)
+  registry.add(shape.name)
   return shape
 }
 

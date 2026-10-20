@@ -29,13 +29,13 @@ print(attempt(fun() { t.fahrenheit = unknown("hot") }))   // expect: argument 'v
 // a setter can check and react before storing the value somewhere
 class Account {
   var stored : Number = 0
-  val history : List = []
+  val history : open List = []
 
   get balance() : Number => this.stored
   set balance(amount : Number) {
     if amount < 0 { throw Error("balance cannot be negative") }
     if amount == this.stored { return }
-    this.history.push(amount)
+    this.history.add(amount)
     this.stored = amount
   }
 
@@ -50,8 +50,8 @@ print(attempt(fun() { account.balance = -1 }), account.balance)   // expect: bal
 
 // only a setter: the property can be assigned but not read
 class Logger {
-  val lines : List = []
-  set message(text) { this.lines.push("log: $text") }
+  val lines : open List = []
+  set message(text) { this.lines.add("log: $text") }
 }
 val logger = Logger()
 logger.message = "started"
@@ -63,10 +63,10 @@ print(attempt(fun() => logger.message))          // expect: property 'message' o
 class Base {
   var raw = ""
   get text() => this.raw
-  set text(value) { this.raw = str(value) }
+  set text(value) { this.raw = "$value" }
 }
 class Loud : Base {
-  override set text(value) { this.raw = str(value).upper() + "!" }
+  override set text(value) { this.raw = "$value".upper() + "!" }
 }
 class Quiet : Base {
   override get text() => "(" + this.raw + ")"
@@ -79,12 +79,12 @@ print(loud.text, quiet.text)                     // expect: HELLO! (hello)
 
 // a property alongside the fields it works on
 class Open {
-  val items : List<any?> = []
+  val items : open List<any?> = []
   var extra = false
   fun init() { this.items.clear() }
-  get count() => this.items.length
-  get last() => this.items.length == 0 ? null : this.items[-1]
-  set last(value) { this.items.push(value) }
+  get count() => this.items.size
+  get last() => this.items.size == 0 ? null : this.items[^1]
+  set last(value) { this.items.add(value) }
 }
 val open = Open()
 open.last = "a"
@@ -102,10 +102,10 @@ print(handlers.increment(5), handlers.increment(2))   // expect: 5 7
 
 // `get` and `set` are only special at the start of a class member
 class Store {
-  val data : Map = {:}
+  val data : open Map = {:}
   fun get(key : string) => this.data.get(key, "missing")
   fun set(key : string, value : int) { this.data[key] = value }
-  get size() : int => this.data.length
+  get size() : int => this.data.size
 }
 val store = Store()
 store.set("a", 1)

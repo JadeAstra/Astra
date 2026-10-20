@@ -175,7 +175,7 @@ fun textWrapsToTheGivenWidth() {
   val wide = wrapped.wrap(600)
   yes("a narrower box needs more lines", narrow.size > wide.size)
   same("the whole sentence fits on one wide line", wide.size, 1)
-  same("no word lost or out of order", narrow.joinToString(" "), sentence)
+  same("no word lost or out of order", narrow.join(" "), sentence)
 }
 textWrapsToTheGivenWidth()
 

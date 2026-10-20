@@ -11,11 +11,11 @@ try { 5.coerceIn(10, 1) } catch (e) { print(e.message) }     // expect: coerceIn
 try { 5.coerceAtLeast(unknown("x")) } catch (e) { print(e.message) }  // expect: minimum must be a number, got string
 
 // Rounding and converting. A half rounds up; toInt drops what is after the point.
-print(2.4.roundToInt(), 2.5.roundToInt(), (-2.5).roundToInt(), (-2.6).roundToInt(), 7.roundToInt(), 1e10.roundToLong())   // expect: 2 3 -2 -3 7 10000000000
-print(2.9.toInt(), (-2.9).toInt(), 7.toInt(), 7.toDouble(), 7.toFloat(), 2.5.toLong(), type(7.toDouble()), type(2.9.toInt()))   // expect: 2 -2 7 7.0 7.0 2 float int
+print(2.4.roundToInt(), 2.5.roundToInt(), (-2.5).roundToInt(), (-2.6).roundToInt(), 7.roundToInt(), 1e10.roundToInt())   // expect: 2 3 -2 -3 7 10000000000
+print(2.9.toInt(), (-2.9).toInt(), 7.toInt(), 7.toFloat(), 7.toFloat(), 2.5.toInt(), type(7.toFloat()), type(2.9.toInt()))   // expect: 2 -2 7 7.0 7.0 2 float int
 print((-7).absoluteValue, 7.absoluteValue, (-2.5).absoluteValue, (-7).sign, 0.sign, 3.sign, (-0.5).sign)   // expect: 7 7 2.5 -1 0 1 -1.0
 print(2.pow(10), 2.pow(-1), 2.5.pow(2), 9.pow(0.5), (-7).mod(3), 7.mod(-3), 7.mod(3), 7.5.mod(2))   // expect: 1024 0.5 6.25 3.0 2 -2 1 1.5
-print(1.compareTo(2), 2.5.compareTo(2), 3.compareTo(3.0), 65.char, 0x1F600.char.toString().length)   // expect: -1 1 0 A 1
+print(1.compareTo(2), 2.5.compareTo(2), 3.compareTo(3.0), 65.char, 0x1F600.char.toString().size)   // expect: -1 1 0 A 1
 print((0.0 / 0.0).isNaN(), 1.5.isNaN(), (1.0 / 0.0).isInfinite(), 1.isFinite(), (1.0 / 0.0).isFinite(), 3.isNaN())   // expect: true false true true false false
 
 // The limits of Astra's numbers, at their real values (D76).
@@ -39,7 +39,7 @@ val r = 1..5
 print(r.first, r.last, r.first(), r.last(), (10 downTo 1 step 3).last, (0..<10 step 4).last, r.size, r.isEmpty(), (5..<5).isEmpty(), r.isNotEmpty())   // expect: 1 5 1 5 1 8 5 false true true
 print(r.map { it * it }, r.filter { it % 2 == 1 }, r.sum(), r.sumOf { it * 2 }, r.count { it > 2 }, r.count(), r.any { it > 4 }, r.all { it > 1 }, r.none { it > 5 })   // expect: [1, 4, 9, 16, 25] [1, 3, 5] 15 30 3 5 true false true
 print(r.reversed(), r.toList(), r.toSet(), r.firstOrNull { it > 3 }, r.find { it > 9 }, r.mapNotNull { it > 3 ? it : null }, r.flatMap { [it, it] }.size)   // expect: [5, 4, 3, 2, 1] [1, 2, 3, 4, 5] {1, 2, 3, 4, 5} 4 null [4, 5] 10
-print(r.joinToString(), r.joinToString("") { it * 2 }, (1..3).associateWith { it * it }, (4..6).random() in 4..6)   // expect: 1, 2, 3, 4, 5 246810 {1: 1, 2: 4, 3: 9} true
+print(r.join(), r.join("") { it * 2 }, (1..3).associateWith { it * it }, (4..6).random() in 4..6)   // expect: 1, 2, 3, 4, 5 246810 {1: 1, 2: 4, 3: 9} true
 val collected = []
 r.forEach { collected.add(it) }
 repeat(3) { collected.add("r$it") }

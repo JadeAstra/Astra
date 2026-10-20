@@ -31,9 +31,9 @@ for (name in ["Segoe UI", "Arial", "Times New Roman", "Consolas", "Bahnschrift",
         val page = Picture(4, 4)
         val drawn = page.drawText(text, 0, 2, f)
         var steps = true
-        for (i in 0..<text.length) { steps = steps and offsets[i] == f.width(text.substring(0, i)) }
+        for (i in 0..<text.size) { steps = steps and offsets[i] == f.width(text[0..<i]) }
         checked += 1
-        if (!(whole is int) or whole != sum or whole != drawn or offsets.size != text.length + 1 or offsets.last() != whole or !steps) {
+        if (!(whole is int) or whole != sum or whole != drawn or offsets.size != text.size + 1 or offsets.last() != whole or !steps) {
           failed.add("$name $size $style: $text")
         }
       }
@@ -102,13 +102,13 @@ val line = "The quick brown fox jumps over the lazy dog"
 var exact : Number = 0.0
 for (c in line) { exact += plain.typeface.advance(plain.typeface.glyph(c)) * 12 / plain.typeface.unitsPerEm }
 val at2 = Math.abs(dense.width(line) / 2.0 - exact)
-print(at2 <= line.length * 0.25, Math.abs(plain.width(line) - exact) <= line.length * 0.5)   // expect: true true
+print(at2 <= line.size * 0.25, Math.abs(plain.width(line) - exact) <= line.size * 0.5)   // expect: true true
 // Any scale will do, and the rule holds at each.
 for (scale in [1.25, 1.5, 1.75, 3]) {
   val f = TextFont("Segoe UI", 11, scale = scale)
   var sum = 0
   for (c in line) { sum += f.charWidth(c) }
-  print(scale, f.width(line) == sum, f.width(line) is int, Math.abs(f.width(line) / scale - TextFont("Segoe UI", 11).width(line)) < line.length * 0.5)
+  print(scale, f.width(line) == sum, f.width(line) is int, Math.abs(f.width(line) / scale - TextFont("Segoe UI", 11).width(line)) < line.size * 0.5)
 }
 // expect: 1.25 true true true
 // expect: 1.5 true true true

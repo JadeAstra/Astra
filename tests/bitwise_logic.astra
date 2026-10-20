@@ -72,7 +72,7 @@ print(attempt(fun() => ~unknown(Plain())))                // expect: Plain does 
 print(true and false, true or false, unknown(null) or unknown("default"), unknown(1) and unknown(2))   // expect: false true default 2
 var calls = []
 fun loud(label : string, value : bool) {
-  calls.push(label)
+  calls.add(label)
   return value
 }
 print(loud("a", false) and loud("b", true), loud("c", true) or loud("d", false), calls)   // expect: false true ["a", "c"]
