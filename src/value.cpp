@@ -296,10 +296,10 @@ bool keysEqual(const Value& a, const Value& b, int depth) {
             const ObjInstance* y = asInstance(b);
             if (x->cls != y->cls) return false;
             for (const ObjString* part : x->cls->components) {
-                const Value* left = x->field(part);
-                const Value* right = y->field(part);
-                if (!keysEqual(left != nullptr ? *left : Value::null(), right != nullptr ? *right : Value::null(), depth + 1))
-                    return false;
+                Value left = Value::null(), right = Value::null();
+                x->read(part, left);
+                y->read(part, right);
+                if (!keysEqual(left, right, depth + 1)) return false;
             }
             return true;
         }
@@ -341,8 +341,8 @@ size_t keyHash(const Value& v, int depth) {
             const ObjInstance* instance = asInstance(v);
             size_t h = std::hash<const void*>()(instance->cls);
             for (const ObjString* part : instance->cls->components) {
-                const Value* field = instance->field(part);
-                h = mix(h, field != nullptr ? keyHash(*field, depth + 1) : 0);
+                Value field;
+                h = mix(h, instance->read(part, field) ? keyHash(field, depth + 1) : 0);
             }
             return h;
         }

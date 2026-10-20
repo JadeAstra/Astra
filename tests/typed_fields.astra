@@ -1,0 +1,67 @@
+// Typed fields and instructions (M6.6 part 6): an int, float or bool field whose type is known
+// is kept as its 8-byte payload alone inside its object, and a number's conversions and Math's
+// functions are one instruction each; what a program sees is as before.
+
+class Counter(var total : int, val name : string) {
+  var scale = 1.5
+  var on = true
+  var maybe : int? = null
+  fun add(n : int) { total += n }
+}
+val c = Counter(1, "c")
+c.add(4)
+c.scale *= 2.0
+c.on = !c.on
+c.maybe = 7
+print(c.total, c.name, c.scale, c.on, c.maybe)   // expect: 5 c 3.0 false 7
+class Sub(total : int) : Counter(total, "sub") {
+  var extra : int = 100
+  override fun toString() : string => "Sub($total, $extra)"
+}
+val s = Sub(5)
+s.add(1)
+s.extra -= 1
+print(s, s.scale, s is Counter)   // expect: Sub(6, 99) 1.5 true
+data P3(val a : int, val b : float, val c : bool)
+val p = P3(1, 2.0, true)
+print(p, p == P3(1, 2.0, true), p == P3(1, 2.0, false), setOf(p, P3(1, 2.0, true)).size, p.copy(a = 5), p.c)
+// expect: P3(a=1, b=2.0, c=true) true false 1 P3(a=5, b=2.0, c=true) true
+class Late {
+  val v : int
+  var w : float
+  fun init(x : int) {
+    v = x
+    w = x * 0.5
+  }
+}
+val late = Late(6)
+print(late.v, late.w)   // expect: 6 3.0
+class Forgot {
+  val v : int
+  fun init() { }
+}
+try { Forgot() } catch (e) { print(e.message) }   // expect: Forgot.init() must set field 'v'
+class Twice {
+  val v : int
+  fun init() {
+    v = 1
+    v = 2
+  }
+}
+try { Twice() } catch (e) { print(e.message) }   // expect: cannot assign to val field 'v' of Twice
+val anyCounter : any = c
+try { (anyCounter as Counter).total = 5; print(c.total) } catch (e) { print(e.message) }   // expect: 5
+
+// A number's conversions and Math's functions, worked out in place: as the library's own.
+val f = 3.7
+val g = -2.5
+val i = 7
+val nan = 0.0 / 0.0
+print(f.toInt(), g.toInt(), i.toInt(), i.toFloat(), f.roundToInt(), g.roundToInt(), f.isNaN(), nan.isNaN(), i.isFinite())
+// expect: 3 -2 7 7.0 4 -2 false true true
+print(Math.max(3, 9), Math.min(3, 9), Math.max(2.5, 1.5), Math.min(-1.0, 4.0), Math.abs(-4), Math.abs(-4.5))
+// expect: 9 3 2.5 -1.0 4 4.5
+print(Math.sqrt(16), Math.floor(2.7), Math.ceil(2.1), Math.round(-2.5), Math.max(nan, 1.0), Math.max(1.0, nan))
+// expect: 4.0 2 3 -3 nan 1.0
+try { print(nan.toInt()) } catch (e) { print(e.message) }   // expect: number nan does not fit in an int
+try { print(nan.roundToInt()) } catch (e) { print(e.message) }   // expect: cannot round NaN to a whole number

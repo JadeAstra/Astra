@@ -1740,6 +1740,34 @@ known:
 - A value type of up to 8 bytes kept in the value itself holds ints, floats and bools only:
   storage widths (D148, the second half) let more fit.
 
+Part 6 (built 2026-10-19): typed instructions and payload-only fields in objects, as D176 and
+D177 propose; payload-only slots in frames, instructions chosen by type for arithmetic, and
+values in variables (D149) moved to M6.7 by the user the same day (D178). A number's conversions
+and Math's commonest functions, where the checker knows the call is the standard library's, are
+one instruction (Numeric) in place of a call. An int, a float or a bool field whose type is
+known, written or worked out from what it is first given, is kept as its 8-byte payload alone
+inside its object, before the object's slots, so that each is at the same place in every object
+of its class, and read and written there by the instructions that remember where a field is.
+Measured against part 5 built the same way:
+`bench/particles.astra` draws a million particles a frame 34 to 40% faster (`toInt()` an
+instruction); a million objects of three `float`s take 112 MB at most, against 142 (72 bytes an
+object, against 96); `numeric` 3 to 8% faster; the rest within 4 either way, with Clang and with
+MSVC. Left for later, each known:
+- A frame's slots still keep a value's kind beside its payload, and arithmetic tests its
+  operands' kinds: both are M6.7's, with values in variables (D149), on the rewritten loop.
+- A payload with no value yet reads as 0, 0.0 or false, where a slot reads as an error; the
+  vals, and the fields an init must set, are still told apart, each by a bit of its own.
+- A field whose type the checker works out is kept as a payload only when it is an int, a float
+  or a bool; one whose type is a value type only when it is made by its type's name (part 5).
+- Through a reference into an object, a field read on through a value held in it still looks
+  each field up by name (part 5); M6.7's instructions that name a frame's slots are where a
+  field's place, known when compiling, goes into the instruction.
+- On one core a mutating method on the items of a list is still some 1.3 times slower than on
+  objects (`bench/bounce_values.astra` 6.2 s against 4.8 with Clang): each field read through an
+  item finds the item again. Keeping where a list's items are beside the list, one load in
+  place of three, was tried and measured no faster, so it was left out; the item's place held
+  in a frame's slot for the whole method is M6.7's.
+
 The second half builds, on M6.5's checker, the language choices decided in
 [language-choices.html](language-choices.html) (section 8): `byte`, with unsigned reads from `bytes` (D19); `>>>` and the unsigned helpers (D44); strings kept at
 flexible width (D20); `char` and how it adds to strings, `'c' == "c"` (D24, D25); `op ==` with
@@ -1759,7 +1787,10 @@ registers (a frame's slots) in place of a stack, as Lua 5 did, and combined inst
 pairs that are common (a compare and a jump, a field read and a call). Built with Clang, each
 instruction ends by going on to the next itself, through a computed `goto`, and a program's code
 is threaded as it is loaded, each opcode replaced by the address of its instruction's code (D160);
-built with MSVC, the same instructions are the cases of a switch. Invisible to programs;
+built with MSVC, the same instructions are the cases of a switch. With them, from M6.6 (D178): a
+frame's slots that keep only a payload where the compiler knows their type, instructions chosen
+by type for arithmetic, which then need no test of their operands' kinds, and values of up to 32
+bytes in consecutive slots (D149). Invisible to programs;
 bytecode files are made again. Measured before and after on the benchmarks of M6.5 part 4;
 the aim is one and a half to three times on top of M6.5 and M6.6. Scripts run from source,
 the shell, workers and tests keep running on the VM even once built programs can be native
@@ -2064,7 +2095,7 @@ font metrics will need new numbers: no other font engine measures text exactly a
 | D146 | Counting from the end: `^k`. | In an index, `^k` is `size - k` (`items[^1]` the last, `items[^k]` computed, `^0` an error), for lists, strings and anything indexed by position. Negative numbers never count from the end: `items[-1]` a compile error saying `items[^1]`, a computed negative index an `IndexOutOfBoundsException`. `last()`, `lastOrNull()`, `lastIndex` stay. Anyone's functions can take `^n`: it makes an `Index` (a value type: a number and a from-the-end flag), an `int` passing as one; `at.of(size)` resolves it; an `int` parameter does not take `^n`; a `Range` may have `^` ends (`r.of(size)`), so `op [](i : Index)` and `op [](r : Range)` give any class `thing[^1]` and `thing[2..^1]`; a range with a `^` end cannot be looped over without a length. Changes L18 (D25). Built in M6.6 (R11 in [decision-review.html](decision-review.html)). |
 | D147 | Slices. | A range in an index gives that part, inclusive as `..` is: `items[1..]` from 1 to the end, `items[0..^1]` the whole, `items[0..^2]` all but the last, `items[..^2]` (start 0), `items[2..4]` three items, `items[0..<^1]` with the end left out; strings and `bytes` too. A copy (an open list, L23), as `subList` gave; `splitAt` (L76) for views. Out of range an error (a slice may end right at the end: `items[3..]` of three is empty); a slice that runs backwards an error. `subList` and `substring` errors pointing to it (`items.subList(1, 4)` is `items[1..<4]`). One copy, no other cost. Two dimensions on a `Bitmap`: `bitmap[3..5, 10..50]` a new `Bitmap` (columns, then rows; a number takes one column or row); a class may declare `op [](xs, ys)` with ranges. Inside `editPixels`, `bitmap[3..5, 10..50] = other` copies a same-sized `Bitmap` into that region (pixels replaced, not blended; a size mismatch an error), marking only that rectangle changed; `op []=(xs, ys, value)` likewise. Changes L49 (D74). Built in M6.6 (R11 in [decision-review.html](decision-review.html)). |
 | D148 | Storage widths, and 32-bit helpers. | `int16`, `int32`, `uint16`, `uint32` and `float32` are storage types as `byte` is: compact in packed lists, value types' fields and fields; read as `int` or `float`; arithmetic stays 64-bit; storing what does not fit an error (`toInt16Wrapped()` and the like for the low bits). Helpers for 32-bit work: `wrap32()`, `rotateLeft32`, `rotateRight32`, `hash(a, b, ...)`. Changes L0, L3 (D19, D23). Built in M6.6 (R12 in [decision-review.html](decision-review.html)). |
-| D149 | Value types in variables. | Up to 32 bytes, a value type takes consecutive slots in locals, parameters and results once types are known, so `Point`, `Size`, `Rect`, `Insets` and `Pair` in variables make no object; boxed only where the type is not known (`any`, a union, a captured variable that outlives the call). Changes L2, L48, L82 to L85. Built in M6.6 part 6, with the slots that keep only a payload, which need the same change to how a frame's slots are laid out (moved there from part 5 on 2026-10-19; R13 in [decision-review.html](decision-review.html)). |
+| D149 | Value types in variables. | Up to 32 bytes, a value type takes consecutive slots in locals, parameters and results once types are known, so `Point`, `Size`, `Rect`, `Insets` and `Pair` in variables make no object; boxed only where the type is not known (`any`, a union, a captured variable that outlives the call). Changes L2, L48, L82 to L85. Built in M6.7, with the frame slots that keep only a payload, which need the same change to how a frame's slots are laid out (moved to part 6 from part 5, and to M6.7 by the user, D178, on 2026-10-19; R13 in [decision-review.html](decision-review.html)). |
 | D150 | `Path`: properties and functions. | Properties for what is in the path (`name`, `extension`, `nameWithoutExtension`, `parent`, `text`, `absolute`); functions for what asks the disk (`exists()`, `isFile()`, `isDirectory()`, `isExecutable()`, `size()`, `lastModified()`, `canonical()`, `list()`, `walk()`), so a property never throws. Changes L106, L112, L117 (D131, D135, D130). Built in M6.6 (R14 in [decision-review.html](decision-review.html)). |
 | D151 | What a bare `catch (e)` catches. | Every `Exception`, and nothing else; an `Error` (`StackOverflowError`, `OutOfMemoryError`) only when named (`catch (e : Error)` or `Throwable`). Changes L12 (D35). Built in M6.6 with D35, whose tree of throwables it needs (R15 in [decision-review.html](decision-review.html); moved from M6.5 by the user on 2026-10-18). |
 | D152 | `size` in two dimensions. | On things with a width and a height (`Rect`, `Image`, `Surface`, `Bitmap`, `Component`, `Window`) `size` is a `Size`; on collections, strings and `bytes` a count; a path's `size()` its bytes on disk. Built in M6.6 (R16 in [decision-review.html](decision-review.html)). |
@@ -2091,12 +2122,15 @@ font metrics will need new numbers: no other font engine measures text exactly a
 | D173 | Fields and results read where they are. | Proposed 2026-10-19 (M6.6 part 5), to be confirmed. Giving a field of a value type another value counts, for D168, as a change to values of that type, as changing a list of them does. A field kept inside its object is read where it is (a reference into the object) where nothing that may change values of its type runs while the read is in use; otherwise it is copied. What a function gives back that it read where it is stays so where the caller is shown to be as safe (a call marked so, WithRefResult); a call's result read at once by one of its fields (`node.sizes().pref`), and a field given back by `return`, always are. Where nothing says so, a function gives back a copy. |
 | D174 | `list.add` copies where the item is. | Proposed 2026-10-19 (M6.6 part 5), to be confirmed. `out.add(p)` for an item read where it is, in a loop say, copies its bytes straight into `out`, with no box made for it on the way; `add(i, item)` copies it first, since the items after `i` move. |
 | D175 | Generic functions copied per layout. | Proposed 2026-10-19 (M6.6 part 5), to be confirmed: not built now. Measured on a million points: `map` 46 ms against 41 by hand, `sumOf` 25 against 23, `filter` 98 against 43, `sortedBy` 84. The check of section 10 costs a few percent; `filter`'s difference comes from copying each item handed to its lambda, which inline functions (D59) remove and copies per layout would not. So copies per layout wait until a measurement asks for them. |
+| D176 | A number's conversions and Math's functions as instructions. | Proposed 2026-10-19 (M6.6 part 6), to be confirmed. `x.toInt()`, `toLong()`, `toFloat()`, `toDouble()`, `roundToInt()`, `roundToLong()`, `isNaN()`, `isInfinite()`, `isFinite()`, and `Math.sqrt`, `floor`, `ceil`, `round`, `abs`, and `min` and `max` of two ints or two floats, where the checker knows the call is the standard library's, are one instruction (Numeric), giving what the library's own gives, errors included. Drawing a million particles a frame is 34 to 40% faster. |
+| D177 | Fields kept as their payload alone. | Proposed 2026-10-19 (M6.6 part 6), to be confirmed. An int, a float or a bool field whose type is known (written, or worked out from what it is first given), and not null, is kept in its object as its 8 bytes of contents alone, before the object's slots, where every object of the class has it at the same place: an object of three `float` fields takes 72 bytes in place of 96. A val, and a field an init must set, has a bit saying whether it has been given a value, so that giving a val a second value and an init that leaves one unset are still errors; any other payload reads as 0, 0.0 or false before it is first given one, where a slot read an error. Field reads and writes are as fast as before. |
+| D178 | Frame slots, typed arithmetic and values in variables in M6.7. | Decided 2026-10-19 by the user: payload-only slots in objects now (M6.6 part 6); in frames, with instructions chosen by type for arithmetic and values of up to 32 bytes in consecutive slots (D149), in M6.7, on the rewritten loop, since each changes every instruction that touches a frame's slots and M6.7 rewrites those anyway. |
 | | How files are loaded under namespaces. | Importing a folder loads every `.astra` file directly in it, as one unit. Importing a file loads that file only, into its folder's namespace (5.1). |
 | | A lambda's parameter list over several lines. | Allowed, as in Kotlin (5.1). |
 
 ### Open
 
-Eight. The language choices, all decided since; six from M6.6 for the user to answer; and one
+Nine. The language choices, all decided since; seven from M6.6 for the user to answer; and one
 left for the milestone that raises it. (The measuring rule on scaled displays, open earlier, was settled in M4:
 section 4, point 8.)
 
@@ -2113,8 +2147,9 @@ section 4, point 8.)
   value where it is, results built where they go, and parallel sections over a list of values.
 - **M6.6 part 5's proposals**, D171 to D175: small values in the value itself, values inside
   their objects, fields and results read where they are, `list.add` copying where the item
-  is, and generic functions not copied per layout for now. And D149, values in variables, moved
-  to part 6.
+  is, and generic functions not copied per layout for now.
+- **M6.6 part 6's proposals**, D176 and D177: a number's conversions and Math's functions as
+  instructions, and fields kept as their payload alone.
 - **The largest value type** (value-lists.html): decided "any, up to 64 KB"; offered on
   2026-10-18, not yet answered, is "any size, with a copy on read past 64 KB", the limit
   coming only from the 16-bit offset in a reference into a list item.

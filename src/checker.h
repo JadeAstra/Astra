@@ -145,6 +145,10 @@ public:
     // object where it is (M6.6 part 5): where nothing that may change values of its type runs
     // while it is in use.
     bool readsFieldInPlace(const Node& read) const;
+
+    // A field written without its type: the type the checker works out for it, where that is an
+    // int, a float or a bool, so that its objects keep it as a payload (M6.6 part 6).
+    bool inferredFieldType(const VarStmt& field, RuntimeType& out) const;
     bool loopsInPlace(const ForInStmt& loop) const;
     bool loopPassesOn(const ForInStmt& loop) const;  // its variable's one use is to be passed on
     std::vector<int> paramsOwned(const FunctionDecl& fn) const;

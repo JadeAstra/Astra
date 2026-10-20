@@ -409,6 +409,7 @@ void registerMath(VM& vm) {
         return Value::integer(floatToInt(vm, std::round(vm.toNumber(args[0], "Math.round() argument"))));
     });
 
+    // (Op::Numeric does min and max of two, and the rest, as these do: VM::numeric below.)
     def("min", 1, -1, [](VM& vm, int argc, Value* args) -> Value {
         Value best = args[0];
         vm.toNumber(best, "Math.min() argument");
@@ -906,6 +907,47 @@ void registerBuiltins(VM& vm) {
         vm.markNotParallel(global);
     vm.markNotParallel("__flow", {"arity"});      // how many parameters a function has: map.forEach asks
     vm.markNotParallel("__parallel", {"cores"});
+}
+
+// Op::Numeric (M6.6 part 6): a number's conversion or one of Math's functions, giving what the
+// standard library's own gives, errors included; the compiler chose it for the arguments' types.
+Value VM::numeric(uint8_t which, const Value* args) {
+    const Value a = args[0];
+    switch (static_cast<NumericOp>(which)) {
+        case NumericOp::ToInt: return a.isInt() ? a : Value::integer(floatToInt(*this, std::trunc(toNumber(a, "the number"))));
+        case NumericOp::ToFloat: return Value::number(toNumber(a, "the number"));
+        case NumericOp::RoundToInt:
+            if (a.isInt()) return a;
+            if (std::isnan(toNumber(a, "the number"))) throw runtimeError("cannot round NaN to a whole number");
+            return Value::integer(floatToInt(*this, std::floor(a.as.d + 0.5)));
+        case NumericOp::IsNaN: return Value::boolean(a.isFloat() && std::isnan(a.as.d));
+        case NumericOp::IsInfinite: return Value::boolean(a.isFloat() && std::isinf(a.as.d));
+        case NumericOp::IsFinite: return Value::boolean(a.isInt() || std::isfinite(toNumber(a, "the number")));
+        case NumericOp::Sqrt: return Value::number(std::sqrt(toNumber(a, "Math.sqrt() argument")));
+        case NumericOp::Floor:
+            return a.isInt() ? a : Value::integer(floatToInt(*this, std::floor(toNumber(a, "Math.floor() argument"))));
+        case NumericOp::Ceil:
+            return a.isInt() ? a : Value::integer(floatToInt(*this, std::ceil(toNumber(a, "Math.ceil() argument"))));
+        case NumericOp::Round:
+            return a.isInt() ? a : Value::integer(floatToInt(*this, std::round(toNumber(a, "Math.round() argument"))));
+        case NumericOp::AbsInt:
+        case NumericOp::AbsFloat:
+            if (a.isInt()) return Value::integer(a.as.i < 0 ? static_cast<int64_t>(0 - static_cast<uint64_t>(a.as.i)) : a.as.i);
+            return Value::number(std::fabs(toNumber(a, "Math.abs() argument")));
+        case NumericOp::MinInt:
+        case NumericOp::MinFloat: {
+            const Value b = args[1];
+            const double x = toNumber(a, "Math.min() argument"), y = toNumber(b, "Math.min() argument");
+            return y < x ? b : a;
+        }
+        case NumericOp::MaxInt:
+        case NumericOp::MaxFloat: {
+            const Value b = args[1];
+            const double x = toNumber(a, "Math.max() argument"), y = toNumber(b, "Math.max() argument");
+            return y > x ? b : a;
+        }
+        default: throw runtimeError("invalid bytecode: unknown numeric operation");
+    }
 }
 
 }  // namespace astra

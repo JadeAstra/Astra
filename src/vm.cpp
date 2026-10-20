@@ -599,7 +599,7 @@ bool VM::hasMember(Value candidate, const ObjString* name) const {
     if (candidate.isObjType(ObjType::Instance)) {
         const ObjInstance* instance = asInstance(candidate);
         const ObjClass* cls = instance->cls;
-        if (instance->field(name) != nullptr || cls->methods.find(name) != nullptr ||
+        if (instance->hasValue(name) || cls->methods.find(name) != nullptr ||
             cls->declaredIndex.find(name) != nullptr ||
             (cls->hasAccessors && (cls->getters.find(name) != nullptr || cls->setters.find(name) != nullptr)))
             return true;
@@ -1622,9 +1622,9 @@ bool VM::invoke(ObjString* name, int argc, bool trailing) {
                 else callClosure(asClosure(*method), argc);
                 return true;
             }
-            if (const Value* field = instance->field(name)) {
-                sp_[-argc - 1] = *field;
-                return trailing ? callValueTrailing(*field, argc) : callValue(*field, argc);
+            if (Value field; instance->read(name, field)) {
+                sp_[-argc - 1] = field;
+                return trailing ? callValueTrailing(field, argc) : callValue(field, argc);
             }
             if (instance->cls->hasAccessors) {
                 // obj.property(args): call whatever the getter of the property returns.
@@ -1808,10 +1808,10 @@ bool VM::equals(Value a, Value b, int depth) {
             guardRead(b.as.obj);
             ObjInstance* y = asInstance(b);
             for (ObjString* part : x->cls->components) {
-                const Value* left = x->field(part);
-                const Value* right = y->field(part);
-                if (!equals(left != nullptr ? *left : Value::null(), right != nullptr ? *right : Value::null(), depth + 1))
-                    return false;
+                Value left = Value::null(), right = Value::null();
+                x->read(part, left);
+                y->read(part, right);
+                if (!equals(left, right, depth + 1)) return false;
             }
             return true;
         }
@@ -1901,7 +1901,7 @@ Value VM::getProperty(Value obj, ObjString* name) {
         switch (obj.as.obj->type) {
             case ObjType::Instance: {
                 ObjInstance* instance = asInstance(obj);
-                if (const Value* field = instance->field(name)) return fieldRead(*field);
+                if (Value field; instance->read(name, field)) return fieldRead(field);
                 if (const Value* method = instance->cls->methods.find(name))
                     return Value::object(alloc<ObjBoundMethod>(obj, asClosure(*method)));
                 if (instance->cls->setters.find(name) != nullptr)
@@ -2582,6 +2582,7 @@ void VM::makeFromHeader(ObjClass* cls, int argc, Value dest) {
 // class is made; a field whose type names a class that does not exist yet keeps its value in a
 // box, as any other field does.
 void VM::layInline(ObjClass* cls) {
+    if (!cls->fieldsLaid.load(std::memory_order_acquire)) layFields(cls);
     std::vector<ObjClass::InlineField> fields;
     std::vector<int32_t> offsets(cls->declared.size(), -1);
     uint32_t at = 0;
@@ -2611,6 +2612,67 @@ void VM::layInline(ObjClass* cls) {
     cls->inlineFields = std::move(fields);
     cls->inlineSlots = (at + sizeof(Value) - 1) / sizeof(Value);
     cls->inlineLaid.store(true, std::memory_order_release);
+}
+
+// Where the objects of a class keep each field (M6.6 part 6, FieldDecl::slot), worked out when
+// the first one is made: an int, a float or a bool whose type is written and is not null as its
+// payload alone, the first 256 of them, after the bits that say which have a value; any other
+// field in a slot of its own.
+void VM::layFields(ObjClass* cls) {
+    VM& root = root_ != nullptr ? *root_ : *this;
+    std::lock_guard<std::mutex> hold(root.internMutex_);
+    if (cls->fieldsLaid.load(std::memory_order_acquire)) return;
+    auto kindOf = [](const FieldDecl& d) {
+        if ((d.type & kTypeNullable) != 0) return FieldDecl::NoPayload;
+        switch (d.type & kTypeMask) {
+            case kTypeInt: return FieldDecl::IntPayload;
+            case kTypeFloat: return FieldDecl::FloatPayload;
+            case kTypeBool: return FieldDecl::BoolPayload;
+            default: return FieldDecl::NoPayload;
+        }
+    };
+    // A field its init must set, here or in a class above.
+    auto required = [&](const ObjString* name) {
+        for (const ObjClass* k = cls; k != nullptr; k = k->super)
+            for (const ObjString* r : k->ownRequired)
+                if (r == name) return true;
+        return false;
+    };
+    // A bit each only for the vals and the fields init must set, up to 256 of those.
+    uint32_t tracked = 0;
+    for (const FieldDecl& d : cls->declared)
+        if (kindOf(d) != FieldDecl::NoPayload && (d.isVal || required(d.name))) tracked++;
+    tracked = std::min(tracked, 256u);
+    uint32_t at = (tracked + 63) / 64 * 8, slot = 0, bit = 0;
+    for (FieldDecl& d : cls->declared) {
+        d.inlineOffset = -1;  // (part 5 lays those out later, from what is here)
+        const FieldDecl::PayloadKind kind = kindOf(d);
+        const bool needsBit = d.isVal || required(d.name);
+        if (kind != FieldDecl::NoPayload && (!needsBit || bit < tracked)) {
+            d.payload = kind;
+            d.payloadOffset = static_cast<int32_t>(at);
+            d.tracked = needsBit;
+            d.payloadBit = static_cast<uint16_t>(needsBit ? bit++ : 0);
+            d.slot = -1;
+            at += 8;
+        } else {
+            d.payload = FieldDecl::NoPayload;
+            d.payloadOffset = -1;
+            d.slot = static_cast<int32_t>(slot++);
+        }
+    }
+    cls->slotCount = slot;
+    cls->payloadBytes = at;
+    cls->fieldsLaid.store(true, std::memory_order_release);
+}
+
+// A field declared after the class's objects were laid out: a slot of its own, which the
+// objects made before do not have.
+void VM::fieldAdded(ObjClass* cls, size_t index) {
+    FieldDecl& d = cls->declared[index];
+    d.payload = FieldDecl::NoPayload;
+    d.payloadOffset = -1;
+    d.slot = cls->fieldsLaid.load(std::memory_order_acquire) ? static_cast<int32_t>(cls->slotCount++) : -1;
 }
 
 // `pts.add(Point(1, 2))` (Op::AddNew): the value written straight into a new item at the end of
@@ -2843,7 +2905,7 @@ void VM::checkRequiredFields(ObjInstance* instance, const ObjClosure* init) {
     if (owner == nullptr) return;
 
     for (ObjString* name : owner->ownRequired)
-        if (instance->field(name) == nullptr)
+        if (!instance->hasValue(name))
             throw runtimeError(owner->name->chars + ".init() must set field '" + name->chars + "'");
 }
 
@@ -2864,7 +2926,7 @@ void VM::checkFieldAssignment(ObjInstance* instance, ObjString* stored, Value va
                            "'; fields must be declared in the class with val or var");
     size_t at = static_cast<size_t>(index->as.i);
 
-    if (cls->declared[at].isVal && instance->field(stored) != nullptr &&
+    if (cls->declared[at].isVal && instance->hasValue(stored) &&
         !(cls->declared[at].overrides && instance->constructing))
         throw runtimeError("cannot assign to val field '" + name->chars + "' of " + cls->name->chars);
 
@@ -2915,6 +2977,7 @@ void VM::declareEntryFields(ObjClass* cls) {
         field.isVal = true;
         cls->declaredIndex.set(name, Value::integer(static_cast<int64_t>(cls->declared.size())));
         cls->declared.push_back(field);
+        fieldAdded(cls, cls->declared.size() - 1);
     };
     add(names.entryName);
     add(names.entryOrdinal);
@@ -2925,7 +2988,7 @@ void VM::declareEntryFields(ObjClass* cls) {
 
 void VM::nameEntry(ObjInstance* entry, ObjString* name, int ordinal) {
     const ObjClass* cls = entry->cls;
-    if (entry->fieldIndex(names.entryName) < 0) throw runtimeError("invalid enum declaration");
+    if (entry->declOf(names.entryName) == nullptr) throw runtimeError("invalid enum declaration");
     entry->setField(names.entryName, Value::object(name));
     entry->setField(names.entryOrdinal, Value::integer(ordinal));
     if (cls->getters.find(names.name) == nullptr) entry->setField(names.name, Value::object(name));
@@ -3060,10 +3123,11 @@ void VM::setProperty(Value obj, ObjString* name, Value value) {
             throw runtimeError("cannot assign to '" + name->chars + "' of an entry of enum " + instance->cls->name->chars);
         checkFieldAssignment(instance, name, value);  // every field is declared (R24)
         if (instance->inlined) {
-            const int64_t at = instance->fieldIndex(name);
-            if (at >= 0 && instance->cls->declared[static_cast<size_t>(at)].inlineOffset >= 0) {
+            const FieldDecl* decl = instance->declOf(name);
+            if (decl != nullptr && decl->inlineOffset >= 0) {
                 // A value kept inside the object: its bytes copied in (M6.6 part 5).
-                const uint32_t offset = static_cast<uint32_t>(instance->cls->declared[static_cast<size_t>(at)].inlineOffset);
+                const int64_t at = decl->slot;
+                const uint32_t offset = static_cast<uint32_t>(decl->inlineOffset);
                 ValueField whole;
                 whole.kind = ValueField::Nested;
                 whole.cls = instance->cls->inlineFieldAt(offset)->cls;
@@ -3853,8 +3917,8 @@ void VM::run(int baseFrame) {
                             break;
                         }
                         ObjInstance* instance = asInstance(receiver);
-                        if (const Value* field = instance->field(name)) {
-                            *sp_++ = fieldRead(*field);
+                        if (Value field; instance->read(name, field)) {
+                            *sp_++ = fieldRead(field);
                             break;
                         }
                         if (instance->cls->hasAccessors) {
@@ -3882,8 +3946,8 @@ void VM::run(int baseFrame) {
                             break;
                         }
                         ObjInstance* instance = asInstance(receiver);
-                        if (const Value* field = instance->field(name)) {
-                            *sp_++ = fieldRead(*field);
+                        if (Value field; instance->read(name, field)) {
+                            *sp_++ = fieldRead(field);
                             break;
                         }
                         if (instance->cls->hasAccessors) {
@@ -4121,7 +4185,17 @@ void VM::run(int baseFrame) {
                             const uint64_t seen = caches[FAST_U16(2)].load(std::memory_order_relaxed);
                             if (static_cast<uint32_t>(seen >> 32) == instance->shape &&
                                 (instance->core == 0 || instance->core == coreId_)) {
-                                const Value field = instance->fields()[(seen >> 16) & 0xFFFF];
+                                if ((seen & 0x80) != 0) {
+                                    // A field kept as its payload alone (M6.6 part 6).
+                                    {
+                                        // A value's 8 bytes of contents, and its kind as remembered.
+                                        sp[-1].kind = static_cast<ValueKind>(seen & 3);
+                                        std::memcpy(&sp[-1].as.i, reinterpret_cast<const uint8_t*>(instance) + ((seen >> 16) & 0xFFFF), 8);
+                                        ip += 4;
+                                        continue;
+                                    }
+                                }
+                                const Value field = *reinterpret_cast<const Value*>(reinterpret_cast<const uint8_t*>(instance) + ((seen >> 16) & 0xFFFF));
                                 if (field.kind == ValueKind::Ref && static_cast<Op>(ip[-1]) < Op::GetPropRef) {
                                     // A value kept inside the object, read through at once with
                                     // the fields read from it next (`comp.bounds.width`).
@@ -4227,8 +4301,18 @@ void VM::run(int baseFrame) {
                                 } else {
                                     sp_[-1] = slot;
                                 }
-                                if (caches != nullptr && at <= 0xFFFF)
-                                    caches[cache].store(static_cast<uint64_t>(instance->shape) << 32 | static_cast<uint64_t>(at) << 16,
+                                const uint64_t from = instance->slotsStart + static_cast<uint64_t>(at) * sizeof(Value);
+                                if (caches != nullptr && from <= 0xFFFF)
+                                    caches[cache].store(static_cast<uint64_t>(instance->shape) << 32 | from << 16, std::memory_order_relaxed);
+                                break;
+                            }
+                            if (const FieldDecl* decl = instance->declOf(name); decl != nullptr && decl->payload != FieldDecl::NoPayload) {
+                                // A field kept as its payload alone (M6.6 part 6), remembered so.
+                                sp_[-1] = instance->payloadOf(*decl);
+                                if (caches != nullptr)
+                                    caches[cache].store(static_cast<uint64_t>(instance->shape) << 32 |
+                                                            static_cast<uint64_t>(sizeof(ObjInstance) + decl->payloadOffset) << 16 |
+                                                            static_cast<uint64_t>(decl->payloadBit) << 8 | 0x80u | decl->payloadValueKind(),
                                                         std::memory_order_relaxed);
                                 break;
                             }
@@ -4302,8 +4386,27 @@ void VM::run(int baseFrame) {
                         if (sp[-2].isObjType(ObjType::Instance) && caches != nullptr) {
                             ObjInstance* instance = asInstance(sp[-2]);
                             const uint64_t seen = caches[FAST_U16(2)].load(std::memory_order_relaxed);
-                            Value* const field = instance->fields() + ((seen >> 16) & 0xFFFF);
-                            if ((seen & 2) != 0) {
+                            Value* const field = reinterpret_cast<Value*>(reinterpret_cast<uint8_t*>(instance) + ((seen >> 16) & 0xFFFF));
+                            if ((seen & 0x80) != 0) {
+                                // A field kept as its payload alone (M6.6 part 6): written there,
+                                // where the value is of its kind (and a val has none yet).
+                                if (static_cast<uint32_t>(seen >> 32) == instance->shape && instance->core == coreId_) {
+                                    const Value value = sp[-1];
+                                    const uint32_t bit = (seen >> 8) & 0xFF;
+                                    const ValueKind kind = static_cast<ValueKind>(seen & 3);
+                                    uint8_t* const data = instance->payloadData();
+                                    const bool given = (seen & 0x20) != 0 && (data[bit / 8] >> (bit % 8) & 1) != 0;
+                                    if (value.kind == kind && ((seen & 0x40) == 0 || !given)) {
+                                        const int64_t bits = kind == ValueKind::Bool ? (value.as.b ? 1 : 0) : value.as.i;
+                                        std::memcpy(reinterpret_cast<uint8_t*>(instance) + ((seen >> 16) & 0xFFFF), &bits, 8);
+                                        if ((seen & 0x20) != 0) data[bit / 8] |= static_cast<uint8_t>(1u << (bit % 8));
+                                        sp[-2] = value;
+                                        sp--;
+                                        ip += 4;
+                                        continue;
+                                    }
+                                }
+                            } else if ((seen & 2) != 0) {
                                 // A value kept inside the object, given another of its type (M6.6
                                 // part 5): its bytes copied in, from a box or from where it is.
                                 if (static_cast<uint32_t>(seen >> 32) == instance->shape && instance->core == coreId_ && field->isRef()) {
@@ -4389,15 +4492,24 @@ void VM::run(int baseFrame) {
                         } else if (caches != nullptr && sp_[-2].isObjType(ObjType::Instance)) {
                             // Remembered for next time, where the next time can be done quickly.
                             const ObjInstance* instance = asInstance(sp_[-2]);
-                            const int64_t at = instance->fieldIndex(name);
-                            if (at >= 0 && at <= 0xFFFF) {
-                                const FieldDecl& field = instance->cls->declared[static_cast<size_t>(at)];
+                            const FieldDecl* decl = instance->declOf(name);
+                            const int64_t at = decl != nullptr && decl->payload == FieldDecl::NoPayload ? decl->slot : -1;
+                            if (decl != nullptr && decl->payload != FieldDecl::NoPayload && !(decl->isVal && decl->overrides)) {
+                                // A payload (M6.6 part 6): its offset, its bit and its kind.
+                                caches[cache].store(static_cast<uint64_t>(instance->shape) << 32 |
+                                                        static_cast<uint64_t>(sizeof(ObjInstance) + decl->payloadOffset) << 16 |
+                                                        static_cast<uint64_t>(decl->payloadBit) << 8 | 0x80u | (decl->isVal ? 0x40u : 0u) |
+                                                        (decl->tracked ? 0x20u : 0u) | decl->payloadValueKind(),
+                                                    std::memory_order_relaxed);
+                            } else if (at >= 0 && instance->slotsStart + static_cast<uint64_t>(at) * sizeof(Value) <= 0xFFFF) {
+                                const FieldDecl& field = *decl;
+                                const uint64_t from = instance->slotsStart + static_cast<uint64_t>(at) * sizeof(Value);
                                 if (!(field.isVal && field.overrides) && (field.type & kTypeMask) != kTypeInstance)
-                                    caches[cache].store(static_cast<uint64_t>(instance->shape) << 32 | static_cast<uint64_t>(at) << 16 |
+                                    caches[cache].store(static_cast<uint64_t>(instance->shape) << 32 | from << 16 |
                                                             static_cast<uint64_t>(field.type) << 8 | (field.isVal ? 1u : 0u),
                                                         std::memory_order_relaxed);
                                 else if (field.inlineOffset >= 0 && instance->inlined && !field.isVal)
-                                    caches[cache].store(static_cast<uint64_t>(instance->shape) << 32 | static_cast<uint64_t>(at) << 16 | 2u,
+                                    caches[cache].store(static_cast<uint64_t>(instance->shape) << 32 | from << 16 | 2u,
                                                         std::memory_order_relaxed);  // kept inside the object (the second bit)
                             }
                         }
@@ -4489,9 +4601,10 @@ void VM::run(int baseFrame) {
                                 break;
                             }
                             guardRead(sp_[-1]);
-                            const Value* field = sp_[-1].isObjType(ObjType::Instance) ? asInstance(sp_[-1])->field(name) : nullptr;
-                            if (field != nullptr && asClass(super)->declaredIndex.find(name) != nullptr) {
-                                sp_[-1] = fieldRead(*field);
+                            Value field;
+                            const bool found = sp_[-1].isObjType(ObjType::Instance) && asInstance(sp_[-1])->read(name, field);
+                            if (found && asClass(super)->declaredIndex.find(name) != nullptr) {
+                                sp_[-1] = fieldRead(field);
                                 break;
                             }
                             throw runtimeError("undefined method or property '" + name->chars + "' in superclass " +
@@ -5170,7 +5283,7 @@ void VM::run(int baseFrame) {
                             subclass->super = superclass;
                             subclass->methods.addAll(superclass->methods);
                             subclass->init = superclass->init;
-                            subclass->declared = superclass->declared;
+                            subclass->declared = superclass->declared;  // laid out again for the subclass's objects
                             subclass->declaredIndex.addAll(superclass->declaredIndex);
                             subclass->shape = newShape();
                             subclass->fieldInits = superclass->fieldInits;
@@ -5312,6 +5425,20 @@ void VM::run(int baseFrame) {
                         if (!sp_[-1].isObjType(ObjType::Class)) throw runtimeError("invalid class declaration");
                         asClass(sp_[-1])->isValue = true;
                         asClass(sp_[-1])->madeFromHeader = fromHeader;
+                        break;
+                    }
+                    case Op::Numeric: {
+                        const uint8_t which = READ_U8();
+                        const Value a = sp_[-1];
+                        if (which == static_cast<uint8_t>(NumericOp::ToInt) && a.isFloat() && a.as.d > -9.2e18 && a.as.d < 9.2e18) {
+                            sp_[-1] = Value::integer(static_cast<int64_t>(a.as.d));  // the whole part, as toInt() gives
+                            break;
+                        }
+                        SAVE_IP();
+                        const int arity = numericArity(which);
+                        const Value result = numeric(which, sp_ - arity);
+                        sp_ -= arity - 1;
+                        sp_[-1] = result;
                         break;
                     }
                     case Op::WithRefResult:
@@ -5600,12 +5727,22 @@ void VM::run(int baseFrame) {
                                 throw runtimeError("field '" + name->chars + "' of class " + cls->name->chars +
                                                    " is already declared by a superclass; write override to declare it again");
                             field.overrides = true;
+                            {
+                                // Kept where the field it stands in for was (M6.6 part 6).
+                                const FieldDecl& was = cls->declared[static_cast<size_t>(inherited->as.i)];
+                                field.slot = was.slot;
+                                field.payload = was.payload;
+                                field.payloadOffset = was.payloadOffset;
+                                field.payloadBit = was.payloadBit;
+                                field.inlineOffset = was.inlineOffset;
+                            }
                             cls->declared[static_cast<size_t>(inherited->as.i)] = field;
                             cls->shape = newShape();
                             break;
                         }
                         cls->declaredIndex.set(name, Value::integer(static_cast<int64_t>(cls->declared.size())));
                         cls->declared.push_back(field);
+                        fieldAdded(cls, cls->declared.size() - 1);
                         cls->shape = newShape();
                         if (flags & kFieldRequired) {
                             cls->ownRequired.push_back(name);
@@ -5932,11 +6069,16 @@ const uint8_t* VM::placeInstruction(Op op, const uint8_t* ip, CallFrame* frame) 
             if (!obj.isObjType(ObjType::Instance)) throw runtimeError("cannot change a field of a value of type " + typeName(obj));
             ObjInstance* instance = asInstance(obj);
             guardWrite(instance);
-            const int64_t at = instance->fieldIndex(name);
-            if (at < 0) throw runtimeError("undefined property '" + name->chars + "' on " + instance->cls->name->chars);
-            if (instance->cls->declared[static_cast<size_t>(at)].isVal)
-                throw runtimeError("cannot assign to val field '" + name->chars + "' of " + instance->cls->name->chars);
-            sp_[-1] = placeIn(instance->fields()[at]);
+            const FieldDecl* decl = instance->declOf(name);
+            if (decl == nullptr) throw runtimeError("undefined property '" + name->chars + "' on " + instance->cls->name->chars);
+            if (decl->isVal) throw runtimeError("cannot assign to val field '" + name->chars + "' of " + instance->cls->name->chars);
+            if (decl->payload != FieldDecl::NoPayload) {
+                Value kept = Value::null();
+                instance->read(name, kept);
+                throw runtimeError("cannot change a field of " + (kept.isNull() ? std::string("null") : "a value of type " + typeName(kept)) +
+                                   " through its place");
+            }
+            sp_[-1] = placeIn(instance->fields()[decl->slot]);
             break;
         }
         case Op::PlaceIndex: {
@@ -6250,17 +6392,19 @@ void VM::stringifyInto(std::string& out, Value v, bool quote, int depth) {
                     if (!first) out += ", ";
                     first = false;
                     out += part->chars + "=";
-                    const Value* field = instance->field(part);
-                    stringifyInto(out, field != nullptr ? *field : Value::null(), true, depth + 1);
+                    Value field = Value::null();
+                    instance->read(part, field);
+                    stringifyInto(out, field, true, depth + 1);
                 }
                 out += ")";
                 return;
             }
             if (instance->cls->isEnum) {
                 // An enum entry prints as its name.
-                const Value* entryName = instance->field(names.entryName);
-                if (entryName != nullptr && entryName->isString()) {
-                    out += asString(*entryName)->chars;
+                Value entryName = Value::null();
+                instance->read(names.entryName, entryName);
+                if (entryName.isString()) {
+                    out += asString(entryName)->chars;
                     return;
                 }
             }
@@ -6503,7 +6647,7 @@ void VM::blacken(Obj* obj) {
         }
         case ObjType::Instance: {
             ObjInstance* instance = static_cast<ObjInstance*>(obj);
-            liveBytes_ += sizeof(ObjInstance) + (instance->fieldCount + instance->captureCount) * sizeof(Value);
+            liveBytes_ += instance->slotsStart + (instance->fieldCount + instance->captureCount) * sizeof(Value);  // its payloads too (M6.6 part 6)
             markObject(instance->cls);
             const Value* fields = instance->fields();
             for (uint32_t i = 0; i < instance->fieldCount + instance->captureCount; i++) markValue(fields[i]);

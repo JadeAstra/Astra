@@ -198,6 +198,7 @@ const OpInfo kOps[] = {
     {"GET_OWN_REF", Operand::U16U16},
     {"FIELD_DESTINATION", Operand::U16},
     {"WITH_REF_RESULT", Operand::None},
+    {"NUMERIC", Operand::U8},
     {"OWN_LOCAL", Operand::U16},
     {"WITH_DESTINATION_AT", Operand::U8},
     {"WITH_FRAME_DESTINATION", Operand::None},
@@ -491,6 +492,11 @@ static int analyzeStack(FunctionProto& f, const Program& program, bool partial) 
                     pops = pushes = 1;
                     break;
                 case Op::WithRefResult:
+                    break;
+                case Op::Numeric:
+                    if (a >= static_cast<int>(NumericOp::Count_)) fail("unknown numeric operation");
+                    pops = numericArity(static_cast<uint8_t>(a));
+                    pushes = 1;
                     break;
                 case Op::SetProp:
                 case Op::SetOwn:

@@ -234,14 +234,17 @@ public:
     // An object of `cls`, with room for the fields the class declares, none of them given a
     // value yet (M6.5 part 4).
     ObjInstance* newInstance(ObjClass* cls, uint16_t captures = 0, bool typed = false) {
-        const uint32_t count = static_cast<uint32_t>(cls->declared.size());
-        const uint32_t inlineSlots = cls->inlineLaid.load(std::memory_order_acquire) ? cls->inlineSlots : 0;
+        if (!cls->fieldsLaid.load(std::memory_order_acquire)) layFields(cls);
+        const uint32_t count = cls->slotCount;
+        // Its payloads before its slots (M6.6 part 6), the values kept inside it after (part 5).
+        const bool withValues = cls->inlineLaid.load(std::memory_order_acquire) && !cls->inlineFields.empty();
+        const uint32_t inlineSlots = withValues ? cls->inlineSlots : 0;
         const uint32_t slots = count + captures + (typed ? 1u : 0u) + inlineSlots;
-        ObjInstance* obj = new (slots) ObjInstance(cls, count, captures, typed, inlineSlots);
+        ObjInstance* obj = new (slots, cls->payloadBytes) ObjInstance(cls, count, captures, typed, inlineSlots, withValues, cls->payloadBytes);
         obj->core = coreId_;
         obj->next = objects_;
         objects_ = obj;
-        bytesAllocated_ += sizeof(ObjInstance) + slots * sizeof(Value);
+        bytesAllocated_ += sizeof(ObjInstance) + slots * sizeof(Value) + cls->payloadBytes;
         return obj;
     }
     // Makes an object of `cls` in the slot under its `argc` arguments and starts its
@@ -271,6 +274,8 @@ public:
     bool addNew(int argc);
     void makeFromHeader(ObjClass* cls, int argc, Value dest);
     void layInline(ObjClass* cls);
+    void layFields(ObjClass* cls);
+    void fieldAdded(ObjClass* cls, size_t index);
     // What a field read gives where it is not shown to be safe to read in place: a copy of a
     // value kept inside its object (M6.6 part 5), anything else as it is.
     Value fieldRead(const Value& slot) { return slot.kind == ValueKind::Ref ? ownRef(slot) : slot; }
@@ -572,6 +577,9 @@ public:
     // built-in functions are not for a parallel section (by the object they belong to).
     void markMutating(BuiltinType type, std::initializer_list<const char*> methods);
     void markTakesPlaces(BuiltinType type, std::initializer_list<const char*> methods);
+    // Op::Numeric's work (builtins.cpp, beside Math's functions): the result of `which` on
+    // `args`, one value or two.
+    Value numeric(uint8_t which, const Value* args);
     void markNotParallel(const std::string& global, std::initializer_list<const char*> except = {});
 
     // Runs `function` on every item of `source` (a list, a range, anything a loop takes), the

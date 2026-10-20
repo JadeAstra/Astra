@@ -5,6 +5,7 @@
 #include <new>
 #include <atomic>
 #include <cstdint>
+#include <cstring>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -474,6 +475,20 @@ struct FieldDecl {
     // A field of a value type kept inside its object (M6.6 part 5): where its bytes are in the
     // object's inline part; -1 for any other field.
     int32_t inlineOffset = -1;
+
+    // Where an object of the class keeps the field's value, set when the first one is made
+    // (VM::layFields, M6.6 part 6): in a slot of its own, a value; or, for an int, a float or a
+    // bool whose type is written and is not null, as its 8-byte payload alone in the object's
+    // inline part. A val, and a field its init must set, has a bit saying whether it has been
+    // given a value yet (`tracked`); any other payload reads as 0, 0.0 or false until it is.
+    enum PayloadKind : uint8_t { NoPayload, IntPayload, FloatPayload, BoolPayload };
+    int32_t slot = -1;
+    int32_t payloadOffset = -1;
+    uint16_t payloadBit = 0;
+    PayloadKind payload = NoPayload;
+    bool tracked = false;
+    // The kind of value its payload is (ValueKind's Bool, Int and Float are 1, 2 and 3).
+    uint8_t payloadValueKind() const { return payload == IntPayload ? 2 : payload == FloatPayload ? 3 : 1; }
 };
 
 // Gives each layout of a class's fields a number of its own, never given again (M6.5 part 4).
@@ -599,6 +614,12 @@ struct ObjClass final : Obj {
     std::vector<InlineField> inlineFields;
     uint32_t inlineSlots = 0;
     std::atomic<bool> inlineLaid{false};
+
+    // Where its objects keep their fields (M6.6 part 6, FieldDecl::slot): how many slots of
+    // values, and how many bytes of payloads, with their bits, begin the inline part.
+    std::atomic<bool> fieldsLaid{false};
+    uint32_t slotCount = 0;
+    uint32_t payloadBytes = 0;
     const InlineField* inlineFieldAt(uint32_t offset) const {
         for (const InlineField& f : inlineFields)
             if (offset >= f.offset && offset < f.offset + f.size) return &f;
@@ -673,16 +694,24 @@ struct ObjInstance final : Obj {
     const bool typed;
     // Made with room for its class's fields of value types inside it (M6.6 part 5).
     const bool inlined;
+    // Where its slots are, from the object's start: after its payloads (M6.6 part 6), which come
+    // first so that each is at the same place in every object of its class.
+    uint16_t slotsStart;
 
-    ObjInstance(ObjClass* c, uint32_t count, uint16_t captures, bool withType, uint32_t inlineSlots)
+    ObjInstance(ObjClass* c, uint32_t count, uint16_t captures, bool withType, uint32_t inlineSlots, bool withValues,
+                uint32_t payloadBytes)
         : Obj(ObjType::Instance), cls(c), shape(c->shape), fieldCount(count), captureCount(captures), typed(withType),
-          inlined(inlineSlots != 0) {
+          inlined(withValues), slotsStart(static_cast<uint16_t>(sizeof(ObjInstance) + payloadBytes)) {
+        if (payloadBytes != 0) std::memset(payloadData(), 0, payloadBytes);
         Value* at = fields();
         for (uint32_t i = 0; i < count + captures + (withType ? 1u : 0u); i++) new (at + i) Value(Value::undefined());
         if (inlineSlots != 0) std::memset(inlineData(), 0, inlineSlots * sizeof(Value));
     }
 
-    // The bytes of its fields of value types, after its other slots.
+    // Its payloads, and the bits saying which have a value, right after the object's header.
+    uint8_t* payloadData() { return reinterpret_cast<uint8_t*>(this + 1); }
+    const uint8_t* payloadData() const { return reinterpret_cast<const uint8_t*>(this + 1); }
+    // The bytes of its fields of value types, after its slots (M6.6 part 5).
     uint8_t* inlineData() { return reinterpret_cast<uint8_t*>(fields() + fieldCount + captureCount + (typed ? 1u : 0u)); }
     const uint8_t* inlineData() const {
         return reinterpret_cast<const uint8_t*>(fields() + fieldCount + captureCount + (typed ? 1u : 0u));
@@ -697,29 +726,91 @@ struct ObjInstance final : Obj {
     // Capture `k`, where the code that uses it was compiled for this object's class.
     ObjUpvalue* captured(uint32_t k) const { return static_cast<ObjUpvalue*>(fields()[fieldCount + k].as.obj); }
 
-    static void* operator new(size_t size, uint32_t count) { return ::operator new(size + count * sizeof(Value)); }
-    static void operator delete(void* p, uint32_t) { ::operator delete(p); }
+    // `count` slots of values, and `bytes` of payloads (a multiple of 8).
+    static void* operator new(size_t size, uint32_t count, uint32_t bytes) { return ::operator new(size + count * sizeof(Value) + bytes); }
+    static void operator delete(void* p, uint32_t, uint32_t) { ::operator delete(p); }
     static void operator delete(void* p) { ::operator delete(p); }
 
-    Value* fields() { return reinterpret_cast<Value*>(this + 1); }
-    const Value* fields() const { return reinterpret_cast<const Value*>(this + 1); }
+    Value* fields() { return reinterpret_cast<Value*>(reinterpret_cast<uint8_t*>(this) + slotsStart); }
+    const Value* fields() const { return reinterpret_cast<const Value*>(reinterpret_cast<const uint8_t*>(this) + slotsStart); }
 
-    // Where the field called `name` is, or -1 if the object has none of that name.
-    int64_t fieldIndex(const ObjString* name) const {
+    // How the field called `name` is kept in this object, or null if it has none of that name
+    // (one declared after the object was made).
+    const FieldDecl* declOf(const ObjString* name) const {
         const Value* at = cls->declaredIndex.find(name);
-        return at != nullptr && at->as.i < fieldCount ? at->as.i : -1;
+        if (at == nullptr) return nullptr;
+        const FieldDecl& d = cls->declared[static_cast<size_t>(at->as.i)];
+        if (d.payload == FieldDecl::NoPayload && (d.slot < 0 || static_cast<uint32_t>(d.slot) >= fieldCount)) return nullptr;
+        return &d;
     }
-    // The field's value, or null if the object has no such field or it has no value yet.
+    // Which slot the field called `name` is in, or -1 if the object has none of that name or
+    // keeps it as a payload.
+    int64_t fieldIndex(const ObjString* name) const {
+        const FieldDecl* d = declOf(name);
+        return d != nullptr && d->payload == FieldDecl::NoPayload ? d->slot : -1;
+    }
+    // The slot holding the field's value, or null if the object has no such field, it has no
+    // value yet, or it is kept as a payload (read()).
     const Value* field(const ObjString* name) const {
         const int64_t i = fieldIndex(name);
         if (i < 0 || fields()[i].kind == ValueKind::Undefined) return nullptr;
         return fields() + i;
     }
-    // Gives the field a value; false if the object has no field of that name.
+
+    // A field kept as its payload alone (M6.6 part 6).
+    bool payloadSet(const FieldDecl& d) const { return (payloadData()[d.payloadBit / 8] >> (d.payloadBit % 8) & 1) != 0; }
+    Value payloadOf(const FieldDecl& d) const {
+        const uint8_t* at = payloadData() + d.payloadOffset;
+        switch (d.payload) {
+            case FieldDecl::IntPayload: {
+                int64_t i;
+                std::memcpy(&i, at, sizeof i);
+                return Value::integer(i);
+            }
+            case FieldDecl::FloatPayload: {
+                double x;
+                std::memcpy(&x, at, sizeof x);
+                return Value::number(x);
+            }
+            case FieldDecl::BoolPayload: return Value::boolean(*at != 0);
+            default: return Value::null();
+        }
+    }
+    // Its kind already checked.
+    void setPayload(const FieldDecl& d, Value value) {
+        // A bool as a whole 0 or 1, so that every payload is a value's 8 bytes of contents.
+        const int64_t bits = d.payload == FieldDecl::BoolPayload ? (value.as.b ? 1 : 0) : value.as.i;
+        std::memcpy(payloadData() + d.payloadOffset, &bits, 8);
+        if (d.tracked) payloadData()[d.payloadBit / 8] |= static_cast<uint8_t>(1u << (d.payloadBit % 8));
+    }
+
+    // The field's value, however it is kept; false if the object has no such field or it has
+    // no value yet.
+    bool read(const ObjString* name, Value& out) const {
+        const FieldDecl* d = declOf(name);
+        if (d == nullptr) return false;
+        if (d->payload != FieldDecl::NoPayload) {
+            out = payloadOf(*d);  // 0, 0.0 or false until it is given a value
+            return true;
+        }
+        const Value& slot = fields()[d->slot];
+        if (slot.kind == ValueKind::Undefined) return false;
+        out = slot;
+        return true;
+    }
+    bool hasValue(const ObjString* name) const {
+        const FieldDecl* d = declOf(name);
+        if (d != nullptr && d->payload != FieldDecl::NoPayload) return !d->tracked || payloadSet(*d);
+        Value ignored;
+        return read(name, ignored);
+    }
+    // Gives the field a value, of its kind where it is a payload; false if the object has no
+    // field of that name.
     bool setField(const ObjString* name, Value value) {
-        const int64_t i = fieldIndex(name);
-        if (i < 0) return false;
-        fields()[i] = value;
+        const FieldDecl* d = declOf(name);
+        if (d == nullptr) return false;
+        if (d->payload != FieldDecl::NoPayload) setPayload(*d, value);
+        else fields()[d->slot] = value;
         return true;
     }
 };

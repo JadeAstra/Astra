@@ -301,6 +301,11 @@ enum class Op : uint8_t {
     // Right before a call whose result may stay where the function found it (M6.6 part 5): a
     // value it gives back that is a Ref into a list or an object is not copied on return.
     WithRefResult,      //                                 ->
+
+    // A number's conversion, or one of Math's functions, called where the checker knows it is
+    // the standard library's (M6.6 part 6): worked out in place, with no method looked up or
+    // C++ function called. `which` is a NumericOp; it takes one value, or two for min and max.
+    Numeric,            // u8 which                        value [value] -> result
     OwnLocal,           // u16 slot                        ->
 
     // Results built where they go (M6.6 part 4, value-lists.html section 7). Right before a call,
@@ -340,6 +345,30 @@ const uint8_t kTypeArgsOwn = 1;
 const uint8_t kTypeArgsKept = 2;
 // A function that gives a value of a value type, given where its result goes (M6.6 part 4).
 const uint8_t kTakesDestination = 4;
+
+// What Op::Numeric works out (M6.6 part 6), each as the standard library's function does.
+enum class NumericOp : uint8_t {
+    ToInt,       // Number.toInt(), toLong()
+    ToFloat,     // Number.toFloat(), toDouble()
+    RoundToInt,  // Number.roundToInt(), roundToLong()
+    IsNaN,
+    IsInfinite,
+    IsFinite,
+    Sqrt,        // Math.sqrt
+    Floor,       // Math.floor, ceil and round: ints
+    Ceil,
+    Round,
+    AbsInt,      // Math.abs, of an int and of a float
+    AbsFloat,
+    MinInt,      // Math.min and max of two ints, and of two floats
+    MaxInt,
+    MinFloat,
+    MaxFloat,
+    Count_
+};
+inline int numericArity(uint8_t which) {
+    return which >= static_cast<uint8_t>(NumericOp::MinInt) && which <= static_cast<uint8_t>(NumericOp::MaxFloat) ? 2 : 1;
+}
 
 const int kFieldVal = 0x100;       // the field can be assigned only once
 const int kFieldRequired = 0x200;  // the initializer has to assign it

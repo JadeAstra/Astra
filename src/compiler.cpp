@@ -3676,6 +3676,12 @@ private:
                 // the object can keep it inside itself (M6.6 part 5).
                 emitTypeThunk(static_cast<const NameExpr&>(*static_cast<const CallExpr&>(*initialValue).callee).name, f);
                 flags = kTypeInstance;
+            } else if (!type.typed() && initialValue != nullptr && session_.checker != nullptr) {
+                // `var total = 0`: an int, a float or a bool by what it is given, so that the
+                // objects keep it as a payload (M6.6 part 6).
+                RuntimeType inferred;
+                if (session_.checker->inferredFieldType(f, inferred))
+                    flags = inferred.kind == RuntimeType::Int ? kTypeInt : inferred.kind == RuntimeType::Float ? kTypeFloat : kTypeBool;
             }
             emit(Op::DeclareField);
             emitU16(stringConstant(storedName(f)));
@@ -4326,6 +4332,7 @@ private:
                            importedMember(*static_cast<const MemberExpr&>(*e.callee).object,
                                           static_cast<const MemberExpr&>(*e.callee).name, *e.callee) == nullptr) {
                     const auto& member = static_cast<const MemberExpr&>(*e.callee);
+                    if (compileNumeric(e, member)) break;
                     if (compileAddNew(e, member)) break;
                     compileObjectOf(member);
                     // `object?.method(...)`: with no object the arguments are not worked out either.
@@ -4904,6 +4911,43 @@ private:
                 throw error(e, "this cannot be incremented or decremented");
         }
         emit(Op::Pop);
+    }
+
+    // A number's conversion or one of Math's functions, where the checker knows the call is the
+    // standard library's (M6.6 part 6): one instruction, Op::Numeric, in place of a call.
+    bool compileNumeric(const CallExpr& e, const MemberExpr& member) {
+        if (member.safe || e.trailingLambda || session_.checker == nullptr) return false;
+        RuntimeType result;
+        std::string name;
+        if (!session_.checker->externalResult(e, result, name)) return false;
+        const size_t argc = e.args.size();
+        const bool ints = result.kind == RuntimeType::Int, floats = result.kind == RuntimeType::Float;
+        bool onReceiver = true;  // a Number method, on what it is called on; else Math's, on its arguments
+        NumericOp op;
+        if ((name == "Number.toInt" || name == "Number.toLong") && argc == 0) op = NumericOp::ToInt;
+        else if ((name == "Number.toFloat" || name == "Number.toDouble") && argc == 0) op = NumericOp::ToFloat;
+        else if ((name == "Number.roundToInt" || name == "Number.roundToLong") && argc == 0) op = NumericOp::RoundToInt;
+        else if (name == "Number.isNaN" && argc == 0) op = NumericOp::IsNaN;
+        else if (name == "Number.isInfinite" && argc == 0) op = NumericOp::IsInfinite;
+        else if (name == "Number.isFinite" && argc == 0) op = NumericOp::IsFinite;
+        else {
+            onReceiver = false;
+            if (name == "Math.sqrt" && argc == 1) op = NumericOp::Sqrt;
+            else if (name == "Math.floor" && argc == 1) op = NumericOp::Floor;
+            else if (name == "Math.ceil" && argc == 1) op = NumericOp::Ceil;
+            else if (name == "Math.round" && argc == 1) op = NumericOp::Round;
+            else if (name == "Math.abs" && argc == 1 && (ints || floats)) op = ints ? NumericOp::AbsInt : NumericOp::AbsFloat;
+            else if (name == "Math.min" && argc == 2 && (ints || floats)) op = ints ? NumericOp::MinInt : NumericOp::MinFloat;
+            else if (name == "Math.max" && argc == 2 && (ints || floats)) op = ints ? NumericOp::MaxInt : NumericOp::MaxFloat;
+            else return false;
+        }
+        if (onReceiver) compileExpr(*member.object);
+        for (const auto& arg : e.args) compileExpr(*arg);
+        line_ = e.line;
+        emit(Op::Numeric);
+        emitByte(static_cast<int>(op));
+        emitExternalResult(e);
+        return true;
     }
 
     // The value of `place = f(...)` with the place on the stack: the call is given it as where

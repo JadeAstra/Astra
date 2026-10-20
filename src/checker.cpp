@@ -645,6 +645,8 @@ struct Checker::Impl {
         return f;
     }
 
+    std::unordered_map<const VarStmt*, FieldInfo*> fieldByDecl;  // Checker::inferredFieldType
+
     FieldInfo* newField(const std::string& name, Unit* u, ClassInfo* owner) {
         fieldStore.push_back(std::make_unique<FieldInfo>());
         FieldInfo* f = fieldStore.back().get();
@@ -5512,6 +5514,17 @@ bool Checker::isValuePlace(const Expr& e) const { return impl_->valuePlaces.coun
 
 bool Checker::readsInPlace(const IndexExpr& index) const { return impl_->readsInPlace(index); }
 bool Checker::readsFieldInPlace(const Node& read) const { return impl_->readsFieldInPlace(read); }
+bool Checker::inferredFieldType(const VarStmt& field, RuntimeType& out) const {
+    if (impl_->fieldByDecl.empty())
+        for (const auto& f : impl_->fieldStore)
+            if (f->decl != nullptr) impl_->fieldByDecl[f->decl] = f.get();
+    auto found = impl_->fieldByDecl.find(&field);
+    if (found == impl_->fieldByDecl.end() || found->second->typeWritten || found->second->state != 2) return false;
+    const Type& t = found->second->type;
+    if (t.nullable || (t.kind != Type::Int && t.kind != Type::Float && t.kind != Type::Bool)) return false;
+    out = runtimeTypeOf(t);
+    return true;
+}
 
 bool Checker::returnsValue(const FunctionDecl& fn) const {
     if (impl_->valueLambdas.count(&fn) != 0) return true;

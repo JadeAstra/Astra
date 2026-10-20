@@ -78,13 +78,13 @@ td.when { min-width: 9em; }
 <body>
 <main>
 <h1>M6.6 so far: what is left open</h1>
-<p class="lede">The choices made while building parts 1 to 5 of M6.6 that are not yet confirmed, and the gaps those parts left, each with where it is to be dealt with. Written 2026-10-19, and brought up to date after parts 4 and 5 the same day: the gaps they closed are gone from the list. The same items are in <a href="gui-plan.md">gui-plan.md</a> (the M6.6 notes, D162 to D175 and the Open list); the design is in <a href="value-lists.html">value-lists.html</a>.</p>
+<p class="lede">The choices made while building parts 1 to 6 of M6.6 that are not yet confirmed, and the gaps those parts left, each with where it is to be dealt with. Written 2026-10-19, and brought up to date after parts 4, 5 and 6 the same day: the gaps they closed are gone from the list. The same items are in <a href="gui-plan.md">gui-plan.md</a> (the M6.6 notes, D162 to D178 and the Open list); the design is in <a href="value-lists.html">value-lists.html</a>.</p>
 
 <nav>
 <h2>Contents</h2>
 <ul>
-<li><a href="#choices">Choices to confirm</a> (eighteen)</li>
-<li><a href="#gaps">Gaps left</a> (nineteen)</li>
+<li><a href="#choices">Choices to confirm</a> (nineteen)</li>
+<li><a href="#gaps">Gaps left</a> (twenty)</li>
 </ul>
 </nav>
 
@@ -235,10 +235,26 @@ td.when { min-width: 9em; }
 <div class="verdict"><span class="label">Your choice</span><span class="blank"></span></div>
 </section>
 
-<section class="decision" id="d149-moved">
-<h3><span class="code">D149</span>Values in variables, moved to part 6</h3>
-<p>Values of up to 32 bytes kept in consecutive slots of a frame (D149) need the same change to how a frame's slots are laid out as part 6's slots that keep only a payload, so they are built there, together, rather than in part 5. Until then a value larger than 8 bytes in a variable, an argument or a result is a box.</p>
+<section class="decision" id="d176">
+<h3><span class="code">D176</span>A number's conversions and Math's functions as instructions (part 6)</h3>
+<p><code>x.toInt()</code>, <code>toLong()</code>, <code>toFloat()</code>, <code>toDouble()</code>, <code>roundToInt()</code>, <code>roundToLong()</code>, <code>isNaN()</code>, <code>isInfinite()</code>, <code>isFinite()</code>, and <code>Math.sqrt</code>, <code>floor</code>, <code>ceil</code>, <code>round</code>, <code>abs</code>, and <code>min</code> and <code>max</code> of two ints or two floats, where the checker knows the call is the standard library's, are one instruction each, giving what the library's own gives, errors included. Drawing a million particles a frame is 34 to 40% faster.</p>
 <div class="verdict"><span class="label">Your choice</span><span class="blank"></span></div>
+</section>
+
+<section class="decision" id="d177">
+<h3><span class="code">D177</span>Fields kept as their payload alone (part 6)</h3>
+<ul>
+<li>An int, a float or a bool field whose type is known (written, or worked out from what it is first given), and not null, is kept in its object as its 8 bytes of contents alone, before the object's slots, at the same place in every object of its class. An object of three <code>float</code> fields takes 72 bytes in place of 96: a million of them, 112 MB at most against 142.</li>
+<li>A val, and a field an init must set, has a bit saying whether it has been given a value, so that giving a val a second value, and an init that leaves one unset, are still errors.</li>
+<li>Any other payload reads as 0, 0.0 or false before it is first given a value, where a slot read as an error. (Only code that reads a field before the line that gives it its value sees the difference.)</li>
+<li>Field reads and writes are as fast as before, with Clang and with MSVC.</li>
+</ul>
+<div class="verdict"><span class="label">Your choice</span><span class="blank"></span></div>
+</section>
+
+<section class="decision" id="d149-moved">
+<h3><span class="code">D149</span>Values in variables, in M6.7 (D178)</h3>
+<p>Values of up to 32 bytes kept in consecutive slots of a frame (D149) need the same change to how a frame's slots are laid out as frame slots that keep only a payload. You decided on 2026-10-19 (D178) that those, with instructions chosen by type for arithmetic, come with M6.7's rewritten loop. Until then a value larger than 8 bytes in a variable, an argument or a result is a box.</p>
 </section>
 
 <section class="decision" id="largest">
@@ -260,17 +276,18 @@ td.when { min-width: 9em; }
 <tr><td class="part">2</td><td>A field of a class whose type is a value type holds a box, not the value's fields within the object.</td><td class="when">Part 5, values inside objects</td></tr>
 <tr><td class="part">3</td><td>A worker is sent a list of values item by item, not as one block of memory.</td><td class="when">Not placed yet</td></tr>
 <tr><td class="part">3</td><td><code>pts.insert(i, Point(...))</code> makes a box first: only <code>add</code> at the end and <code>pts[i] = ...</code> write straight into the list.</td><td class="when">Not placed yet</td></tr>
-<tr><td class="part">4</td><td>A variable changed through its place is given a box of its own at every change (<code>p.x = 1</code> in a loop makes a box each time), since another variable may hold the box it had: on 40 million calls, <code>one.move()</code> on a variable takes 8.4 s against 2.7 for an object.</td><td class="when">Part 6, values in variables (D149)</td></tr>
-<tr><td class="part">4</td><td>A field read through a list item finds the item again each time (the list, its items, the item): on one core a mutating method on items is some 1.4 times slower than on objects (6.1 s against 4.2 in <code>bench/bounce_values.astra</code>; on 32 cores it is faster, 0.46 s against 0.78).</td><td class="when">Part 6, typed instructions</td></tr>
+<tr><td class="part">4</td><td>A variable changed through its place is given a box of its own at every change (<code>p.x = 1</code> in a loop makes a box each time), since another variable may hold the box it had: on 40 million calls, <code>one.move()</code> on a variable takes 8.4 s against 2.7 for an object.</td><td class="when">M6.7, values in variables (D149)</td></tr>
+<tr><td class="part">4</td><td>A field read through a list item finds the item again each time (the list, its items, the item): on one core a mutating method on items is some 1.3 times slower than on objects (6.2 s against 4.8 in <code>bench/bounce_values.astra</code> with Clang; on 32 cores it is faster, 0.46 s against 0.78). Keeping where a list's items are beside the list, one load in place of three, was tried in part 6 and measured no faster.</td><td class="when">M6.7: the item's place held in a frame's slot for the whole method</td></tr>
 <tr><td class="part">4</td><td><code>pts[i]</code> read whole is judged by the whole function, not by the statement it is in: one <code>sortBy</code> anywhere in the function makes it a copy.</td><td class="when">Not placed yet</td></tr>
 <tr><td class="part">4</td><td>A list of values that may hold null (<code>List&lt;Point?&gt;</code>) is gone through by copies in a parallel section, so <code>forEach { it?.move() }</code> cannot change its items.</td><td class="when">Not placed yet</td></tr>
-<tr><td class="part">4</td><td>A <code>float</code>'s <code>toInt()</code> and the like are method calls: drawing a million particles by one loop takes 80 ms a frame, most of it there.</td><td class="when">Part 6, typed instructions</td></tr>
 <tr><td class="part">4</td><td>Calls, field access and the simulation slice are 4 to 6% slower than in part 3, the same instructions run (with Clang and with MSVC; <code>calls</code> 19% under MSVC, where placement alone moves it): the checks for references spread over the instructions, and what they do to how the compilers lay out the loop. Value types' benchmarks and making objects of classes got faster in part 4.</td><td class="when">The VM's loop rewritten for D160, M6.7</td></tr>
-<tr><td class="part">5</td><td>A value of a value type larger than 8 bytes in a variable, an argument or a result is a box, so Jade's layout without kept sizes (<code>bench/layout_values.astra</code>) makes as many boxes as before: 470,042 in 200 passes.</td><td class="when">Part 6, values in variables (D149)</td></tr>
-<tr><td class="part">5</td><td>Through a reference into an object, a field is read by finding which of the object's values the reference is in, and reading on through a value held in it (<code>node.sizes().pref.width</code>) looks each field up by name: Jade's layout with kept sizes takes 4 to 7% longer than in part 4 for it, though it makes 47 times fewer boxes.</td><td class="when">Part 6, typed instructions</td></tr>
+<tr><td class="part">5</td><td>A value of a value type larger than 8 bytes in a variable, an argument or a result is a box, so Jade's layout without kept sizes (<code>bench/layout_values.astra</code>) makes as many boxes as before: 470,042 in 200 passes.</td><td class="when">M6.7, values in variables (D149)</td></tr>
+<tr><td class="part">5</td><td>Through a reference into an object, a field is read by finding which of the object's values the reference is in, and reading on through a value held in it (<code>node.sizes().pref.width</code>) looks each field up by name: Jade's layout with kept sizes takes 4 to 7% longer than in part 4 for it, though it makes 47 times fewer boxes.</td><td class="when">M6.7, with instructions that name a frame's slots</td></tr>
 <tr><td class="part">5</td><td>Generic list functions that hand each item to a lambda (<code>filter</code>, <code>any</code>, <code>count</code> and the like) copy each item of a list of values, since the lambda may change the list: <code>filter</code> on a million points 98 ms, against 43 written out by hand.</td><td class="when">Inline functions (D59), the second half</td></tr>
 <tr><td class="part">5</td><td>A field is kept inside its object only when its type is written, or it is given a value made by its type's name; one whose type the checker works out from anything else keeps a box, as does one whose type names a class that does not exist yet when the first object is made.</td><td class="when">Not placed yet</td></tr>
 <tr><td class="part">5</td><td>A value type kept in the value itself holds ints, floats and bools only, up to 8 bytes; Jade's <code>Color</code> is still a class (whether it becomes a value type is yours to decide, with the rest of Jade's geometry).</td><td class="when">Storage widths (D148), the second half</td></tr>
+<tr><td class="part">6</td><td>A frame's slots keep a value's kind beside its payload, and arithmetic tests its operands' kinds, where the compiler knows them.</td><td class="when">M6.7 (D178)</td></tr>
+<tr><td class="part">6</td><td>A field whose type the checker works out is kept as a payload only when it is an int, a float or a bool; one of a value type only when it is made by its type's name (part 5); any other keeps its slot.</td><td class="when">Not placed yet</td></tr>
 <tr><td class="part">All</td><td>Under MSVC, code placement alone moves the <code>fields</code> benchmark by 10 to 20% with the same loop. Not a gap in Astra, but a caution in reading timings: compare against a baseline built the same way, and count instructions, before calling a change slower.</td><td class="when">D160: the Clang build's dispatch, M6.7</td></tr>
 </tbody>
 </table></div>
