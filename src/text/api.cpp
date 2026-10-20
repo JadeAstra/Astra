@@ -76,8 +76,9 @@ std::shared_ptr<Font> fontOf(VM& vm, Value v) {
     return h.fonts[static_cast<size_t>(number)];
 }
 
-// A character given as a one-character string or as its number.
+// A character given as a char, a one-character string or its number.
 uint32_t characterOf(VM& vm, Value v) {
+    if (v.isChar()) return static_cast<uint32_t>(v.as.i);
     if (v.isInt()) {
         const int64_t cp = v.as.i;
         if (cp < 0 || cp > 0x10FFFF) throw vm.runtimeError("not a character: " + std::to_string(cp));

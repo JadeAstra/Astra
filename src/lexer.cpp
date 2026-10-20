@@ -1,5 +1,7 @@
 #include "lexer.h"
 
+#include "value.h"
+
 #include <charconv>
 #include <unordered_map>
 
@@ -28,24 +30,6 @@ const std::unordered_map<std::string, TokenType>& keywords() {
 bool isDigit(char c) { return c >= '0' && c <= '9'; }
 bool isIdentStart(char c) { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_'; }
 bool isIdentPart(char c) { return isIdentStart(c) || isDigit(c); }
-
-void appendUtf8(std::string& out, uint32_t cp) {
-    if (cp < 0x80) {
-        out += static_cast<char>(cp);
-    } else if (cp < 0x800) {
-        out += static_cast<char>(0xC0 | (cp >> 6));
-        out += static_cast<char>(0x80 | (cp & 0x3F));
-    } else if (cp < 0x10000) {
-        out += static_cast<char>(0xE0 | (cp >> 12));
-        out += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
-        out += static_cast<char>(0x80 | (cp & 0x3F));
-    } else {
-        out += static_cast<char>(0xF0 | (cp >> 18));
-        out += static_cast<char>(0x80 | ((cp >> 12) & 0x3F));
-        out += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
-        out += static_cast<char>(0x80 | (cp & 0x3F));
-    }
-}
 
 }  // namespace
 
@@ -173,9 +157,29 @@ void Lexer::scanToken() {
         return;
     }
 
-    if (c == '"' || c == '\'') {
+    if (c == '\'') {
+        character(start, line, col);
+        return;
+    }
+    if (c == '"') {
         string(c, start, line, col);
         return;
+    }
+
+    // `$$"""..."""`: a raw string that reads `$$name` and `$${...}`, a lone `$` being text (D112).
+    if (c == '$') {
+        size_t quote = pos_;
+        while (quote < end_ && src_[quote] == '$') quote++;
+        const bool raw = quote + 2 < end_ && src_[quote] == '"' && src_[quote + 1] == '"' && src_[quote + 2] == '"';
+        if (quote - pos_ >= 2 && raw) {
+            const size_t dollars = quote - pos_;
+            pos_ = quote;
+            string('"', start, line, col, dollars);
+            return;
+        }
+        if (quote < end_ && (src_[quote] == '"' || src_[quote] == '\''))
+            throw error(quote - pos_ == 1 ? "a string needs no '$' in front; for one whose dollar signs are text, write $$\"\"\"...\"\"\", which reads $$name"
+                                          : "dollar signs in front go on a raw string: write " + std::string(quote - pos_, '$') + "\"\"\"...\"\"\"");
     }
 
     TokenType type = TokenType::Eof;
@@ -275,7 +279,12 @@ void Lexer::scanToken() {
             }
             break;
         case '>':
-            if (next('>')) {
+            if (next('>') && pos_ + 2 < end_ && src_[pos_ + 2] == '>') {
+                // `>>>`, a shift that brings in zeros (D44).
+                bool assign = pos_ + 3 < end_ && src_[pos_ + 3] == '=';
+                type = assign ? TokenType::UshrEq : TokenType::Ushr;
+                length = assign ? 4 : 3;
+            } else if (next('>')) {
                 bool assign = pos_ + 2 < end_ && src_[pos_ + 2] == '=';
                 type = assign ? TokenType::ShrEq : TokenType::Shr;
                 length = assign ? 3 : 2;
@@ -297,6 +306,13 @@ void Lexer::scanToken() {
             break;
         case '&':
             if (next('&')) throw error("'&&' is not an operator; logical and is written 'and'");
+            if (next('+') || next('-') || next('*')) {
+                // `a &+ b`: an int sum that wraps around rather than overflowing (D27), as Swift's.
+                const char second = src_[pos_ + 1];
+                type = second == '+' ? TokenType::AmpPlus : second == '-' ? TokenType::AmpMinus : TokenType::AmpStar;
+                length = 2;
+                break;
+            }
             withEq(TokenType::Amp, TokenType::AmpEq);
             break;
         case '|':
@@ -387,9 +403,10 @@ void Lexer::number(size_t start, int line, int col) {
     }
 }
 
-void Lexer::string(char quote, size_t start, int line, int col) {
+void Lexer::string(char quote, size_t start, int line, int col, size_t dollars) {
     // Three quotes open a raw string: it runs to the next three, over as many lines as it
-    // likes, and a backslash in it is just a backslash. $name and ${...} still work.
+    // likes, and a backslash in it is just a backslash. $name and ${...} still work, or, with
+    // `dollars` signs in front of it, $$name and $${...}: fewer in a row are text (D112).
     const bool raw = quote == '"' && pos_ + 2 < end_ && src_[pos_ + 1] == '"' && src_[pos_ + 2] == '"';
     pos_ += raw ? 3 : 1;
     std::string text;
@@ -439,7 +456,22 @@ void Lexer::string(char quote, size_t start, int line, int col) {
             continue;
         }
 
-        if (c == '$' && next('{')) {
+        // A run of dollar signs: only the last `dollars` of them can begin "$name" or "${".
+        size_t after = pos_ + 1;
+        if (c == '$') {
+            size_t run = 1;
+            while (pos_ + run < end_ && src_[pos_ + run] == '$') run++;
+            if (run < dollars) {
+                text.append(run, '$');
+                pos_ += run;
+                continue;
+            }
+            text.append(run - dollars, '$');
+            pos_ += run - dollars;
+            after = pos_ + dollars;
+        }
+
+        if (c == '$' && after < end_ && src_[after] == '{') {
             if (!parts) parts = std::make_shared<std::vector<InterpPart>>();
             if (!text.empty()) {
                 InterpPart literal;
@@ -448,7 +480,7 @@ void Lexer::string(char quote, size_t start, int line, int col) {
                 text.clear();
             }
 
-            size_t exprStart = pos_ + 2;
+            size_t exprStart = after + 1;
             size_t exprEnd = findInterpolationEnd(exprStart);
             Lexer sub(src_, file_, exprStart, exprEnd, line_, lineStart_);
             InterpPart expr;
@@ -464,8 +496,8 @@ void Lexer::string(char quote, size_t start, int line, int col) {
         }
 
         // "$name": a single variable. Anything longer ("$a.b", a call) needs the braces.
-        if (c == '$' && pos_ + 1 < end_ && isIdentStart(src_[pos_ + 1])) {
-            size_t nameStart = pos_ + 1;
+        if (c == '$' && after < end_ && isIdentStart(src_[after])) {
+            size_t nameStart = after;
             size_t nameEnd = nameStart;
             while (nameEnd < end_ && isIdentPart(src_[nameEnd])) nameEnd++;
             std::string name = src_.substr(nameStart, nameEnd - nameStart);
@@ -506,6 +538,11 @@ void Lexer::string(char quote, size_t start, int line, int col) {
                 pos_ = nameEnd;
                 continue;
             }
+        }
+        if (c == '$') {
+            text.append(dollars, '$');
+            pos_ = after;
+            continue;
         }
 
         text += c;
@@ -557,12 +594,49 @@ void Lexer::escape(std::string& out) {
     }
 }
 
+// 'c': one character (D24, D25). Single quotes are for characters only; text takes double quotes.
+void Lexer::character(size_t start, int line, int col) {
+    pos_++;
+    std::string text;
+    size_t count = 0;
+    for (;;) {
+        if (pos_ >= end_ || src_[pos_] == '\n') throw CompileError(file_, line, col, "a character is not closed: it ends with '", pos_ >= end_);
+        const char c = src_[pos_];
+        if (c == '\'') break;
+        if (c == '\\') {
+            pos_++;
+            if (pos_ >= end_) throw CompileError(file_, line, col, "a character is not closed: it ends with '", true);
+            escape(text);
+        } else {
+            // One character, all the bytes that spell it in UTF-8.
+            const unsigned char lead = static_cast<unsigned char>(c);
+            size_t size = lead < 0x80 ? 1 : lead >= 0xF0 ? 4 : lead >= 0xE0 ? 3 : 2;
+            if (pos_ + size > end_) size = end_ - pos_;
+            text.append(src_, pos_, size);
+            pos_ += size;
+        }
+        count++;
+    }
+    pos_++;
+    if (count != 1) {
+        // Characters counted as written; an escape is one.
+        const std::string written = src_.substr(start + 1, pos_ - start - 2);
+        if (count == 0)
+            throw CompileError(file_, line, col, "'' holds no character: a char is exactly one; the empty string is \"\"");
+        throw CompileError(file_, line, col, "single quotes hold one character, and '" + written + "' holds " + std::to_string(count) +
+                                                 ": text takes double quotes, \"" + written + "\"");
+    }
+    const Characters one = Characters::fromUtf8(text);
+    if (one.size() != 1) throw CompileError(file_, line, col, "'" + text + "' is not one character");
+    add(TokenType::Char, start, line, col).intValue = one[0];
+}
+
 // Finds the '}' closing a "${" whose expression starts at `p`.
 size_t Lexer::findInterpolationEnd(size_t p) const {
     int depth = 1;
     while (p < end_) {
         char c = src_[p];
-        if (c == '"' || c == '\'') {
+        if (c == '"' || c == '\'' || (c == '$' && p + 1 < end_ && src_[p + 1] == '$')) {
             p = skipString(p);
             continue;
         }
@@ -576,17 +650,38 @@ size_t Lexer::findInterpolationEnd(size_t p) const {
     throw error("unterminated string interpolation", true);
 }
 
+// Skips a string inside an interpolation, raw or not, with dollar signs in front or not.
 size_t Lexer::skipString(size_t p) const {
-    char quote = src_[p++];
+    size_t dollars = 1;
+    if (src_[p] == '$') {
+        const size_t first = p;
+        while (p < end_ && src_[p] == '$') p++;
+        if (p >= end_ || src_[p] != '"') return p;  // not a string: `$$` in code is an error later
+        dollars = p - first;
+    }
+    const char quote = src_[p];
+    const bool raw = quote == '"' && p + 2 < end_ && src_[p + 1] == '"' && src_[p + 2] == '"';
+    p += raw ? 3 : 1;
     while (p < end_) {
         char c = src_[p];
-        if (c == '\\') {
+        if (raw && c == quote && p + 2 < end_ && src_[p + 1] == quote && src_[p + 2] == quote) {
+            p += 3;
+            while (p < end_ && src_[p] == quote) p++;
+            return p;
+        }
+        if (!raw && c == '\\') {
             p += 2;
             continue;
         }
-        if (c == quote) return p + 1;
-        if (c == '$' && p + 1 < end_ && src_[p + 1] == '{') {
-            p = findInterpolationEnd(p + 2) + 1;
+        if (!raw && c == quote) return p + 1;
+        if (c == '$') {
+            size_t run = 1;
+            while (p + run < end_ && src_[p + run] == '$') run++;
+            if (run >= dollars && p + run < end_ && src_[p + run] == '{') {
+                p = findInterpolationEnd(p + run + 1) + 1;
+            } else {
+                p += run;
+            }
             continue;
         }
         p++;

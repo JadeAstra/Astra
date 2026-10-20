@@ -91,7 +91,7 @@ Renderer& need(VM& vm) {
 }
 
 Window& windowOf(VM& vm, Value v) {
-    auto found = state().windows.find(static_cast<int>(vm.toInt(v, "window")));
+    auto found = state().windows.find(vm.toInt32(v, "window"));
     if (found == state().windows.end()) throw vm.runtimeError("the window has been closed");
     return found->second;
 }
@@ -105,7 +105,7 @@ void release(VM& vm, Window& window) {
 // A surface is given as the value surfaceCreate made, or as a window's own by its number.
 int surfaceOf(VM& vm, Value v) {
     if (v.isObjType(ObjType::Resource)) return static_cast<int>(static_cast<const ObjResource*>(v.as.obj)->id);
-    return static_cast<int>(vm.toInt(v, "surface"));
+    return vm.toInt32(v, "surface");
 }
 
 jade::Surface& surfaceNeeded(VM& vm, Renderer& r, Value v) {
@@ -302,10 +302,10 @@ RawEvent syntheticEvent(VM& vm, Window& window, const std::string& kind, Value* 
     }
     if (kind == "pointerMove") {
         e.kind = RawEvent::PointerMove;
-        e.buttons = static_cast<int>(vm.toInt(args[2], "buttons"));
+        e.buttons = vm.toInt32(args[2], "buttons");
     } else if (kind == "pointerDown" || kind == "pointerUp") {
         e.kind = kind == "pointerDown" ? RawEvent::PointerDown : RawEvent::PointerUp;
-        e.button = static_cast<int>(vm.toInt(args[2], "button"));
+        e.button = vm.toInt32(args[2], "button");
     } else if (kind == "pointerLeave") {
         e.kind = RawEvent::PointerLeave;
     } else if (kind == "wheel") {
@@ -332,7 +332,7 @@ RawEvent syntheticEvent(VM& vm, Window& window, const std::string& kind, Value* 
     } else {
         throw vm.runtimeError("no such event: " + kind);
     }
-    e.modifiers = static_cast<int>(vm.toInt(args[3], "modifiers"));
+    e.modifiers = vm.toInt32(args[3], "modifiers");
     return e;
 }
 
@@ -452,7 +452,7 @@ void registerJade(VM& vm) {
     });
     // Closes a window for good. Closing one that is closed already does nothing.
     def("windowClose", 1, 1, [](VM& vm, int, Value* args) -> Value {
-        auto found = state().windows.find(static_cast<int>(vm.toInt(args[0], "window")));
+        auto found = state().windows.find(vm.toInt32(args[0], "window"));
         if (found == state().windows.end()) return Value::null();
         Renderer& r = need(vm);
         release(vm, found->second);
@@ -471,7 +471,7 @@ void registerJade(VM& vm) {
         return done();
     });
     def("windowIsOpen", 1, 1, [](VM& vm, int, Value* args) -> Value {
-        return Value::boolean(state().windows.count(static_cast<int>(vm.toInt(args[0], "window"))) != 0);
+        return Value::boolean(state().windows.count(vm.toInt32(args[0], "window")) != 0);
     });
     def("windowTitle", 2, 2, [](VM& vm, int, Value* args) -> Value {
         windowOf(vm, args[0]).native->setTitle(vm.toStr(args[1], "title"));
@@ -498,7 +498,7 @@ void registerJade(VM& vm) {
         return pairOf(vm, {Value::integer(x), Value::integer(y)});
     });
     def("windowSetPosition", 3, 3, [](VM& vm, int, Value* args) -> Value {
-        windowOf(vm, args[0]).native->setPosition(static_cast<int>(vm.toInt(args[1], "x")), static_cast<int>(vm.toInt(args[2], "y")));
+        windowOf(vm, args[0]).native->setPosition(vm.toInt32(args[1], "x"), vm.toInt32(args[2], "y"));
         return done();
     });
     // windowLimits(window, minWidth, minHeight, maxWidth, maxHeight) in layout units; 0 for none.
@@ -529,7 +529,7 @@ void registerJade(VM& vm) {
     def("windowIcon", 4, 4, [](VM& vm, int, Value* args) -> Value {
         Window& window = windowOf(vm, args[0]);
         if (!args[1].isObjType(ObjType::Bytes)) throw vm.runtimeError("an icon's pixels are bytes");
-        window.native->setIcon(asBytes(args[1])->data, static_cast<int>(vm.toInt(args[2], "width")), static_cast<int>(vm.toInt(args[3], "height")));
+        window.native->setIcon(asBytes(args[1])->data, vm.toInt32(args[2], "width"), vm.toInt32(args[3], "height"));
         return Value::null();
     });
     def("windowCursor", 2, 2, [](VM& vm, int, Value* args) -> Value {
@@ -561,7 +561,7 @@ void registerJade(VM& vm) {
     // which then goes the way a real one does.
     def("windowSend", 9, 9, [](VM& vm, int, Value* args) -> Value {
         Window& window = windowOf(vm, args[0]);
-        const int id = static_cast<int>(vm.toInt(args[0], "window"));
+        const int id = vm.toInt32(args[0], "window");
         const RawEvent event = syntheticEvent(vm, window, vm.toStr(args[1], "kind of event"), args + 2);
         deliver(id, event);
         if (state().delivering == 0 && !state().pumping) state().closed.clear();
@@ -627,8 +627,8 @@ void registerJade(VM& vm) {
     def("target", 8, 8, [](VM& vm, int, Value* args) -> Value {
         Renderer& r = need(vm);
         surfaceNeeded(vm, r, args[0]);
-        state().originX = static_cast<int>(vm.toInt(args[1], "x"));
-        state().originY = static_cast<int>(vm.toInt(args[2], "y"));
+        state().originX = vm.toInt32(args[1], "x");
+        state().originY = vm.toInt32(args[2], "y");
         state().scale = vm.toNumber(args[3], "scale");
         auto edge = [&](Value v) { return static_cast<int>(std::clamp<int64_t>(vm.toInt(v, "clip"), -(int64_t{1} << 24), int64_t{1} << 24)); };
         r.setTarget(surfaceOf(vm, args[0]), edge(args[4]), edge(args[5]), edge(args[6]), edge(args[7]));

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -165,6 +166,7 @@ struct Names {
     ObjString* key;
     ObjString* value;
     ObjString* code;
+    ObjString* character;  // `n.char`
     ObjString* iterator;
     ObjString* first;
     ObjString* last;
@@ -201,7 +203,7 @@ struct Names {
     ObjString* opBitNot;
 };
 
-enum class BuiltinType { String, List, Map, Range, Bytes, Number, Count_ };
+enum class BuiltinType { String, List, Map, Range, Bytes, Number, Char, Byte, Count_ };
 
 class VM {
 public:
@@ -359,6 +361,10 @@ public:
         }
     }
     void writeValueField(uint8_t* at, const ValueField& field, const ObjClass* owner, Value value);
+    std::string storageMismatch(Narrow narrow, Value v);
+    // An int given where a storage width it does not fit is declared: an error saying so, with
+    // `where` after it. Returns normally for anything else.
+    void checkRange(uint8_t type, Value v, const std::string& where);
     int64_t valueFieldIndex(const ObjValue* box, const ObjString* name) const;
     Value valueField(const ObjValue* box, size_t index);
     void setValueField(ObjValue* box, ObjString* name, Value value);
@@ -426,7 +432,20 @@ public:
         return args != nullptr && static_cast<size_t>(i) < args->args.size() ? args->args[static_cast<size_t>(i)] : anyType();
     }
     ObjString* newString(std::string s);
+    ObjString* newString(Characters text);
+    ObjString* joinStrings(const ObjString* first, const ObjString* second);
     Value str(std::string s) { return Value::object(newString(std::move(s))); }
+    Value str(Characters text) { return Value::object(newString(std::move(text))); }
+    // The string of character `c` alone.
+    Value characterString(uint32_t c) {
+        Characters one;
+        one.width = c < 0x100 ? 1 : c < 0x10000 ? 2 : 4;
+        one.units.resize(one.width);
+        if (one.width == 1) one.units[0] = static_cast<char>(c);
+        else if (one.width == 2) { const uint16_t unit = static_cast<uint16_t>(c); std::memcpy(one.units.data(), &unit, 2); }
+        else std::memcpy(one.units.data(), &c, 4);
+        return str(std::move(one));
+    }
 
     // ---- Running programs ----
 
@@ -466,8 +485,18 @@ public:
     std::string typeName(Value v) const;
 
     int64_t toInt(Value v, const char* what);
+    // An int handed to Windows, OpenGL or the text engine, which take 32 bits: one past their
+    // range is taken as their nearest end (D76), as `int.maxValue` for "no limit" is.
+    int toInt32(Value v, const char* what) {
+        return static_cast<int>(std::clamp<int64_t>(toInt(v, what), INT32_MIN, INT32_MAX));
+    }
     double toNumber(Value v, const char* what);
     const std::string& toStr(Value v, const char* what);
+    // A string, as its characters (D20); toStr gives its UTF-8 form.
+    const ObjString* toText(Value v, const char* what) {
+        if (!v.isString()) toStr(v, what);  // says what it should have been
+        return asString(v);
+    }
 
     void defineGlobal(const std::string& name, Value value) { builtins_[name] = value; }
     bool hasBuiltin(const std::string& name) const { return builtins_.count(name) != 0; }
@@ -589,6 +618,7 @@ public:
     // Op::Numeric's work (builtins.cpp, beside Math's functions): the result of `which` on
     // `args`, one value or two.
     Value numeric(uint8_t which, const Value* args);
+    AstraThrow overflowError(Op op, int64_t a, int64_t b);
     void markNotParallel(const std::string& global, std::initializer_list<const char*> except = {});
 
     // Runs `function` on every item of `source` (a list, a range, anything a loop takes), the
@@ -846,7 +876,7 @@ private:
     const Value* superMethod(Value super, Value self, const ObjString* name) const;
 
     // Extension functions on the built-in types, by TypeId; on null; and on every value.
-    Table typeExtensions_[16];
+    Table typeExtensions_[kTypeCount_];
     Table nullExtensions_;
     Table nullExtensionOwners_;  // for each of those, the type it was declared on
     Table anyExtensions_;
@@ -866,6 +896,7 @@ private:
     Value getIndex(Value obj, Value index);
     void setIndex(Value obj, Value index, Value value);
     bool binarySlow(Op op);
+    bool numberArithmetic(Op op);
     bool compareSlow(Op op);
     bool shift(Op op);
     bool bitwise(Op op);

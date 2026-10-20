@@ -28,7 +28,7 @@ print("$name!")                                 // expect: world!
 print("<$name>")                                // expect: <world>
 print("$name$name")                             // expect: worldworld
 print("$name and ${car.name} and $name")        // expect: world and Beetle and world
-print('single quotes: $name')                   // expect: single quotes: world
+print('$' + name, "${'$'}$name")                // expect: $world $world
 
 // only the variable name belongs to "$name"; longer expressions need braces
 print("$car.name")                              // expect: <Car instance>.name

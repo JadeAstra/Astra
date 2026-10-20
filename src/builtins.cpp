@@ -106,31 +106,6 @@ int64_t floatToInt(VM& vm, double d) {
     return static_cast<int64_t>(d);
 }
 
-void appendUtf8(std::string& out, uint32_t cp) {
-    if (cp < 0x80) {
-        out += static_cast<char>(cp);
-    } else if (cp < 0x800) {
-        out += static_cast<char>(0xC0 | (cp >> 6));
-        out += static_cast<char>(0x80 | (cp & 0x3F));
-    } else if (cp < 0x10000) {
-        out += static_cast<char>(0xE0 | (cp >> 12));
-        out += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
-        out += static_cast<char>(0x80 | (cp & 0x3F));
-    } else {
-        out += static_cast<char>(0xF0 | (cp >> 18));
-        out += static_cast<char>(0x80 | ((cp >> 12) & 0x3F));
-        out += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
-        out += static_cast<char>(0x80 | (cp & 0x3F));
-    }
-}
-
-// Length in bytes of the UTF-8 character starting at s[i].
-size_t utf8Length(const std::string& s, size_t i) {
-    size_t n = 1;
-    while (i + n < s.size() && (static_cast<unsigned char>(s[i + n]) & 0xC0) == 0x80) n++;
-    return n;
-}
-
 std::vector<std::string> splitLines(const std::string& text) {
     std::vector<std::string> lines;
     size_t start = 0;
@@ -156,7 +131,12 @@ ObjList* newList(VM& vm, std::vector<Value> items) {
 bool defaultLess(VM& vm, const Value& a, const Value& b) {
     if (a.isInt() && b.isInt()) return a.as.i < b.as.i;
     if (a.isNumber() && b.isNumber()) return a.toDouble() < b.toDouble();
-    if (a.isString() && b.isString()) return asString(a)->chars < asString(b)->chars;
+    if (a.isString() && b.isString()) return compareText(asString(a), asString(b)) < 0;
+    // Chars by their numbers; a byte as the int it holds.
+    if (a.isChar() && b.isChar()) return a.as.i < b.as.i;
+    if ((a.isByte() || a.isInt()) && (b.isByte() || b.isInt())) return a.as.i < b.as.i;
+    if ((a.isByte() || a.isNumber()) && (b.isByte() || b.isNumber()))
+        return (a.isFloat() ? a.as.d : static_cast<double>(a.as.i)) < (b.isFloat() ? b.as.d : static_cast<double>(b.as.i));
     throw vm.runtimeError("cannot compare " + vm.typeName(a) + " and " + vm.typeName(b) + " while sorting");
 }
 
@@ -177,13 +157,18 @@ void mergeSort(std::vector<Value>& items, std::vector<Value>& scratch, size_t lo
               items.begin() + static_cast<std::ptrdiff_t>(lo));
 }
 
-int64_t integerPower(int64_t base, int64_t exponent) {
-    uint64_t result = 1, b = static_cast<uint64_t>(base);
-    for (uint64_t e = static_cast<uint64_t>(exponent); e != 0; e >>= 1) {
-        if (e & 1) result *= b;
-        b *= b;
+// An int to a power of 0 or more, an error where it does not fit in an int (D27).
+int64_t integerPower(VM& vm, int64_t base, int64_t exponent) {
+    int64_t result = 1, b = base;
+    bool bOverflowed = false;
+    for (int64_t e = exponent; e != 0; e >>= 1) {
+        if (e & 1) {
+            if (bOverflowed || mulOverflows(result, b, result))
+                throw vm.runtimeError(std::to_string(base) + " to the power " + std::to_string(exponent) + " does not fit in an int");
+        }
+        if (e > 1 && !bOverflowed) bOverflowed = mulOverflows(b, b, b);
     }
-    return static_cast<int64_t>(result);
+    return result;
 }
 
 namespace {
@@ -198,14 +183,14 @@ void registerGlobals(VM& vm) {
         if (!args[0].isString() || !args[1].isString() || !args[2].isObjType(ObjType::List)) throw vm.runtimeError("__nameParams: bad arguments");
         std::vector<std::string> params;
         for (const Value& p : vm.listCopy(asList(args[2])))
-            if (p.isString()) params.push_back(asString(p)->chars);
-        const std::string& type = asString(args[0])->chars;
+            if (p.isString()) params.push_back(asString(p)->utf8());
+        const std::string& type = asString(args[0])->utf8();
         BuiltinType builtin;
         if (type.empty()) {
-            vm.nameFunctionParams(asString(args[1])->chars, params);
+            vm.nameFunctionParams(asString(args[1])->utf8(), params);
         } else if (VM::builtinTypeNamed(type, builtin)) {
-            vm.nameParams(builtin, asString(args[1])->chars, params);
-        } else if (ObjNative* member = vm.builtinStatic(type, asString(args[1])->chars)) {
+            vm.nameParams(builtin, asString(args[1])->utf8(), params);
+        } else if (ObjNative* member = vm.builtinStatic(type, asString(args[1])->utf8())) {
             // A function of an object the C++ provides (`Math.pow`).
             if (params.size() > member->params.size()) member->params = params;
         }
@@ -268,12 +253,12 @@ void registerGlobals(VM& vm) {
         if (v.isFloat()) return Value::integer(floatToInt(vm, std::trunc(v.as.d)));
         if (v.isBool()) return Value::integer(v.as.b ? 1 : 0);
         if (v.isString()) {
-            std::string_view text = trimmed(asString(v)->chars);
+            std::string_view text = trimmed(asString(v)->utf8());
             int64_t i;
             if (parseInt(text, i)) return Value::integer(i);
             double d;
             if (parseFloat(text, d) && std::isfinite(d)) return Value::integer(floatToInt(vm, std::trunc(d)));
-            throw vm.runtimeError("cannot convert " + quoteString(asString(v)->chars) + " to an int");
+            throw vm.runtimeError("cannot convert " + quoteString(asString(v)->utf8()) + " to an int");
         }
         throw vm.runtimeError("cannot convert a value of type " + vm.typeName(v) + " to an int");
     });
@@ -285,8 +270,8 @@ void registerGlobals(VM& vm) {
         if (v.isBool()) return Value::number(v.as.b ? 1.0 : 0.0);
         if (v.isString()) {
             double d;
-            if (parseFloat(trimmed(asString(v)->chars), d)) return Value::number(d);
-            throw vm.runtimeError("cannot convert " + quoteString(asString(v)->chars) + " to a float");
+            if (parseFloat(trimmed(asString(v)->utf8()), d)) return Value::number(d);
+            throw vm.runtimeError("cannot convert " + quoteString(asString(v)->utf8()) + " to a float");
         }
         throw vm.runtimeError("cannot convert a value of type " + vm.typeName(v) + " to a float");
     });
@@ -335,26 +320,15 @@ void registerGlobals(VM& vm) {
         throw AstraExit{argc > 0 ? static_cast<int>(vm.toInt(args[0], "exit code")) : 0};
     });
 
-    vm.defineNative("chr", 1, 1, [](VM& vm, int, Value* args) -> Value {
-        int64_t cp = vm.toInt(args[0], "code point");
-        if (cp < 0 || cp > 0x10FFFF || (cp >= 0xD800 && cp <= 0xDFFF))
-            throw vm.runtimeError(std::to_string(cp) + " is not a valid Unicode code point");
-        std::string s;
-        appendUtf8(s, static_cast<uint32_t>(cp));
-        return vm.str(std::move(s));
-    });
-
-    vm.defineNative("ord", 1, 1, [](VM& vm, int, Value* args) -> Value {
-        const std::string& s = vm.toStr(args[0], "ord() argument");
-        if (s.empty()) throw vm.runtimeError("ord() of an empty string");
-        unsigned char lead = static_cast<unsigned char>(s[0]);
-        size_t n = utf8Length(s, 0);
-        uint32_t cp = lead;
-        if (n == 2) cp = lead & 0x1F;
-        else if (n == 3) cp = lead & 0x0F;
-        else if (n >= 4) cp = lead & 0x07;
-        for (size_t i = 1; i < n && i < 4; i++) cp = (cp << 6) | (static_cast<unsigned char>(s[i]) & 0x3F);
-        return Value::integer(cp);
+    // The hash of several values together, as Java's Objects.hash works it out, wrapping at 32
+    // bits inside, so a class's hash needs no `31 * h + ...` of its own (D148).
+    vm.defineNative("hash", 0, -1, [](VM&, int argc, Value* args) -> Value {
+        uint32_t result = 1;
+        for (int i = 0; i < argc; i++) {
+            const size_t one = args[i].isNull() ? 0 : keyHash(args[i]);
+            result = 31 * result + static_cast<uint32_t>(one ^ (one >> 32));
+        }
+        return Value::integer(static_cast<int32_t>(result));
     });
 }
 
@@ -390,7 +364,10 @@ void registerMath(VM& vm) {
 
     def("abs", 1, 1, [](VM& vm, int, Value* args) -> Value {
         Value v = args[0];
-        if (v.isInt()) return Value::integer(v.as.i < 0 ? static_cast<int64_t>(0 - static_cast<uint64_t>(v.as.i)) : v.as.i);
+        if (v.isInt()) {
+            if (v.as.i == INT64_MIN) throw vm.overflowError(Op::Sub, 0, v.as.i);  // (D27)
+            return Value::integer(v.as.i < 0 ? -v.as.i : v.as.i);
+        }
         return Value::number(std::fabs(vm.toNumber(v, "Math.abs() argument")));
     });
 
@@ -428,7 +405,7 @@ void registerMath(VM& vm) {
 
     def("pow", 2, 2, [](VM& vm, int, Value* args) -> Value {
         if (args[0].isInt() && args[1].isInt() && args[1].as.i >= 0)
-            return Value::integer(integerPower(args[0].as.i, args[1].as.i));
+            return Value::integer(integerPower(vm, args[0].as.i, args[1].as.i));
         return Value::number(std::pow(vm.toNumber(args[0], "Math.pow() base"), vm.toNumber(args[1], "Math.pow() exponent")));
     });
 
@@ -471,22 +448,22 @@ void registerStringMethods(VM& vm) {
     const BuiltinType T = BuiltinType::String;
 
     vm.defineMethod(T, "upper", 0, 0, [](VM& vm, Value self, int, Value*) -> Value {
-        return vm.str(changeCase(asString(self)->chars, true));
+        return vm.str(changeCase(asString(self)->utf8(), true));
     });
 
     vm.defineMethod(T, "lower", 0, 0, [](VM& vm, Value self, int, Value*) -> Value {
-        return vm.str(changeCase(asString(self)->chars, false));
+        return vm.str(changeCase(asString(self)->utf8(), false));
     });
 
     vm.defineMethod(T, "trim", 0, 0, [](VM& vm, Value self, int, Value*) -> Value {
-        return vm.str(std::string(trimmed(asString(self)->chars)));
+        return vm.str(std::string(trimmed(asString(self)->utf8())));
     });
 
     // For text written over several lines in the source: trimIndent takes away the indentation
     // the lines share, and trimMargin everything up to and including a marker ("|" unless
     // another is given). Both drop a first and a last line that are blank.
     vm.defineMethod(T, "trimIndent", 0, 0, [](VM& vm, Value self, int, Value*) -> Value {
-        std::vector<std::string> lines = splitLines(asString(self)->chars);
+        std::vector<std::string> lines = splitLines(asString(self)->utf8());
         size_t indent = std::string::npos;
         for (const std::string& line : lines) {
             size_t first = line.find_first_not_of(" \t");
@@ -504,7 +481,7 @@ void registerStringMethods(VM& vm) {
 
     vm.defineMethod(T, "trimMargin", 0, 1, [](VM& vm, Value self, int argc, Value* args) -> Value {
         const std::string marker = argc > 0 ? vm.toStr(args[0], "margin marker") : std::string("|");
-        std::vector<std::string> lines = splitLines(asString(self)->chars);
+        std::vector<std::string> lines = splitLines(asString(self)->utf8());
         std::string out;
         bool any = false;
         for (size_t i = 0; i < lines.size(); i++) {
@@ -520,35 +497,38 @@ void registerStringMethods(VM& vm) {
     });
 
     vm.defineMethod(T, "split", 0, 1, [](VM& vm, Value self, int argc, Value* args) -> Value {
-        const std::string& s = asString(self)->chars;
+        if (argc > 0 && args[0].isChar()) args[0] = vm.characterString(static_cast<uint32_t>(args[0].as.i));  // split(',') (D25)
+        // On the characters themselves, each part at the width it needs (D20).
+        const ObjString* text = asString(self);
+        const size_t length = text->length;
         std::vector<Value> parts;
 
         if (argc == 0) {
             // No separator: split on runs of whitespace.
+            auto space = [text](size_t i) {
+                const uint32_t c = text->at(i);
+                return c < 0x80 && std::isspace(static_cast<int>(c));
+            };
             size_t i = 0;
-            while (i < s.size()) {
-                while (i < s.size() && std::isspace(static_cast<unsigned char>(s[i]))) i++;
+            while (i < length) {
+                while (i < length && space(i)) i++;
                 size_t begin = i;
-                while (i < s.size() && !std::isspace(static_cast<unsigned char>(s[i]))) i++;
-                if (i > begin) parts.push_back(vm.str(s.substr(begin, i - begin)));
+                while (i < length && !space(i)) i++;
+                if (i > begin) parts.push_back(vm.str(text->slice(begin, i)));
             }
         } else {
-            const std::string& sep = vm.toStr(args[0], "separator");
-            if (sep.empty()) {
-                for (size_t i = 0; i < s.size();) {
-                    size_t n = utf8Length(s, i);
-                    parts.push_back(vm.str(s.substr(i, n)));
-                    i += n;
-                }
+            const ObjString* separator = vm.toText(args[0], "separator");
+            if (separator->length == 0) {
+                for (size_t i = 0; i < length; i++) parts.push_back(vm.characterString(text->at(i)));
             } else {
                 size_t begin = 0;
                 for (;;) {
-                    size_t at = s.find(sep, begin);
-                    if (at == std::string::npos) break;
-                    parts.push_back(vm.str(s.substr(begin, at - begin)));
-                    begin = at + sep.size();
+                    const int64_t at = text->find(separator, begin);
+                    if (at < 0) break;
+                    parts.push_back(vm.str(text->slice(begin, static_cast<size_t>(at))));
+                    begin = static_cast<size_t>(at) + separator->length;
                 }
-                parts.push_back(vm.str(s.substr(begin)));
+                parts.push_back(vm.str(text->slice(begin, length)));
             }
         }
         return Value::object(newList(vm, std::move(parts)));
@@ -559,12 +539,11 @@ void registerStringMethods(VM& vm) {
         size_t begin = clampPosition(vm.toInt(args[0], "slice start"), text->length);
         size_t end = argc > 1 ? clampPosition(vm.toInt(args[1], "slice end"), text->length) : text->length;
         if (begin >= end) return vm.str(std::string());
-        size_t from = text->byteAt(begin);
-        return vm.str(text->chars.substr(from, text->byteAt(end) - from));
+        return vm.str(text->slice(begin, end));
     });
 
     vm.defineMethod(T, "repeat", 1, 1, [](VM& vm, Value self, int, Value* args) -> Value {
-        const std::string& s = asString(self)->chars;
+        const std::string& s = asString(self)->utf8();
         int64_t times = vm.toInt(args[0], "repeat count");
         if (times < 0) throw vm.runtimeError("repeat count cannot be negative");
         // As large as memory allows; a size past what can be counted cannot be asked for at all.
@@ -793,6 +772,75 @@ void registerRangeMethods(VM& vm) {
 
 // ---- bytes ----
 
+// A byte given as one, or as an int from 0 to 255 by code that does not say its types.
+uint8_t byteArgument(VM& vm, Value v) {
+    if (v.isByte()) return static_cast<uint8_t>(v.as.i);
+    if (!v.isInt() || v.as.i < 0 || v.as.i > 255) throw vm.runtimeError("a byte is a whole number from 0 to 255, not " + vm.stringify(v));
+    return static_cast<uint8_t>(v.as.i);
+}
+
+// Where a number of `size` bytes starts in `data`, at `at`: an error past the end.
+size_t binaryAt(VM& vm, const std::vector<uint8_t>& data, Value at, size_t size) {
+    const int64_t i = vm.toInt(at, "position");
+    if (i < 0 || static_cast<uint64_t>(i) > data.size() || data.size() - static_cast<size_t>(i) < size)
+        throw vm.runtimeError("a " + std::to_string(size * 8) + "-bit number at " + std::to_string(i) + " runs past the end of " +
+                              std::to_string(data.size()) + " bytes");
+    return static_cast<size_t>(i);
+}
+
+// `size` bytes from `data` at `at`, as one number, least significant byte first unless `big`.
+uint64_t readBinary(const std::vector<uint8_t>& data, size_t at, size_t size, bool big) {
+    uint64_t n = 0;
+    for (size_t k = 0; k < size; k++) n |= static_cast<uint64_t>(data[at + (big ? size - 1 - k : k)]) << (8 * k);
+    return n;
+}
+
+void writeBinary(std::vector<uint8_t>& data, size_t at, size_t size, bool big, uint64_t n) {
+    for (size_t k = 0; k < size; k++) data[at + (big ? size - 1 - k : k)] = static_cast<uint8_t>(n >> (8 * k));
+}
+
+enum class Kind { Signed, Unsigned, Float };
+
+template <size_t Size, Kind kind>
+Value readNumber(VM& vm, Value self, int argc, Value* args) {
+    const std::vector<uint8_t>& data = asBytes(self)->data;
+    const uint64_t bits = readBinary(data, binaryAt(vm, data, args[0], Size), Size, argc > 1 && args[1].truthy());
+    if constexpr (kind == Kind::Float) {
+        float f;
+        const uint32_t word = static_cast<uint32_t>(bits);
+        std::memcpy(&f, &word, sizeof f);
+        return Value::number(f);
+    } else if constexpr (kind == Kind::Signed) {
+        return Value::integer(Size == 2 ? static_cast<int16_t>(bits) : static_cast<int32_t>(bits));
+    } else {
+        return Value::integer(static_cast<int64_t>(bits));
+    }
+}
+
+template <size_t Size, Kind kind>
+Value writeNumber(VM& vm, Value self, int argc, Value* args) {
+    std::vector<uint8_t>& data = asBytes(self)->data;
+    const size_t at = binaryAt(vm, data, args[0], Size);
+    uint64_t bits;
+    if constexpr (kind == Kind::Float) {
+        const float f = static_cast<float>(vm.toNumber(args[1], "number"));
+        uint32_t word;
+        std::memcpy(&word, &f, sizeof word);
+        bits = word;
+    } else {
+        const int64_t n = vm.toInt(args[1], "number");
+        const int64_t low = kind == Kind::Unsigned ? 0 : Size == 2 ? -32768 : -2147483648LL;
+        const int64_t high = kind == Kind::Unsigned ? (Size == 2 ? 65535 : 4294967295LL) : Size == 2 ? 32767 : 2147483647;
+        if (n < low || n > high)
+            throw vm.runtimeError(std::to_string(n) + " does not fit in " + std::to_string(Size * 8) + " bits " +
+                                  (kind == Kind::Unsigned ? "unsigned" : "signed") + ", which hold " + std::to_string(low) + " to " +
+                                  std::to_string(high));
+        bits = static_cast<uint64_t>(n);
+    }
+    writeBinary(data, at, Size, argc > 2 && args[2].truthy(), bits);
+    return self;
+}
+
 void registerBytes(VM& vm) {
     // bytes(16): sixteen zeros. bytes([1, 2, 255]) or bytes(other): a copy.
     vm.defineNative("Bytes", 1, 1, [](VM& vm, int, Value* args) -> Value {
@@ -803,11 +851,7 @@ void registerBytes(VM& vm) {
             vm.checkRoomFor(static_cast<uint64_t>(from.as.i));
             made->data.assign(static_cast<size_t>(from.as.i), 0);
         } else if (from.isObjType(ObjType::List)) {
-            for (Value item : vm.listCopy(asList(from))) {
-                if (!item.isInt() || item.as.i < 0 || item.as.i > 255)
-                    throw vm.runtimeError("a byte is a whole number from 0 to 255, not " + vm.stringify(item));
-                made->data.push_back(static_cast<uint8_t>(item.as.i));
-            }
+            for (Value item : vm.listCopy(asList(from))) made->data.push_back(byteArgument(vm, item));
         } else if (from.isObjType(ObjType::Bytes)) {
             made->data = asBytes(from)->data;
         } else {
@@ -832,7 +876,7 @@ void registerBytes(VM& vm) {
 
     vm.defineMethod(T, "toList", 0, 0, [](VM& vm, Value self, int, Value*) -> Value {
         std::vector<Value> items;
-        for (uint8_t b : asBytes(self)->data) items.push_back(Value::integer(b));
+        for (uint8_t b : asBytes(self)->data) items.push_back(Value::byte(b));
         return Value::object(newList(vm, std::move(items)));
     });
 
@@ -843,16 +887,15 @@ void registerBytes(VM& vm) {
     });
 
     vm.defineMethod(T, "fill", 1, 1, [](VM& vm, Value self, int, Value* args) -> Value {
-        int64_t value = vm.toInt(args[0], "byte");
-        if (value < 0 || value > 255) throw vm.runtimeError("a byte is a whole number from 0 to 255, not " + std::to_string(value));
+        const uint8_t value = byteArgument(vm, args[0]);
         std::vector<uint8_t>& data = asBytes(self)->data;
-        std::fill(data.begin(), data.end(), static_cast<uint8_t>(value));
+        std::fill(data.begin(), data.end(), value);
         return self;
     });
 
     vm.defineMethod(T, "indexOf", 1, 1, [](VM&, Value self, int, Value* args) -> Value {
         const std::vector<uint8_t>& data = asBytes(self)->data;
-        if (args[0].isInt())
+        if (args[0].isInt() || args[0].isByte())
             for (size_t i = 0; i < data.size(); i++)
                 if (data[i] == args[0].as.i) return Value::integer(static_cast<int64_t>(i));
         return Value::integer(-1);
@@ -860,12 +903,26 @@ void registerBytes(VM& vm) {
 
     vm.defineMethod(T, "contains", 1, 1, [](VM&, Value self, int, Value* args) -> Value {
         const std::vector<uint8_t>& data = asBytes(self)->data;
-        return Value::boolean(args[0].isInt() && std::find(data.begin(), data.end(), args[0].as.i) != data.end());
+        return Value::boolean((args[0].isInt() || args[0].isByte()) && std::find(data.begin(), data.end(), args[0].as.i) != data.end());
     });
+
+
+    // 16- and 32-bit numbers in the bytes (D19, L0): read as an int (a float for float32) and
+    // written, each at a position, least significant byte first unless `bigEndian`.
+    vm.defineMethod(T, "int16", 1, 2, readNumber<2, Kind::Signed>);
+    vm.defineMethod(T, "uint16", 1, 2, readNumber<2, Kind::Unsigned>);
+    vm.defineMethod(T, "int32", 1, 2, readNumber<4, Kind::Signed>);
+    vm.defineMethod(T, "uint32", 1, 2, readNumber<4, Kind::Unsigned>);
+    vm.defineMethod(T, "float32", 1, 2, readNumber<4, Kind::Float>);
+    vm.defineMethod(T, "putInt16", 2, 3, writeNumber<2, Kind::Signed>);
+    vm.defineMethod(T, "putUint16", 2, 3, writeNumber<2, Kind::Unsigned>);
+    vm.defineMethod(T, "putInt32", 2, 3, writeNumber<4, Kind::Signed>);
+    vm.defineMethod(T, "putUint32", 2, 3, writeNumber<4, Kind::Unsigned>);
+    vm.defineMethod(T, "putFloat32", 2, 3, writeNumber<4, Kind::Float>);
 
     // Text as bytes, in UTF-8.
     vm.defineMethod(BuiltinType::String, "toBytes", 0, 0, [](VM& vm, Value self, int, Value*) -> Value {
-        const std::string& s = asString(self)->chars;
+        const std::string& s = asString(self)->utf8();
         ObjBytes* made = vm.alloc<ObjBytes>();
         made->data.assign(s.begin(), s.end());
         vm.account(made->data.size());
@@ -902,7 +959,7 @@ void registerBuiltins(VM& vm) {
     vm.markMutating(BuiltinType::Map, {"remove", "clear", "put", "set"});
     // Given an item of a list of values where it is, `add` copies it in at once (M6.6 part 5).
     vm.markTakesPlaces(BuiltinType::List, {"add"});
-    vm.markMutating(BuiltinType::Bytes, {"fill"});
+    vm.markMutating(BuiltinType::Bytes, {"fill", "putInt16", "putUint16", "putInt32", "putUint32", "putFloat32"});
     for (const char* global : {"__thread", "__loop", "__io", "__file", "__worker", "input", "exit"})
         vm.markNotParallel(global);
     vm.markNotParallel("__flow", {"arity"});      // how many parameters a function has: map.forEach asks
@@ -932,7 +989,10 @@ Value VM::numeric(uint8_t which, const Value* args) {
             return a.isInt() ? a : Value::integer(floatToInt(*this, std::round(toNumber(a, "Math.round() argument"))));
         case NumericOp::AbsInt:
         case NumericOp::AbsFloat:
-            if (a.isInt()) return Value::integer(a.as.i < 0 ? static_cast<int64_t>(0 - static_cast<uint64_t>(a.as.i)) : a.as.i);
+            if (a.isInt()) {
+                if (a.as.i == INT64_MIN) throw overflowError(Op::Sub, 0, a.as.i);  // (D27)
+                return Value::integer(a.as.i < 0 ? -a.as.i : a.as.i);
+            }
             return Value::number(std::fabs(toNumber(a, "Math.abs() argument")));
         case NumericOp::MinInt:
         case NumericOp::MinFloat: {

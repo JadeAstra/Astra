@@ -1,0 +1,45 @@
+// Characters (M6.6 part 8, group 1): a char is one code point, what s[i] gives (D24); how
+// chars and strings combine (D25); n.char and c.code (D142).
+
+fun attempt(f : () -> any) : string {
+  try { return "${f()}" } catch (e) { return e.message }
+}
+
+// Single quotes are for one character, its escapes included.
+print('a', 'é', '😀', '\n'.code, '\''.code, '\\'.code, '\u{1F600}' == '😀', '$')   // expect: a é 😀 10 39 92 true $
+print('a' is char, "a" is char, 'a' is string, "café"[3] is char)   // expect: true false false true
+
+// char + char is a string; char +- int a char; char - char and int +- char an int.
+print('c' + 'a' + 't', 'a' + 1, 'z' - 1, 'z' - 'a', 5 + 'a', 'a' + "bc", "ab" + 'c', 'é' + 1)   // expect: cat b y 25 102 abc abc ê
+var c = 'a'
+c += 2
+c -= 1
+print(c, c < 'c', 'B' > 'A', attempt { 'a' + 2000000 }, attempt { 'a' - 98 })
+// expect: b true true 'a' + 2000000 is not a character: characters are numbered 0 to 1114111, leaving out 55296 to 57343 'a' - 98 is not a character: characters are numbered 0 to 1114111, leaving out 55296 to 57343
+
+// 'c' == "c", and they are one key; a string of another length is never equal.
+val key = "c"
+val counts : Map<any, int> = {"c": 1}
+counts['c'] = counts['c']!! + 1
+print('c' == "c", "c" == 'c', 'c' == key, 'c' != key.repeat(2), counts, counts.size, ['c'].contains("c"))   // expect: true true true true {"c": 2} 1 true
+
+// n.char and c.code.
+print(65.char, 'A'.code, 233.char, 128512.char.code, attempt { 55296.char }, attempt { (-1).char })
+// expect: A 65 é 128512 55296 is not a character's number: characters are numbered 0 to 1114111, leaving out 55296 to 57343 -1 is not a character's number: characters are numbered 0 to 1114111, leaving out 55296 to 57343
+
+// What a char is.
+print('x'.isLetter(), '7'.isDigit(), '_'.isLetterOrDigit(), ' '.isWhitespace(), 'É'.isUpperCase(), 'é'.isLowerCase())   // expect: true true false true true true
+print('a'.upper(), 'Q'.lower(), 'é'.upper(), '7'.digitToInt(), 'f'.digitToInt(16), 'x'.digitToIntOrNull(), attempt { 'x'.digitToInt() })   // expect: A q É 7 15 null 'x' is not a digit
+
+// A string's characters are chars, wherever they come from.
+val word = "naïve😀"
+var seen : List<char> = []
+for (ch in word) { seen.add(ch) }
+print(seen, word.first(), word.last(), word.get(2), word.toList().size, word.count { it.isLetter() }, word.filter { it != 'ï' })
+// expect: ['n', 'a', 'ï', 'v', 'e', '😀'] n 😀 ï 6 5 nave😀
+print(word.map { it.code }, word.indexOf('v'), word.contains('😀'), word.split('ï'), "a-b".replace('-', '+'), "7".padStart(3, '0'))
+// expect: [110, 97, 239, 118, 101, 128512] 3 true ["na", "ve😀"] a+b 007
+print("${'a'}${'b'}", 'a'.toString() + 'b', "x".startsWith('x'), "xy".endsWith('y'), word.lastIndexOf('a'))   // expect: ab ab true true 1
+val chars : List<char> = ['z', 'a', 'é']
+chars.sort()
+print(chars, chars.joinToString(""), ['a', 'b'] == ['a', 'b'])   // expect: ['a', 'z', 'é'] azé true

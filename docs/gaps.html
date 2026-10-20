@@ -78,13 +78,13 @@ td.when { min-width: 9em; }
 <body>
 <main>
 <h1>M6.6 so far: what is left open</h1>
-<p class="lede">The choices made while building the first half of M6.6, parts 1 to 7, that are not yet confirmed, and the gaps it left, each with where it is to be dealt with. Written 2026-10-19, and brought up to date after parts 4 to 7 the same day: the gaps they closed are gone from the list. The same items are in <a href="gui-plan.md">gui-plan.md</a> (the M6.6 notes, D162 to D180 and the Open list); the design is in <a href="value-lists.html">value-lists.html</a>.</p>
+<p class="lede">The choices made while building M6.6 that are not yet confirmed, and the gaps it left, each with where it is to be dealt with: the first half, parts 1 to 7, and of the second half, part 8's groups as they are built. Written 2026-10-19, and brought up to date after each part since: the gaps they closed are gone from the list. The same items are in <a href="gui-plan.md">gui-plan.md</a> (the M6.6 notes, D162 to D180 and the Open list); the design is in <a href="value-lists.html">value-lists.html</a>.</p>
 
 <nav>
 <h2>Contents</h2>
 <ul>
-<li><a href="#choices">Choices to confirm</a> (nineteen)</li>
-<li><a href="#gaps">Gaps left</a> (twenty-one)</li>
+<li><a href="#choices">Choices to confirm</a> (nineteen from the first half; seven from part 8, group 1)</li>
+<li><a href="#gaps">Gaps left</a> (twenty-three)</li>
 </ul>
 </nav>
 
@@ -268,6 +268,48 @@ td.when { min-width: 9em; }
 <div class="verdict"><span class="label">Your choice</span><span class="blank"></span></div>
 </section>
 
+<section class="decision" id="p8-byte-int">
+<h3><span class="code">8.1a</span>A byte becomes an int by <code>toInt()</code> (part 8, group 1)</h3>
+<p>D19 says byte arithmetic gives an int and an int becomes a byte by <code>toByte()</code>; it does not say whether a byte goes where an int is asked for. As built, it does not: <code>b.toInt()</code>, as an int goes where a float is asked for only by <code>toFloat()</code>, and as in Kotlin. Comparing (<code>b &lt; 255</code>, <code>b == 200</code>) and arithmetic (<code>b + 1</code>, an int) take a byte and an int together. An int literal that fits, or arithmetic on literals, is a byte where a byte goes; a name, even a constant's, is the int it is, as in Kotlin (<code>val n = 5; val b : byte = n</code> is an error).</p>
+<div class="verdict"><span class="label">Your choice</span><span class="blank"></span></div>
+</section>
+
+<section class="decision" id="p8-char-string">
+<h3><span class="code">8.1b</span>Where a char goes for a string (part 8, group 1)</h3>
+<p>A char goes where a string is asked for only where Kotlin has a form taking a <code>Char</code>: <code>split(',')</code>, <code>indexOf('x')</code>, <code>lastIndexOf</code>, <code>contains</code>, <code>startsWith</code>, <code>endsWith</code>, <code>replace('a', 'b')</code>, <code>padStart(n, '0')</code>, <code>padEnd</code>. Elsewhere it is an error saying a string is wanted (<code>"$c"</code> or <code>c.toString()</code> makes one). So a <code>Map&lt;string, V&gt;</code> indexed by a char is a compile error, though when running <code>'c'</code> and <code>"c"</code> are one key, as a <code>Map&lt;any, V&gt;</code> shows (D25). The other way would be a char taken wherever a string is, made one as it is passed.</p>
+<div class="verdict"><span class="label">Your choice</span><span class="blank"></span></div>
+</section>
+
+<section class="decision" id="p8-char-case">
+<h3><span class="code">8.1c</span>A char's <code>upper()</code> and <code>lower()</code> give a char (part 8, group 1)</h3>
+<p>D74 keeps <code>upper</code> and <code>lower</code> over <code>uppercase</code> and <code>lowercase</code>; on a char each gives a char, the letter in the other case where that is one character, the char itself otherwise. Kotlin's <code>Char.uppercase()</code> gives a string (for <code>ß</code>, "SS") and its <code>uppercaseChar()</code> a char; ported <code>replaceFirstChar { it.uppercase() }</code> becomes <code>{ it.upper() }</code>. A string keeps <code>uppercase()</code> and <code>lowercase()</code> beside <code>upper()</code> and <code>lower()</code> until D74 is built.</p>
+<div class="verdict"><span class="label">Your choice</span><span class="blank"></span></div>
+</section>
+
+<section class="decision" id="p8-utf8">
+<h3><span class="code">8.1d</span>The UTF-8 a string is made from is not kept (part 8, group 1)</h3>
+<p>D20: a string's UTF-8 form is made when first asked for and kept. As Python does, a string made from UTF-8 (read from a file, joined by C++ code) keeps only its characters, at 1, 2 or 4 bytes each, and makes its UTF-8 again when C++ code first asks for it: Latin-1 text then takes a byte a character, not UTF-8's two for <code>é</code>. ASCII text is its own UTF-8, so the question is only for other text. Keeping the UTF-8 it came from would save that pass and cost the memory of both forms.</p>
+<div class="verdict"><span class="label">Your choice</span><span class="blank"></span></div>
+</section>
+
+<section class="decision" id="p8-byte-order">
+<h3><span class="code">8.1e</span>The byte order of <code>Bytes</code>' numbers (part 8, group 1)</h3>
+<p>L0 gives <code>int16(at)</code>, <code>int32(at)</code>, <code>float32(at)</code>, <code>uint16(at)</code>, <code>uint32(at)</code> and their put forms "with a byte order". Built as a flag, <code>bigEndian = false</code> by default: <code>buffer.uint32(4, bigEndian = true)</code>, <code>buffer.putInt16(0, -2)</code>. The other way would be an enum, <code>ByteOrder.big</code>.</p>
+<div class="verdict"><span class="label">Your choice</span><span class="blank"></span></div>
+</section>
+
+<section class="decision" id="p8-wrap32">
+<h3><span class="code">8.1f</span><code>wrap32()</code> beside <code>toInt32Wrapped()</code> (part 8, group 1)</h3>
+<p>D148 names both, and they give the same: the low 32 bits as a signed number. Both are built; one name for each thing (D74) would keep one, <code>wrap32()</code> for the hashing it is meant for, or <code>toInt32Wrapped()</code> for its family.</p>
+<div class="verdict"><span class="label">Your choice</span><span class="blank"></span></div>
+</section>
+
+<section class="decision" id="p8-hash">
+<h3><span class="code">8.1g</span>What <code>hash(a, b, ...)</code> combines (part 8, group 1)</h3>
+<p>Java's <code>Objects.hash</code> rule, <code>31 * h + hash of each</code>, wrapping at 32 bits, over Astra's own hash of each value (the one map keys use: by contents for strings, lists, data classes and values). A class's own <code>hashCode</code> is not called when running yet; when it is (D26, group 2), <code>hash</code> calls it for a value whose class has one.</p>
+<div class="verdict"><span class="label">Your choice</span><span class="blank"></span></div>
+</section>
+
 <h2 id="gaps">Gaps left</h2>
 <p class="note">Each is known, and the code around it is tested; none gives a wrong result. Most make something slower or leave a feature for a later part.</p>
 
@@ -290,10 +332,12 @@ td.when { min-width: 9em; }
 <tr><td class="part">5</td><td>Through a reference into an object, a field is read by finding which of the object's values the reference is in, and reading on through a value held in it (<code>node.sizes().pref.width</code>) looks each field up by name: Jade's layout with kept sizes takes 4 to 7% longer than in part 4 for it, though it makes 47 times fewer boxes.</td><td class="when">M6.7, with instructions that name a frame's slots</td></tr>
 <tr><td class="part">5</td><td>Generic list functions that hand each item to a lambda (<code>filter</code>, <code>any</code>, <code>count</code> and the like) copy each item of a list of values, since the lambda may change the list: <code>filter</code> on a million points 98 ms, against 43 written out by hand.</td><td class="when">Inline functions (D59), the second half</td></tr>
 <tr><td class="part">5</td><td>A field is kept inside its object only when its type is written, or it is given a value made by its type's name; one whose type the checker works out from anything else keeps a box, as does one whose type names a class that does not exist yet when the first object is made.</td><td class="when">Not placed yet</td></tr>
-<tr><td class="part">5</td><td>A value type kept in the value itself holds ints, floats and bools only, up to 8 bytes; Jade's <code>Color</code> is still a class (whether it becomes a value type, as its geometry did in part 7, is yours to decide).</td><td class="when">Storage widths (D148), the second half</td></tr>
+<tr><td class="part">5</td><td>Jade's <code>Color</code> is still a class. A value type kept in the value itself may now hold bytes, chars and the storage widths as well as ints, floats and bools (part 8), so four bytes of colour would fit.</td><td class="when">Part 8, group 9 (D99)</td></tr>
 <tr><td class="part">6</td><td>A frame's slots keep a value's kind beside its payload, and arithmetic tests its operands' kinds, where the compiler knows them.</td><td class="when">M6.7 (D178)</td></tr>
 <tr><td class="part">6</td><td>A field whose type the checker works out is kept as a payload only when it is an int, a float or a bool; one of a value type only when it is made by its type's name (part 5); any other keeps its slot.</td><td class="when">Not placed yet</td></tr>
 <tr><td class="part">7</td><td>Jade's own layout (<code>bench/jade_layout.astra</code>) is 3 to 6% slower than on M6.5: the sizes pass between functions in variables and results, which keep a box until values in variables, and a widget not yet painted asks its content for its sizes again at each layout.</td><td class="when">M6.7, values in variables (D149)</td></tr>
+<tr><td class="part">8.1</td><td>An object's field kept narrow (a byte, a char, a storage width) is read and written by the interpreter's general path, not by the quick one int, float and bool fields have, so it is slower to reach than an int field.</td><td class="when">If it shows in timings; M6.7's typed instructions</td></tr>
+<tr><td class="part">8.1</td><td>A one-character string keeps <code>code</code>, and strings their <code>isLetter()</code> and the like, beside the char's; and Kotlin's <code>uppercase()</code>, <code>lowercase()</code> beside <code>upper()</code> and <code>lower()</code>.</td><td class="when">D74, one name for each thing, a later group</td></tr>
 <tr><td class="part">All</td><td>Under MSVC, code placement alone moves the <code>fields</code> benchmark by 10 to 20% with the same loop. Not a gap in Astra, but a caution in reading timings: compare against a baseline built the same way, and count instructions, before calling a change slower.</td><td class="when">D160: the Clang build's dispatch, M6.7</td></tr>
 </tbody>
 </table></div>

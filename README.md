@@ -116,6 +116,9 @@ told apart by name. Rename the file and the process name follows.
 
 ## The language
 
+Coming from Kotlin: [docs/porting.md](docs/porting.md) lists what is written differently, and
+what compiles but means something else.
+
 ### Basics
 
 ```astra
@@ -123,7 +126,8 @@ val limit = 10           // immutable: assigning to it again is a compile error
 var count = 3            // mutable
 var picked : string?     // null until given a value
 
-// Types: null, bool, int (64-bit), float, string, list, map, range, function, class, instance
+// Types: null, bool, int (64-bit), float, char, byte, string, list, map, range, function,
+// class, instance
 print(7 / 2, 7 / 2.0, 7 % 3)        // 3 3.5 1   (int / int truncates)
 print("Hi $count, or ${count + 1}") // string interpolation
 print(1 == 1.0, "a" + 1)            // true a1
@@ -131,7 +135,7 @@ print(1 == 1.0, "a" + 1)            // true a1
 
 ### Strings
 
-Strings use double or single quotes and build text from code with `$`:
+Strings use double quotes and build text from code with `$`:
 
 ```astra
 "hello $name"                        // a variable
@@ -147,7 +151,13 @@ name or `{` is an ordinary dollar sign (`"$5"`); write `\$` to keep one in front
 (`"\$name"`).
 
 A string in three quotes is raw: it runs to the next three quotes, over as many lines as it
-likes, and quotes and backslashes in it are just text. `$name` and `${...}` still work.
+likes, and quotes and backslashes in it are just text. `$name` and `${...}` still work. With
+`$$` in front, `$$name` and `$${...}` are read and a lone `$` is text, for text full of dollar
+signs; each more `$` in front lets one more in a row be text:
+
+```astra
+val price = $$"""cost: $5, total: $$total"""     // cost: $5, total: 12
+```
 `trimIndent()` takes away the indentation its lines share and `trimMargin()` everything up to
 a `|` at the start of each line, so that the text can be indented with the code around it:
 
@@ -167,26 +177,45 @@ cutting a character in half:
 ```astra
 val s = "naïve café"
 s.length                 // 10
-s[2]                     // "ï": one character, as a string of length one
+s[2]                     // 'ï': a char
 s.substring(6)           // "café"
-s.indexOf("é")           // 9
+s.indexOf("é")           // 9, as s.indexOf('é')
 s.uppercase()            // "NAÏVE CAFÉ": all letters, not only the ASCII ones
-for c in s { ... }       // loops 10 times
-"é".code                 // 233, the number of the character; 233.toChar() goes back
+for c in s { ... }       // loops 10 times, c a char
 ```
 
-There is no separate character type: `"a"` and `'a'` are both strings of length one, and
-`isLetter()`, `isDigit()`, `isWhitespace()`, `isUpperCase()` and `isLowerCase()` are asked of
-a string. A character outside the basic plane, such as an emoji, is one character. One made
-of several code points (a letter followed by a combining accent, a flag) counts as several.
+A string is kept at the narrowest width its widest character needs: one byte a character
+when all are below 256 (all of ASCII and Latin-1), two when all are below 65,536, four
+otherwise, as Python keeps its strings. So `s[i]`, `substring` and `length` go straight to
+the place, whatever the text. The UTF-8 a file, the console or the text engine takes is made
+when first asked for and kept.
 
-**`Bytes` is for data that is not text**: a fixed number of bytes, each a number from 0 to
-255, that can be changed in place.
+**A char is one character**, what `s[i]` gives, written in single quotes: `'a'`, `'é'`,
+`'😀'`, `'\n'`, `'\u{1F600}'`. Single quotes are for one character only; text takes double
+quotes. A character outside the basic plane, such as an emoji, is one char. One made of
+several code points (a letter followed by a combining accent, a flag) is several.
+
+```astra
+'c' + 'a' + 't'          // "cat": two chars added are a string
+'a' + 1                  // 'b': a char and an int, a char
+'z' - 'a'                // 25: two chars apart, an int
+'é'.code                 // 233, the char's number; 233.char is the char again
+'c' == "c"               // true: a char equals the string of it alone, and is the same map key
+'x'.isLetter()   '7'.isDigit()   ' '.isWhitespace()   'a'.upper()   'f'.digitToInt(16)
+```
+
+A result that is not a character is an error, and so is comparing a char with a string known
+when compiling to be of another length (`c == "ab"`). A char goes where a char is asked for:
+`val c : char = 5` is an error. Where Kotlin takes a `Char` or a `String`, so does Astra:
+`s.split(',')`, `s.indexOf('x')`, `s.padStart(3, '0')`.
+
+**`Bytes` is for data that is not text**: a fixed number of bytes, each a `byte`, a number
+from 0 to 255, that can be changed in place.
 
 ```astra
 val b = Bytes(16)                    // sixteen zeros
 val c = Bytes([1, 2, 255])           // from a list; Bytes(b) copies
-c[0] = 7                             // read and written by position
+c[0] = 7                             // read and written by position: c[0] is a byte
 c.size        c + b        c.slice(1, 3)        c.toList()        c.fill(0)
 "héllo".toBytes()                    // the text as UTF-8: 6 bytes
 c.decodeToString()                   // and back
@@ -195,6 +224,17 @@ File("photo.png").readBytes()        // files give and take bytes (see File)
 ```
 
 Two `Bytes` are `==` if they hold the same bytes. In a type it is written `Bytes`.
+
+A `byte` is a kind of value of its own, so `x is byte` means something. Arithmetic on bytes
+gives an int, as it never loses anything; an int is made a byte again with `toByte()`, an
+error past 0 to 255, or `toByteWrapped()`, which keeps the low 8 bits. An int constant that
+fits needs neither: `val b : byte = 200`, `c[0] = 7`.
+
+```astra
+c[0] = (c[0] + 1).toByte()           // c[0] + 1 is an int
+c.int16(0)   c.uint32(4, bigEndian = true)   c.float32(8)       // 16- and 32-bit numbers in the bytes
+c.putInt32(4, -5)   c.putUint16(0, 65535, bigEndian = true)     // and written
+```
 
 ### Keywords as names
 
@@ -242,9 +282,18 @@ in does not run: each mistake is listed, as a compile error is. `astra check` li
 without running anything. A cast is checked as the program runs, and a wrong one raises a
 catchable `Error`.
 
-Type names: `int`, `float`, `Number`, `string`, `bool`, `List`, `Map`, `Range`, `Function`,
-`Bytes`, `any`, or the name of a class, interface or enum (`Event.Click` for one declared inside
-another class). Without `?`, a typed variable must be initialized and can never be null.
+Type names: `int`, `float`, `Number`, `string`, `char`, `byte`, `bool`, `List`, `Map`, `Range`,
+`Function`, `Bytes`, `any`, or the name of a class, interface or enum (`Event.Click` for one
+declared inside another class). Without `?`, a typed variable must be initialized and can
+never be null.
+
+**Storage widths.** `int16`, `int32`, `uint16`, `uint32` and `float32` keep a number in less
+room where it is kept: in a list (`List<int16>`, 2 bytes an item), in a value type's field
+(`value Vertex(val x : int32, val y : int32)`, 8 bytes) and in an object's field. Read, one is
+an `int` (a `float` for `float32`), and arithmetic is always on 64-bit ints and floats. Storing
+a number that does not fit is an error (40000 into an `int16`, -1 into a `uint32`);
+`toInt16Wrapped()`, `toUint16Wrapped()`, `toInt32Wrapped()` and `toUint32Wrapped()` keep the
+low bits where that is meant. A `float32` keeps the nearest 32-bit float.
 
 A type can say more: what a list or map holds, and what a function takes and gives back.
 
@@ -276,7 +325,7 @@ class Board { static const cells = rows * cols }
 
 Its value is worked out from literals (numbers, text, `true` and `false`) and other
 constants, with arithmetic, joining and comparisons on them, exactly as the program would
-work them out when running: ints wrap round, `/` on two ints drops the fraction. Anything
+work them out when running: an int that does not fit is an error, `/` on two ints drops the fraction. Anything
 else is a compile error saying what is not constant (`'limit' is not a constant`, `a call is
 made when the program runs`). A constant may name one declared further down, but not
 itself. It is declared at the top level, in an object, or in a class's static code (`static
@@ -1701,7 +1750,7 @@ of the library is built into the runtime and the rest is written in Astra itself
 
 **Functions:** `print(...)`, `write(...)` (no newline), `input(prompt?)`, `len(x)`, `str(x)`,
 `int(x)`, `float(x)`, `type(x)`, `Range(end)` / `Range(start, end, step?)`,
-`assert(cond, message?)`, `clock()`, `args()`, `exit(code?)`, `chr(n)`, `ord(s)`,
+`assert(cond, message?)`, `clock()`, `args()`, `exit(code?)`, `hash(a, b, ...)`,
 `Bytes(size | list)`, `with(object, lambda)`, `repeat(times) { index -> }`, `flush()`
 
 **Checks:** `require(condition) { message }`, `check(condition) { message }`,
@@ -1722,19 +1771,31 @@ message is a lambda, so it is only worked out when the check fails, and may be l
 | `x.toInt()`, `n.toDouble()` | drop what is after the point; make a fraction of a whole number |
 | `n.absoluteValue`, `n.sign` | read without brackets |
 | `n.pow(e)`, `n.mod(d)` | `mod` is never negative for a positive divisor: `(-1).mod(5)` is 4 |
-| `n.toString()`, `n.toString(16)`, `n.toChar()` | as text, in another base, as the character with that code |
+| `n.toString()`, `n.toString(16)`, `n.char` | as text, in another base; the character numbered `n` |
+| `n.toByte()`, `n.toByteWrapped()` | as a byte: an error past 0 to 255, or the low 8 bits |
+| `n.toUnsignedString(radix?)`, `a.compareUnsigned(b)`, `a.divideUnsigned(b)`, `a.remainderUnsigned(b)`, `s.parseUnsigned(radix?)` | an int's 64 bits as unsigned; `a >>> n` shifts zeros in |
+| `n.wrap32()`, `n.rotateLeft32(k)`, `n.rotateRight32(k)` | for 32-bit work ported from Kotlin: the low 32 bits as a signed number, and their rotations |
 | `x.isNaN()`, `x.isInfinite()`, `x.isFinite()` | |
 | `compareValues(a, b)`, `maxOf(a, b, ...)`, `minOf(a, b, ...)` | order numbers or strings; `null` comes first |
 
 Astra has one type for whole numbers (64 bits) and one for fractions, so `toLong`,
-`roundToLong` and `toFloat` are the same as `toInt`, `roundToInt` and `toDouble`. The limits
-Kotlin's types have are there under its names: `Int.maxValue` (2147483647), `Int.minValue`,
-`Long.maxValue`, `Long.minValue`, `Double.maxValue`, `Double.minValue`,
-`Double.positiveInfinity`, `Double.negativeInfinity`, `Double.nan`, and the same for `Float`.
+`roundToLong` and `toFloat` are the same as `toInt`, `roundToInt` and `toDouble`. Their limits
+are `int.maxValue` (9223372036854775807), `int.minValue`, `float.maxValue`, `float.minValue`
+(the most negative), `float.minPositive` (the smallest above 0, Kotlin's `Double.MIN_VALUE`),
+`float.nan`, `float.positiveInfinity` and `float.negativeInfinity`, constants written in
+place. Kotlin's `Int.MAX_VALUE` and the like are errors saying which of these to write.
+
+An int sum, difference, product or quotient that does not fit in an int is an error, which
+says so, rather than an answer wrapped round: `int.maxValue + 1` fails. `a &+ b`, `a &- b`
+and `a &* b` wrap round where that is meant, as a hash does: `h = (31 &* h &+ c.code).wrap32()`.
+`hash(a, b, ...)` gives the hash of several values together, wrapping inside, so a class's
+`hashCode` needs no loop of its own.
 
 ### Strings
 
-`length` (also `size`), `lastIndex`, `indices` and `code` are read without brackets.
+`length` (also `size`), `lastIndex`, `indices` and `code` are read without brackets. Each
+character is a `char`: what `s[i]`, `first()`, `get(i)` and a `for` give, and what the lambdas
+of `filter { }`, `map { }` and the rest are passed.
 
 | | |
 | --- | --- |
@@ -1742,7 +1803,8 @@ Kotlin's types have are there under its names: `Int.maxValue` (2147483647), `Int
 | Finding | `contains(s)`, `startsWith(s)`, `endsWith(s)`, `indexOf(s, startIndex?)`, `lastIndexOf(s)`, `indexOfFirst { }`, `indexOfLast { }`, `equals(s)`, `compareTo(s)`; all of these but the two with lambdas take `ignoreCase = true` |
 | Changing | `uppercase()`, `lowercase()` (`upper`, `lower`), `trim()`, `trimStart()`, `trimEnd()`, `trimIndent()`, `trimMargin()`, `replace(old, new, ignoreCase?)`, `replaceFirst(old, new)`, `replaceFirstChar { }`, `padStart(n, char?)`, `padEnd(n, char?)`, `repeat(n)`, `reversed()` |
 | Asking | `isEmpty()`, `isNotEmpty()`, `isBlank()`, `isNotBlank()`, `isNullOrEmpty()`, `isNullOrBlank()`, `ifEmpty { }`, `ifBlank { }`, `orEmpty()` |
-| Characters | `first()`, `last()`, `firstOrNull()`, `lastOrNull()`, `get(i)`, `getOrNull(i)`, `isLetter()`, `isDigit()`, `isLetterOrDigit()`, `isWhitespace()`, `isUpperCase()`, `isLowerCase()`, `digitToInt()`, `forEach { }`, `map { }`, `filter { }`, `any { }`, `all { }`, `none { }`, `count { }`, `toList()` |
+| Characters | `first()`, `last()`, `firstOrNull()`, `lastOrNull()`, `get(i)`, `getOrNull(i)`, `forEach { }`, `map { }`, `filter { }`, `any { }`, `all { }`, `none { }`, `count { }`, `toList()`; a string's `isLetter()`, `isDigit()`, `isLetterOrDigit()`, `isWhitespace()`, `isUpperCase()`, `isLowerCase()` ask it of every character |
+| A char | `code`, `isLetter()`, `isDigit()`, `isLetterOrDigit()`, `isWhitespace()`, `isUpperCase()`, `isLowerCase()`, `upper()`, `lower()`, `digitToInt(radix?)`, `digitToIntOrNull(radix?)` |
 | Converting | `toInt(radix?)`, `toIntOrNull(radix?)`, `toDouble()`, `toDoubleOrNull()`, `toBoolean()`, `toBytes()`, `format(...)` |
 
 `substring` and `get` are errors for a position outside the string; `slice` and `s[i]` count
@@ -2487,7 +2549,6 @@ opportunity, which is slow but useful for finding memory bugs when changing the 
   thread, and `bounce_workers.astra` in workers.
 - An `object` is created where it is written, and top-level variables get their values in
   order (file by file for a folder), so one cannot be used by a statement that runs earlier.
-- Integer arithmetic wraps on overflow.
 - Bytecode files are verified when loaded, but that is a consistency check rather than a
   security sandbox. Run only `.astc` files you trust.
 - Standalone programs are 1.7 to 2.2 MB each and have only been tried on Windows. They carry

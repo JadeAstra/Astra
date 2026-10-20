@@ -18,6 +18,8 @@
 #include "checker.h"
 
 #include <algorithm>
+#include <cctype>
+#include <limits>
 #include <functional>
 #include <map>
 #include <set>
@@ -52,9 +54,14 @@ struct Type {
         Function,
         Class,
         TypeParam,  // `T` inside the class or function that declares it
+        Char,       // one character (D24)
+        Byte,       // 0 to 255 (D19)
     };
     Kind kind = Unknown;
     bool nullable = false;
+    // An Int or Float kept at a storage width (D148), kTypeInt16 and the rest: read as an int or
+    // float, an int or float fitting it, its range checked where it is kept.
+    uint8_t storage = 0;
     ClassInfo* cls = nullptr;          // Class
     std::vector<Type> args;            // List [T], Map [K, V], Class: its type arguments, Function: the parameters
     std::shared_ptr<Type> result;      // Function: the result
@@ -75,6 +82,12 @@ struct Type {
 };
 
 Type unknownType() { return Type{}; }
+
+// A value as it is read: a storage width is an int or a float once read (D148).
+Type readType(Type t) {
+    t.storage = 0;
+    return t;
+}
 
 Type withNull(Type t, bool nullable = true) {
     if (t.kind == Type::Unknown || t.kind == Type::Null || t.kind == Type::Nothing) return t;
@@ -361,8 +374,10 @@ struct Checker::Impl {
             case Type::Unit: return "unit";
             case Type::Null: return "null";
             case Type::Bool: s = "bool"; break;
-            case Type::Int: s = "int"; break;
-            case Type::Float: s = "float"; break;
+            case Type::Int:
+            case Type::Float: s = t.storage != 0 ? typeText(t.storage, "") : t.kind == Type::Int ? "int" : "float"; break;
+            case Type::Char: s = "char"; break;
+            case Type::Byte: s = "byte"; break;
             case Type::Number: s = "Number"; break;
             case Type::String: s = "string"; break;
             case Type::Bytes: s = "Bytes"; break;
@@ -485,11 +500,13 @@ struct Checker::Impl {
             case Type::List:
                 if (from.kind != Type::List) return false;
                 if (to.args.empty() || from.args.empty()) return true;
-                return fits(from.args[0], to.args[0]);  // read through that name only (D32)
+                // Items kept at a storage width are kept differently (D148): the widths match.
+                return fits(from.args[0], to.args[0]) && from.args[0].storage == to.args[0].storage;  // read through that name only (D32)
             case Type::Map:
                 if (from.kind != Type::Map) return false;
                 if (to.args.size() < 2 || from.args.size() < 2) return true;
-                return fits(from.args[0], to.args[0]) && fits(from.args[1], to.args[1]);
+                return fits(from.args[0], to.args[0]) && fits(from.args[1], to.args[1]) && from.args[0].storage == to.args[0].storage &&
+                       from.args[1].storage == to.args[1].storage;
             case Type::Function: {
                 if (from.kind != Type::Function) return false;
                 // A function that may wait goes only where waiting is expected (R1).
@@ -913,6 +930,15 @@ struct Checker::Impl {
             const std::string& n = a.name;
             if (n == "int") t.kind = Type::Int;
             else if (n == "float") t.kind = Type::Float;
+            else if (n == "char") t.kind = Type::Char;
+            else if (n == "byte") t.kind = Type::Byte;
+            else if (n == "int16" || n == "int32" || n == "uint16" || n == "uint32") {
+                t.kind = Type::Int;
+                t.storage = builtinTypeId(n);
+            } else if (n == "float32") {
+                t.kind = Type::Float;
+                t.storage = kTypeFloat32;
+            }
             else if (n == "Number") t.kind = Type::Number;
             else if (n == "string") t.kind = Type::String;
             else if (n == "bool") t.kind = Type::Bool;
@@ -1405,6 +1431,8 @@ struct Checker::Impl {
             case Type::Int: return {"int", "Number"};
             case Type::Float: return {"float", "Number"};
             case Type::Number: return {"Number"};
+            case Type::Char: return {"char"};
+            case Type::Byte: return {"byte"};
             default: return {};
         }
     }
@@ -1470,6 +1498,8 @@ struct Checker::Impl {
             case Type::Int: keys.push_back("int"); keys.push_back("Number"); break;
             case Type::Float: keys.push_back("float"); keys.push_back("Number"); break;
             case Type::Number: keys.push_back("Number"); break;
+            case Type::Char: keys.push_back("char"); break;
+            case Type::Byte: keys.push_back("byte"); break;
             case Type::Bool: keys.push_back("bool"); break;
             case Type::Function: keys.push_back("Function"); break;
             default: break;
@@ -1885,9 +1915,10 @@ struct Checker::Impl {
                 Type over = expr(*f.iterable);
                 Type item = unknownType();
                 if (!over.nullable) {
-                    if (over.kind == Type::Range || over.kind == Type::Bytes) item = Type::of(Type::Int);
-                    else if (over.kind == Type::String) item = Type::of(Type::String);
-                    else if (over.kind == Type::List && !over.args.empty()) item = over.args[0];
+                    if (over.kind == Type::Range) item = Type::of(Type::Int);
+                    else if (over.kind == Type::Bytes) item = Type::of(Type::Byte);
+                    else if (over.kind == Type::String) item = Type::of(Type::Char);
+                    else if (over.kind == Type::List && !over.args.empty()) item = readType(over.args[0]);
                 } else if (over.known() && over.kind != Type::Null) {
                     report(*f.iterable, "a for cannot go over " + describe(over) + ", which may be null");
                 }
@@ -2425,7 +2456,37 @@ struct Checker::Impl {
         return exprExpectedLiteral(e, expected);
     }
 
+    // Int constants kept as bytes where a byte goes (D19): `val b : byte = 200`.
+    std::unordered_map<const Expr*, uint8_t> byteConstants;
+
+    // Whether `e` is made of int literals alone, as `200` and `0x80 | 1` are: a literal that
+    // fits is a byte where a byte goes, and a name, even a constant's, is the int it is (D19).
+    static bool literalsOnly(const Expr& e) {
+        switch (e.kind) {
+            case ExprKind::Literal: return static_cast<const LiteralExpr&>(e).type == LiteralExpr::Type::Int;
+            case ExprKind::Unary: return literalsOnly(*static_cast<const UnaryExpr&>(e).operand);
+            case ExprKind::Binary: {
+                const auto& b = static_cast<const BinaryExpr&>(e);
+                return literalsOnly(*b.left) && literalsOnly(*b.right);
+            }
+            default: return false;
+        }
+    }
+
     Type exprExpectedLiteral(const Expr& e, const Type& expected) {
+        if (expected.kind == Type::Byte && e.kind != ExprKind::List && e.kind != ExprKind::Map && e.kind != ExprKind::Function) {
+            // A constant int that fits needs no conversion; one that does not is caught here.
+            Type t = expr(e);
+            if (t.kind != Type::Int || t.nullable || !literalsOnly(e)) return t;
+            const ConstValue known = foldQuietly(e);
+            if (known.kind != ConstValue::Int) return t;
+            if (known.i < 0 || known.i > 255) {
+                report(e, std::to_string(known.i) + " does not fit in a byte, which holds 0 to 255");
+                return unknownType();
+            }
+            byteConstants[&e] = static_cast<uint8_t>(known.i);
+            return Type::of(Type::Byte);
+        }
         if (expected.known()) {
             if (e.kind == ExprKind::Function) {
                 Type plain = withNull(expected, false);
@@ -2466,7 +2527,9 @@ struct Checker::Impl {
         return expr(e);
     }
 
-    Type expr(const Expr& e) {
+    Type expr(const Expr& e) { return readType(exprWithStorage(e)); }
+
+    Type exprWithStorage(const Expr& e) {
         switch (e.kind) {
             case ExprKind::Literal: {
                 const auto& l = static_cast<const LiteralExpr&>(e);
@@ -2476,6 +2539,7 @@ struct Checker::Impl {
                     case LiteralExpr::Type::Int: return Type::of(Type::Int);
                     case LiteralExpr::Type::Float: return Type::of(Type::Float);
                     case LiteralExpr::Type::String: return Type::of(Type::String);
+                    case LiteralExpr::Type::Char: return Type::of(Type::Char);
                 }
                 return unknownType();
             }
@@ -2942,11 +3006,12 @@ struct Checker::Impl {
                 return Type::of(Type::Bool);
             case TokenType::Minus:
                 if (t.kind == Type::Class) return operatorResult(t, "unary-", u, {});
+                if (t.kind == Type::Byte && !t.nullable) return Type::of(Type::Int);  // a byte negated is an int (D19)
                 if (!isNumeric(t)) report(u, "'-' needs a number; this is " + describe(t));
                 return isNumeric(t) ? t : unknownType();
             case TokenType::Tilde:
                 if (t.kind == Type::Class) return operatorResult(t, "unary~", u, {});
-                if (!(t.kind == Type::Int && !t.nullable)) report(u, "'~' needs an int; this is " + describe(t));
+                if (!((t.kind == Type::Int || t.kind == Type::Byte) && !t.nullable)) report(u, "'~' needs an int; this is " + describe(t));
                 return Type::of(Type::Int);
             case TokenType::BangBang:
                 return withNull(t, false);
@@ -3018,6 +3083,10 @@ struct Checker::Impl {
             case TokenType::Caret: return "^";
             case TokenType::Shl: return "<<";
             case TokenType::Shr: return ">>";
+            case TokenType::Ushr: return ">>>";
+            case TokenType::AmpPlus: return "&+";
+            case TokenType::AmpMinus: return "&-";
+            case TokenType::AmpStar: return "&*";
             default: return "?";
         }
     }
@@ -3037,6 +3106,15 @@ struct Checker::Impl {
                                       " cannot tell two values of " + side->cls->name + " apart; == compares them by their fields");
                         break;
                     }
+                // A char equals a string of that one character (D25); a string known when
+                // compiling to be of another length never does.
+                if ((l.kind == Type::Char && r.kind == Type::String) || (l.kind == Type::String && r.kind == Type::Char)) {
+                    const Expr& text = l.kind == Type::String ? *b.left : *b.right;
+                    const ConstValue known = foldQuietly(text);
+                    if (known.kind == ConstValue::String && countCharacters(known.s) != 1)
+                        report(text, "a char is one character, so it is never equal to \"" + known.s + "\", which holds " +
+                                         std::to_string(countCharacters(known.s)));
+                }
                 return Type::of(Type::Bool);
             default:
                 break;
@@ -3055,6 +3133,19 @@ struct Checker::Impl {
             report(b, "'" + opText(op) + "' cannot take " + describe(l.nullable ? l : r) +
                           ", which may be null; check it first, or give a value for null with ?:");
             return comparison ? Type::of(Type::Bool) : unknownType();
+        }
+        // A byte in arithmetic is the int it holds (D19); a char adds as D25 has it.
+        if (l.kind == Type::Byte) l = Type::of(Type::Int);
+        if (r.kind == Type::Byte) r = Type::of(Type::Int);
+        if (l.kind == Type::Char || r.kind == Type::Char) {
+            if (comparison) {
+                if (l.kind != Type::Char || r.kind != Type::Char)
+                    report(b, "'" + opText(op) + "' cannot compare " + describe(l) + " with " + describe(r));
+                return Type::of(Type::Bool);
+            }
+            const Type result = charArithmetic(op, l, r);
+            if (result.unknown()) report(b, "'" + opText(op) + "' cannot be used on " + describe(l) + " and " + describe(r));
+            return result;
         }
         switch (op) {
             case TokenType::Plus:
@@ -3081,6 +3172,10 @@ struct Checker::Impl {
             case TokenType::Caret:
             case TokenType::Shl:
             case TokenType::Shr:
+            case TokenType::Ushr:
+            case TokenType::AmpPlus:
+            case TokenType::AmpMinus:
+            case TokenType::AmpStar:
                 if (l.kind != Type::Int || r.kind != Type::Int) {
                     report(b, "'" + opText(op) + "' works on ints; these are " + describe(l) + " and " + describe(r));
                     return unknownType();
@@ -3089,6 +3184,18 @@ struct Checker::Impl {
             default:
                 return unknownType();
         }
+    }
+
+    // `char + char` is a string, `char +- int` a char, `char - char` an int, `int +- char` an
+    // int (D25); Unknown for anything else.
+    static Type charArithmetic(TokenType op, const Type& l, const Type& r) {
+        const bool lc = l.kind == Type::Char, rc = r.kind == Type::Char;
+        const bool li = l.kind == Type::Int, ri = r.kind == Type::Int;
+        if (op == TokenType::Plus && lc && rc) return Type::of(Type::String);
+        if ((op == TokenType::Plus || op == TokenType::Minus) && lc && ri) return Type::of(Type::Char);
+        if (op == TokenType::Minus && lc && rc) return Type::of(Type::Int);
+        if ((op == TokenType::Plus || op == TokenType::Minus) && li && rc) return Type::of(Type::Int);
+        return unknownType();
     }
 
     static Type arithmetic(const Type& l, const Type& r) {
@@ -3557,6 +3664,7 @@ struct Checker::Impl {
                 case TokenType::StarEq: op = TokenType::Star; break;
                 case TokenType::SlashEq: op = TokenType::Slash; break;
                 case TokenType::PercentEq: op = TokenType::Percent; break;
+                case TokenType::UshrEq: op = TokenType::Ushr; break;
                 default: return Type::of(Type::Unit);
             }
             if (target.unknown() || value.unknown()) return Type::of(Type::Unit);
@@ -3564,9 +3672,16 @@ struct Checker::Impl {
             if (target.nullable && safeChain(*a.target)) target = withNull(target, false);
             if (!nullablePlace(*a.target, target, opText(op) + "=", a.nullSafe, a)) target = withNull(target, false);
             else return Type::of(Type::Unit);
+            const Type left = target.kind == Type::Byte ? Type::of(Type::Int) : readType(target);
+            const Type right = value.kind == Type::Byte ? Type::of(Type::Int) : value;
             if (op == TokenType::Plus && (target.kind == Type::String || value.kind == Type::String)) result = Type::of(Type::String);
-            else if (isNumeric(target) && isNumeric(value)) result = arithmetic(target, value);
+            else if (left.kind == Type::Char || right.kind == Type::Char) result = charArithmetic(op, left, right);
+            else if (isNumeric(left) && isNumeric(right)) result = arithmetic(left, right);
             else return Type::of(Type::Unit);
+            if (result.unknown()) {
+                report(a, "'" + opText(op) + "=' cannot be used on " + describe(target) + " and " + describe(value));
+                return Type::of(Type::Unit);
+            }
         }
         if (!fits(result, target)) {
             std::string who = targetName.empty() ? "this place" : "'" + targetName + "'";
@@ -3695,6 +3810,24 @@ struct Checker::Impl {
         // `ui.Button` after `import jade as ui`, or `Outer.Inner`, or `Color.red`.
         if (m.object->kind == ExprKind::Name) {
             const std::string& base = static_cast<const NameExpr&>(*m.object).name;
+            if (findLocal(base) == nullptr && !nameIsMember(base) && classNamed(base) == nullptr) {
+                // `int.maxValue` and the other limits of Astra's numbers (D76): constants.
+                if (base == "int" || base == "float") {
+                    ConstValue limit;
+                    if (numberLimit(base, m.name, limit)) {
+                        if (silent == 0) builtinConstants[&m] = limit;
+                        return Type::of(limit.kind == ConstValue::Int ? Type::Int : Type::Float);
+                    }
+                    report(m, base + " has no limit called '" + m.name + "'; it has " +
+                                  (base == "int" ? "maxValue and minValue" : "maxValue, minValue, minPositive, nan, positiveInfinity and negativeInfinity"));
+                    return unknownType();
+                }
+                // Kotlin's holders, whose numbers are not Astra's (D76).
+                if ((base == "Int" || base == "Long" || base == "Double" || base == "Float") && findGlobal(*unit, base) == nullptr) {
+                    report(m, oldLimitAdvice(base, m.name));
+                    return unknownType();
+                }
+            }
             if (findLocal(base) == nullptr && !nameIsMember(base)) {
                 if (Namespace* ns = findAlias(*unit, base)) {
                     if (const GlobalSym* g = findIn(ns, m.name)) {
@@ -3719,6 +3852,46 @@ struct Checker::Impl {
         }
         return result;
     }
+
+    // The limits of Astra's numbers (D76): `int.maxValue` and the rest, at their real values.
+    bool numberLimit(const std::string& type, const std::string& name, ConstValue& limit) {
+        limit = ConstValue{};
+        if (type == "int") {
+            if (name == "maxValue") limit = constInt(std::numeric_limits<int64_t>::max());
+            else if (name == "minValue") limit = constInt(std::numeric_limits<int64_t>::min());
+        } else {
+            if (name == "maxValue") limit = constFloat(std::numeric_limits<double>::max());
+            else if (name == "minValue") limit = constFloat(-std::numeric_limits<double>::max());
+            else if (name == "minPositive") limit = constFloat(std::numeric_limits<double>::denorm_min());
+            else if (name == "nan") limit = constFloat(std::numeric_limits<double>::quiet_NaN());
+            else if (name == "positiveInfinity") limit = constFloat(std::numeric_limits<double>::infinity());
+            else if (name == "negativeInfinity") limit = constFloat(-std::numeric_limits<double>::infinity());
+        }
+        return limit.kind != ConstValue::None;
+    }
+    // What `Int.MAX_VALUE`, `Double.MIN_VALUE` and the like are in Astra.
+    static std::string oldLimitAdvice(const std::string& holder, const std::string& name) {
+        // MAX_VALUE as Kotlin writes it, or maxValue as Astra's holders had it.
+        const bool screaming = name.find('_') != std::string::npos || name == "NaN";
+        std::string camel = screaming ? "" : name;
+        bool up = false;
+        for (char c : screaming ? name : std::string()) {
+            if (c == '_') {
+                up = true;
+            } else {
+                camel += up ? c : static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+                up = false;
+            }
+        }
+        const bool whole = holder == "Int" || holder == "Long";
+        std::string to = (whole ? "int." : "float.") + camel;
+        if (!whole && camel == "minValue") to = "float.minPositive (Kotlin's " + holder + ".MIN_VALUE is the smallest above 0; float.minValue is the most negative)";
+        std::string text = holder + " is Kotlin's; Astra's numbers are int and float: write " + to;
+        if (holder == "Int" && (camel == "maxValue" || camel == "minValue"))
+            text += ", which is " + std::string(camel == "maxValue" ? "9223372036854775807" : "-9223372036854775808") + ", an int being 64 bits";
+        return text;
+    }
+    std::unordered_map<const Node*, ConstValue> builtinConstants;  // `int.maxValue` and the like
 
     // Whether a bare name is a member of something the code runs on, rather than a class.
     bool nameIsMember(const std::string& base) {
@@ -3848,10 +4021,11 @@ struct Checker::Impl {
                 return obj.args.empty() ? unknownType() : obj.args[0];
             case Type::String:
                 needInt();
-                return Type::of(Type::String);
+                if (idx.kind == Type::Range) return Type::of(Type::String);
+                return Type::of(Type::Char);  // s[i] is a char (D24)
             case Type::Bytes:
                 needInt();
-                return Type::of(Type::Int);
+                return Type::of(Type::Byte);  // an item of Bytes is a byte (D19)
             case Type::Map:
                 if (obj.args.size() == 2 && !fits(idx, obj.args[0]))
                     report(*i.index, "the keys of this map are " + text(obj.args[0]) + "s; this is " + describe(idx));
@@ -4229,6 +4403,11 @@ struct Checker::Impl {
                 } else {
                     unify(want, types[i], fit.env, vars);
                     ok = fits(types[i], subst(want, fit.env));
+                    // An int constant that fits is a byte where a byte goes (D19).
+                    if (!ok && types[i].kind == Type::Int && subst(want, fit.env).kind == Type::Byte && literalsOnly(*args.exprs[i])) {
+                        const ConstValue known = foldQuietly(*args.exprs[i]);
+                        ok = known.kind == ConstValue::Int && known.i >= 0 && known.i <= 255;
+                    }
                 }
             }
             if (!ok) continue;
@@ -4385,7 +4564,9 @@ struct Checker::Impl {
         for (const ExprPtr& a : c.args) expr(*a);
         if (builtinDeclared(plain) && !anyExtension(m.name) && !builtinMember(m.name)) {
             Type property;
-            if (!builtinProperty(plain, m.name, property)) report(m, describe(plain) + " has no method '" + m.name + "'");
+            if (m.name == "toChar" && (plain.kind == Type::Int || plain.kind == Type::Number))
+                report(m, "toChar() is Kotlin's; the character numbered n is n.char (D142)");
+            else if (!builtinProperty(plain, m.name, property)) report(m, describe(plain) + " has no method '" + m.name + "'");
         }
         return unknownType();
     }
@@ -4425,6 +4606,8 @@ struct Checker::Impl {
             case Type::Int:
             case Type::Float:
             case Type::Number:
+            case Type::Char:
+            case Type::Byte:
                 return !builtinMethods.empty();
             default:
                 return false;
@@ -4516,6 +4699,11 @@ struct Checker::Impl {
                 if (g->var != nullptr) return callValue(fieldType(g->var), c, n);
             }
             for (const ExprPtr& a : c.args) expr(*a);
+            // The free conversion functions that went for members (D142, D74).
+            if (n == "char" || n == "chr")
+                report(c, n + "(n) is written n.char: the character numbered n, as c.code is the number of the character c");
+            else if (n == "ord")
+                report(c, "ord(c) is written c.code: the number of the character c, as n.char is the character numbered n");
             return unknownType();
         }
         if (c.callee->kind == ExprKind::Member) {
@@ -4807,11 +4995,18 @@ struct Checker::Impl {
     std::unordered_map<const Expr*, const VarStmt*> valUses;
     std::unordered_map<const VarStmt*, std::pair<int, ConstValue>> valValues;
 
+    // A constant int kept where a byte is declared is a byte (D19), read as one.
+    static ConstValue asDeclared(const VarStmt& d, ConstValue v) {
+        if (v.kind == ConstValue::Int && d.type.present() && d.type.name == "byte" && !d.type.nullable && v.i >= 0 && v.i <= 255)
+            v.kind = ConstValue::Byte;
+        return v;
+    }
+
     ConstValue valueOfVal(const VarStmt* d) {
         auto known = valValues.find(d);
         if (known != valValues.end()) return known->second.first == 2 ? known->second.second : ConstValue{};
         valValues[d].first = 1;
-        ConstValue v = foldQuietly(*d->init);
+        ConstValue v = asDeclared(*d, foldQuietly(*d->init));
         valValues[d] = {2, v};
         return v;
     }
@@ -4850,7 +5045,7 @@ struct Checker::Impl {
         pop();
         workingOutConst--;
         silent--;
-        v = constEval(*f->decl->init, f->name);
+        v = asDeclared(*f->decl, constEval(*f->decl->init, f->name));
         unit = savedUnit;
         ctx = savedCtx;
         scopes = std::move(savedScopes);
@@ -4911,6 +5106,12 @@ struct Checker::Impl {
             case ConstValue::Float: return formatFloat(v.d);
             case ConstValue::Bool: return v.b ? "true" : "false";
             case ConstValue::String: return v.s;
+            case ConstValue::Char: {
+                std::string text;
+                appendUtf8(text, static_cast<uint32_t>(v.i));
+                return text;
+            }
+            case ConstValue::Byte: return std::to_string(v.i);
             default: return "";
         }
     }
@@ -4928,6 +5129,12 @@ struct Checker::Impl {
                     case LiteralExpr::Type::Int: return constInt(l.intValue);
                     case LiteralExpr::Type::Float: return constFloat(l.floatValue);
                     case LiteralExpr::Type::String: return constString(l.stringValue);
+                    case LiteralExpr::Type::Char: {
+                        ConstValue c;
+                        c.kind = ConstValue::Char;
+                        c.i = l.intValue;
+                        return c;
+                    }
                     default: return notConstant(e, of, "null is not a constant's value");
                 }
             }
@@ -4942,6 +5149,13 @@ struct Checker::Impl {
             }
             case ExprKind::Name:
             case ExprKind::Member: {
+                if (e.kind == ExprKind::Member && static_cast<const MemberExpr&>(e).object->kind == ExprKind::Name) {
+                    // `int.maxValue` and the like (D76).
+                    const auto& m = static_cast<const MemberExpr&>(e);
+                    const std::string& base = static_cast<const NameExpr&>(*m.object).name;
+                    ConstValue limit;
+                    if ((base == "int" || base == "float") && numberLimit(base, m.name, limit)) return limit;
+                }
                 auto use = constUses.find(&e);
                 if (use != constUses.end() && quietFold > 0) {
                     auto known = constValues.find(use->second->decl);
@@ -4960,8 +5174,11 @@ struct Checker::Impl {
                 const auto& u = static_cast<const UnaryExpr&>(e);
                 ConstValue a = quietFold > 0 ? foldQuietly(*u.operand) : constEval(*u.operand, of);
                 if (a.kind == ConstValue::None) return a;
-                if (u.op == TokenType::Minus && a.kind == ConstValue::Int)
-                    return constInt(static_cast<int64_t>(0 - static_cast<uint64_t>(a.i)));
+                if (a.kind == ConstValue::Byte) a.kind = ConstValue::Int;
+                if (u.op == TokenType::Minus && a.kind == ConstValue::Int) {
+                    if (a.i == INT64_MIN) return notConstant(e, of, "its negation does not fit in an int");  // (D27)
+                    return constInt(-a.i);
+                }
                 if (u.op == TokenType::Minus && a.kind == ConstValue::Float) return constFloat(-a.d);
                 if (u.op == TokenType::Bang && a.kind == ConstValue::Bool) return constBool(!a.b);
                 if (u.op == TokenType::Tilde && a.kind == ConstValue::Int) return constInt(~a.i);
@@ -4983,30 +5200,112 @@ struct Checker::Impl {
         }
     }
 
+    // Whether an int sum, difference or product leaves the 64 bits an int has (D27); its
+    // wrapped result in `r` either way.
+    static bool intOverflows(TokenType op, int64_t a, int64_t b, int64_t& r) {
+        const uint64_t x = static_cast<uint64_t>(a), y = static_cast<uint64_t>(b);
+        switch (op) {
+            case TokenType::Plus:
+                r = static_cast<int64_t>(x + y);
+                return ((a ^ r) & (b ^ r)) < 0;
+            case TokenType::Minus:
+                r = static_cast<int64_t>(x - y);
+                return ((a ^ b) & (a ^ r)) < 0;
+            default:
+                r = static_cast<int64_t>(x * y);
+                if (a == -1) return b == INT64_MIN;  // (and dividing by -1 below would overflow itself)
+                return a != 0 && r / a != b;
+        }
+    }
+
+    // Constants with a char among them (D25).
+    ConstValue constChars(const BinaryExpr& e, const ConstValue& a, const ConstValue& b, const std::string& of) {
+        auto character = [&](int64_t c) {
+            if (!isCharacter(c)) return notConstant(e, of, "it is not a character: characters are numbered 0 to 1114111, leaving out 55296 to 57343");
+            ConstValue v;
+            v.kind = ConstValue::Char;
+            v.i = c;
+            return v;
+        };
+        const bool ac = a.kind == ConstValue::Char, bc = b.kind == ConstValue::Char;
+        switch (e.op) {
+            case TokenType::Plus:
+                if (a.kind == ConstValue::String || b.kind == ConstValue::String || (ac && bc)) return constString(constText(a) + constText(b));
+                if (ac && b.kind == ConstValue::Int) return character(a.i + b.i);
+                if (a.kind == ConstValue::Int && bc) return constInt(a.i + b.i);
+                return ConstValue{};
+            case TokenType::Minus:
+                if (ac && b.kind == ConstValue::Int) return character(a.i - b.i);
+                if (ac && bc) return constInt(a.i - b.i);
+                if (a.kind == ConstValue::Int && bc) return constInt(a.i - b.i);
+                return ConstValue{};
+            case TokenType::EqEq:
+            case TokenType::BangEq: {
+                const ConstValue& c = ac ? a : b;
+                const ConstValue& other = ac ? b : a;
+                bool same = false;
+                if (other.kind == ConstValue::Char) same = other.i == c.i;
+                else if (other.kind == ConstValue::String) same = other.s == constText(c);
+                return constBool(e.op == TokenType::EqEq ? same : !same);
+            }
+            case TokenType::Lt:
+            case TokenType::LtEq:
+            case TokenType::Gt:
+            case TokenType::GtEq:
+                if (!ac || !bc) return ConstValue{};
+                if (e.op == TokenType::Lt) return constBool(a.i < b.i);
+                if (e.op == TokenType::LtEq) return constBool(a.i <= b.i);
+                if (e.op == TokenType::Gt) return constBool(a.i > b.i);
+                return constBool(a.i >= b.i);
+            default:
+                return ConstValue{};
+        }
+    }
+
     ConstValue constBinary(const BinaryExpr& e, const std::string& of) {
         ConstValue a = quietFold > 0 ? foldQuietly(*e.left) : constEval(*e.left, of);
         ConstValue b = quietFold > 0 ? foldQuietly(*e.right) : constEval(*e.right, of);
         if (a.kind == ConstValue::None || b.kind == ConstValue::None) return ConstValue{};
+        // A byte in arithmetic is the int it holds (D19).
+        if (a.kind == ConstValue::Byte) a.kind = ConstValue::Int;
+        if (b.kind == ConstValue::Byte) b.kind = ConstValue::Int;
+        if (a.kind == ConstValue::Char || b.kind == ConstValue::Char) return constChars(e, a, b, of);
         const bool ints = a.kind == ConstValue::Int && b.kind == ConstValue::Int;
         const bool numbers = isNumberConst(a) && isNumberConst(b);
         const uint64_t x = static_cast<uint64_t>(a.i), y = static_cast<uint64_t>(b.i);
         switch (e.op) {
             case TokenType::Plus:
                 if (a.kind == ConstValue::String || b.kind == ConstValue::String) return constString(constText(a) + constText(b));
-                if (ints) return constInt(static_cast<int64_t>(x + y));
+                if (ints) {
+                    int64_t r;
+                    if (intOverflows(TokenType::Plus, a.i, b.i, r)) return notConstant(e, of, "its sum does not fit in an int");
+                    return constInt(r);
+                }
                 if (numbers) return constFloat(asDouble(a) + asDouble(b));
                 return ConstValue{};
             case TokenType::Minus:
-                if (ints) return constInt(static_cast<int64_t>(x - y));
+                if (ints) {
+                    int64_t r;
+                    if (intOverflows(TokenType::Minus, a.i, b.i, r)) return notConstant(e, of, "its difference does not fit in an int");
+                    return constInt(r);
+                }
                 if (numbers) return constFloat(asDouble(a) - asDouble(b));
                 return ConstValue{};
             case TokenType::Star:
-                if (ints) return constInt(static_cast<int64_t>(x * y));
+                if (ints) {
+                    int64_t r;
+                    if (intOverflows(TokenType::Star, a.i, b.i, r)) return notConstant(e, of, "its product does not fit in an int");
+                    return constInt(r);
+                }
                 if (numbers) return constFloat(asDouble(a) * asDouble(b));
                 return ConstValue{};
+            case TokenType::AmpPlus: return ints ? constInt(static_cast<int64_t>(x + y)) : ConstValue{};
+            case TokenType::AmpMinus: return ints ? constInt(static_cast<int64_t>(x - y)) : ConstValue{};
+            case TokenType::AmpStar: return ints ? constInt(static_cast<int64_t>(x * y)) : ConstValue{};
             case TokenType::Slash:
                 if (ints) {
                     if (b.i == 0) return notConstant(e, of, "this divides by zero");
+                    if (b.i == -1 && a.i == INT64_MIN) return notConstant(e, of, "its quotient does not fit in an int");
                     return constInt(b.i == -1 ? static_cast<int64_t>(0 - x) : a.i / b.i);
                 }
                 if (numbers) return constFloat(asDouble(a) / asDouble(b));
@@ -5046,10 +5345,12 @@ struct Checker::Impl {
             case TokenType::Pipe: return ints ? constInt(a.i | b.i) : ConstValue{};
             case TokenType::Caret: return ints ? constInt(std::bit_xor<int64_t>()(a.i, b.i)) : ConstValue{};
             case TokenType::Shl:
-            case TokenType::Shr: {
+            case TokenType::Shr:
+            case TokenType::Ushr: {
                 if (!ints) return ConstValue{};
                 if (b.i < 0) return notConstant(e, of, "it shifts by a negative amount");
                 if (e.op == TokenType::Shl) return constInt(b.i >= 64 ? 0 : static_cast<int64_t>(x << b.i));
+                if (e.op == TokenType::Ushr) return constInt(b.i >= 64 ? 0 : static_cast<int64_t>(x >> b.i));
                 if (b.i >= 64) return constInt(a.i < 0 ? -1 : 0);
                 return constInt(a.i < 0 ? ~(~a.i >> b.i) : a.i >> b.i);
             }
@@ -5320,6 +5621,13 @@ struct Checker::Impl {
 
 Checker::Checker() : impl_(std::make_unique<Impl>()) {}
 
+bool Checker::byteAt(const Expr& e, uint8_t& out) const {
+    auto found = impl_->byteConstants.find(&e);
+    if (found == impl_->byteConstants.end()) return false;
+    out = found->second;
+    return true;
+}
+
 bool Checker::folded(const Expr& e, ConstValue& out) {
     if (e.kind != ExprKind::Binary && e.kind != ExprKind::Unary && e.kind != ExprKind::Logical && e.kind != ExprKind::Interp)
         return false;
@@ -5328,6 +5636,10 @@ bool Checker::folded(const Expr& e, ConstValue& out) {
 }
 
 bool Checker::constantAt(const Expr& at, ConstValue& out) {
+    if (auto limit = impl_->builtinConstants.find(&at); limit != impl_->builtinConstants.end()) {
+        out = limit->second;
+        return true;
+    }
     auto val = impl_->valUses.find(&at);
     if (val != impl_->valUses.end()) {
         out = impl_->valueOfVal(val->second);
@@ -5447,8 +5759,13 @@ RuntimeType runtimeTypeOf(const Type& t) {
     switch (t.kind) {
         case Type::Any: r.kind = RuntimeType::Any; return r;
         case Type::Bool: r.kind = RuntimeType::Bool; return r;
-        case Type::Int: r.kind = RuntimeType::Int; return r;
-        case Type::Float: r.kind = RuntimeType::Float; return r;
+        case Type::Int:
+        case Type::Float:
+            r.kind = t.kind == Type::Int ? RuntimeType::Int : RuntimeType::Float;
+            r.storage = t.storage;
+            return r;
+        case Type::Char: r.kind = RuntimeType::Char; return r;
+        case Type::Byte: r.kind = RuntimeType::Byte; return r;
         case Type::Number: r.kind = RuntimeType::Number; return r;
         case Type::String: r.kind = RuntimeType::String; return r;
         case Type::Bytes: r.kind = RuntimeType::Bytes; return r;

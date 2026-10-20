@@ -306,6 +306,13 @@ enum class Op : uint8_t {
     // the standard library's (M6.6 part 6): worked out in place, with no method looked up or
     // C++ function called. `which` is a NumericOp; it takes one value, or two for min and max.
     Numeric,            // u8 which                        value [value] -> result
+
+    // M6.6 part 8: `>>>`, which brings in zeros (D44), and the int sum, difference and product
+    // that wrap around (`&+`, `&-`, `&*`, D27), where `+`, `-` and `*` stop with an error.
+    Ushr,               //                                 a b -> a >>> b
+    AddWrap,            //                                 a b -> a &+ b
+    SubWrap,            //                                 a b -> a &- b
+    MulWrap,            //                                 a b -> a &* b
     OwnLocal,           // u16 slot                        ->
 
     // Results built where they go (M6.6 part 4, value-lists.html section 7). Right before a call,
@@ -334,7 +341,44 @@ enum TypeId : uint8_t {
     kTypeBytes,
     kTypeType,      // a type, as the program runs (M6.6 part 1): `items.itemType`
     kTypeInstance,  // an instance of a particular class or of one of its subclasses
+    kTypeChar,      // one character (D24)
+    kTypeByte,      // 0 to 255 (D19)
+    // Storage widths (D148): ints (a float for float32) that must fit where they are kept.
+    kTypeInt16,
+    kTypeInt32,
+    kTypeUint16,
+    kTypeUint32,
+    kTypeFloat32,
+    kTypeCount_,
 };
+
+// Whether `id` names one of the types above other than a class's.
+inline bool isBuiltinTypeId(uint8_t id) { return id >= kTypeInt && id < kTypeCount_ && id != kTypeInstance; }
+// Whether a value of type `id` is an int kept at a narrower width: it must fit its range.
+inline bool isIntStorage(uint8_t id) { return id >= kTypeInt16 && id <= kTypeUint32; }
+// How a value of type `id` is kept narrow (D19, D24, D148), or Narrow::None.
+inline Narrow narrowOf(uint8_t id) {
+    switch (id) {
+        case kTypeByte: return Narrow::Byte;
+        case kTypeChar: return Narrow::Char;
+        case kTypeInt16: return Narrow::Int16;
+        case kTypeInt32: return Narrow::Int32;
+        case kTypeUint16: return Narrow::Uint16;
+        case kTypeUint32: return Narrow::Uint32;
+        case kTypeFloat32: return Narrow::Float32;
+        default: return Narrow::None;
+    }
+}
+
+// The range of an int storage width.
+inline void intStorageRange(uint8_t id, int64_t& low, int64_t& high) {
+    switch (id) {
+        case kTypeInt16: low = -32768; high = 32767; break;
+        case kTypeInt32: low = -2147483648LL; high = 2147483647; break;
+        case kTypeUint16: low = 0; high = 65535; break;
+        default: low = 0; high = 4294967295LL; break;
+    }
+}
 
 const uint8_t kTypeNullable = 0x80;  // `type?`: null is allowed as well
 const uint8_t kTypeMask = 0x7F;

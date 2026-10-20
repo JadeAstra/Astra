@@ -1,0 +1,43 @@
+// What the checker says about numbers and characters (M6.6 part 8, group 1).
+
+fun bytes() {
+  val fits : byte = 255
+  val over : byte = 300                    // check: 300 does not fit in a byte, which holds 0 to 255
+  val n = 5
+  val asked : byte = n                     // check: 'asked' is a byte; it cannot start as an int
+  var b : byte = 1
+  b += 1                                   // check: 'b' is a byte; this makes it an int
+  val list : List<byte> = [1, 2, 256]      // check: 256 does not fit in a byte, which holds 0 to 255
+  print(fits, over, asked, b, list, b + n, b.toInt() + n, n.toByte())
+}
+
+fun chars() {
+  val five = 5
+  val c : char = five                      // check: 'c' is a char; it cannot start as an int
+  val joined : char = 'a' + 'b'            // check: 'joined' is a char; it cannot start as a string
+  print('a' == "ab")                       // check: a char is one character, so it is never equal to "ab", which holds 2
+  print('a' == "")                         // check: a char is one character, so it is never equal to "", which holds 0
+  print('a' * 2)                           // check: '*' cannot be used on a char and an int
+  print('a' < "b")                         // check: '<' cannot compare a char with a string
+  print(65.toChar())                       // check: toChar() is Kotlin's; the character numbered n is n.char (D142)
+  print(char(65))                          // check: char(n) is written n.char: the character numbered n, as c.code is the number of the character c
+  print(chr(65))                           // check: chr(n) is written n.char: the character numbered n, as c.code is the number of the character c
+  print(ord("a"))                          // check: ord(c) is written c.code: the number of the character c, as n.char is the character numbered n
+  print(c, joined, 'a' == "a", 'a' + 1, 'b' - 'a')
+}
+
+fun widths() {
+  val shorts : List<int16> = [1, 2]
+  val ints : List<int> = shorts            // check: 'ints' is a List<int>; it cannot start as a List<int16>
+  val one : int16 = 70000
+  val read = shorts[0] + one
+  print(ints, read)
+}
+
+fun limits() {
+  print(int.biggest)                       // check: int has no limit called 'biggest'; it has maxValue and minValue
+  print(Int.MAX_VALUE)                     // check: Int is Kotlin's; Astra's numbers are int and float: write int.maxValue, which is 9223372036854775807, an int being 64 bits
+  print(Double.MIN_VALUE)                  // check: Double is Kotlin's; Astra's numbers are int and float: write float.minPositive (Kotlin's Double.MIN_VALUE is the smallest above 0; float.minValue is the most negative)
+}
+
+const tooBig = int.maxValue + 1            // check: const 'tooBig' is worked out when compiling, from literals and other constants; its sum does not fit in an int

@@ -1,0 +1,4 @@
+// Single quotes hold one character (D25); text takes double quotes.
+print("never runs")
+print('two')
+// expect compile error: error_char_quotes.astra:3:7: error: single quotes hold one character, and 'two' holds 3: text takes double quotes, "two"

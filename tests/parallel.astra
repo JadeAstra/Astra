@@ -146,7 +146,7 @@ print(places(plain) == places(shared))                       // expect: true
 // ---- A buffer, in parts ----
 // Each core gets the positions of one part, and may write those and no others.
 val buffer = Bytes(10000)
-buffer.parallelChunks { positions -> for i in positions { buffer[i] = i % 251 } }
+buffer.parallelChunks { positions -> for i in positions { buffer[i] = (i % 251).toByte() } }
 print(buffer[0], buffer[250], buffer[251], buffer[9999], (0..<10000).all { buffer[it] == it % 251 })   // expect: 0 250 0 210 true
 val firstParts = []
 buffer.parallelChunks { positions -> buffer[positions.first] = 255 }

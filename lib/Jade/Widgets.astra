@@ -30,7 +30,7 @@ class Label : Content, OwnedContent {
   override fun sizes() : Sizes {
     val fm = metrics(font)
     val pref = Dimension(fm.stringWidth(text) + 8, fm.height + 4)
-    return Sizes(pref, pref, Dimension(maxInt, pref.height))
+    return Sizes(pref, pref, Dimension(int.maxValue, pref.height))
   }
 
   override fun paint(canvas : Canvas) {
@@ -100,7 +100,7 @@ class WrappedLabel : Content, OwnedContent, HeightForWidth {
   override fun sizes() : Sizes {
     val width = lastWidth > 0 ? lastWidth : preferredWidth
     val height = heightForWidth(width)
-    return Sizes(Dimension(60, height), Dimension(width, height), Dimension(maxInt, maxInt))
+    return Sizes(Dimension(60, height), Dimension(width, height), Dimension(int.maxValue, int.maxValue))
   }
 
   override fun paint(canvas : Canvas) {
@@ -153,7 +153,7 @@ class Button : Content, OwnedContent {
     val fm = metrics(font)
     val pref = Dimension(fm.stringWidth(text) + 24, fm.height + 12)
     val min = Dimension(fm.stringWidth(text) + 12, fm.height + 6)
-    return Sizes(min, pref, Dimension(maxInt, pref.height))   // it may be made wider, not taller
+    return Sizes(min, pref, Dimension(int.maxValue, pref.height))   // it may be made wider, not taller
   }
 
   override fun paint(canvas : Canvas) {
@@ -293,7 +293,7 @@ class ToolbarSeparator : Content {
 
   override fun sizes() : Sizes {
     val d = Dimension(9, height)
-    return Sizes(d, d, Dimension(d.width, maxInt))
+    return Sizes(d, d, Dimension(d.width, int.maxValue))
   }
 
   override fun paint(canvas : Canvas) {
@@ -316,7 +316,7 @@ internal class Spacer : Content {
     this.h = h
   }
 
-  override fun sizes() : Sizes => Sizes(Dimension(w, h), Dimension(w, h), Dimension(maxInt, maxInt))
+  override fun sizes() : Sizes => Sizes(Dimension(w, h), Dimension(w, h), Dimension(int.maxValue, int.maxValue))
 
   override fun paint(canvas : Canvas) {
     val fill = canvas.style.background

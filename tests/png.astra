@@ -2,7 +2,7 @@
 
 fun fromHex(text : string) {
   val out = Bytes(text.length / 2)
-  for (i in 0..<out.size) { out[i] = text.substring(i * 2, i * 2 + 2).toInt(16) }
+  for (i in 0..<out.size) { out[i] = text.substring(i * 2, i * 2 + 2).toInt(16).toByte() }
   return out
 }
 
@@ -135,7 +135,7 @@ print(attempt { Picture.load(file.slice(0, 60)) })         // expect: IOExceptio
 val cut = Bytes(file.slice(0, file.size - 40))
 print(attempt { Picture.load(cut) } != "no error")         // expect: true
 val spoiled = Bytes(file)
-for (i in 60..<90) { spoiled[i] = 255 - spoiled[i] }
+for (i in 60..<90) { spoiled[i] = (255 - spoiled[i]).toByte() }
 print(attempt { Picture.load(spoiled) } != "no error")     // expect: true
 print(attempt { Picture(3, 3, 0, Bytes(5)) })              // expect: Error: the pixels do not fit a picture of 3 by 3
 print(attempt { Picture(0, 0).toPng() })                   // expect: Error: a picture with no pixels cannot be written as PNG

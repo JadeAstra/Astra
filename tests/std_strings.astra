@@ -19,7 +19,7 @@ print("prefix-body".removePrefix("prefix-"), "body.txt".removeSuffix(".txt"), "(
 print(s.first(), s.last(), s.get(4), s.getOrNull(99), s.getOrNull(-1), "".firstOrNull(), "".lastOrNull(), accented.last())   // expect: H d o null null null null é
 print(s.first { it.isLowerCase() }, s.last { it.isUpperCase() }, s.firstOrNull { it.isDigit() })   // expect: e W null
 try { "".first() } catch (e) { print(e.message) }            // expect: first() of an empty string
-print(s.lastIndex, s.indices, s.size, "é".code, "A".code, 233.toChar(), 97.toChar())   // expect: 11 0..<12 12 233 65 é a
+print(s.lastIndex, s.indices, s.size, "é".code, "A".code, 233.char, 97.char)   // expect: 11 0..<12 12 233 65 é a
 
 // Finding. ignoreCase and startIndex go by name or by position.
 print(s.indexOf("o"), s.indexOf("o", 5), s.indexOf("o", startIndex = 9), s.lastIndexOf("o"), s.lastIndexOf("o", 7), s.indexOf("z"))   // expect: 4 8 -1 8 4 -1
@@ -33,8 +33,8 @@ try { unknown(s).contains("x", wrong = true) } catch (e) { print(e.message) }   
 // Changing.
 print(s.lowercase(), s.uppercase(), accented.uppercase(), "ÉCOLE".lowercase())   // expect: hello, world HELLO, WORLD NAÏVE CAFÉ école
 print(s.replace("o", "0"), s.replace("L", "_", ignoreCase = true), "Écoute école".replace("éco", "X", true), s.replaceFirst("l", "L"))   // expect: Hell0, W0rld He__o, Wor_d Xute Xle HeLlo, World
-print("ada".replaceFirstChar { it.uppercase() }, "".replaceFirstChar { it.uppercase() }, "abc".reversed(), accented.reversed())   // expect: Ada  cba éfac evïan
-print("7".padStart(3, "0"), "7".padEnd(3, "*") + "|", "abc".padStart(2), "é".padStart(3) + "|", "x".padStart(length = 3, padChar = "-"))   // expect: 007 7**| abc   é| --x
+print("ada".replaceFirstChar { it.upper() }, "".replaceFirstChar { it.upper() }, "abc".reversed(), accented.reversed())   // expect: Ada  cba éfac evïan
+print("7".padStart(3, '0'), "7".padEnd(3, '*') + "|", "abc".padStart(2), "é".padStart(3) + "|", "x".padStart(length = 3, padChar = '-'))   // expect: 007 7**| abc   é| --x
 print("  both  ".trim() + "|", "  left".trimStart() + "|", "right  ".trimEnd() + "|", "interstellar".commonPrefixWith("internet"))   // expect: both| left| right| inter
 
 // Empty and blank.
@@ -50,13 +50,13 @@ print("one\ntwo\r\nthree".lines(), "".lines(), "a\n".lines())   // expect: ["one
 print("a".isLetter(), "1".isLetter(), "é".isLetter(), "abc".isLetter(), "a1".isLetter(), "".isLetter())   // expect: true false true true false false
 print("7".isDigit(), "x".isDigit(), "a1".isLetterOrDigit(), "_".isLetterOrDigit(), " ".isWhitespace(), "\t".isWhitespace(), "x".isWhitespace())   // expect: true false true false true true false
 print("A".isUpperCase(), "a".isUpperCase(), "a".isLowerCase(), "É".isUpperCase(), "é".isLowerCase(), "1".isUpperCase())   // expect: true false true true true false
-print("a".uppercaseChar(), "Q".lowercaseChar(), "7".digitToInt(), "x".digitToIntOrNull(), "7".digitToInt() + 1)   // expect: A q 7 null 8
+print('a'.upper(), 'Q'.lower(), '7'.digitToInt(), 'x'.digitToIntOrNull(), '7'.digitToInt() + 1, 'f'.digitToInt(16))   // expect: A q 7 null 8 15
 print(s.count { it == "l" }, s.count(), s.any { it.isDigit() }, s.all { it.code < 128 }, s.none { it == "z" }, "".any(), "".none())   // expect: 3 12 false true true false true
-print("abc".map { it.code }, "a1b2".filter { it.isDigit() }, "a1b2".filterNot { it.isDigit() }, "héé".toList(), "aab".toSet())   // expect: [97, 98, 99] 12 ab ["h", "é", "é"] {"a", "b"}
+print("abc".map { it.code }, "a1b2".filter { it.isDigit() }, "a1b2".filterNot { it.isDigit() }, "héé".toList(), "aab".toSet())   // expect: [97, 98, 99] 12 ab ['h', 'é', 'é'] {'a', 'b'}
 val seen = []
 "ab".forEach { seen.add(it) }
 "ab".forEachIndexed { i, c -> seen.add("$i$c") }
-print(seen)                                                  // expect: ["a", "b", "0a", "1b"]
+print(seen)                                                  // expect: ['a', 'b', "0a", "1b"]
 
 // To numbers.
 print("42".toInt() + 1, "-7".toInt(), "+3".toInt(), "ff".toInt(16), "101".toInt(2), "12".toLong(), "abc".toIntOrNull(), "".toIntOrNull(), "4.5".toIntOrNull())   // expect: 43 -7 3 255 5 12 null null null

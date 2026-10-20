@@ -1,5 +1,7 @@
 #include "vm.h"
 
+#include "builtins.h"  // addOverflows and the like (D27)
+
 #include <algorithm>
 #include <bit>
 #include <cstring>
@@ -58,6 +60,7 @@ VM::VM(bool worker) : output(&std::cout), input(&std::cin), rng(std::random_devi
     names.key = intern("key");
     names.value = intern("value");
     names.code = intern("code");
+    names.character = intern("char");
     names.iterator = intern("iterator");
     names.first = intern("first");
     names.last = intern("last");
@@ -100,6 +103,7 @@ VM::VM(bool worker) : output(&std::cout), input(&std::cin), rng(std::random_devi
     opNames_[static_cast<int>(Op::Mod)] = names.opMod;
     opNames_[static_cast<int>(Op::Shl)] = names.opShl;
     opNames_[static_cast<int>(Op::Shr)] = names.opShr;
+    opNames_[static_cast<int>(Op::Ushr)] = intern(">>>");
     opNames_[static_cast<int>(Op::BitAnd)] = names.opBitAnd;
     opNames_[static_cast<int>(Op::BitOr)] = names.opBitOr;
     opNames_[static_cast<int>(Op::BitXor)] = names.opBitXor;
@@ -153,7 +157,7 @@ ObjTypeInfo* VM::typeOf(uint8_t id, bool nullable, ObjClass* cls, const std::vec
 std::string VM::typeInfoText(const ObjTypeInfo* type) const {
     std::string text;
     if (type->id == kTypeInstance) {
-        text = type->cls->name->chars;
+        text = type->cls->name->utf8();
     } else if (type->id == 0) {
         text = "any";
     } else {
@@ -184,6 +188,13 @@ ObjTypeInfo* VM::typeFromShape(const std::string& shape, size_t& at, const Value
         case 's': return typeOf(kTypeString, nullable, nullptr, {});
         case 'b': return typeOf(kTypeBool, nullable, nullptr, {});
         case 'y': return typeOf(kTypeBytes, nullable, nullptr, {});
+        case 'c': return typeOf(kTypeChar, nullable, nullptr, {});
+        case 'u': return typeOf(kTypeByte, nullable, nullptr, {});
+        case 'h': return typeOf(kTypeInt16, nullable, nullptr, {});
+        case 'd': return typeOf(kTypeInt32, nullable, nullptr, {});
+        case 'H': return typeOf(kTypeUint16, nullable, nullptr, {});
+        case 'D': return typeOf(kTypeUint32, nullable, nullptr, {});
+        case 'g': return typeOf(kTypeFloat32, nullable, nullptr, {});
         case 'r': return typeOf(kTypeRange, nullable, nullptr, {});
         case 't': return typeOf(kTypeType, nullable, nullptr, {});
         case 'F': return typeOf(kTypeFunction, nullable, nullptr, {});
@@ -331,13 +342,23 @@ ObjString* VM::intern(std::string_view s) {
 
     ObjString* str = alloc<ObjString>(std::string(s));
     str->immortal = true;
-    interned_.emplace(std::string_view(str->chars), str);
+    interned_.emplace(std::string_view(str->utf8()), str);
     return str;
 }
 
 ObjString* VM::newString(std::string s) {
     account(s.size());
     return alloc<ObjString>(std::move(s));
+}
+
+ObjString* VM::joinStrings(const ObjString* first, const ObjString* second) {
+    account(first->units().size() + second->units().size());
+    return alloc<ObjString>(first, second);
+}
+
+ObjString* VM::newString(Characters text) {
+    account(text.units.size());
+    return alloc<ObjString>(std::move(text));
 }
 
 // ---- Setup ----
@@ -396,6 +417,8 @@ bool VM::builtinTypeNamed(const std::string& name, BuiltinType& type) {
     else if (name == "Range") type = BuiltinType::Range;
     else if (name == "Bytes") type = BuiltinType::Bytes;
     else if (name == "Number" || name == "int" || name == "float") type = BuiltinType::Number;
+    else if (name == "char") type = BuiltinType::Char;
+    else if (name == "byte") type = BuiltinType::Byte;
     else return false;
     return true;
 }
@@ -529,13 +552,13 @@ void VM::addExtensionForm(Table& table, ObjString* name, Value function) {
         table.set(name, function);
         return;
     }
-    std::unique_ptr<FunctionProto>& proto = extensionSets_[name->chars];
+    std::unique_ptr<FunctionProto>& proto = extensionSets_[name->utf8()];
     if (proto == nullptr) {
         proto = std::make_unique<FunctionProto>();
-        proto->name = name->chars;
+        proto->name = name->utf8();
         proto->chooser = true;
     }
-    for (ObjClosure* form : forms) table.set(intern(name->chars + form->proto->signature), Value::object(form));
+    for (ObjClosure* form : forms) table.set(intern(name->utf8() + form->proto->signature), Value::object(form));
     ObjForms* set = alloc<ObjForms>(proto.get());
     set->forms = std::move(forms);
     account(set->forms.size() * sizeof(ObjClosure*));
@@ -552,12 +575,14 @@ const Value* VM::findExtension(Value receiver, const ObjString* name) const {
             // null does not say which is meant.
             if (found != nullptr && !found->isObjType(ObjType::Closure))
                 throw const_cast<VM*>(this)->runtimeError(
-                    name->chars + "() is called on null, and more than one type has its own " + name->chars +
+                    name->utf8() + "() is called on null, and more than one type has its own " + name->utf8() +
                     "() that takes null, so there is no telling which is meant; use ?: to say what stands in for null");
             break;
         case ValueKind::Bool: found = typeExtensions_[kTypeBool].find(name); break;
         case ValueKind::Int: found = typeExtensions_[kTypeInt].find(name); break;
         case ValueKind::Float: found = typeExtensions_[kTypeFloat].find(name); break;
+        case ValueKind::Char: found = typeExtensions_[kTypeChar].find(name); break;
+        case ValueKind::Byte: found = typeExtensions_[kTypeByte].find(name); break;
         case ValueKind::Obj:
             switch (receiver.as.obj->type) {
                 case ObjType::String: found = typeExtensions_[kTypeString].find(name); break;
@@ -676,7 +701,7 @@ void VM::setAccess(ObjClass* cls, Table& marks, ObjString* name, bool write, con
     uint32_t half = 0;
     if (!run.empty()) {
         if (run.size() > 0xFF || cls->accessIds.size() + run.size() > 0xFFFFF)
-            throw runtimeError("class " + cls->name->chars + " has too many private, protected and internal members");
+            throw runtimeError("class " + cls->name->utf8() + " has too many private, protected and internal members");
         half = static_cast<uint32_t>(run.size()) | static_cast<uint32_t>(kind) << 8 |
                static_cast<uint32_t>(cls->accessIds.size()) << 12;
         cls->accessIds.insert(cls->accessIds.end(), run.begin(), run.end());
@@ -722,7 +747,7 @@ void VM::joinProtected(ObjClass* subclass) {
                 run.push_back(static_cast<uint16_t>(subclass->number));
                 // A class above is everyone's: a core of a parallel section leaves it alone.
                 if (owner != subclass && coreId_ != 0)
-                    throw notOwned("class " + owner->name->chars + " has protected static members, and a subclass of it is declared for the whole program");
+                    throw notOwned("class " + owner->name->utf8() + " has protected static members, and a subclass of it is declared for the whole program");
                 setAccess(owner, marks, name, write, run, kAccessProtected);
             }
         }
@@ -763,7 +788,7 @@ AstraThrow VM::accessError(Value target, const ObjString* name, const FunctionPr
     const bool isStatic = target.isObjType(ObjType::Class);
     const ObjClass* cls = isStatic ? asClass(target) : asInstance(target)->cls;
     const Value* mark = (isStatic ? cls->staticAccessMarks : cls->accessMarks).find(name);
-    if (mark == nullptr) return runtimeError("'" + name->chars + "' cannot be used here");
+    if (mark == nullptr) return runtimeError("'" + name->utf8() + "' cannot be used here");
     const bool write = !halfDenies(cls, halfOf(*mark, false), proto);
     const uint32_t half = halfOf(*mark, write);
     const int kind = halfKind(half);
@@ -786,9 +811,9 @@ AstraThrow VM::accessError(Value target, const ObjString* name, const FunctionPr
                             : kind == kAccessInternal ? "only code of the library it belongs to can "
                             : "only code written in that class can ";
     if (write)
-        return runtimeError("'" + name->chars + "' cannot be assigned here: its setter is " + word + " in class " +
-                            declaring->name->chars + ", so " + who + "assign to it");
-    return runtimeError("'" + name->chars + "' is " + word + " in class " + declaring->name->chars + ": " + who + "use it");
+        return runtimeError("'" + name->utf8() + "' cannot be assigned here: its setter is " + word + " in class " +
+                            declaring->name->utf8() + ", so " + who + "assign to it");
+    return runtimeError("'" + name->utf8() + "' is " + word + " in class " + declaring->name->utf8() + ": " + who + "use it");
 }
 
 // An entry of FunctionProto::outerReceivers: an upvalue of the function, or with kCapturedReceiver
@@ -865,7 +890,7 @@ std::vector<std::string> VM::membersFoundByName() const {
     // Every member of the names table is an ObjString*.
     const ObjString* const* first = reinterpret_cast<const ObjString* const*>(&names);
     for (size_t i = 0; i < sizeof names / sizeof(ObjString*); i++)
-        if (first[i] != nullptr) found.push_back(first[i]->chars);
+        if (first[i] != nullptr) found.push_back(first[i]->utf8());
     return found;
 }
 
@@ -933,10 +958,12 @@ void VM::unwindTo(int baseFrame) {
 std::string VM::typeName(Value v) const {
     switch (v.kind) {
         case ValueKind::Null: return "null";
-        case ValueKind::Ref: return refClass(v)->name->chars;
-        case ValueKind::Small: return smallClassOf(v)->name->chars;
+        case ValueKind::Ref: return refClass(v)->name->utf8();
+        case ValueKind::Small: return smallClassOf(v)->name->utf8();
         case ValueKind::Bool: return "bool";
         case ValueKind::Int: return "int";
+        case ValueKind::Char: return "char";
+        case ValueKind::Byte: return "byte";
         case ValueKind::Float: return "float";
         case ValueKind::Undefined: return "undefined";
         case ValueKind::Obj: break;
@@ -952,8 +979,8 @@ std::string VM::typeName(Value v) const {
         case ObjType::BoundMethod:
         case ObjType::BoundNative: return "Function";
         case ObjType::Class: return "Class";
-        case ObjType::Instance: return asInstance(v)->cls->name->chars;
-        case ObjType::Value: return asValue(v)->cls->name->chars;
+        case ObjType::Instance: return asInstance(v)->cls->name->utf8();
+        case ObjType::Value: return asValue(v)->cls->name->utf8();
         case ObjType::Fiber: return "flow";
         case ObjType::Resource: return static_cast<const ObjResource*>(v.as.obj)->kind;
         case ObjType::Upvalue:
@@ -975,7 +1002,7 @@ double VM::toNumber(Value v, const char* what) {
 
 const std::string& VM::toStr(Value v, const char* what) {
     if (!v.isString()) throw runtimeError(std::string(what) + " must be a string, got " + typeName(v));
-    return asString(v)->chars;
+    return asString(v)->utf8();
 }
 
 // ---- Calls ----
@@ -991,7 +1018,7 @@ void VM::checkArity(const std::string& name, int minArgs, int maxArgs, int argc)
 // A bare name was passed where nothing says which enum it could belong to.
 AstraThrow VM::unsettledName(Value pending) {
     pendingEnums_--;
-    return runtimeError("undefined variable '" + static_cast<ObjString*>(pending.as.obj)->chars + "'");
+    return runtimeError("undefined variable '" + static_cast<ObjString*>(pending.as.obj)->utf8() + "'");
 }
 
 void VM::rejectPendingNames(const Value* args, int argc) {
@@ -1008,7 +1035,7 @@ Value VM::settleEnumName(Value pending, const ObjClass* type) {
     const ObjString* name = static_cast<ObjString*>(pending.as.obj);
     const Value* entry = type->statics.find(name);
     if (entry == nullptr || !entry->isObjType(ObjType::Instance) || asInstance(*entry)->cls != type)
-        throw runtimeError("'" + name->chars + "' is not an entry of enum " + type->name->chars);
+        throw runtimeError("'" + name->utf8() + "' is not an entry of enum " + type->name->utf8());
     return *entry;
 }
 
@@ -1043,8 +1070,8 @@ int VM::paramFit(Value v, uint8_t type, const ObjString* className) const {
     if (classOf(v) == nullptr || className == nullptr) return -1;
     // The class is known by its name, as written: the last part of it.
     auto named = [&](const ObjClass* c) {
-        const std::string& n = c->name->chars;
-        const std::string& want = className->chars;
+        const std::string& n = c->name->utf8();
+        const std::string& want = className->utf8();
         return n == want || (n.size() > want.size() && n[n.size() - want.size() - 1] == '.' &&
                              n.compare(n.size() - want.size(), want.size(), want) == 0);
     };
@@ -1101,7 +1128,7 @@ bool VM::formTakes(const FunctionProto* proto, const Value* args, int positional
         const ObjString* name = asString(pairs[2 * k]);
         const Value value = pairs[2 * k + 1];
         int index = -1;
-        if (name->chars.empty()) {
+        if (name->utf8().empty()) {
             if (arity == 0) return false;
             index = arity - 1;
         } else {
@@ -1168,7 +1195,7 @@ ObjClosure* VM::chooseForm(const ObjForms* set, const Value* args, int positiona
         std::string given;
         for (int i = 0; i < positional; i++) given += (given.empty() ? "" : ", ") + typeName(args[i]);
         for (int k = 0; k < named; k++) {
-            const std::string& n = asString(pairs[2 * k])->chars;
+            const std::string& n = asString(pairs[2 * k])->utf8();
             given += (given.empty() ? "" : ", ") + (n.empty() ? std::string() : n + " = ") + typeName(pairs[2 * k + 1]);
         }
         throw runtimeError("no form of " + name + "() takes " + (given.empty() ? std::string("no arguments") : "(" + given + ")") +
@@ -1251,7 +1278,7 @@ void VM::callTrailing(ObjClosure* closure, int argc) {
     if (given < proto->requiredArgs()) {
         // The lambda may pass over parameters that have a default, and no others.
         if (proto->paramNames.size() != static_cast<size_t>(arity)) checkArity(proto->name, proto->requiredArgs(), arity, argc);
-        throw runtimeError(proto->name + "() is missing argument '" + proto->paramNames[static_cast<size_t>(given)]->chars + "'");
+        throw runtimeError(proto->name + "() is missing argument '" + proto->paramNames[static_cast<size_t>(given)]->utf8() + "'");
     }
     if (target == given && vararg < 0) {
         callClosure(closure, argc);  // already in its place; what follows takes its default
@@ -1371,7 +1398,7 @@ bool VM::callNamed(int positional, int named) {
     Value callee = first[-1];
 
     // A lambda written after a call to a built-in function is simply its last argument.
-    if (named == 1 && sp_[-2].isString() && asString(sp_[-2])->chars.empty() &&
+    if (named == 1 && sp_[-2].isString() && asString(sp_[-2])->utf8().empty() &&
         (callee.isObjType(ObjType::Native) || callee.isObjType(ObjType::BoundNative))) {
         sp_[-2] = sp_[-1];
         sp_--;
@@ -1381,7 +1408,7 @@ bool VM::callNamed(int positional, int named) {
     // The function whose parameter names the arguments are matched against.
     const FunctionProto* proto = nullptr;
     auto display = [&]() -> std::string {
-        return callee.isObjType(ObjType::Class) ? asClass(callee)->name->chars : proto->name;
+        return callee.isObjType(ObjType::Class) ? asClass(callee)->name->utf8() : proto->name;
     };
     if (callee.isObj()) {
         switch (callee.as.obj->type) {
@@ -1404,7 +1431,7 @@ bool VM::callNamed(int positional, int named) {
                 break;
             case ObjType::Class: {
                 ObjClass* cls = asClass(callee);
-                if (cls->init == nullptr) throw runtimeError(cls->name->chars + "() takes no arguments");
+                if (cls->init == nullptr) throw runtimeError(cls->name->utf8() + "() takes no arguments");
                 proto = cls->init->proto;
                 break;
             }
@@ -1429,7 +1456,7 @@ bool VM::callNamed(int positional, int named) {
 
     // The common case of a lambda after the call: every parameter before the last was given,
     // so the lambda is simply the next argument.
-    if (named == 1 && vararg < 0 && positional + 1 == arity && asString(sp_[-2])->chars.empty()) {
+    if (named == 1 && vararg < 0 && positional + 1 == arity && asString(sp_[-2])->utf8().empty()) {
         sp_[-2] = sp_[-1];
         sp_--;
         return callValue(callee, positional + 1);
@@ -1455,7 +1482,7 @@ bool VM::callNamed(int positional, int named) {
         const ObjString* name = asString(pair[0]);  // interned, like the parameter names
 
         int index = -1;
-        if (name->chars.empty()) {
+        if (name->utf8().empty()) {
             // The lambda written after the call: it is the last parameter (see callTrailing).
             if (arity == 0) throw runtimeError(display() + "() takes no arguments, so no lambda can follow the call");
             index = arity - 1;
@@ -1464,9 +1491,9 @@ bool VM::callNamed(int positional, int named) {
         for (int p = 0; index < 0 && p < arity; p++) {
             if (proto->paramNames[static_cast<size_t>(p)] == name) index = p;
         }
-        if (index < 0) throw runtimeError(display() + "() has no parameter named '" + name->chars + "'");
+        if (index < 0) throw runtimeError(display() + "() has no parameter named '" + name->utf8() + "'");
         if (arranged[static_cast<size_t>(index)].kind != ValueKind::Undefined)
-            throw runtimeError("argument '" + name->chars + "' of " + display() + "() is given more than once");
+            throw runtimeError("argument '" + name->utf8() + "' of " + display() + "() is given more than once");
         arranged[static_cast<size_t>(index)] = pair[1];
     }
 
@@ -1475,7 +1502,7 @@ bool VM::callNamed(int positional, int named) {
         if (gathered.kind == ValueKind::Undefined) {
             gathered = Value::object(alloc<ObjList>());
         } else if (!gathered.isObjType(ObjType::List)) {
-            throw runtimeError("argument '" + proto->paramNames[static_cast<size_t>(vararg)]->chars + "' of " + display() +
+            throw runtimeError("argument '" + proto->paramNames[static_cast<size_t>(vararg)]->utf8() + "' of " + display() +
                                "() is a vararg parameter: by name it takes a list, not a value of type " + typeName(gathered));
         }
     }
@@ -1483,7 +1510,7 @@ bool VM::callNamed(int positional, int named) {
     // Only parameters with a default value may be left out.
     for (int i = 0; i < proto->requiredArgs(); i++)
         if (arranged[static_cast<size_t>(i)].kind == ValueKind::Undefined)
-            throw runtimeError(display() + "() is missing argument '" + proto->paramNames[static_cast<size_t>(i)]->chars + "'");
+            throw runtimeError(display() + "() is missing argument '" + proto->paramNames[static_cast<size_t>(i)]->utf8() + "'");
 
     if (stackEnd_ - first < arity) throw runtimeError("stack overflow");
     for (int i = 0; i < arity; i++) first[i] = arranged[static_cast<size_t>(i)];
@@ -1519,7 +1546,7 @@ bool VM::callNativeNamed(int positional, int named) {
     const Value* pair = first + positional;
     for (int i = 0; i < named; i++, pair += 2) {
         if (!pair[0].isString()) throw runtimeError("invalid call");
-        const std::string& name = asString(pair[0])->chars;
+        const std::string& name = asString(pair[0])->utf8();
         int index = name.empty() ? count - 1 : -1;  // a lambda after the call is the last parameter
         for (int p = 0; index < 0 && p < count; p++)
             if (method->params[static_cast<size_t>(p)] == name) index = p;
@@ -1560,6 +1587,10 @@ const NativeMethod* VM::findNativeMethod(Value receiver, const ObjString* name) 
     BuiltinType type;
     if (receiver.isNumber()) {
         type = BuiltinType::Number;
+    } else if (receiver.isChar()) {
+        type = BuiltinType::Char;
+    } else if (receiver.isByte()) {
+        type = BuiltinType::Byte;
     } else if (!receiver.isObj()) {
         return nullptr;
     } else {
@@ -1640,7 +1671,7 @@ bool VM::invoke(ObjString* name, int argc, bool trailing) {
                 return true;
             }
             if (const int done = scopeFunction(name, argc)) return done == 2;
-            throw runtimeError("undefined method '" + name->chars + "' on " + instance->cls->name->chars);
+            throw runtimeError("undefined method '" + name->utf8() + "' on " + instance->cls->name->utf8());
         }
 
         if (receiver.as.obj->type == ObjType::Value) {
@@ -1668,7 +1699,7 @@ bool VM::invoke(ObjString* name, int argc, bool trailing) {
                 return true;
             }
             if (const int done = scopeFunction(name, argc)) return done == 2;
-            throw runtimeError("undefined method '" + name->chars + "' on " + box->cls->name->chars);
+            throw runtimeError("undefined method '" + name->utf8() + "' on " + box->cls->name->utf8());
         }
 
         if (receiver.as.obj->type == ObjType::Class) {
@@ -1678,7 +1709,7 @@ bool VM::invoke(ObjString* name, int argc, bool trailing) {
                 sp_[-argc - 1] = *member;
                 return trailing ? callValueTrailing(*member, argc) : callValue(*member, argc);
             }
-            throw runtimeError("undefined static method '" + name->chars + "' on class " + cls->name->chars);
+            throw runtimeError("undefined static method '" + name->utf8() + "' on class " + cls->name->utf8());
         }
     }
 
@@ -1690,7 +1721,7 @@ bool VM::invoke(ObjString* name, int argc, bool trailing) {
             return true;
         }
         if (const int done = scopeFunction(name, argc)) return done == 2;
-        throw runtimeError("undefined method '" + name->chars + "' on a value of type " + typeName(receiver));
+        throw runtimeError("undefined method '" + name->utf8() + "' on a value of type " + typeName(receiver));
     }
     checkArity(method->name, method->minArgs, method->maxArgs, argc);
     if (pendingEnums_ > 0) rejectPendingNames(sp_ - argc, argc);
@@ -1731,7 +1762,7 @@ Value VM::tailCallOn(Value receiver, Value function) {
 // stack, and 2 if a call has been set going.
 int VM::scopeFunction(ObjString* name, int argc) {
     if (argc != 1) return 0;
-    const std::string& n = name->chars;
+    const std::string& n = name->utf8();
     const bool onReceiver = n == "apply" || n == "run";
     if (!onReceiver && n != "let" && n != "also") return 0;
 
@@ -1830,7 +1861,8 @@ bool VM::equals(Value a, Value b, int depth) {
             ObjList* x = asList(a);
             ObjList* y = asList(b);
             if (x->size() != y->size()) return false;
-            if (x->packed() && y->packed() && x->store() == y->store() && (x->store() == ListStore::Ints || x->store() == ListStore::Bools) &&
+            const bool sameNarrow = x->store() == ListStore::Narrow && x->pack->narrow == y->pack->narrow && x->pack->narrow != Narrow::Float32;
+            if (x->packed() && y->packed() && x->store() == y->store() && (x->store() == ListStore::Ints || x->store() == ListStore::Bools || sameNarrow) &&
                 !x->pack->nullable && !y->pack->nullable)
                 return x->pack->block == y->pack->block;  // ints and bools, equal where their bytes are
             // An element's own == may change either list, so the sizes are looked at again.
@@ -1873,8 +1905,8 @@ void VM::invokeOperator(Value receiver, ObjString* name, int argc) {
     const ObjClass* cls = classOf(receiver);
     const Value* method = cls->methods.find(name);
     if (method == nullptr) {
-        const std::string symbol = name == names.opNeg ? "-" : name == names.opBitNot ? "~" : name->chars;
-        throw runtimeError(cls->name->chars + " does not define operator '" + symbol + "'");
+        const std::string symbol = name == names.opNeg ? "-" : name == names.opBitNot ? "~" : name->utf8();
+        throw runtimeError(cls->name->utf8() + " does not define operator '" + symbol + "'");
     }
     callClosure(asClosure(*method), argc);
 }
@@ -1905,11 +1937,11 @@ Value VM::getProperty(Value obj, ObjString* name) {
                 if (const Value* method = instance->cls->methods.find(name))
                     return Value::object(alloc<ObjBoundMethod>(obj, asClosure(*method)));
                 if (instance->cls->setters.find(name) != nullptr)
-                    throw runtimeError("property '" + name->chars + "' of " + instance->cls->name->chars +
+                    throw runtimeError("property '" + name->utf8() + "' of " + instance->cls->name->utf8() +
                                        " cannot be read: it has no getter");
                 if (const Value* extension = findExtension(obj, name))
                     return Value::object(alloc<ObjBoundMethod>(obj, asClosure(*extension)));
-                throw runtimeError("undefined property '" + name->chars + "' on " + instance->cls->name->chars);
+                throw runtimeError("undefined property '" + name->utf8() + "' on " + instance->cls->name->utf8());
             }
             case ObjType::Value: {
                 ObjValue* box = asValue(obj);
@@ -1919,7 +1951,7 @@ Value VM::getProperty(Value obj, ObjString* name) {
                 if (const Value* getter = box->cls->getters.find(name)) return callWithReceiver(obj, asClosure(*getter));
                 if (const Value* extension = findExtension(obj, name))
                     return Value::object(alloc<ObjBoundMethod>(obj, asClosure(*extension)));
-                throw runtimeError("undefined property '" + name->chars + "' on " + box->cls->name->chars);
+                throw runtimeError("undefined property '" + name->utf8() + "' on " + box->cls->name->utf8());
             }
             case ObjType::Class: {
                 ObjClass* cls = asClass(obj);
@@ -1928,11 +1960,11 @@ Value VM::getProperty(Value obj, ObjString* name) {
                 for (const ObjClass* k = cls; k != nullptr; k = k->super) {
                     if (const Value* getter = k->staticGetters.find(name)) return call(*getter, 0, nullptr);
                     if (k->staticSetters.find(name) != nullptr)
-                        throw runtimeError("static property '" + name->chars + "' of " + k->name->chars +
+                        throw runtimeError("static property '" + name->utf8() + "' of " + k->name->utf8() +
                                            " cannot be read: it has no getter");
                 }
                 if (name == names.className) return Value::object(cls->name);  // `name` is left free for a member
-                throw runtimeError("undefined static member '" + name->chars + "' on class " + cls->name->chars);
+                throw runtimeError("undefined static member '" + name->utf8() + "' on class " + cls->name->utf8());
             }
             case ObjType::String:
                 if (name == names.length || name == names.size) return Value::integer(static_cast<int64_t>(asString(obj)->length));
@@ -1941,12 +1973,7 @@ Value VM::getProperty(Value obj, ObjString* name) {
                 if (name == names.lastIndex) return Value::integer(static_cast<int64_t>(asString(obj)->length) - 1);
                 if (name == names.code && asString(obj)->length > 0) {
                     // The code point of a character (the first, if there are more).
-                    std::string_view first = asString(obj)->character(0);
-                    uint32_t cp = static_cast<unsigned char>(first[0]);
-                    if (first.size() == 2) cp &= 0x1F;
-                    else if (first.size() == 3) cp &= 0x0F;
-                    else if (first.size() >= 4) cp &= 0x07;
-                    for (size_t i = 1; i < first.size(); i++) cp = (cp << 6) | (static_cast<unsigned char>(first[i]) & 0x3F);
+                    const uint32_t cp = asString(obj)->at(0);
                     return Value::integer(cp);
                 }
                 break;
@@ -1985,6 +2012,13 @@ Value VM::getProperty(Value obj, ObjString* name) {
         }
     }
 
+    if (obj.isChar() && name == names.code) return Value::integer(obj.as.i);  // the character's number (D24)
+    if (obj.isInt() && name == names.character) {
+        // The character numbered n (D142).
+        if (!isCharacter(obj.as.i))
+            throw runtimeError(std::to_string(obj.as.i) + " is not a character's number: characters are numbered 0 to 1114111, leaving out 55296 to 57343");
+        return Value::character(static_cast<uint32_t>(obj.as.i));
+    }
     if (obj.isInt()) {
         if (name == names.absoluteValue) return Value::integer(obj.as.i < 0 ? -obj.as.i : obj.as.i);
         if (name == names.sign) return Value::integer((obj.as.i > 0) - (obj.as.i < 0));
@@ -1997,7 +2031,7 @@ Value VM::getProperty(Value obj, ObjString* name) {
         return Value::object(alloc<ObjBoundNative>(obj, method));
     if (const Value* extension = findExtension(obj, name))
         return Value::object(alloc<ObjBoundMethod>(obj, asClosure(*extension)));
-    throw runtimeError("undefined property '" + name->chars + "' on a value of type " + typeName(obj));
+    throw runtimeError("undefined property '" + name->utf8() + "' on a value of type " + typeName(obj));
 }
 
 // ---- Value types (M6.6 part 2, value-lists.html) ----
@@ -2024,8 +2058,8 @@ const ValueLayout& VM::layoutOf(ObjClass* cls) {
     // The value types being laid out, to refuse one that holds itself.
     static thread_local std::vector<const ObjClass*> laying;
     if (std::find(laying.begin(), laying.end(), cls) != laying.end())
-        throw runtimeError("value " + cls->name->chars + " holds itself, and would have no end: make the field nullable, " +
-                           cls->name->chars + "?, which keeps it in a box");
+        throw runtimeError("value " + cls->name->utf8() + " holds itself, and would have no end: make the field nullable, " +
+                           cls->name->utf8() + "?, which keeps it in a box");
     laying.push_back(cls);
     struct Done {
         std::vector<const ObjClass*>& list;
@@ -2055,6 +2089,9 @@ const ValueLayout& VM::layoutOf(ObjClass* cls) {
             field.kind = ValueField::Float;
         } else if (!nullable && id == kTypeBool) {
             field.kind = ValueField::Bool;
+        } else if (!nullable && narrowOf(id) != Narrow::None) {
+            field.kind = ValueField::Narrow;  // a byte, a char or a storage width (D148)
+            field.narrow = narrowOf(id);
         } else if (id == kTypeInstance) {
             field.cls = fieldClass(declared);
             field.kind = !nullable && field.cls->isValue ? ValueField::Nested : ValueField::Object;
@@ -2068,6 +2105,7 @@ const ValueLayout& VM::layoutOf(ObjClass* cls) {
             case ValueField::Int:
             case ValueField::Float: field.offset = place(8, 8); break;
             case ValueField::Bool: field.offset = place(1, 1); break;
+            case ValueField::Narrow: field.offset = place(narrowSize(field.narrow), narrowSize(field.narrow)); break;
             case ValueField::Object:
                 field.offset = place(8, 8);
                 made->objects.push_back(field.offset);
@@ -2151,6 +2189,7 @@ Value VM::readValueField(const uint8_t* at, const ValueField& field) {
             return Value::number(d);
         }
         case ValueField::Bool: return Value::boolean(*at != 0);
+        case ValueField::Narrow: return readNarrow(field.narrow, at);
         case ValueField::Object: {
             Obj* obj;
             std::memcpy(&obj, at, sizeof obj);
@@ -2172,12 +2211,31 @@ Value VM::readValueField(const uint8_t* at, const ValueField& field) {
     return Value::null();
 }
 
+// What an int that does not fit a storage width is told (D148).
+std::string VM::storageMismatch(Narrow narrow, Value v) {
+    int64_t low, high;
+    narrowRange(narrow, low, high);
+    static const char* const kinds[] = {"", "byte", "char", "int16", "int32", "uint16", "uint32", "float32"};
+    static const char* const wrapped[] = {"", "toByteWrapped()", "", "toInt16Wrapped()", "toInt32Wrapped()", "toUint16Wrapped()", "toUint32Wrapped()", ""};
+    const size_t at = static_cast<size_t>(narrow);
+    return std::to_string(v.as.i) + " does not fit in " + (narrow == Narrow::Int16 || narrow == Narrow::Int32 ? "an " : "a ") + kinds[at] +
+           ", which holds " + std::to_string(low) + " to " + std::to_string(high) + "; " + wrapped[at] + " keeps the low " +
+           std::to_string(narrowSize(narrow) * 8) + " bits";
+}
+
+void VM::checkRange(uint8_t type, Value v, const std::string& where) {
+    if (isIntStorage(type & kTypeMask) && v.isInt()) throw runtimeError(storageMismatch(narrowOf(type & kTypeMask), v) + " (" + where + ")");
+}
+
 // Writes `value` into a field kept at `at`, checked against the field's declared type as an
 // object's field is.
 void VM::writeValueField(uint8_t* at, const ValueField& field, const ObjClass* owner, Value value) {
+    if (field.kind == ValueField::Narrow && value.isInt() && field.narrow != Narrow::Byte && field.narrow != Narrow::Char &&
+        !fitsNarrow(field.narrow, value))
+        throw runtimeError(storageMismatch(field.narrow, value) + " (field '" + field.name->utf8() + "' of " + owner->name->utf8() + ")");
     if (field.type != 0 && !(value.isNull() && (field.type & kTypeNullable) != 0) && !matchesType(value, field.type, field.cls))
-        throw runtimeError("cannot assign a value of type " + typeName(value) + " to field '" + field.name->chars + "' of " +
-                           owner->name->chars + ", which is declared as " + declaredTypeText(field.type, field.cls));
+        throw runtimeError("cannot assign a value of type " + typeName(value) + " to field '" + field.name->utf8() + "' of " +
+                           owner->name->utf8() + ", which is declared as " + declaredTypeText(field.type, field.cls));
     if (value.isRef() && field.kind == ValueField::Nested) {
         std::memmove(at, refAt(value, false), layoutOf(field.cls).size);  // the same bytes, perhaps
         return;
@@ -2187,6 +2245,10 @@ void VM::writeValueField(uint8_t* at, const ValueField& field, const ObjClass* o
         case ValueField::Int: std::memcpy(at, &value.as.i, sizeof value.as.i); break;
         case ValueField::Float: std::memcpy(at, &value.as.d, sizeof value.as.d); break;
         case ValueField::Bool: *at = value.as.b ? 1 : 0; break;
+        case ValueField::Narrow:
+            if (field.narrow == Narrow::Byte && value.isInt()) value = Value::byte(static_cast<uint8_t>(value.as.i));
+            writeNarrow(field.narrow, at, value);
+            break;
         case ValueField::Object: {
             Obj* obj = value.isObj() ? value.as.obj : nullptr;
             std::memcpy(at, &obj, sizeof obj);
@@ -2242,9 +2304,9 @@ Value VM::valueField(const ObjValue* box, size_t index) {
 void VM::setValueField(ObjValue* box, ObjString* name, Value value) {
     const int64_t index = valueFieldIndex(box, name);
     if (index < 0)
-        throw runtimeError(box->cls->name->chars + " has no field '" + name->chars + "'; fields must be declared in it with val or var");
+        throw runtimeError(box->cls->name->utf8() + " has no field '" + name->utf8() + "'; fields must be declared in it with val or var");
     if (!box->constructing)
-        throw runtimeError("'" + name->chars + "' of value " + box->cls->name->chars +
+        throw runtimeError("'" + name->utf8() + "' of value " + box->cls->name->utf8() +
                            " cannot be given a new value: a value never changes once it is made");
     const ValueField& field = layoutOf(box->cls).fields[static_cast<size_t>(index)];
     writeValueField(box->data() + field.offset, field, box->cls, value);
@@ -2305,6 +2367,13 @@ ListStore VM::storeFor(const ObjTypeInfo* item, uint32_t& width, ObjClass*& item
         case kTypeInt: width = 8; return ListStore::Ints;
         case kTypeFloat: width = 8; return ListStore::Floats;
         case kTypeBool: width = 1; return ListStore::Bools;
+        case kTypeByte:
+        case kTypeChar:
+        case kTypeInt16:
+        case kTypeInt32:
+        case kTypeUint16:
+        case kTypeUint32:
+        case kTypeFloat32: width = narrowSize(narrowOf(item->id)); return ListStore::Narrow;
         case kTypeInstance:
             if (item->cls != nullptr && item->cls->isValue) {
                 itemClass = item->cls;
@@ -2336,6 +2405,7 @@ void VM::typeList(ObjList* list, ObjTypeInfo* type) {
     list->pack->store = store;
     list->pack->width = width;
     list->pack->itemClass = itemClass;
+    list->pack->narrow = store == ListStore::Narrow ? narrowOf(type->args[0]->id) : Narrow::None;
     list->pack->nullable = type->args[0]->nullable;
     list->pack->count = 0;
     // The items it was made with, checked and packed: a list that cannot hold one of them is
@@ -2364,6 +2434,7 @@ Value VM::packedGet(ObjList* list, size_t i) {
             return Value::number(v);
         }
         case ListStore::Bools: return Value::boolean(*at != 0);
+        case ListStore::Narrow: return readNarrow(list->pack->narrow, at);
         case ListStore::Items: {
             if (list->pack->itemClass->smallId != 0) return smallFrom(list->pack->itemClass, at, list->pack->width);
             ObjValue* box = newValue(list->pack->itemClass);
@@ -2382,6 +2453,11 @@ void VM::checkItem(const ObjList* list, Value v) {
         case ListStore::Ints: fits = v.isInt(); break;
         case ListStore::Floats: fits = v.isFloat(); break;
         case ListStore::Bools: fits = v.isBool(); break;
+        case ListStore::Narrow:
+            if (v.isInt() && list->pack->narrow != Narrow::Byte && list->pack->narrow != Narrow::Char && !fitsNarrow(list->pack->narrow, v))
+                throw runtimeError(storageMismatch(list->pack->narrow, v));
+            fits = fitsNarrow(list->pack->narrow, v);
+            break;
         case ListStore::Items:
             fits = (v.isObjType(ObjType::Value) && asValue(v)->cls == list->pack->itemClass) || (v.isRef() && refClass(v) == list->pack->itemClass) ||
                    (v.isSmall() && smallClassOf(v) == list->pack->itemClass);
@@ -2405,6 +2481,7 @@ void VM::writeItem(ObjList* list, size_t i, Value v) {
         case ListStore::Ints: std::memcpy(at, &v.as.i, 8); break;
         case ListStore::Floats: std::memcpy(at, &v.as.d, 8); break;
         case ListStore::Bools: *at = v.as.b ? 1 : 0; break;
+        case ListStore::Narrow: writeNarrow(list->pack->narrow, at, v); break;
         case ListStore::Items:
             std::memmove(at, v.isRef() ? refAt(v, false) : v.isSmall() ? smallBytes(v) : asValue(v)->data(), list->pack->width);
             break;
@@ -2632,7 +2709,7 @@ void VM::layFields(ObjClass* cls) {
             case kTypeInt: return FieldDecl::IntPayload;
             case kTypeFloat: return FieldDecl::FloatPayload;
             case kTypeBool: return FieldDecl::BoolPayload;
-            default: return FieldDecl::NoPayload;
+            default: return narrowOf(d.type & kTypeMask) != Narrow::None ? FieldDecl::NarrowPayload : FieldDecl::NoPayload;
         }
     };
     // A field its init must set, here or in a class above.
@@ -2648,16 +2725,23 @@ void VM::layFields(ObjClass* cls) {
         if (kindOf(d) != FieldDecl::NoPayload && (d.isVal || required(d.name))) tracked++;
     tracked = std::min(tracked, 256u);
     uint32_t at = (tracked + 63) / 64 * 8, slot = 0, bit = 0;
+    // The 8-byte payloads first, then the narrow ones from the widest down, each in line.
+    std::vector<FieldDecl*> narrow[5];
     for (FieldDecl& d : cls->declared) {
         d.inlineOffset = -1;  // (part 5 lays those out later, from what is here)
         const FieldDecl::PayloadKind kind = kindOf(d);
         const bool needsBit = d.isVal || required(d.name);
         if (kind != FieldDecl::NoPayload && (!needsBit || bit < tracked)) {
             d.payload = kind;
-            d.payloadOffset = static_cast<int32_t>(at);
             d.tracked = needsBit;
             d.payloadBit = static_cast<uint16_t>(needsBit ? bit++ : 0);
             d.slot = -1;
+            if (kind == FieldDecl::NarrowPayload) {
+                d.narrow = narrowOf(d.type & kTypeMask);
+                narrow[narrowSize(d.narrow)].push_back(&d);
+                continue;
+            }
+            d.payloadOffset = static_cast<int32_t>(at);
             at += 8;
         } else {
             d.payload = FieldDecl::NoPayload;
@@ -2665,6 +2749,12 @@ void VM::layFields(ObjClass* cls) {
             d.slot = static_cast<int32_t>(slot++);
         }
     }
+    for (size_t size : {4, 2, 1})
+        for (FieldDecl* d : narrow[size]) {
+            d->payloadOffset = static_cast<int32_t>(at);
+            at += static_cast<uint32_t>(size);
+        }
+    at = (at + 7) / 8 * 8;  // the slots after them are 8-byte aligned
     cls->slotCount = slot;
     cls->payloadBytes = at;
     cls->fieldsLaid.store(true, std::memory_order_release);
@@ -2791,7 +2881,7 @@ uint8_t* VM::refAt(Value r, bool write) {
     } else if (write) {
         if (r.as.obj->type == ObjType::List) guardWrite(r.as.obj);
         else if (!static_cast<ObjValue*>(r.as.obj)->constructing)
-            throw runtimeError("a value of " + refClass(r)->name->chars + " cannot be changed there: a value never changes "
+            throw runtimeError("a value of " + refClass(r)->name->utf8() + " cannot be changed there: a value never changes "
                                "where others may see it; change it through the place that holds it");
     }
     return at;
@@ -2817,9 +2907,9 @@ void VM::setRefField(Value r, ObjString* name, Value value) {
     ObjClass* cls = refClass(r);
     const Value* index = cls->declaredIndex.find(name);
     if (index == nullptr)
-        throw runtimeError(cls->name->chars + " has no field '" + name->chars + "'; fields must be declared in it with val or var");
+        throw runtimeError(cls->name->utf8() + " has no field '" + name->utf8() + "'; fields must be declared in it with val or var");
     const size_t at = static_cast<size_t>(index->as.i);
-    if (cls->declared[at].isVal) throw runtimeError("cannot assign to val field '" + name->chars + "' of " + cls->name->chars);
+    if (cls->declared[at].isVal) throw runtimeError("cannot assign to val field '" + name->utf8() + "' of " + cls->name->utf8());
     const ValueField& field = layoutOf(cls).fields[at];
     writeValueField(refAt(r, true) + field.offset, field, cls, value);
 }
@@ -2842,11 +2932,11 @@ Value VM::placeIn(Value& slot) {
 bool VM::construct(ObjClass* cls, int argc, bool packed, const Value* captures, uint16_t captureCount) {
     if (cls->staticInit != nullptr) ensureClassInit(cls);  // an enum has its entries by now
     if (cls->isAbstract)
-        throw runtimeError(cls->name->chars + " is abstract and cannot be created; create a class that extends it");
+        throw runtimeError(cls->name->utf8() + " is abstract and cannot be created; create a class that extends it");
     if (cls->isInterface)
-        throw runtimeError(cls->name->chars + " is an interface and cannot be created; create a class that implements it");
+        throw runtimeError(cls->name->utf8() + " is an interface and cannot be created; create a class that implements it");
     if (cls->enumSealed)
-        throw runtimeError("enum " + cls->name->chars + " has only the entries it declares; " + cls->name->chars +
+        throw runtimeError("enum " + cls->name->utf8() + " has only the entries it declares; " + cls->name->utf8() +
                            "() cannot make another");
     // A generic class's type arguments, given by WithTypes: the object keeps its type.
     const ObjTypeInfo* typeArgs = std::exchange(pendingTypeArgs_, nullptr);
@@ -2867,7 +2957,7 @@ bool VM::construct(ObjClass* cls, int argc, bool packed, const Value* captures, 
             return true;
         }
         box->constructing = false;
-        if (argc != 0) throw runtimeError(cls->name->chars + "() takes no arguments but got " + std::to_string(argc));
+        if (argc != 0) throw runtimeError(cls->name->utf8() + "() takes no arguments but got " + std::to_string(argc));
         return false;
     }
     if (!cls->inlineLaid.load(std::memory_order_acquire)) layInline(cls);
@@ -2888,7 +2978,7 @@ bool VM::construct(ObjClass* cls, int argc, bool packed, const Value* captures, 
         return true;
     }
     instance->constructing = false;
-    if (argc != 0) throw runtimeError(cls->name->chars + "() takes no arguments but got " + std::to_string(argc));
+    if (argc != 0) throw runtimeError(cls->name->utf8() + "() takes no arguments but got " + std::to_string(argc));
     return false;
 }
 
@@ -2910,7 +3000,7 @@ void VM::checkRequiredFields(ObjInstance* instance, const ObjClosure* init) {
 
     for (ObjString* name : owner->ownRequired)
         if (!instance->hasValue(name))
-            throw runtimeError(owner->name->chars + ".init() must set field '" + name->chars + "'");
+            throw runtimeError(owner->name->utf8() + ".init() must set field '" + name->utf8() + "'");
 }
 
 // Enforces the field declarations of a class that has any (its own or inherited): only
@@ -2920,19 +3010,20 @@ void VM::checkFieldAssignment(ObjInstance* instance, ObjString* stored, Value va
     ObjClass* cls = instance->cls;
     // A property with accessors keeps its value under "field:" and its name; messages say the name.
     struct Shown {
-        std::string chars;
+        std::string text;
+        const std::string& utf8() const { return text; }
     };
-    const Shown shown{stored->chars.rfind("field:", 0) == 0 ? stored->chars.substr(6) : stored->chars};
+    const Shown shown{stored->utf8().rfind("field:", 0) == 0 ? stored->utf8().substr(6) : stored->utf8()};
     const Shown* const name = &shown;
     const Value* index = cls->declaredIndex.find(stored);
     if (index == nullptr)
-        throw runtimeError(cls->name->chars + " has no field '" + name->chars +
+        throw runtimeError(cls->name->utf8() + " has no field '" + name->utf8() +
                            "'; fields must be declared in the class with val or var");
     size_t at = static_cast<size_t>(index->as.i);
 
     if (cls->declared[at].isVal && instance->hasValue(stored) &&
         !(cls->declared[at].overrides && instance->constructing))
-        throw runtimeError("cannot assign to val field '" + name->chars + "' of " + cls->name->chars);
+        throw runtimeError("cannot assign to val field '" + name->utf8() + "' of " + cls->name->utf8());
 
     uint8_t type = cls->declared[at].type;
     if (type == 0) return;
@@ -2949,9 +3040,10 @@ void VM::checkFieldAssignment(ObjInstance* instance, ObjString* stored, Value va
     }
 
     const ObjClass* typeClass = cls->declared[at].typeClass;
+    if (!matchesType(value, type, typeClass)) checkRange(type, value, "field '" + name->utf8() + "' of " + cls->name->utf8());
     if (!matchesType(value, type, typeClass))
-        throw runtimeError("cannot assign a value of type " + typeName(value) + " to field '" + name->chars + "' of " +
-                           cls->name->chars + ", which is declared as " + declaredTypeText(type, typeClass));
+        throw runtimeError("cannot assign a value of type " + typeName(value) + " to field '" + name->utf8() + "' of " +
+                           cls->name->utf8() + ", which is declared as " + declaredTypeText(type, typeClass));
 }
 
 // `super.name(...)`: the method of the superclass, or failing that the one that comes with an
@@ -3058,7 +3150,7 @@ void VM::ensureClassInit(ObjClass* cls) {
     if (init == nullptr) return;
     // Working out a class's static values changes the class, which every core sees.
     if (cls->core != coreId_)
-        throw notOwned("class " + cls->name->chars + " is used for the first time here, and its static values are worked out on " +
+        throw notOwned("class " + cls->name->utf8() + " is used for the first time here, and its static values are worked out on " +
                        "first use; use it once before the section");
     cls->staticInit = nullptr;  // before running it: what it works out may be asked for meanwhile
     call(Value::object(init), 0, nullptr);
@@ -3077,9 +3169,10 @@ void VM::checkStaticType(ObjClass* owner, FieldDecl& field, Value value) {
             throw runtimeError("a type must be a class or a built-in type, not a value of type " + typeName(resolved));
         field.typeClass = asClass(resolved);
     }
+    if (!matchesType(value, type, field.typeClass)) checkRange(type, value, "static field '" + field.name->utf8() + "' of " + owner->name->utf8());
     if (!matchesType(value, type, field.typeClass))
-        throw runtimeError("cannot assign a value of type " + typeName(value) + " to static field '" + field.name->chars +
-                           "' of " + owner->name->chars + ", which is declared as " + declaredTypeText(type, field.typeClass));
+        throw runtimeError("cannot assign a value of type " + typeName(value) + " to static field '" + field.name->utf8() +
+                           "' of " + owner->name->utf8() + ", which is declared as " + declaredTypeText(type, field.typeClass));
 }
 
 // `Class.name = value`. A declared static field keeps its rules (a val stays as it is, a type
@@ -3093,7 +3186,7 @@ void VM::assignStatic(ObjClass* cls, ObjString* name, Value value) {
     for (ObjClass* k = cls; k != nullptr; k = k->super) {
         if (const Value* index = k->staticIndex.find(name)) {
             FieldDecl& field = k->staticDeclared[static_cast<size_t>(index->as.i)];
-            if (field.isVal) throw runtimeError("cannot assign to static val '" + name->chars + "' of " + k->name->chars);
+            if (field.isVal) throw runtimeError("cannot assign to static val '" + name->utf8() + "' of " + k->name->utf8());
             checkStaticType(k, field, value);
             k->statics.set(name, value);
             return;
@@ -3103,7 +3196,7 @@ void VM::assignStatic(ObjClass* cls, ObjString* name, Value value) {
             return;
         }
         if (k->staticGetters.find(name) != nullptr)
-            throw runtimeError("static property '" + name->chars + "' of " + k->name->chars +
+            throw runtimeError("static property '" + name->utf8() + "' of " + k->name->utf8() +
                                " cannot be assigned: it has no setter");
     }
     cls->statics.set(name, value);
@@ -3124,7 +3217,7 @@ void VM::setProperty(Value obj, ObjString* name, Value value) {
         ObjInstance* instance = asInstance(obj);
         guardWrite(instance);
         if (instance->cls->isEnum && (name == names.name || name == names.ordinal))
-            throw runtimeError("cannot assign to '" + name->chars + "' of an entry of enum " + instance->cls->name->chars);
+            throw runtimeError("cannot assign to '" + name->utf8() + "' of an entry of enum " + instance->cls->name->utf8());
         checkFieldAssignment(instance, name, value);  // every field is declared (R24)
         if (instance->inlined) {
             const FieldDecl* decl = instance->declOf(name);
@@ -3141,11 +3234,11 @@ void VM::setProperty(Value obj, ObjString* name, Value value) {
             }
         }
         if (!instance->setField(name, own(value)))
-            throw runtimeError(instance->cls->name->chars + " has no field '" + name->chars + "'");
+            throw runtimeError(instance->cls->name->utf8() + " has no field '" + name->utf8() + "'");
     } else if (obj.isObjType(ObjType::Class)) {
         assignStatic(asClass(obj), name, own(value));
     } else {
-        throw runtimeError("cannot set property '" + name->chars + "' on a value of type " + typeName(obj));
+        throw runtimeError("cannot set property '" + name->utf8() + "' on a value of type " + typeName(obj));
     }
 }
 
@@ -3181,7 +3274,7 @@ Value VM::getIndex(Value obj, Value index) {
                 if (!resolveIndex(toInt(index, "string index"), text->length, i))
                     throw runtimeError("string index " + std::to_string(index.as.i) + " is out of range (length " +
                                        std::to_string(text->length) + ")");
-                return str(std::string(text->character(i)));
+                return Value::character(text->at(i));  // a char (D24)
             }
             case ObjType::Map: {
                 const Value* found = asMap(obj)->map.find(own(index));
@@ -3193,7 +3286,7 @@ Value VM::getIndex(Value obj, Value index) {
                 if (!resolveIndex(toInt(index, "bytes index"), data.size(), i))
                     throw runtimeError("bytes index " + std::to_string(index.as.i) + " is out of range (size " +
                                        std::to_string(data.size()) + ")");
-                return Value::integer(data[i]);
+                return Value::byte(data[i]);  // a byte (D19)
             }
             default:
                 break;
@@ -3221,7 +3314,7 @@ void VM::setIndex(Value obj, Value index, Value value) {
         if (!resolveIndex(toInt(index, "bytes index"), data.size(), i))
             throw runtimeError("bytes index " + std::to_string(index.as.i) + " is out of range (size " +
                                std::to_string(data.size()) + ")");
-        if (!value.isInt() || value.as.i < 0 || value.as.i > 255)
+        if (!value.isByte() && (!value.isInt() || value.as.i < 0 || value.as.i > 255))
             throw runtimeError("a byte is a whole number from 0 to 255, not " + stringify(value));
         // In a parallel section over the parts of a buffer, a core writes its own part of it.
         if (obj.as.obj->core != coreId_ && !(obj.as.obj == bandObject_ && i >= bandFrom_ && i < bandTo_)) {
@@ -3244,6 +3337,42 @@ bool VM::binarySlow(Op op) {
     guardRead(b);
     ObjString* symbol = opNames_[static_cast<int>(op)];
 
+    // A byte in arithmetic is the int it holds, so byte + byte is an int (D19).
+    if ((a.isByte() && (b.isNumber() || b.isByte())) || (b.isByte() && a.isNumber())) {
+        if (a.isByte()) sp_[-2] = a = Value::integer(a.as.i);
+        if (b.isByte()) sp_[-1] = b = Value::integer(b.as.i);
+        return numberArithmetic(op);
+    }
+    // Arithmetic with characters (D25): char + char is a string, char +- int a char,
+    // char - char an int, int +- char an int.
+    if ((a.isChar() || b.isChar()) && !a.isString() && !b.isString()) {
+        const bool plus = op == Op::Add, minus = op == Op::Sub;
+        Value result;
+        if (plus && a.isChar() && b.isChar()) {
+            std::string joined;
+            appendUtf8(joined, static_cast<uint32_t>(a.as.i));
+            appendUtf8(joined, static_cast<uint32_t>(b.as.i));
+            result = str(std::move(joined));
+        } else if ((plus || minus) && a.isChar() && b.isInt()) {
+            int64_t c;
+            if ((plus ? addOverflows(a.as.i, b.as.i, c) : subOverflows(a.as.i, b.as.i, c)) || !isCharacter(c))
+                throw runtimeError(quoteCharacter(static_cast<uint32_t>(a.as.i)) + (plus ? " + " : " - ") + std::to_string(b.as.i) +
+                                   " is not a character: characters are numbered 0 to 1114111, leaving out 55296 to 57343");
+            result = Value::character(static_cast<uint32_t>(c));
+        } else if (minus && a.isChar() && b.isChar()) {
+            result = Value::integer(a.as.i - b.as.i);
+        } else if ((plus || minus) && a.isInt() && b.isChar()) {
+            int64_t n;
+            if (plus ? addOverflows(a.as.i, b.as.i, n) : subOverflows(a.as.i, b.as.i, n)) throw overflowError(op, a.as.i, b.as.i);
+            result = Value::integer(n);
+        } else {
+            throw runtimeError("unsupported operand types for '" + symbol->utf8() + "': " + typeName(a) + " and " + typeName(b));
+        }
+        sp_[-2] = result;
+        sp_--;
+        return false;
+    }
+
     if (classOf(a) != nullptr) {
         invokeOperator(a, symbol, 1);
         return true;
@@ -3251,14 +3380,22 @@ bool VM::binarySlow(Op op) {
 
     if (op == Op::Add) {
         if (a.isString() || b.isString()) {
-            std::string joined;
+            // Joined at the width of the wider part (D20).
             if (a.isString() && b.isString()) {
-                joined.reserve(asString(a)->chars.size() + asString(b)->chars.size());
-                joined += asString(a)->chars;
-                joined += asString(b)->chars;
-            } else {
-                stringifyInto(joined, a, false, 0);
-                stringifyInto(joined, b, false, 0);
+                sp_[-2] = Value::object(joinStrings(asString(a), asString(b)));
+                sp_--;
+                return false;
+            }
+            Characters joined;
+            joined.units.reserve((a.isString() ? asString(a)->units().size() : 16) + (b.isString() ? asString(b)->units().size() : 16));
+            for (const Value& part : {a, b}) {
+                if (part.isString()) {
+                    appendText(joined, asString(part));
+                } else {
+                    std::string shown;
+                    stringifyInto(shown, part, false, 0);
+                    joined.appendUtf8Text(shown);
+                }
             }
             sp_[-2] = str(std::move(joined));
             sp_--;
@@ -3305,7 +3442,7 @@ bool VM::binarySlow(Op op) {
         }
     }
 
-    throw runtimeError("unsupported operand types for '" + symbol->chars + "': " + typeName(a) + " and " + typeName(b));
+    throw runtimeError("unsupported operand types for '" + symbol->utf8() + "': " + typeName(a) + " and " + typeName(b));
 }
 
 bool VM::compareSlow(Op op) {
@@ -3319,15 +3456,32 @@ bool VM::compareSlow(Op op) {
         return true;
     }
 
+    int order = 0;
+    const bool numbers = (a.isNumber() || a.isByte()) && (b.isNumber() || b.isByte());
     if (a.isString() && b.isString()) {
-        int order = asString(a)->chars.compare(asString(b)->chars);
+        order = compareText(asString(a), asString(b));
+    } else if (a.isChar() && b.isChar()) {
+        order = a.as.i < b.as.i ? -1 : a.as.i > b.as.i;
+    } else if (numbers) {
+        // A byte compared is the number it holds.
+        const bool whole = !a.isFloat() && !b.isFloat();
+        if (whole) order = a.as.i < b.as.i ? -1 : a.as.i > b.as.i;
+        else {
+            const double x = a.isFloat() ? a.as.d : static_cast<double>(a.as.i), y = b.isFloat() ? b.as.d : static_cast<double>(b.as.i);
+            const bool result = op == Op::Lt ? x < y : op == Op::Le ? x <= y : op == Op::Gt ? x > y : x >= y;
+            sp_[-2] = Value::boolean(result);
+            sp_--;
+            return false;
+        }
+    }
+    if (a.isString() && b.isString() || (a.isChar() && b.isChar()) || numbers) {
         bool result = op == Op::Lt ? order < 0 : op == Op::Le ? order <= 0 : op == Op::Gt ? order > 0 : order >= 0;
         sp_[-2] = Value::boolean(result);
         sp_--;
         return false;
     }
 
-    throw runtimeError("cannot compare " + typeName(a) + " and " + typeName(b) + " with '" + symbol->chars + "'");
+    throw runtimeError("cannot compare " + typeName(a) + " and " + typeName(b) + " with '" + symbol->utf8() + "'");
 }
 
 // ---- Declared variable types ----
@@ -3345,6 +3499,18 @@ bool VM::matchesType(const Value& v, uint8_t type, const ObjClass* cls) const {
         case kTypeMap: return v.isObjType(ObjType::Map);
         case kTypeRange: return v.isObjType(ObjType::Range);
         case kTypeBytes: return v.isObjType(ObjType::Bytes);
+        case kTypeChar: return v.isChar();
+        case kTypeByte: return v.isByte();
+        case kTypeInt16:
+        case kTypeInt32:
+        case kTypeUint16:
+        case kTypeUint32: {
+            if (!v.isInt()) return false;
+            int64_t low, high;
+            intStorageRange(type & kTypeMask, low, high);
+            return v.as.i >= low && v.as.i <= high;
+        }
+        case kTypeFloat32: return v.isFloat();
         case kTypeType: return v.isObjType(ObjType::TypeInfo);
         case kTypeFunction:
             return v.isObjType(ObjType::Closure) || v.isObjType(ObjType::Native) ||
@@ -3364,12 +3530,71 @@ ObjClass* VM::popTypeClass(uint8_t type) {
 }
 
 std::string VM::declaredTypeText(uint8_t type, const ObjClass* cls) const {
-    return typeText(type, cls != nullptr ? cls->name->chars : std::string());
+    return typeText(type, cls != nullptr ? cls->name->utf8() : std::string());
 }
 
 AstraThrow VM::typeMismatch(const std::string& variable, uint8_t type, const ObjClass* cls, Value v) {
+    checkRange(type, v, "'" + variable + "'");
     return runtimeError("cannot assign a value of type " + typeName(v) + " to '" + variable + "', which is declared as " +
                         declaredTypeText(type, cls));
+}
+
+// An int sum, difference, product or quotient whose result does not fit in an int (D27).
+AstraThrow VM::overflowError(Op op, int64_t a, int64_t b) {
+    const char* symbol = op == Op::Add ? "+" : op == Op::Sub ? "-" : op == Op::Mul ? "*" : "/";
+    const std::string sum = op == Op::Sub && a == 0 ? "-(" + std::to_string(b) + ")" : std::to_string(a) + " " + symbol + " " + std::to_string(b);
+    std::string message = sum + " does not fit in an int, which holds -9223372036854775808 to 9223372036854775807";
+    if (op != Op::Div && !(op == Op::Sub && a == 0)) message += std::string("; write &") + symbol + " for an answer that wraps around";
+    return runtimeError(message);
+}
+
+// Arithmetic on two numbers, ints or floats, for an operator the interpreter's quick path did
+// not take (a byte among them, made an int).
+bool VM::numberArithmetic(Op op) {
+    const Value a = sp_[-2], b = sp_[-1];
+    switch (op) {
+        case Op::Shl:
+        case Op::Shr:
+        case Op::Ushr: return shift(op);
+        case Op::BitAnd:
+        case Op::BitOr:
+        case Op::BitXor: return bitwise(op);
+        default: break;
+    }
+    Value result;
+    if (a.isInt() && b.isInt()) {
+        const int64_t x = a.as.i, y = b.as.i;
+        int64_t n = 0;
+        switch (op) {
+            case Op::Add: if (addOverflows(x, y, n)) throw overflowError(op, x, y); break;
+            case Op::Sub: if (subOverflows(x, y, n)) throw overflowError(op, x, y); break;
+            case Op::Mul: if (mulOverflows(x, y, n)) throw overflowError(op, x, y); break;
+            case Op::AddWrap: n = static_cast<int64_t>(static_cast<uint64_t>(x) + static_cast<uint64_t>(y)); break;
+            case Op::SubWrap: n = static_cast<int64_t>(static_cast<uint64_t>(x) - static_cast<uint64_t>(y)); break;
+            case Op::MulWrap: n = static_cast<int64_t>(static_cast<uint64_t>(x) * static_cast<uint64_t>(y)); break;
+            case Op::Div:
+            case Op::Mod:
+                if (y == 0) throw runtimeError("division by zero");
+                if (op == Op::Div && y == -1 && x == INT64_MIN) throw overflowError(op, x, y);
+                n = y == -1 ? (op == Op::Div ? -x : 0) : op == Op::Div ? x / y : x % y;
+                break;
+            default: throw runtimeError("unsupported operand types for '" + opNames_[static_cast<int>(op)]->utf8() + "': int and int");
+        }
+        result = Value::integer(n);
+    } else {
+        const double x = a.toDouble(), y = b.toDouble();
+        switch (op) {
+            case Op::Add: result = Value::number(x + y); break;
+            case Op::Sub: result = Value::number(x - y); break;
+            case Op::Mul: result = Value::number(x * y); break;
+            case Op::Div: result = Value::number(x / y); break;
+            case Op::Mod: result = Value::number(std::fmod(x, y)); break;
+            default: throw runtimeError("unsupported operand types for '" + opNames_[static_cast<int>(op)]->utf8() + "': " + typeName(a) + " and " + typeName(b));
+        }
+    }
+    sp_[-2] = result;
+    sp_--;
+    return false;
 }
 
 // a << b and a >> b on ints. Returns true if an overloaded operator was called instead.
@@ -3384,6 +3609,9 @@ bool VM::shift(Op op) {
     if (op == Op::Shl) {
         // Bits shifted past the top are lost; a count of 64 or more leaves nothing.
         result = count >= 64 ? 0 : static_cast<int64_t>(static_cast<uint64_t>(a.as.i) << count);
+    } else if (op == Op::Ushr) {
+        // `>>>` brings in zeros, the sign bit among the bits shifted (D44).
+        result = count >= 64 ? 0 : static_cast<int64_t>(static_cast<uint64_t>(a.as.i) >> count);
     } else {
         // The sign is kept: negative numbers stay negative, ending at -1.
         if (count >= 64) result = a.as.i < 0 ? -1 : 0;
@@ -3454,7 +3682,7 @@ bool VM::iteratorNext(ObjIterator* it, Value& out) {
         case ObjType::Bytes: {
             const std::vector<uint8_t>& data = asBytes(source)->data;
             if (it->index >= data.size()) return false;
-            out = Value::integer(data[it->index++]);
+            out = Value::byte(data[it->index++]);
             return true;
         }
         case ObjType::Range: {
@@ -3465,12 +3693,9 @@ bool VM::iteratorNext(ObjIterator* it, Value& out) {
             return true;
         }
         case ObjType::String: {
-            // Yields whole UTF-8 characters: a lead byte plus its continuation bytes.
-            const std::string& chars = asString(source)->chars;
-            if (it->index >= chars.size()) return false;
-            size_t begin = it->index++;
-            while (it->index < chars.size() && (static_cast<unsigned char>(chars[it->index]) & 0xC0) == 0x80) it->index++;
-            out = str(chars.substr(begin, it->index - begin));
+            const ObjString* text = asString(source);
+            if (it->index >= text->length) return false;
+            out = Value::character(text->at(it->index++));
             return true;
         }
         case ObjType::Map: {
@@ -3697,13 +3922,17 @@ void VM::run(int baseFrame) {
 // Two operands, `a` kept where it is, on the stack's top held in a register: two floats or two
 // ints are worked out at once, and `done` ends the instruction; anything else falls through to
 // the instruction's own code, the stack as it was (M6.5 part 4).
-#define FAST_ARITHMETIC(a, b, op, done)                                       \
+// Two ints whose result does not fit (D27) fall through as well, to be told so.
+#define FAST_ARITHMETIC(a, b, op, checked, done)                              \
     if ((a).isFloat() && (b).isFloat()) {                                     \
         (a).setFloat((a).as.d op (b).as.d);                                   \
         done;                                                                 \
     } else if ((a).isInt() && (b).isInt()) {                                  \
-        (a).setInt(static_cast<int64_t>(static_cast<uint64_t>((a).as.i) op static_cast<uint64_t>((b).as.i)));\
-        done;                                                                 \
+        int64_t sum_;                                                         \
+        if (!checked((a).as.i, (b).as.i, sum_)) {                             \
+            (a).setInt(sum_);                                                 \
+            done;                                                             \
+        }                                                                     \
     }
 #define FAST_FLOAT(a, b, op, done)                                            \
     if ((a).isFloat() && (b).isFloat()) {                                     \
@@ -3719,13 +3948,13 @@ void VM::run(int baseFrame) {
         done;                                                                 \
     }
 
-#define ARITHMETIC(op, intExpr, floatExpr)                                \
+#define ARITHMETIC(op, checked, floatExpr)                                 \
     {                                                                     \
         Value b = sp_[-1], a = sp_[-2];                                   \
         if (a.isInt() && b.isInt()) {                                     \
-            uint64_t x = static_cast<uint64_t>(a.as.i);                   \
-            uint64_t y = static_cast<uint64_t>(b.as.i);                   \
-            sp_[-2].setInt(static_cast<int64_t>(intExpr));               \
+            int64_t sum_;                                                 \
+            if (checked(a.as.i, b.as.i, sum_)) throw overflowError(op, a.as.i, b.as.i); \
+            sp_[-2].setInt(sum_);                                         \
             sp_--;                                                        \
         } else if (a.isNumber() && b.isNumber()) {                        \
             double x = a.toDouble(), y = b.toDouble();                    \
@@ -3741,18 +3970,17 @@ void VM::run(int baseFrame) {
 // The joined instructions (M6.5 part 4): `right` is the local or constant the second one names.
 // Two floats or two ints are worked out here; anything else is pushed, and goes the way of the
 // plain instruction at `plain`.
-#define JOINED_ARITHMETIC(right, intExpr, floatExpr, plain)           \
+#define JOINED_ARITHMETIC(right, checked, floatExpr, plain)           \
     {                                                                 \
         Value b = (right), a = sp_[-1];                               \
+        int64_t sum_;                                                 \
         if (a.isFloat() && b.isFloat()) {                             \
             double x = a.as.d, y = b.as.d;                            \
             sp_[-1].setFloat(floatExpr);                              \
             (void)0;                                                  \
-        } else if (a.isInt() && b.isInt()) {                          \
-            uint64_t x = static_cast<uint64_t>(a.as.i);               \
-            uint64_t y = static_cast<uint64_t>(b.as.i);               \
+        } else if (a.isInt() && b.isInt() && !checked(a.as.i, b.as.i, sum_)) { \
             sp_[-1].kind = ValueKind::Int;                            \
-            sp_[-1].as.i = static_cast<int64_t>(intExpr);             \
+            sp_[-1].as.i = sum_;                                      \
         } else {                                                      \
             *sp_++ = b;                                               \
             goto plain;                                               \
@@ -4017,7 +4245,7 @@ void VM::run(int baseFrame) {
                                 break;
                             }
                             if (cls->getters.find(name) != nullptr)
-                                throw runtimeError("property '" + name->chars + "' of " + cls->name->chars +
+                                throw runtimeError("property '" + name->utf8() + "' of " + cls->name->utf8() +
                                                    " cannot be assigned: it has no setter");
                         }
                         setProperty(receiver, name, value);
@@ -4042,9 +4270,11 @@ void VM::run(int baseFrame) {
                         uint8_t type = READ_U8();
                         ObjClass* cls = popTypeClass(type);
                         if (sp_[-1].kind == ValueKind::EnumName) sp_[-1] = settleEnumName(sp_[-1], cls);
-                        if (!matchesType(sp_[-1], type, cls))
-                            throw runtimeError("argument '" + parameter->chars + "' of " + frame->closure->proto->name +
+                        if (!matchesType(sp_[-1], type, cls)) {
+                            checkRange(type, sp_[-1], "argument '" + parameter->utf8() + "' of " + frame->closure->proto->name + "()");
+                            throw runtimeError("argument '" + parameter->utf8() + "' of " + frame->closure->proto->name +
                                                "() must be " + declaredTypeText(type, cls) + ", got " + typeName(sp_[-1]));
+                        }
                         break;
                     }
                     case Op::CheckReturn: {
@@ -4063,7 +4293,7 @@ void VM::run(int baseFrame) {
                         ObjString* variable = asString(consts[READ_U16()]);
                         uint8_t type = READ_U8();
                         ObjClass* cls = popTypeClass(type);
-                        if (!matchesType(sp_[-1], type, cls)) throw typeMismatch(variable->chars, type, cls, sp_[-1]);
+                        if (!matchesType(sp_[-1], type, cls)) throw typeMismatch(variable->utf8(), type, cls, sp_[-1]);
                         break;
                     }
 
@@ -4075,7 +4305,7 @@ void VM::run(int baseFrame) {
                         ObjString* name = asString(consts[READ_U16()]);
                         Value value = *frame->closure->upvalues[static_cast<size_t>(index)]->location;
                         if (value.kind == ValueKind::Undefined)
-                            throw runtimeError("'" + name->chars + "' is used before it has a value");
+                            throw runtimeError("'" + name->utf8() + "' is used before it has a value");
                         *sp_++ = value;
                         break;
                     }
@@ -4098,7 +4328,7 @@ void VM::run(int baseFrame) {
                         ObjString* name = asString(consts[READ_U16()]);
                         const Value value = *cell->location;
                         if (value.kind == ValueKind::Undefined)
-                            throw runtimeError("'" + name->chars + "' is used before it has a value");
+                            throw runtimeError("'" + name->utf8() + "' is used before it has a value");
                         *sp_++ = value;
                         break;
                     }
@@ -4311,9 +4541,10 @@ void VM::run(int baseFrame) {
                                 break;
                             }
                             if (const FieldDecl* decl = instance->declOf(name); decl != nullptr && decl->payload != FieldDecl::NoPayload) {
-                                // A field kept as its payload alone (M6.6 part 6), remembered so.
+                                // A field kept as its payload alone (M6.6 part 6), remembered so;
+                                // a narrow one (D148) is read here each time.
                                 sp_[-1] = instance->payloadOf(*decl);
-                                if (caches != nullptr)
+                                if (caches != nullptr && decl->payload != FieldDecl::NarrowPayload)
                                     caches[cache].store(static_cast<uint64_t>(instance->shape) << 32 |
                                                             static_cast<uint64_t>(sizeof(ObjInstance) + decl->payloadOffset) << 16 |
                                                             static_cast<uint64_t>(decl->payloadBit) << 8 | 0x80u | decl->payloadValueKind(),
@@ -4482,7 +4713,7 @@ void VM::run(int baseFrame) {
                                 break;
                             }
                             if (cls->getters.find(name) != nullptr)
-                                throw runtimeError("property '" + name->chars + "' of " + cls->name->chars +
+                                throw runtimeError("property '" + name->utf8() + "' of " + cls->name->utf8() +
                                                    " cannot be assigned: it has no setter");
                         }
                         setProperty(sp_[-2], name, value);
@@ -4498,7 +4729,8 @@ void VM::run(int baseFrame) {
                             const ObjInstance* instance = asInstance(sp_[-2]);
                             const FieldDecl* decl = instance->declOf(name);
                             const int64_t at = decl != nullptr && decl->payload == FieldDecl::NoPayload ? decl->slot : -1;
-                            if (decl != nullptr && decl->payload != FieldDecl::NoPayload && !(decl->isVal && decl->overrides)) {
+                            if (decl != nullptr && decl->payload != FieldDecl::NoPayload && decl->payload != FieldDecl::NarrowPayload &&
+                                !(decl->isVal && decl->overrides)) {
                                 // A payload (M6.6 part 6): its offset, its bit and its kind.
                                 caches[cache].store(static_cast<uint64_t>(instance->shape) << 32 |
                                                         static_cast<uint64_t>(sizeof(ObjInstance) + decl->payloadOffset) << 16 |
@@ -4592,7 +4824,7 @@ void VM::run(int baseFrame) {
                         CHECK_ACCESS(sp_[-1], 1, false, true);
                         const Value* method = superMethod(super, sp_[-1], name);
                         if (method == nullptr && super.isNull())
-                            throw runtimeError("there is no '" + name->chars + "' for super to mean: this class has no superclass, " +
+                            throw runtimeError("there is no '" + name->utf8() + "' for super to mean: this class has no superclass, " +
                                                std::string("and its interfaces come with none"));
                         if (method == nullptr && !super.isObjType(ObjType::Class)) throw runtimeError("superclass must be a class");
                         if (method == nullptr) {
@@ -4611,34 +4843,34 @@ void VM::run(int baseFrame) {
                                 sp_[-1] = fieldRead(field);
                                 break;
                             }
-                            throw runtimeError("undefined method or property '" + name->chars + "' in superclass " +
-                                               asClass(super)->name->chars);
+                            throw runtimeError("undefined method or property '" + name->utf8() + "' in superclass " +
+                                               asClass(super)->name->utf8());
                         }
                         sp_[-1] = Value::object(alloc<ObjBoundMethod>(sp_[-1], asClosure(*method)));
                         break;
                     }
 
                     case Op::Add:
-                        FAST_ARITHMETIC(sp[-2], sp[-1], +, sp--; continue)
+                        FAST_ARITHMETIC(sp[-2], sp[-1], +, addOverflows, sp--; continue)
                     plainAdd:
-                        ARITHMETIC(Op::Add, x + y, x + y)
+                        ARITHMETIC(Op::Add, addOverflows, x + y)
                     case Op::Sub:
-                        FAST_ARITHMETIC(sp[-2], sp[-1], -, sp--; continue)
+                        FAST_ARITHMETIC(sp[-2], sp[-1], -, subOverflows, sp--; continue)
                     plainSub:
-                        ARITHMETIC(Op::Sub, x - y, x - y)
+                        ARITHMETIC(Op::Sub, subOverflows, x - y)
                     case Op::Mul:
-                        FAST_ARITHMETIC(sp[-2], sp[-1], *, sp--; continue)
+                        FAST_ARITHMETIC(sp[-2], sp[-1], *, mulOverflows, sp--; continue)
                     plainMul:
-                        ARITHMETIC(Op::Mul, x * y, x * y)
+                        ARITHMETIC(Op::Mul, mulOverflows, x * y)
                     case Op::AddLocal:
-                        FAST_ARITHMETIC(sp[-1], base[FAST_U16(0)], +, ip += 2; continue)
-                        JOINED_ARITHMETIC(base[READ_U16()], x + y, x + y, plainAdd)
+                        FAST_ARITHMETIC(sp[-1], base[FAST_U16(0)], +, addOverflows, ip += 2; continue)
+                        JOINED_ARITHMETIC(base[READ_U16()], addOverflows, x + y, plainAdd)
                     case Op::SubLocal:
-                        FAST_ARITHMETIC(sp[-1], base[FAST_U16(0)], -, ip += 2; continue)
-                        JOINED_ARITHMETIC(base[READ_U16()], x - y, x - y, plainSub)
+                        FAST_ARITHMETIC(sp[-1], base[FAST_U16(0)], -, subOverflows, ip += 2; continue)
+                        JOINED_ARITHMETIC(base[READ_U16()], subOverflows, x - y, plainSub)
                     case Op::MulLocal:
-                        FAST_ARITHMETIC(sp[-1], base[FAST_U16(0)], *, ip += 2; continue)
-                        JOINED_ARITHMETIC(base[READ_U16()], x * y, x * y, plainMul)
+                        FAST_ARITHMETIC(sp[-1], base[FAST_U16(0)], *, mulOverflows, ip += 2; continue)
+                        JOINED_ARITHMETIC(base[READ_U16()], mulOverflows, x * y, plainMul)
                     case Op::DivLocal:
                         FAST_FLOAT(sp[-1], base[FAST_U16(0)], /, ip += 2; continue)
                         JOINED_FLOAT(base[READ_U16()], x / y, plainDiv)
@@ -4659,14 +4891,14 @@ void VM::run(int baseFrame) {
                         FAST_COMPARISON(sp[-1], base[FAST_U16(0)], ==, ip += 2; continue)
                         JOINED_COMPARISON(base[READ_U16()], ==, plainEq)
                     case Op::AddConst:
-                        FAST_ARITHMETIC(sp[-1], consts[FAST_U16(0)], +, ip += 2; continue)
-                        JOINED_ARITHMETIC(consts[READ_U16()], x + y, x + y, plainAdd)
+                        FAST_ARITHMETIC(sp[-1], consts[FAST_U16(0)], +, addOverflows, ip += 2; continue)
+                        JOINED_ARITHMETIC(consts[READ_U16()], addOverflows, x + y, plainAdd)
                     case Op::SubConst:
-                        FAST_ARITHMETIC(sp[-1], consts[FAST_U16(0)], -, ip += 2; continue)
-                        JOINED_ARITHMETIC(consts[READ_U16()], x - y, x - y, plainSub)
+                        FAST_ARITHMETIC(sp[-1], consts[FAST_U16(0)], -, subOverflows, ip += 2; continue)
+                        JOINED_ARITHMETIC(consts[READ_U16()], subOverflows, x - y, plainSub)
                     case Op::MulConst:
-                        FAST_ARITHMETIC(sp[-1], consts[FAST_U16(0)], *, ip += 2; continue)
-                        JOINED_ARITHMETIC(consts[READ_U16()], x * y, x * y, plainMul)
+                        FAST_ARITHMETIC(sp[-1], consts[FAST_U16(0)], *, mulOverflows, ip += 2; continue)
+                        JOINED_ARITHMETIC(consts[READ_U16()], mulOverflows, x * y, plainMul)
                     case Op::DivConst:
                         FAST_FLOAT(sp[-1], consts[FAST_U16(0)], /, ip += 2; continue)
                         JOINED_FLOAT(consts[READ_U16()], x / y, plainDiv)
@@ -4695,19 +4927,19 @@ void VM::run(int baseFrame) {
                         continue;
                     case Op::AddLocals:
                         sp[0] = base[FAST_U16(0)];
-                        FAST_ARITHMETIC(sp[0], base[FAST_U16(2)], +, sp++; ip += 4; continue)
+                        FAST_ARITHMETIC(sp[0], base[FAST_U16(2)], +, addOverflows, sp++; ip += 4; continue)
                         *sp_++ = base[READ_U16()];
                         *sp_++ = base[READ_U16()];
                         goto plainAdd;
                     case Op::SubLocals:
                         sp[0] = base[FAST_U16(0)];
-                        FAST_ARITHMETIC(sp[0], base[FAST_U16(2)], -, sp++; ip += 4; continue)
+                        FAST_ARITHMETIC(sp[0], base[FAST_U16(2)], -, subOverflows, sp++; ip += 4; continue)
                         *sp_++ = base[READ_U16()];
                         *sp_++ = base[READ_U16()];
                         goto plainSub;
                     case Op::MulLocals:
                         sp[0] = base[FAST_U16(0)];
-                        FAST_ARITHMETIC(sp[0], base[FAST_U16(2)], *, sp++; ip += 4; continue)
+                        FAST_ARITHMETIC(sp[0], base[FAST_U16(2)], *, mulOverflows, sp++; ip += 4; continue)
                         *sp_++ = base[READ_U16()];
                         *sp_++ = base[READ_U16()];
                         goto plainMul;
@@ -4756,9 +4988,11 @@ void VM::run(int baseFrame) {
                         const int slot = READ_U16();
                         ObjString* parameter = asString(consts[READ_U16()]);
                         const uint8_t type = READ_U8();
-                        if (!matchesType(base[slot], type, nullptr))
-                            throw runtimeError("argument '" + parameter->chars + "' of " + frame->closure->proto->name +
+                        if (!matchesType(base[slot], type, nullptr)) {
+                            checkRange(type, base[slot], "argument '" + parameter->utf8() + "' of " + frame->closure->proto->name + "()");
+                            throw runtimeError("argument '" + parameter->utf8() + "' of " + frame->closure->proto->name +
                                                "() must be " + declaredTypeText(type, nullptr) + ", got " + typeName(base[slot]));
+                        }
                         break;
                     }
                     case Op::Div:
@@ -4766,9 +5000,8 @@ void VM::run(int baseFrame) {
                         Value b = sp_[-1], a = sp_[-2];
                         if (a.isInt() && b.isInt()) {
                             if (b.as.i == 0) throw runtimeError("division by zero");
-                            // INT64_MIN / -1 overflows; negating with wraparound is the same answer.
-                            int64_t result = b.as.i == -1 ? static_cast<int64_t>(0 - static_cast<uint64_t>(a.as.i))
-                                                          : a.as.i / b.as.i;
+                            if (b.as.i == -1 && a.as.i == INT64_MIN) throw overflowError(Op::Div, a.as.i, b.as.i);  // (D27)
+                            int64_t result = b.as.i == -1 ? -a.as.i : a.as.i / b.as.i;
                             sp_[-2] = Value::integer(result);
                             sp_--;
                         } else if (a.isNumber() && b.isNumber()) {
@@ -4797,8 +5030,23 @@ void VM::run(int baseFrame) {
                         break;
                     }
 
+                    case Op::AddWrap:
+                    case Op::SubWrap:
+                    case Op::MulWrap: {
+                        // `&+`, `&-` and `&*`: an int sum, difference or product that wraps around (D27).
+                        const Op op = static_cast<Op>(ip[-1]);
+                        const Value b = sp_[-1], a = sp_[-2];
+                        if (!a.isInt() || !b.isInt())
+                            throw runtimeError(std::string(op == Op::AddWrap ? "&+" : op == Op::SubWrap ? "&-" : "&*") +
+                                               " works on ints, not on " + typeName(a) + " and " + typeName(b));
+                        const uint64_t x = static_cast<uint64_t>(a.as.i), y = static_cast<uint64_t>(b.as.i);
+                        sp_[-2] = Value::integer(static_cast<int64_t>(op == Op::AddWrap ? x + y : op == Op::SubWrap ? x - y : x * y));
+                        sp_--;
+                        break;
+                    }
                     case Op::Shl:
                     case Op::Shr:
+                    case Op::Ushr:
                         SAVE_IP();
                         if (shift(static_cast<Op>(ip[-1]))) LOAD_FRAME();
                         break;
@@ -4812,7 +5060,7 @@ void VM::run(int baseFrame) {
 
                     case Op::BitNot: {
                         Value a = sp_[-1];
-                        if (a.isInt()) {
+                        if (a.isInt() || a.isByte()) {
                             sp_[-1] = Value::integer(~a.as.i);
                         } else if (classOf(a) != nullptr) {
                             SAVE_IP();
@@ -4827,9 +5075,12 @@ void VM::run(int baseFrame) {
                     case Op::Neg: {
                         Value a = sp_[-1];
                         if (a.isInt()) {
-                            sp_[-1] = Value::integer(static_cast<int64_t>(0 - static_cast<uint64_t>(a.as.i)));
+                            if (a.as.i == INT64_MIN) throw overflowError(Op::Sub, 0, a.as.i);  // (D27)
+                            sp_[-1] = Value::integer(-a.as.i);
                         } else if (a.isFloat()) {
                             sp_[-1] = Value::number(-a.as.d);
+                        } else if (a.isByte()) {
+                            sp_[-1] = Value::integer(-a.as.i);  // a byte negated is an int (D19)
                         } else if (classOf(a) != nullptr) {
                             SAVE_IP();
                             invokeOperator(a, names.opNeg, 0);
@@ -5073,12 +5324,12 @@ void VM::run(int baseFrame) {
                         CHECK_ACCESS(sp_[-argc - 1], 1, false, true);
                         const Value* method = superMethod(super, sp_[-argc - 1], name);
                         if (method == nullptr && super.isNull())
-                            throw runtimeError("there is no '" + name->chars + "' for super to mean: this class has no superclass, " +
+                            throw runtimeError("there is no '" + name->utf8() + "' for super to mean: this class has no superclass, " +
                                                std::string("and its interfaces come with none"));
                         if (method == nullptr && !super.isObjType(ObjType::Class)) throw runtimeError("superclass must be a class");
                         if (method == nullptr)
-                            throw runtimeError("undefined method '" + name->chars + "' in superclass " +
-                                               asClass(super)->name->chars);
+                            throw runtimeError("undefined method '" + name->utf8() + "' in superclass " +
+                                               asClass(super)->name->utf8());
                         SAVE_IP();
                         if (trailing) callTrailing(asClosure(*method), argc);
                         else callClosure(asClosure(*method), argc);
@@ -5099,7 +5350,7 @@ void VM::run(int baseFrame) {
                         ObjClosure* init = asClass(super)->init;
                         if (init == nullptr) {
                             if (argc != 0)
-                                throw runtimeError(asClass(super)->name->chars + "() takes no arguments but got " +
+                                throw runtimeError(asClass(super)->name->utf8() + "() takes no arguments but got " +
                                                    std::to_string(argc));
                             break;  // nothing to run; the receiver stays as the result
                         }
@@ -5155,7 +5406,7 @@ void VM::run(int baseFrame) {
                             }
                             if (method == nullptr || !method->isObjType(ObjType::Closure)) {
                                 if (cls->isAbstract) continue;  // one left to the classes below
-                                throw runtimeError("class " + cls->name->chars + " has no form " + name->chars);
+                                throw runtimeError("class " + cls->name->utf8() + " has no form " + name->utf8());
                             }
                             forms.push_back(asClosure(*method));
                             cls->methods.set(name, *method);
@@ -5269,18 +5520,18 @@ void VM::run(int baseFrame) {
                                 throw runtimeError("superclass must be a class, got " + typeName(types[i]));
                             ObjClass* type = asClass(types[i]);
                             if (type->isInterface) continue;
-                            if (type->isEnum) throw runtimeError("cannot inherit from enum " + type->name->chars);
+                            if (type->isEnum) throw runtimeError("cannot inherit from enum " + type->name->utf8());
                             if (type->isValue)
-                                throw runtimeError("'" + subclass->name->chars + "' cannot extend value '" + type->name->chars +
+                                throw runtimeError("'" + subclass->name->utf8() + "' cannot extend value '" + type->name->utf8() +
                                                    "': a value type has no subclasses");
                             if (subclass->isValue)
-                                throw runtimeError("value '" + subclass->name->chars + "' cannot extend class '" + type->name->chars +
+                                throw runtimeError("value '" + subclass->name->utf8() + "' cannot extend class '" + type->name->utf8() +
                                                    "': a value type may only implement interfaces");
                             if (subclass->isInterface)
-                                throw runtimeError("interface " + subclass->name->chars + " cannot extend class " + type->name->chars);
+                                throw runtimeError("interface " + subclass->name->utf8() + " cannot extend class " + type->name->utf8());
                             if (superclass != nullptr)
-                                throw runtimeError("class " + subclass->name->chars + " can have only one superclass, but " +
-                                                   superclass->name->chars + " and " + type->name->chars + " are both classes");
+                                throw runtimeError("class " + subclass->name->utf8() + " can have only one superclass, but " +
+                                                   superclass->name->utf8() + " and " + type->name->utf8() + " are both classes");
                             superclass = type;
                         }
                         if (superclass != nullptr) {
@@ -5351,7 +5602,7 @@ void VM::run(int baseFrame) {
                         break;
                     case Op::MissingArg: {
                         ObjString* parameter = asString(consts[READ_U16()]);
-                        throw runtimeError(frame->closure->proto->name + "() is missing argument '" + parameter->chars + "'");
+                        throw runtimeError(frame->closure->proto->name + "() is missing argument '" + parameter->utf8() + "'");
                     }
                     case Op::DataField: {
                         ObjString* name = asString(consts[READ_U16()]);
@@ -5374,7 +5625,7 @@ void VM::run(int baseFrame) {
                         } else if (classOf(whole) != nullptr && classOf(whole)->isData) {
                             const ObjClass* cls = classOf(whole);
                             if (index >= cls->components.size())
-                                throw runtimeError("cannot take a " + which + " part from " + cls->name->chars + ", which has " +
+                                throw runtimeError("cannot take a " + which + " part from " + cls->name->utf8() + ", which has " +
                                                    std::to_string(cls->components.size()));
                             SAVE_IP();
                             sp_[-1] = getProperty(whole, cls->components[index]);
@@ -5492,10 +5743,10 @@ void VM::run(int baseFrame) {
                         // a field or property for a field or property; or something an interface
                         // or an abstract class asks for, which either kind supplies.
                         auto has = [&](const ObjClass* from) {
-                            if (!property && from->methods.find(name) == nullptr && name->chars.find('(') != std::string::npos) {
+                            if (!property && from->methods.find(name) == nullptr && name->utf8().find('(') != std::string::npos) {
                                 // A form of a name with several (D56): the one above may have been
                                 // compiled where the name had one form, under the name alone.
-                                const Value* plain = from->methods.find(intern(name->chars.substr(0, name->chars.find('('))));
+                                const Value* plain = from->methods.find(intern(name->utf8().substr(0, name->utf8().find('('))));
                                 return plain != nullptr && plain->isObjType(ObjType::Closure) && !asClosure(*plain)->proto->chooser &&
                                        asClosure(*plain)->proto->signature.empty();
                             }
@@ -5512,14 +5763,14 @@ void VM::run(int baseFrame) {
                         if (marked) {
                             // toString and == are there for every object to replace.
                             if (!inherited && askedBy == nullptr && name != names.toString && name != names.opEq)
-                                throw runtimeError("'" + name->chars + "' in class " + cls->name->chars +
+                                throw runtimeError("'" + name->utf8() + "' in class " + cls->name->utf8() +
                                                    " is marked override, but there is nothing of that name for it to replace");
                         } else if (askedBy != nullptr) {
-                            throw runtimeError("'" + name->chars + "' in class " + cls->name->chars + " is what " +
-                                               (askedBy->isInterface ? "interface " : "abstract class ") + askedBy->name->chars +
+                            throw runtimeError("'" + name->utf8() + "' in class " + cls->name->utf8() + " is what " +
+                                               (askedBy->isInterface ? "interface " : "abstract class ") + askedBy->name->utf8() +
                                                " asks for; write override in front of it");
                         } else if (inherited) {
-                            throw runtimeError("'" + name->chars + "' in class " + cls->name->chars +
+                            throw runtimeError("'" + name->utf8() + "' in class " + cls->name->utf8() +
                                                " takes the place of the one it inherits; write override in front of it");
                         }
                         break;
@@ -5561,9 +5812,9 @@ void VM::run(int baseFrame) {
                             for (const auto& [wanted, by] : cls->required)
                                 if (open == nullptr && wanted == name && by != cls) open = by;
                             if (open != nullptr)
-                                throw runtimeError("'" + name->chars + "' in class " + cls->name->chars + " cannot be " +
+                                throw runtimeError("'" + name->utf8() + "' in class " + cls->name->utf8() + " cannot be " +
                                                    (kind == kAccessPrivate ? "private" : kind == kAccessProtected ? "protected" : "internal") +
-                                                   ": it is open in " + (open->isInterface ? "interface " : "class ") + open->name->chars);
+                                                   ": it is open in " + (open->isInterface ? "interface " : "class ") + open->name->utf8());
                         }
                         declareAccess(cls, cls->accessMarks, name, id, kind, write);
                         break;
@@ -5601,8 +5852,8 @@ void VM::run(int baseFrame) {
                             if (cls->methods.find(name) != nullptr || cls->declaredIndex.find(name) != nullptr ||
                                 cls->getters.find(name) != nullptr)
                                 continue;
-                            throw runtimeError("class " + cls->name->chars + " must have '" + name->chars + "', which " +
-                                               (interface->isInterface ? "interface " : "abstract class ") + interface->name->chars +
+                            throw runtimeError("class " + cls->name->utf8() + " must have '" + name->utf8() + "', which " +
+                                               (interface->isInterface ? "interface " : "abstract class ") + interface->name->utf8() +
                                                " requires");
                         }
                         cls->required.clear();
@@ -5728,7 +5979,7 @@ void VM::run(int baseFrame) {
                         ObjClass* cls = asClass(sp_[-1]);
                         if (const Value* inherited = cls->declaredIndex.find(name)) {
                             if ((flags & kFieldOverride) == 0)
-                                throw runtimeError("field '" + name->chars + "' of class " + cls->name->chars +
+                                throw runtimeError("field '" + name->utf8() + "' of class " + cls->name->utf8() +
                                                    " is already declared by a superclass; write override to declare it again");
                             field.overrides = true;
                             {
@@ -5823,11 +6074,29 @@ void VM::run(int baseFrame) {
                     case Op::BuildString: {
                         int count = READ_U16();
                         SAVE_IP();
-                        std::string text;
+                        // At the width of the widest part (D20), room made for all of it at once.
+                        Characters text;
+                        size_t characters = 0;
+                        for (int i = 0; i < count; i++) {
+                            const Value part = sp_[i - count];
+                            if (part.isString()) {
+                                characters += asString(part)->length;
+                                text.width = std::max(text.width, asString(part)->width);
+                            } else {
+                                characters += 20;
+                            }
+                        }
+                        text.units.reserve(characters * text.width);
+                        std::string shown;
                         for (int i = 0; i < count; i++) {
                             Value part = sp_[i - count];
-                            if (part.isString()) text += asString(part)->chars;
-                            else stringifyInto(text, part, false, 0);
+                            if (part.isString()) {
+                                appendText(text, asString(part));
+                            } else {
+                                shown.clear();
+                                stringifyInto(shown, part, false, 0);
+                                text.appendUtf8Text(shown);
+                            }
                         }
                         sp_ -= count;
                         *sp_++ = str(std::move(text));
@@ -6074,8 +6343,8 @@ const uint8_t* VM::placeInstruction(Op op, const uint8_t* ip, CallFrame* frame) 
             ObjInstance* instance = asInstance(obj);
             guardWrite(instance);
             const FieldDecl* decl = instance->declOf(name);
-            if (decl == nullptr) throw runtimeError("undefined property '" + name->chars + "' on " + instance->cls->name->chars);
-            if (decl->isVal) throw runtimeError("cannot assign to val field '" + name->chars + "' of " + instance->cls->name->chars);
+            if (decl == nullptr) throw runtimeError("undefined property '" + name->utf8() + "' on " + instance->cls->name->utf8());
+            if (decl->isVal) throw runtimeError("cannot assign to val field '" + name->utf8() + "' of " + instance->cls->name->utf8());
             if (decl->payload != FieldDecl::NoPayload) {
                 Value kept = Value::null();
                 instance->read(name, kept);
@@ -6124,7 +6393,7 @@ const uint8_t* VM::typeInstruction(Op op, const uint8_t* ip, CallFrame* frame) {
     std::atomic<uint64_t>* const caches = frame->closure->proto->caches.get();
     switch (op) {
         case Op::MakeType: {
-            const std::string& shape = asString(consts[(ip += 2, operandU16(ip - 2))])->chars;
+            const std::string& shape = asString(consts[(ip += 2, operandU16(ip - 2))])->utf8();
             const int count = shapeOperands(shape);
             const Value* operand = sp_ - count;
             size_t at = 0;
@@ -6191,7 +6460,7 @@ const uint8_t* VM::typeInstruction(Op op, const uint8_t* ip, CallFrame* frame) {
             break;
         }
         case Op::CheckResult: {
-            const std::string& name = asString(consts[(ip += 2, operandU16(ip - 2))])->chars;
+            const std::string& name = asString(consts[(ip += 2, operandU16(ip - 2))])->utf8();
             if (!sp_[-1].isObjType(ObjType::TypeInfo)) throw runtimeError("invalid type");
             const ObjTypeInfo* type = static_cast<const ObjTypeInfo*>(sp_[-1].as.obj);
             if (!fitsType(sp_[-2], type))
@@ -6249,8 +6518,13 @@ void VM::stringifyInto(std::string& out, Value v, bool quote, int depth) {
     switch (v.kind) {
         case ValueKind::Null: out += "null"; return;
         case ValueKind::Bool: out += v.as.b ? "true" : "false"; return;
-        case ValueKind::Int: out += std::to_string(v.as.i); return;
+        case ValueKind::Int:
+        case ValueKind::Byte: out += std::to_string(v.as.i); return;
         case ValueKind::Float: out += formatFloat(v.as.d); return;
+        case ValueKind::Char:
+            if (quote) out += quoteCharacter(static_cast<uint32_t>(v.as.i));
+            else appendUtf8(out, static_cast<uint32_t>(v.as.i));
+            return;
         case ValueKind::Undefined: out += "undefined"; return;
         case ValueKind::Obj: break;
     }
@@ -6258,8 +6532,8 @@ void VM::stringifyInto(std::string& out, Value v, bool quote, int depth) {
     guardRead(v.as.obj);
     switch (v.as.obj->type) {
         case ObjType::String:
-            if (quote) out += quoteString(asString(v)->chars);
-            else out += asString(v)->chars;
+            if (quote) out += quoteString(asString(v)->utf8());
+            else out += asString(v)->utf8();
             return;
 
         case ObjType::List: {
@@ -6335,7 +6609,7 @@ void VM::stringifyInto(std::string& out, Value v, bool quote, int depth) {
             out += "<native fun " + asBoundNative(v)->method->name + ">";
             return;
         case ObjType::Class:
-            out += "<class " + asClass(v)->name->chars + ">";
+            out += "<class " + asClass(v)->name->utf8() + ">";
             return;
 
         case ObjType::Value: {
@@ -6345,14 +6619,14 @@ void VM::stringifyInto(std::string& out, Value v, bool quote, int depth) {
             if (method != nullptr && asClosure(*method)->proto->arity == 0) {
                 Value result = callWithReceiver(v, asClosure(*method));
                 if (result.isString()) {
-                    out += asString(result)->chars;
+                    out += asString(result)->utf8();
                 } else {
                     TempRoot root(*this, result);
                     stringifyInto(out, result, false, depth + 1);
                 }
                 return;
             }
-            out += box->cls->name->chars + "(";
+            out += box->cls->name->utf8() + "(";
             if (depth > 20) {
                 out += "...)";
                 return;
@@ -6361,7 +6635,7 @@ void VM::stringifyInto(std::string& out, Value v, bool quote, int depth) {
             for (ObjString* part : box->cls->components) {
                 if (!first) out += ", ";
                 first = false;
-                out += part->chars + "=";
+                out += part->utf8() + "=";
                 const int64_t at = valueFieldIndex(box, part);
                 const Value field = at >= 0 ? valueField(box, static_cast<size_t>(at)) : Value::null();
                 TempRoot keep(*this, field);
@@ -6377,7 +6651,7 @@ void VM::stringifyInto(std::string& out, Value v, bool quote, int depth) {
                 Value bound = Value::object(alloc<ObjBoundMethod>(v, asClosure(*method)));
                 Value result = call(bound, 0, nullptr);
                 if (result.isString()) {
-                    out += asString(result)->chars;
+                    out += asString(result)->utf8();
                 } else {
                     TempRoot root(*this, result);
                     stringifyInto(out, result, false, depth + 1);
@@ -6386,7 +6660,7 @@ void VM::stringifyInto(std::string& out, Value v, bool quote, int depth) {
             }
             if (instance->cls->isData) {
                 // A data object prints as its class and header fields: Point(x=1, y=2).
-                out += instance->cls->name->chars + "(";
+                out += instance->cls->name->utf8() + "(";
                 if (depth > 20) {
                     out += "...)";
                     return;
@@ -6395,7 +6669,7 @@ void VM::stringifyInto(std::string& out, Value v, bool quote, int depth) {
                 for (ObjString* part : instance->cls->components) {
                     if (!first) out += ", ";
                     first = false;
-                    out += part->chars + "=";
+                    out += part->utf8() + "=";
                     Value field = Value::null();
                     instance->read(part, field);
                     stringifyInto(out, field, true, depth + 1);
@@ -6408,11 +6682,11 @@ void VM::stringifyInto(std::string& out, Value v, bool quote, int depth) {
                 Value entryName = Value::null();
                 instance->read(names.entryName, entryName);
                 if (entryName.isString()) {
-                    out += asString(entryName)->chars;
+                    out += asString(entryName)->utf8();
                     return;
                 }
             }
-            out += "<" + instance->cls->name->chars + " instance>";
+            out += "<" + instance->cls->name->utf8() + " instance>";
             return;
         }
 
@@ -6510,7 +6784,7 @@ void VM::markObject(Obj* obj) {
     obj->marked = true;
     if (obj->type == ObjType::String) {
         // Strings have no references to trace. Interned ones are not counted as collectable heap.
-        if (!obj->immortal) liveBytes_ += sizeof(ObjString) + static_cast<ObjString*>(obj)->chars.size();
+        if (!obj->immortal) liveBytes_ += sizeof(ObjString) + static_cast<ObjString*>(obj)->heldBytes();
         return;
     }
     gray_.push_back(obj);

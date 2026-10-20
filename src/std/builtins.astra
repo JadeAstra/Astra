@@ -22,8 +22,8 @@ external fun Range(first : int, end : int = 0, step : int = 1) : Range
 external fun Bytes(source : any) : Bytes
 external fun args() : List<string>
 external fun assert(condition : bool, message : string = "assertion failed")
-external fun chr(code : int) : string
-external fun ord(character : string) : int
+// The hash of several values together, wrapping at 32 bits inside, as Java's Objects.hash (D148).
+external fun hash(vararg values : any?) : int
 external fun clock() : float
 external fun compareValues(a : any?, b : any?) : int
 external fun exit(code : int = 0) : nothing
@@ -50,6 +50,7 @@ external fun string.trimEnd() : string
 external fun string.trimIndent() : string
 external fun string.trimMargin(marginPrefix : string = "|") : string
 external fun string.split(delimiter : string = " ") : List<string>
+external fun string.split(delimiter : char) : List<string>
 external fun string.lines() : List<string>
 external fun string.slice(start : int, end : int = 0) : string
 external fun string.substring(startIndex : int, endIndex : int = 0) : string
@@ -57,11 +58,17 @@ external fun string.substring(range : Range) : string
 external fun string.repeat(times : int) : string
 external fun string.reversed() : string
 external fun string.contains(other : string, ignoreCase : bool = false) : bool
+external fun string.contains(other : char, ignoreCase : bool = false) : bool
 external fun string.startsWith(prefix : string, ignoreCase : bool = false) : bool
+external fun string.startsWith(prefix : char, ignoreCase : bool = false) : bool
 external fun string.endsWith(suffix : string, ignoreCase : bool = false) : bool
+external fun string.endsWith(suffix : char, ignoreCase : bool = false) : bool
 external fun string.indexOf(other : string, startIndex : int = 0, ignoreCase : bool = false) : int
+external fun string.indexOf(other : char, startIndex : int = 0, ignoreCase : bool = false) : int
 external fun string.lastIndexOf(other : string, startIndex : int = 0, ignoreCase : bool = false) : int
+external fun string.lastIndexOf(other : char, startIndex : int = 0, ignoreCase : bool = false) : int
 external fun string.replace(oldValue : string, newValue : string, ignoreCase : bool = false) : string
+external fun string.replace(oldChar : char, newChar : char, ignoreCase : bool = false) : string
 external fun string.equals(other : any?, ignoreCase : bool = false) : bool
 external fun string.compareTo(other : string, ignoreCase : bool = false) : int
 external fun string.isEmpty() : bool
@@ -74,10 +81,11 @@ external fun string.isLetterOrDigit() : bool
 external fun string.isWhitespace() : bool
 external fun string.isUpperCase() : bool
 external fun string.isLowerCase() : bool
-external fun string.padStart(length : int, padChar : string = " ") : string
-external fun string.padEnd(length : int, padChar : string = " ") : string
+external fun string.padStart(length : int, padChar : char = ' ') : string
+external fun string.padEnd(length : int, padChar : char = ' ') : string
 external fun string.toInt(radix : int = 10) : int
 external fun string.toIntOrNull(radix : int = 10) : int?
+external fun string.parseUnsigned(radix : int = 10) : int
 external fun string.toDouble() : float
 external fun string.toDoubleOrNull() : float?
 external fun string.format(vararg values : any?) : string
@@ -172,11 +180,43 @@ external fun Range.isEmpty() : bool
 external val Bytes.size : int
 external val Bytes.length : int
 external fun Bytes.slice(start : int = 0, end : int = 0) : Bytes
-external fun Bytes.toList() : List<int>
+external fun Bytes.toList() : List<byte>
 external fun Bytes.decodeToString() : string
-external fun Bytes.fill(value : int) : Bytes
-external fun Bytes.indexOf(value : int) : int
+external fun Bytes.fill(value : byte) : Bytes
+external fun Bytes.indexOf(value : byte) : int
 external fun Bytes.contains(value : any?) : bool
+// 16- and 32-bit numbers kept in the bytes (D19), at a position, the least significant byte
+// first unless bigEndian; read as an int, a float for float32.
+external fun Bytes.int16(at : int, bigEndian : bool = false) : int
+external fun Bytes.uint16(at : int, bigEndian : bool = false) : int
+external fun Bytes.int32(at : int, bigEndian : bool = false) : int
+external fun Bytes.uint32(at : int, bigEndian : bool = false) : int
+external fun Bytes.float32(at : int, bigEndian : bool = false) : float
+external fun Bytes.putInt16(at : int, value : int, bigEndian : bool = false) : Bytes
+external fun Bytes.putUint16(at : int, value : int, bigEndian : bool = false) : Bytes
+external fun Bytes.putInt32(at : int, value : int, bigEndian : bool = false) : Bytes
+external fun Bytes.putUint32(at : int, value : int, bigEndian : bool = false) : Bytes
+external fun Bytes.putFloat32(at : int, value : Number, bigEndian : bool = false) : Bytes
+
+// -- char and byte --
+
+// A char is one character, a Unicode code point (D24): what s[i] gives. `c.code` is its number,
+// and `n.char` the character numbered n (D142).
+external val char.code : int
+external val int.char : char
+external fun char.isLetter() : bool
+external fun char.isDigit() : bool
+external fun char.isLetterOrDigit() : bool
+external fun char.isWhitespace() : bool
+external fun char.isUpperCase() : bool
+external fun char.isLowerCase() : bool
+external fun char.upper() : char
+external fun char.lower() : char
+external fun char.digitToInt(radix : int = 10) : int
+// A byte holds 0 to 255 (D19); arithmetic on bytes gives an int.
+external fun byte.toInt() : int
+external fun int.toByte() : byte
+external fun int.toByteWrapped() : byte
 
 // -- int and float --
 
@@ -206,8 +246,22 @@ external fun Number.toInt() : int
 external fun Number.toLong() : int
 external fun Number.toDouble() : float
 external fun Number.toFloat() : float
-external fun Number.toChar() : string
 external fun Number.toString(radix : int = 10) : string
+// An int's 64 bits read as unsigned (D44); Kotlin's `ushr` is `>>>`.
+external fun int.toUnsignedString(radix : int = 10) : string
+external fun int.compareUnsigned(other : int) : int
+external fun int.divideUnsigned(divisor : int) : int
+external fun int.remainderUnsigned(divisor : int) : int
+// The low bits of an int, as the storage widths keep them (D148), read back as an int.
+external fun int.toInt16Wrapped() : int
+external fun int.toUint16Wrapped() : int
+external fun int.toInt32Wrapped() : int
+external fun int.toUint32Wrapped() : int
+// For 32-bit work ported from Kotlin (D148): the low 32 bits as a signed number, and their
+// rotations, each a signed 32-bit number as Kotlin's Int is.
+external fun int.wrap32() : int
+external fun int.rotateLeft32(count : int) : int
+external fun int.rotateRight32(count : int) : int
 external fun Number.compareTo(other : Number) : int
 external fun Number.isNaN() : bool
 external fun Number.isInfinite() : bool

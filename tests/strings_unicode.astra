@@ -16,7 +16,7 @@ print(count, joined == s, s.split("").length)   // expect: 10 true 10
 // Characters of every size: 1, 2, 3 and 4 bytes in UTF-8.
 val mixed = "aé€😀z"
 print(mixed.length, mixed[0], mixed[1], mixed[2], mixed[3], mixed[4], mixed.slice(1, 4), mixed.indexOf("😀"), mixed.indexOf("z"))   // expect: 5 a é € 😀 z é€😀 3 4
-print(ord(mixed[3]), chr(128512) == mixed[3], mixed.slice(3).length, "😀😀".length, "".length)   // expect: 128512 true 2 2 0
+print(mixed[3].code, 128512.char == mixed[3], mixed.slice(3).length, "😀😀".length, "".length)   // expect: 128512 true 2 2 0
 try { mixed[5] } catch (e) { print(e.message) }   // expect: string index 5 is out of range (length 5)
 
 // Upper and lower case for all letters.

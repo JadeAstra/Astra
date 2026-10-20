@@ -480,8 +480,8 @@ class NativeWindow {
       is RawInput.PointerDown -> __jade.windowSend(id, "pointerDown", event.x, event.y, event.button.ordinal, event.mods.bits, 0.0, 0.0, null)
       is RawInput.PointerUp -> __jade.windowSend(id, "pointerUp", event.x, event.y, event.button.ordinal, event.mods.bits, 0.0, 0.0, null)
       is RawInput.Wheel -> __jade.windowSend(id, "wheel", event.x, event.y, 0, event.mods.bits, float(event.dx), float(event.dy), null)
-      is RawInput.KeyDown -> __jade.windowSend(id, "keyDown", event.letter == null ? 0 : ord(event.letter), 0, event.repeat ? 1 : 0, event.mods.bits, 0.0, 0.0, event.key.name)
-      is RawInput.KeyUp -> __jade.windowSend(id, "keyUp", event.letter == null ? 0 : ord(event.letter), 0, 0, event.mods.bits, 0.0, 0.0, event.key.name)
+      is RawInput.KeyDown -> __jade.windowSend(id, "keyDown", event.letter == null ? 0 : event.letter[0].code, 0, event.repeat ? 1 : 0, event.mods.bits, 0.0, 0.0, event.key.name)
+      is RawInput.KeyUp -> __jade.windowSend(id, "keyUp", event.letter == null ? 0 : event.letter[0].code, 0, 0, event.mods.bits, 0.0, 0.0, event.key.name)
       is RawInput.Text -> __jade.windowSend(id, "text", 0, 0, 0, 0, 0.0, 0.0, event.text)
       is RawInput.Focus -> __jade.windowSend(id, "focus", 0, 0, event.focused ? 1 : 0, 0, 0.0, 0.0, null)
       is RawInput.Hover -> {
@@ -539,8 +539,8 @@ class NativeWindow {
         input(RawInput.Hover(false))
       }
       "wheel" -> input(RawInput.Wheel(x, y, f1, f2, Modifiers.ofBits(n2)))
-      "keyDown" -> input(RawInput.KeyDown(KeyCode.named(extra as string), Modifiers.ofBits(n2), n1 != 0, x == 0 ? null : chr(x)))
-      "keyUp" -> input(RawInput.KeyUp(KeyCode.named(extra as string), Modifiers.ofBits(n2), x == 0 ? null : chr(x)))
+      "keyDown" -> input(RawInput.KeyDown(KeyCode.named(extra as string), Modifiers.ofBits(n2), n1 != 0, x == 0 ? null : x.char.toString()))
+      "keyUp" -> input(RawInput.KeyUp(KeyCode.named(extra as string), Modifiers.ofBits(n2), x == 0 ? null : x.char.toString()))
       "text" -> input(RawInput.Text(extra as string))
       "focus" -> input(RawInput.Focus(n1 != 0))
       "resize" -> {

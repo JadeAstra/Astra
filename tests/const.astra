@@ -12,7 +12,7 @@ const ratio = cols / 3.0
 const halves = 7 / 2                        // two ints: the fraction is dropped, as when running
 const left = -7 % 3
 const big = 1 << 62
-const wraps = big * 4                       // ints wrap round, as when running
+const wraps = big &* 4                      // wraps round, as &* does when running
 const flags = 0b1010 ^ 0b0110 | 1
 const shifted = -16 >> 2
 const wide = rows > cols and title != ""

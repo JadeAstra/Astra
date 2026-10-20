@@ -11,14 +11,14 @@ print(1e3, 2.5e-3, 0.1 + 0.2)           // expect: 1000.0 0.0025 0.3000000000000
 print(1 == 1.0, 1 != 2, 1 == "1")       // expect: true true false
 print(10 > 9, 2 >= 2, 1 < 1, 3 <= 2)    // expect: true true false false
 print(-(-3), !true, !unknown(null), !unknown(0))   // expect: 3 false true false
-print(9223372036854775807 + 1)          // expect: -9223372036854775808
+print(9223372036854775807 &+ 1)         // expect: -9223372036854775808
 print(Math.pow(2, 10), Math.sqrt(16), Math.floor(-1.5), Math.round(2.5))   // expect: 1024 4.0 -2 3
 print(Math.max(1, 7, 3), Math.min(2.5, 2), Math.abs(-4))   // expect: 7 2 4
 
 // Strings
 var name = "Astra"
 print("Hello, ${name}!")                 // expect: Hello, Astra!
-print('single ${1 + 1} quotes')          // expect: single 2 quotes
+print('s', 'é', '\n'.code, '😀'.code)     // expect: s é 10 128512
 print("nested ${"in${1}ner"} done")      // expect: nested in1ner done
 print("a" + "b" + 1 + 2.5 + true + null) // expect: ab12.5truenull
 print("back\\slash", "q\"uote", "dollar \${x}")   // expect: back\slash q"uote dollar ${x}

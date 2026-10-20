@@ -101,6 +101,7 @@ uint8_t staticTypeOf(const Expr& expr) {
                 case LiteralExpr::Type::Int: return kTypeInt;
                 case LiteralExpr::Type::Float: return kTypeFloat;
                 case LiteralExpr::Type::String: return kTypeString;
+                case LiteralExpr::Type::Char: return kTypeChar;
             }
             return 0;
         case ExprKind::Interp: return kTypeString;
@@ -833,6 +834,9 @@ private:
         std::memcpy(&bits, &d, sizeof bits);
         return addConstant(Value::number(d), 1, bits);
     }
+
+    int charConstant(uint32_t c) { return addConstant(Value::character(c), 3, c); }
+    int byteConstant(uint8_t b) { return addConstant(Value::byte(b), 4, b); }
 
     int stringConstant(const std::string& s) {
         ObjString* str = session_.vm_.intern(s);
@@ -1852,8 +1856,16 @@ private:
         if (t.nullable) shape += '?';
         switch (t.kind) {
             case RuntimeType::Any: shape += 'a'; return true;
-            case RuntimeType::Int: shape += 'i'; return true;
-            case RuntimeType::Float: shape += 'f'; return true;
+            case RuntimeType::Int:
+            case RuntimeType::Float:
+                if (t.storage != 0) {
+                    shape += t.storage == kTypeInt16 ? 'h' : t.storage == kTypeInt32 ? 'd' : t.storage == kTypeUint16 ? 'H' : t.storage == kTypeUint32 ? 'D' : 'g';
+                    return true;
+                }
+                shape += t.kind == RuntimeType::Int ? 'i' : 'f';
+                return true;
+            case RuntimeType::Char: shape += 'c'; return true;
+            case RuntimeType::Byte: shape += 'u'; return true;
             case RuntimeType::Number: shape += 'n'; return true;
             case RuntimeType::String: shape += 's'; return true;
             case RuntimeType::Bool: shape += 'b'; return true;
@@ -2049,8 +2061,10 @@ private:
             return;
         }
         // The others, and a list or map with nothing said of what it holds: of anything.
-        static const char* const kShapes[] = {"", "i", "f", "n", "s", "b", "La", "Maa", "r", "F", "y", "t"};
-        if (id != 0 && id < sizeof kShapes / sizeof kShapes[0]) {
+        static const char* const kShapes[] = {"", "i", "f", "n", "s", "b", "La", "Maa", "r", "F", "y", "t", "",
+                                              "c", "u", "h", "d", "H", "D", "g"};
+        static_assert(sizeof kShapes / sizeof kShapes[0] == kTypeCount_, "a shape for each type");
+        if (isBuiltinTypeId(id)) {
             shape += kShapes[id];
             return;
         }
@@ -2077,8 +2091,25 @@ private:
 
     // Rejects an initializer that can never fit the declared type. Returns whether the value
     // still has to be checked when the program runs.
+    // What an expression's value is when the program runs, an int constant the checker made a
+    // byte included (D19).
+    uint8_t staticTypeHere(const Expr& e) const {
+        uint8_t b;
+        if (session_.checker != nullptr && session_.checker->byteAt(e, b)) return kTypeByte;
+        return staticTypeOf(e);
+    }
+
+    // Whether a value of static type `actual` can go where `declared` is asked for, before what
+    // is checked when the program runs: an int goes into a storage width, whose range is
+    // checked then, and a float into a float32 (D148).
+    static bool staticFits(uint8_t declared, uint8_t actual) {
+        return declared == actual || (declared == kTypeNumber && (actual == kTypeInt || actual == kTypeFloat)) ||
+               (isIntStorage(declared) && actual == kTypeInt) || (declared == kTypeFloat32 && actual == kTypeFloat) ||
+               (declared == kTypeByte && actual == kTypeInt);  // the checker says why an int is not a byte there
+    }
+
     bool checkInitializer(const VarStmt& s, const TypeSpec& type) {
-        uint8_t actual = s.init ? staticTypeOf(*s.init) : kStaticNull;
+        uint8_t actual = s.init ? staticTypeHere(*s.init) : kStaticNull;
         if (actual == 0) return !provenFits(provenType(*s.init), type);
 
         if (actual == kStaticNull) {
@@ -2090,11 +2121,10 @@ private:
                                      type.text() + "? to allow null)");
         }
 
-        bool fits = type.id() == actual || (type.id() == kTypeNumber && (actual == kTypeInt || actual == kTypeFloat));
-        if (!fits)
+        if (!staticFits(type.id(), actual))
             throw error(*s.init, "cannot initialize '" + s.name + "' of type " + type.text() + " with a value of type " +
                                      typeText(actual, ""));
-        return false;
+        return isIntStorage(type.id());  // the int's range, when it runs
     }
 
     // What the value of `expr` is certain to be when the program runs, as far as can be told from
@@ -2121,7 +2151,7 @@ private:
                 return global != nullptr && global->isFunction && global->forms.empty() ? global->returnType : 0;
             }
             case ExprKind::Literal: {
-                const uint8_t literal = staticTypeOf(expr);
+                const uint8_t literal = staticTypeHere(expr);
                 return literal == kStaticNull ? 0 : literal;
             }
             case ExprKind::Interp: return kTypeString;
@@ -2204,10 +2234,10 @@ private:
             throw error(at, fs_->proto->name + "() is declared to return " + type.text() + " and cannot return null");
         }
         if (actual != 0) {
-            bool fits = type.id() == actual || (type.id() == kTypeNumber && (actual == kTypeInt || actual == kTypeFloat));
-            if (fits) return;
-            throw error(at, fs_->proto->name + "() is declared to return " + type.text() +
-                                " and cannot return a value of type " + typeText(actual, ""));
+            if (!staticFits(type.id(), actual))
+                throw error(at, fs_->proto->name + "() is declared to return " + type.text() +
+                                    " and cannot return a value of type " + typeText(actual, ""));
+            if (!isIntStorage(type.id())) return;  // an int's range is checked as it is returned
         }
 
         if (type.id() == kTypeInstance) emitTypeName(type.className, at);
@@ -2217,10 +2247,9 @@ private:
 
     // Rejects an initial or default value that can never fit the declared type.
     void checkStaticFit(const TypeSpec& type, const Expr& value, const std::string& what) {
-        uint8_t actual = staticTypeOf(value);
+        uint8_t actual = staticTypeHere(value);
         if (actual == 0) return;
-        bool fits = actual == kStaticNull ? type.nullable()
-                    : type.id() == actual || (type.id() == kTypeNumber && (actual == kTypeInt || actual == kTypeFloat));
+        bool fits = actual == kStaticNull ? type.nullable() : staticFits(type.id(), actual);
         if (!fits)
             throw error(value, "cannot initialize " + what + " of type " + type.text() + " with " +
                                    (actual == kStaticNull ? std::string("null") : "a value of type " + typeText(actual, "")));
@@ -2396,7 +2425,7 @@ private:
                     compileExprFor(*s.value, fs_->returnType);
                     tailCall_ = savedTail;
                     line_ = s.line;
-                    emitReturnCheck(staticTypeOf(*s.value), *s.value, s.value.get());
+                    emitReturnCheck(staticTypeHere(*s.value), *s.value, s.value.get());
                 } else {
                     emitReturnCheck(kStaticNull, s);
                     emit(Op::Null);
@@ -2664,6 +2693,8 @@ private:
         else if (name == "Range") type = BuiltinType::Range;
         else if (name == "Bytes") type = BuiltinType::Bytes;
         else if (name == "Number" || name == "int" || name == "float") type = BuiltinType::Number;
+        else if (name == "char") type = BuiltinType::Char;
+        else if (name == "byte") type = BuiltinType::Byte;
         else return false;
         return true;
     }
@@ -4096,6 +4127,11 @@ private:
             case TokenType::ShlEq: return Op::Shl;
             case TokenType::Shr:
             case TokenType::ShrEq: return Op::Shr;
+            case TokenType::Ushr:
+            case TokenType::UshrEq: return Op::Ushr;
+            case TokenType::AmpPlus: return Op::AddWrap;
+            case TokenType::AmpMinus: return Op::SubWrap;
+            case TokenType::AmpStar: return Op::MulWrap;
             case TokenType::Amp:
             case TokenType::AmpEq: return Op::BitAnd;
             case TokenType::Pipe:
@@ -4129,6 +4165,7 @@ private:
                     case LiteralExpr::Type::Bool: emit(e.boolValue ? Op::True : Op::False); break;
                     case LiteralExpr::Type::Int: emit(Op::Const, intConstant(e.intValue)); break;
                     case LiteralExpr::Type::Float: emit(Op::Const, floatConstant(e.floatValue)); break;
+                    case LiteralExpr::Type::Char: emit(Op::Const, charConstant(static_cast<uint32_t>(e.intValue))); break;
                     case LiteralExpr::Type::String:
                         if (&e == workerLiteral_) {
                             // The path in Worker("..."): the call is given where the script is.
@@ -4814,6 +4851,10 @@ private:
     bool emitConstant(const Expr& expr) {
         ConstValue v;
         if (session_.checker == nullptr) return false;
+        if (uint8_t b; session_.checker->byteAt(expr, b)) {
+            emit(Op::Const, byteConstant(b));  // an int constant where a byte goes (D19)
+            return true;
+        }
         if (expr.kind == ExprKind::Name || expr.kind == ExprKind::Member) {
             if (!session_.checker->constantAt(expr, v)) return false;
             // A bare name two imports both declare is still reported, as an ordinary read is.
@@ -4833,6 +4874,8 @@ private:
             case ConstValue::Float: emit(Op::Const, floatConstant(v.d)); break;
             case ConstValue::Bool: emit(v.b ? Op::True : Op::False); break;
             case ConstValue::String: emit(Op::Const, stringConstant(v.s)); break;
+            case ConstValue::Char: emit(Op::Const, charConstant(static_cast<uint32_t>(v.i))); break;
+            case ConstValue::Byte: emit(Op::Const, byteConstant(static_cast<uint8_t>(v.i))); break;
             default: return false;
         }
         return true;

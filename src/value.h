@@ -62,6 +62,11 @@ enum class ValueKind : uint8_t {
     // section 4): one of at most 8 bytes that holds no object, its fields in `as`, its type's
     // number in `refIndex` (smallClasses). Kept anywhere a value is, with no box.
     Small,
+
+    // One character, a Unicode code point, in `as.i` (D24): what `s[i]` gives.
+    Char,
+    // A number from 0 to 255 in `as.i` (D19): what an item of `Bytes` is.
+    Byte,
 };
 
 // An Astra runtime value: null, bool, 64-bit int, double, or a pointer to a heap object.
@@ -150,6 +155,20 @@ struct Value {
         return v;
     }
     bool isSmall() const { return kind == ValueKind::Small; }
+    static Value character(uint32_t c) {
+        Value v;
+        v.kind = ValueKind::Char;
+        v.as.i = c;
+        return v;
+    }
+    static Value byte(uint8_t b) {
+        Value v;
+        v.kind = ValueKind::Byte;
+        v.as.i = b;
+        return v;
+    }
+    bool isChar() const { return kind == ValueKind::Char; }
+    bool isByte() const { return kind == ValueKind::Byte; }
 
     bool isNull() const { return kind == ValueKind::Null; }
     bool isBool() const { return kind == ValueKind::Bool; }
@@ -167,50 +186,140 @@ struct Value {
     bool truthy() const { return !(kind == ValueKind::Null || (kind == ValueKind::Bool && !as.b)); }
 };
 
-uint32_t hashString(std::string_view s);
-
 // The core the running thread is, in a parallel section; 0 on any other thread. For code
 // that looks into objects without a VM at hand (the keys of a map).
 extern thread_local uint8_t currentCore;
 
 // How many characters (Unicode code points) a piece of UTF-8 text holds.
 size_t countCharacters(std::string_view s);
+// Adds character `c` to `out` as UTF-8.
+void appendUtf8(std::string& out, uint32_t c);
+// The hash of a string's characters taken one more character `c` in: a string's hash is the
+// same whatever width it is kept at, and a char hashes as the string of it alone (D25).
+inline uint32_t hashCharacter(uint32_t hash, uint32_t c) { return (hash ^ c) * 16777619u; }
+constexpr uint32_t kEmptyStringHash = 2166136261u;  // FNV-1a over the characters
 
-// A string is text: a sequence of characters, each one Unicode code point. It is kept as
-// UTF-8, and every position a program sees counts characters, never bytes.
+// Characters at one width, as a string is kept: 1, 2 or 4 bytes each (D20).
+struct Characters {
+    std::string units;  // `width` bytes a character, in the machine's byte order
+    uint8_t width = 1;
+
+    size_t size() const { return units.size() / width; }
+    uint32_t operator[](size_t i) const {
+        switch (width) {
+            case 1: return static_cast<unsigned char>(units[i]);
+            case 2: { uint16_t c; std::memcpy(&c, units.data() + 2 * i, 2); return c; }
+            default: { uint32_t c; std::memcpy(&c, units.data() + 4 * i, 4); return c; }
+        }
+    }
+    // Text at the narrowest width that holds all of it; text not valid as UTF-8 has U+FFFD in
+    // place of each byte that is not.
+    static Characters fromUtf8(std::string text);
+    // Characters given at width `from`, kept at width `to` (at least as wide as any of them).
+    static void widen(const char* in, size_t count, uint8_t from, uint8_t to, std::string& out);
+
+    // Adds `count` characters given at width `from`, widening what is here if they need it:
+    // text built from parts takes the width of its widest part.
+    void append(const char* in, size_t count, uint8_t from) {
+        if (from > width && units.empty()) {
+            width = from;
+        } else if (from > width) {
+            std::string wider;
+            wider.reserve((size() + count) * from);
+            widen(units.data(), size(), width, from, wider);
+            units = std::move(wider);
+            width = from;
+        }
+        widen(in, count, from, width, units);
+    }
+    void append(const Characters& more) { append(more.units.data(), more.size(), more.width); }
+    void appendUtf8Text(std::string_view text);
+};
+
+// A string is text: a sequence of characters, each one Unicode code point. It is kept at a
+// fixed width, the narrowest its widest character needs, as Python keeps its strings (D20):
+// 1 byte a character when all are below 256 (ASCII and Latin-1), 2 when all are below 65,536,
+// 4 otherwise, so a character is reached by its number directly, and equal strings are kept
+// alike and compare byte for byte. C++ code that wants UTF-8 (printing, files, the text
+// engine, names) asks for utf8(): for ASCII text the characters themselves, for other text
+// made when first asked for and kept.
 struct ObjString final : Obj {
-    const std::string chars;
-    const uint32_t hash;
+    const uint32_t hash;  // of the characters, whatever the width
 
     // Some class has a member of this name that not all code may use (1), or may assign to
     // (2); and some class has one that is private (4). Set and never cleared: a member of
     // any other name is reached without a look at who may use it.
     uint8_t restricted = 0;
 
+    const uint8_t width;  // 1, 2 or 4 bytes a character
+    const bool ascii;     // every character below 128: the characters are their own UTF-8
     const size_t length;  // in characters
 
-    explicit ObjString(std::string s)
-        : Obj(ObjType::String), chars(std::move(s)), hash(hashString(chars)), length(countCharacters(chars)) {}
+    // From UTF-8 text.
+    explicit ObjString(std::string utf8) : ObjString(make(Characters::fromUtf8(std::move(utf8)))) {}
+    // From characters at some width; kept at the narrowest that holds them.
+    explicit ObjString(Characters characters) : ObjString(make(std::move(characters))) {}
+    // Two strings joined: kept at the wider one's width, which is the narrowest that holds
+    // both, and hashed on from the first one's hash over the second's characters alone.
+    ObjString(const ObjString* first, const ObjString* second) : ObjString(join(first, second)) {}
+    ~ObjString() override { delete utf8_.load(std::memory_order_relaxed); }
 
-    bool isAscii() const { return length == chars.size(); }
+    uint32_t at(size_t index) const {
+        switch (width) {
+            case 1: return static_cast<unsigned char>(units_[index]);
+            case 2: { uint16_t c; std::memcpy(&c, units_.data() + 2 * index, 2); return c; }
+            default: { uint32_t c; std::memcpy(&c, units_.data() + 4 * index, 4); return c; }
+        }
+    }
+    // The characters, `width` bytes each.
+    const std::string& units() const { return units_; }
+    // Characters `begin` to `end` (not included), at the narrowest width that holds them.
+    Characters slice(size_t begin, size_t end) const;
 
-    // The byte at which character `index` starts; `index` may be the length, for the end.
-    size_t byteAt(size_t index) const;
-    // The number of characters before byte `offset`, which is where a character starts.
-    size_t charAt(size_t offset) const;
-    // Character `index`, as the bytes that spell it.
-    std::string_view character(size_t index) const {
-        size_t begin = byteAt(index);
-        return std::string_view(chars).substr(begin, byteAt(index + 1) - begin);
+    const std::string& utf8() const {
+        if (ascii) return units_;
+        const std::string* made = utf8_.load(std::memory_order_acquire);
+        return made != nullptr ? *made : makeUtf8();
+    }
+    // Where character `index` starts in the UTF-8 form; `index` may be the length, for the end.
+    size_t utf8Offset(size_t index) const;
+    // Where `part` first is at or after character `from` (last, at or before `from`, when
+    // `last`), or -1.
+    int64_t find(const ObjString* part, size_t from, bool last = false) const;
+
+    // The memory the string holds beyond the object itself, for the collector's count.
+    size_t heldBytes() const {
+        const std::string* made = utf8_.load(std::memory_order_acquire);
+        return units_.capacity() + (made != nullptr ? made->capacity() : 0);
     }
 
 private:
-    // For text that is not all ASCII: where each character starts, and the end. Made the
-    // first time a position is asked for, which several cores may do at once.
-    mutable std::vector<uint32_t> starts_;
-    mutable std::atomic<bool> indexed_{false};
-    void index() const;
+    const std::string units_;
+    // The UTF-8 form of text that is not all ASCII, once asked for. Several cores may ask at
+    // the same moment: each makes it, and the first to store it wins.
+    mutable std::atomic<const std::string*> utf8_{nullptr};
+
+    struct Made {
+        std::string units;
+        uint32_t hash;
+        uint8_t width;
+        bool ascii;
+        size_t length;
+    };
+    static Made make(Characters characters);
+    static Made join(const ObjString* first, const ObjString* second);
+    explicit ObjString(Made made);
+    const std::string& makeUtf8() const;
 };
+
+inline void appendText(Characters& to, const ObjString* text) { to.append(text->units().data(), text->length, text->width); }
+
+// Whether two strings hold the same characters.
+inline bool sameText(const ObjString* a, const ObjString* b) {
+    return a == b || (a->hash == b->hash && a->width == b->width && a->units() == b->units());
+}
+// Orders two strings by their characters' numbers (which is the order of their UTF-8 bytes).
+int compareText(const ObjString* a, const ObjString* b);
 
 // Language-level equality without operator overloading: numbers compare by value across
 // int and float, strings by content, everything else by identity.
@@ -228,6 +337,10 @@ std::string formatFloat(double d);
 
 // The string as a double-quoted literal with escapes.
 std::string quoteString(std::string_view s);
+// A char as it is written: 'a', '\n', '\''.
+std::string quoteCharacter(uint32_t c);
+// Whether `c` is a character: a code point that is not a surrogate's (D25).
+inline bool isCharacter(int64_t c) { return c >= 0 && c <= 0x10FFFF && !(c >= 0xD800 && c <= 0xDFFF); }
 
 // Hash table keyed by interned strings (compared by pointer). Used for fields, methods and statics.
 class Table {
@@ -310,6 +423,104 @@ private:
 struct ObjTypeInfo;
 struct ObjClass;
 
+// A byte, a char or a number at a storage width (D19, D24, D148), kept narrower than a value
+// is: in a packed list or a value type's field. Read, a storage width is an int (a float for
+// Float32); a value that does not fit is an error where it is stored.
+enum class Narrow : uint8_t { None, Byte, Char, Int16, Int32, Uint16, Uint32, Float32 };
+
+inline uint32_t narrowSize(Narrow n) {
+    return n == Narrow::Byte ? 1 : n == Narrow::Int16 || n == Narrow::Uint16 ? 2 : 4;
+}
+
+inline Value readNarrow(Narrow n, const uint8_t* at) {
+    switch (n) {
+        case Narrow::Byte: return Value::byte(*at);
+        case Narrow::Char: {
+            uint32_t c;
+            std::memcpy(&c, at, 4);
+            return Value::character(c);
+        }
+        case Narrow::Int16: {
+            int16_t v;
+            std::memcpy(&v, at, 2);
+            return Value::integer(v);
+        }
+        case Narrow::Int32: {
+            int32_t v;
+            std::memcpy(&v, at, 4);
+            return Value::integer(v);
+        }
+        case Narrow::Uint16: {
+            uint16_t v;
+            std::memcpy(&v, at, 2);
+            return Value::integer(v);
+        }
+        case Narrow::Uint32: {
+            uint32_t v;
+            std::memcpy(&v, at, 4);
+            return Value::integer(v);
+        }
+        case Narrow::Float32: {
+            float f;
+            std::memcpy(&f, at, 4);
+            return Value::number(f);
+        }
+        default: return Value::null();
+    }
+}
+
+// The range of a narrow int.
+inline void narrowRange(Narrow n, int64_t& low, int64_t& high) {
+    switch (n) {
+        case Narrow::Byte: low = 0; high = 255; break;
+        case Narrow::Int16: low = -32768; high = 32767; break;
+        case Narrow::Int32: low = -2147483648LL; high = 2147483647; break;
+        case Narrow::Uint16: low = 0; high = 65535; break;
+        default: low = 0; high = 4294967295LL; break;
+    }
+}
+
+// Whether `v` can be kept narrow: a byte as a byte (or an int from 0 to 255, from code that
+// does not say its types), a char as a char, an int in the width's range, a float.
+inline bool fitsNarrow(Narrow n, const Value& v) {
+    switch (n) {
+        case Narrow::Char: return v.isChar();
+        case Narrow::Float32: return v.isFloat();
+        case Narrow::Byte:
+            if (v.isByte()) return true;
+            [[fallthrough]];
+        default: {
+            if (!v.isInt()) return false;
+            int64_t low, high;
+            narrowRange(n, low, high);
+            return v.as.i >= low && v.as.i <= high;
+        }
+    }
+}
+
+// Writes `v`, which fits, narrow at `at`; a float32 is the nearest 32-bit float.
+inline void writeNarrow(Narrow n, uint8_t* at, const Value& v) {
+    switch (n) {
+        case Narrow::Byte: *at = static_cast<uint8_t>(v.as.i); break;
+        case Narrow::Int16:
+        case Narrow::Uint16: {
+            const uint16_t bits = static_cast<uint16_t>(v.as.i);
+            std::memcpy(at, &bits, 2);
+            break;
+        }
+        case Narrow::Float32: {
+            const float f = static_cast<float>(v.as.d);
+            std::memcpy(at, &f, 4);
+            break;
+        }
+        default: {
+            const uint32_t bits = static_cast<uint32_t>(v.as.i);
+            std::memcpy(at, &bits, 4);
+            break;
+        }
+    }
+}
+
 // How a list keeps its items (M6.6 part 3, value-lists.html section 5): as 16-byte values, as
 // today, for a list of objects, of `any` or of a type a value must say itself, and for a list
 // made with nothing said of what it holds; or packed one after another at their own widths,
@@ -319,6 +530,7 @@ enum class ListStore : uint8_t {
     Ints,    // `block`, 8 bytes an item
     Floats,  // 8 bytes an item
     Bools,   // 1 byte an item
+    Narrow,  // PackedItems::narrow, 1, 2 or 4 bytes an item: List<byte>, List<char>, List<int16>...
     Items,   // a value type's, in its layout, `width` bytes an item
 };
 
@@ -329,6 +541,7 @@ struct PackedItems {
     uint32_t width = 0;             // the bytes an item takes
     size_t count = 0;               // the items
     ObjClass* itemClass = nullptr;  // ListStore::Items: the value type
+    Narrow narrow = Narrow::None;   // ListStore::Narrow: what each item is
     std::vector<uint8_t> block;     // `count` items of `width` bytes, one after another
     std::vector<uint64_t> nulls;    // nullable: a bit per item, set where the item is null
 };
@@ -481,7 +694,9 @@ struct FieldDecl {
     // bool whose type is written and is not null, as its 8-byte payload alone in the object's
     // inline part. A val, and a field its init must set, has a bit saying whether it has been
     // given a value yet (`tracked`); any other payload reads as 0, 0.0 or false until it is.
-    enum PayloadKind : uint8_t { NoPayload, IntPayload, FloatPayload, BoolPayload };
+    // A byte, a char or a storage width is kept narrow (D148), `narrow`, after the 8-byte ones.
+    enum PayloadKind : uint8_t { NoPayload, IntPayload, FloatPayload, BoolPayload, NarrowPayload };
+    Narrow narrow = Narrow::None;
     int32_t slot = -1;
     int32_t payloadOffset = -1;
     uint16_t payloadBit = 0;
@@ -506,10 +721,12 @@ struct ValueField {
         Object,  // 8 bytes, a pointer to an object, null for null: a string, a list, an object of a class...
         Any,     // 16 bytes, a Value: for a type a value must say itself (any, Number, int?, a type parameter)
         Nested,  // another value type's fields, in place, at its own size
+        Narrow,  // a byte, a char or a storage width, `narrow`, at 1, 2 or 4 bytes (D148)
     };
     ObjString* name = nullptr;
     uint32_t offset = 0;
     Kind kind = Any;
+    astra::Narrow narrow = astra::Narrow::None;  // Narrow: what it keeps
     uint8_t type = 0;           // as FieldDecl::type, for the check of a value stored there
     ObjClass* cls = nullptr;    // the class a class-typed field is declared with; for Nested, the value type
 };
@@ -773,11 +990,18 @@ struct ObjInstance final : Obj {
                 return Value::number(x);
             }
             case FieldDecl::BoolPayload: return Value::boolean(*at != 0);
+            case FieldDecl::NarrowPayload: return readNarrow(d.narrow, at);
             default: return Value::null();
         }
     }
     // Its kind already checked.
     void setPayload(const FieldDecl& d, Value value) {
+        if (d.payload == FieldDecl::NarrowPayload) {
+            if (d.narrow == Narrow::Byte && value.isInt()) value = Value::byte(static_cast<uint8_t>(value.as.i));
+            writeNarrow(d.narrow, payloadData() + d.payloadOffset, value);
+            if (d.tracked) payloadData()[d.payloadBit / 8] |= static_cast<uint8_t>(1u << (d.payloadBit % 8));
+            return;
+        }
         // A bool as a whole 0 or 1, so that every payload is a value's 8 bytes of contents.
         const int64_t bits = d.payload == FieldDecl::BoolPayload ? (value.as.b ? 1 : 0) : value.as.i;
         std::memcpy(payloadData() + d.payloadOffset, &bits, 8);

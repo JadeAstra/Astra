@@ -1,0 +1,110 @@
+// Numbers (M6.6 part 8, group 1): an int that does not fit is an error, and &+ &- &* wrap
+// (D27); >>> and the unsigned helpers (D44); the limits (D76); byte (D19); the storage widths
+// and the 32-bit helpers (D148).
+
+val big = int.maxValue
+val small = int.minValue
+fun attempt(f : () -> any) : string {
+  try { return "${f()}" } catch (e) { return e.message }
+}
+
+// ---- Overflow is an error; &+, &- and &* wrap around ----
+print(attempt { big + 1 })
+// expect: 9223372036854775807 + 1 does not fit in an int, which holds -9223372036854775808 to 9223372036854775807; write &+ for an answer that wraps around
+print(attempt { small - 1 })
+// expect: -9223372036854775808 - 1 does not fit in an int, which holds -9223372036854775808 to 9223372036854775807; write &- for an answer that wraps around
+print(attempt { big * 2 })
+// expect: 9223372036854775807 * 2 does not fit in an int, which holds -9223372036854775808 to 9223372036854775807; write &* for an answer that wraps around
+print(attempt { -small })
+// expect: -(-9223372036854775808) does not fit in an int, which holds -9223372036854775808 to 9223372036854775807
+print(attempt { small / -1 })
+// expect: -9223372036854775808 / -1 does not fit in an int, which holds -9223372036854775808 to 9223372036854775807
+print(attempt { 3.pow(40) }, attempt { Math.abs(small) == 0 })
+// expect: 3 to the power 40 does not fit in an int -(-9223372036854775808) does not fit in an int, which holds -9223372036854775808 to 9223372036854775807
+print(attempt { var j = big; j++; j }, attempt { var k = big - 1; k += 1; k })
+// expect: 9223372036854775807 + 1 does not fit in an int, which holds -9223372036854775808 to 9223372036854775807; write &+ for an answer that wraps around 9223372036854775807
+print(big &+ 1, small &- 1, big &* 2, 5 &+ 3, 7 &- 9, 6 &* 7)   // expect: -9223372036854775808 9223372036854775807 -2 8 -2 42
+print(2.pow(62), 10.pow(18), 1.5 * 2, big - 1 + 1)   // expect: 4611686018427387904 1000000000000000000 3.0 9223372036854775807
+// The 32-bit hash loop Kotlin wraps: written with &* and &+, or with hash(...).
+var h = 0
+for (c in "a long enough string to wrap") { h = (31 &* h &+ c.code).wrap32() }
+print(h, hash(1, "a", null) == hash(1, "a", null), hash() == 1)   // expect: -1482487061 true true
+
+// ---- >>> and the unsigned helpers ----
+print(-8 >>> 60, -1 >>> 0, 1 >>> 64, -8 >> 60, 16 >>> 2)   // expect: 15 -1 0 -1 4
+var shifted = -16
+shifted >>>= 2
+print(shifted)                                  // expect: 4611686018427387900
+print((-1).toUnsignedString(), (-1).toUnsignedString(16), 255.toUnsignedString(2))   // expect: 18446744073709551615 ffffffffffffffff 11111111
+print((-1).compareUnsigned(1), 1.compareUnsigned(-1), 5.compareUnsigned(5))   // expect: 1 -1 0
+print((-1).divideUnsigned(2), (-1).remainderUnsigned(10), "18446744073709551615".parseUnsigned(), "ff".parseUnsigned(16))
+// expect: 9223372036854775807 5 -1 255
+print(attempt { "18446744073709551616".parseUnsigned() }, attempt { 5.divideUnsigned(0) })
+// expect: "18446744073709551616" is not a whole number from 0 to 18446744073709551615 division by zero
+
+// ---- Limits ----
+print(int.maxValue, int.minValue, float.maxValue, float.minValue == -float.maxValue, float.minPositive)
+// expect: 9223372036854775807 -9223372036854775808 1.7976931348623157e+308 true 5e-324
+const half = int.maxValue / 2
+print(half, float.nan.isNaN(), float.positiveInfinity > float.maxValue)   // expect: 4611686018427387903 true true
+
+// ---- byte: 0 to 255, its own kind when running; arithmetic gives an int ----
+val b : byte = 200
+val data = Bytes([1, 2, 255])
+print(b, b is byte, b is int, b + 100, b * 2, -b, b == 200, b < 255, data[2] is byte, data[2] + data[0])
+// expect: 200 true false 300 400 -200 true true true 256
+val doubled = (b.toInt() / 2).toByte()
+print(doubled, 300.toByteWrapped(), (-1).toByteWrapped(), attempt { 256.toByte() }, attempt { (-1).toByte() })
+// expect: 100 44 255 256 does not fit in a byte, which holds 0 to 255; toByteWrapped() keeps the low 8 bits -1 does not fit in a byte, which holds 0 to 255; toByteWrapped() keeps the low 8 bits
+var bs : List<byte> = [0, 128, 255]
+bs.add(7)
+print(bs, bs[1] is byte, bs.toList().size, data.toList(), data.toList()[0] is byte)   // expect: [0, 128, 255, 7] true 4 [1, 2, 255] true
+var sum = 0
+for (x in data) { sum += x }
+print(sum, data.indexOf(255), data.contains(2), {200: "two hundred"}[b.toInt()])   // expect: 258 2 true two hundred
+
+// ---- Bytes: 16- and 32-bit numbers, either byte order ----
+val buffer = Bytes(8)
+buffer.putInt16(0, -2).putUint16(2, 65535, true).putInt32(4, -123456789)
+print(buffer, buffer.int16(0), buffer.uint16(2, true), buffer.uint16(2), buffer.int32(4), buffer.uint32(4))
+// expect: Bytes[254, 255, 255, 255, 235, 50, 164, 248] -2 65535 65535 -123456789 4171510507
+buffer.putFloat32(0, 1.5).putUint32(4, 4294967295, true)
+print(buffer.float32(0), buffer.uint32(4), buffer.int32(4, true), attempt { buffer.int32(6) }, attempt { buffer.putInt16(0, 40000) })
+// expect: 1.5 4294967295 -1 a 32-bit number at 6 runs past the end of 8 bytes 40000 does not fit in 16 bits signed, which hold -32768 to 32767
+
+// ---- Storage widths: ints (and a float) kept narrow, read as int and float ----
+val shorts : List<int16> = [1, -2, 300]
+shorts.add(32767)
+print(shorts, shorts[1] + 1, shorts[1] is int, attempt { shorts.add(40000) })
+// expect: [1, -2, 300, 32767] -1 true 40000 does not fit in an int16, which holds -32768 to 32767; toInt16Wrapped() keeps the low 16 bits
+val halves : List<float32> = [0.5, 0.1]
+val words : List<uint32> = [4294967295, 0]
+print(halves, halves[0] is float, words, attempt { words.add(-1) })
+// expect: [0.5, 0.10000000149011612] true [4294967295, 0] -1 does not fit in a uint32, which holds 0 to 4294967295; toUint32Wrapped() keeps the low 32 bits
+
+value Vertex(val x : int32, val y : int32, val tag : byte, val c : char)
+val v = Vertex(1, -2, 7, 'q')
+val vs : List<Vertex> = [v, Vertex(5, 6, 8, 'z')]
+print(v, v.x + v.y, v.tag is byte, vs[1].x, vs[1].c, attempt { Vertex(3000000000, 0, 1, 'a') })
+// expect: Vertex(x=1, y=-2, tag=7, c='q') -1 true 5 z 3000000000 does not fit in an int32, which holds -2147483648 to 2147483647; toInt32Wrapped() keeps the low 32 bits (field 'x' of Vertex)
+
+class Pixel(val r : byte, val g : byte, var tag : char, var count : uint16, var weight : float32, var whole : int) {
+  var steps : int16 = 0
+  fun step() { steps += 1; count += 2; weight = weight * 2.0; whole += 1 }
+  fun show() : string => "$r $g $tag $count $weight $whole $steps"
+}
+val p = Pixel(255, 128, 'é', 65532, 1.25, -5)
+p.step()
+print(p.show(), attempt { p.step() })
+// expect: 255 128 é 65534 2.5 -4 1 65536 does not fit in a uint16, which holds 0 to 65535; toUint16Wrapped() keeps the low 16 bits (field 'count' of Pixel)
+var narrowLocal : uint16 = 65535
+fun twice(n : int16) : int => n * 2
+print(narrowLocal, twice(100), attempt { narrowLocal = narrowLocal + 1 }, attempt { twice(100000) })
+// expect: 65535 200 65536 does not fit in a uint16, which holds 0 to 65535; toUint16Wrapped() keeps the low 16 bits ('narrowLocal') 100000 does not fit in an int16, which holds -32768 to 32767; toInt16Wrapped() keeps the low 16 bits (argument 'n' of twice())
+print(70000.toInt16Wrapped(), (-1).toUint16Wrapped(), 0x1FFFFFFFF.toInt32Wrapped(), (-1).toUint32Wrapped())   // expect: 4464 65535 -1 4294967295
+print(0x80000001.wrap32(), 1.rotateLeft32(31), 1.rotateRight32(1), 0x12345678.rotateLeft32(8), (-1).rotateRight32(5))
+// expect: -2147483647 -2147483648 -2147483648 878082066 -1
+// Two int32s are 8 bytes, so the value is kept in the value itself, with no box.
+value Pair32(val a : int32, val b : int32)
+val pp = Pair32(1, -1)
+print(pp, pp == Pair32(1, -1), mapOf(pp to 1)[Pair32(1, -1)], [pp, Pair32(2, 2)][1].b)   // expect: Pair32(a=1, b=-1) true 1 2

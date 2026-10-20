@@ -117,7 +117,7 @@ class Grid : Content, OwnedContent {
     val nr = Grid.numRows(e.cells)
     if (nc == 0 or nr == 0) {
       val edge = Dimension(e.insets.left + e.insets.right, e.insets.top + e.insets.bottom)
-      return Sizes(edge, edge, Dimension(maxInt, maxInt))
+      return Sizes(edge, edge, Dimension(int.maxValue, int.maxValue))
     }
     val t = tracks(e.cells, e.hgap, e.vgap, nc, nr)
     val edgeW = e.insets.left + e.insets.right
@@ -247,10 +247,10 @@ class Grid : Content, OwnedContent {
   static fun trackMaxSum(maxes : List<int>, gap : int, edge : int) : int {
     var sum = edge + gap * Math.max(maxes.size - 1, 0)
     for (m in maxes) {
-      if (m <= 0 or m >= maxInt) { return maxInt }
+      if (m <= 0 or m >= int.maxValue - sum) { return int.maxValue }
       sum += m
     }
-    return sum >= maxInt ? maxInt : sum
+    return sum
   }
 
   static fun positions(sizes : List<int>, start : int, gap : int) : List<int> {

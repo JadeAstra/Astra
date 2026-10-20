@@ -13,9 +13,10 @@ struct Namespace;
 // A type as the compiler writes it into a program for when it runs (M6.6 part 1): what a list
 // or map literal is made to hold, and the like.
 struct RuntimeType {
-    enum Kind : uint8_t { Unknown, Any, Int, Float, Number, String, Bool, Bytes, Range, TypeValue, Function, List, Map, Class, TypeParam };
+    enum Kind : uint8_t { Unknown, Any, Int, Float, Number, String, Bool, Bytes, Range, TypeValue, Function, List, Map, Class, TypeParam, Char, Byte };
     Kind kind = Unknown;
     bool nullable = false;
+    uint8_t storage = 0;  // Int or Float kept at a storage width (D148): kTypeInt16 and the rest
     // A class: where its global is, in a namespace by `global` or, for a private one, in the
     // file `privateFile`; its type arguments in `args`.
     const Namespace* ns = nullptr;
@@ -27,7 +28,7 @@ struct RuntimeType {
 
 // The value of a constant (R2, D139), worked out when the program is checked.
 struct ConstValue {
-    enum Kind : uint8_t { None, Int, Float, Bool, String };
+    enum Kind : uint8_t { None, Int, Float, Bool, String, Char, Byte };  // a Char's or Byte's in `i`
     Kind kind = None;
     int64_t i = 0;
     double d = 0;
@@ -103,6 +104,8 @@ public:
     // value, worked out as the VM would. False for anything else, and where working it out
     // would fail (a division by zero), which is left to happen when the program runs.
     bool folded(const Expr& e, ConstValue& out);
+    // Whether `e` is an int constant given where a byte goes, and which byte (D19).
+    bool byteAt(const Expr& e, uint8_t& out) const;
 
     // For a call of a name with several forms (overloads, D56): the declaration of the form it
     // means, where that could be told; null otherwise, and the form is chosen when it runs.

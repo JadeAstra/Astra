@@ -1,4 +1,4 @@
-// bytes: binary data. A fixed number of elements, each a whole number from 0 to 255.
+// bytes: binary data. A fixed number of elements, each a byte: a whole number from 0 to 255 (D19).
 
 val zeros = Bytes(4)
 val data = Bytes([1, 2, 255])
@@ -7,13 +7,14 @@ print(zeros, data, data.size, data.length, data[0], data[2], data[-1], zeros is 
 // A value whose type the checker does not see, for testing the checks made when running.
 val unknown = { value -> value }
 
-// Elements can be changed; nothing but a byte fits.
+// Elements can be changed; nothing but a byte fits. An int constant that fits is one; byte
+// arithmetic gives an int, made a byte again with toByte().
 zeros[1] = 200
 zeros[-1] = 7
-zeros[0] += 5
-print(zeros)                                // expect: Bytes[5, 200, 0, 7]
-try { zeros[0] = 256 } catch (e) { print(e.message) }    // expect: a byte is a whole number from 0 to 255, not 256
-try { zeros[0] = -1 } catch (e) { print(e.message) }     // expect: a byte is a whole number from 0 to 255, not -1
+zeros[0] = (zeros[0] + 5).toByte()
+print(zeros, zeros[1] is byte, zeros[1] + 1, zeros[1] == 200)   // expect: Bytes[5, 200, 0, 7] true 201 true
+try { zeros[0] = unknown(256) } catch (e) { print(e.message) }    // expect: a byte is a whole number from 0 to 255, not 256
+try { zeros[0] = unknown(-1) } catch (e) { print(e.message) }     // expect: a byte is a whole number from 0 to 255, not -1
 try { zeros[0] = unknown(1.5) } catch (e) { print(e.message) }    // expect: a byte is a whole number from 0 to 255, not 1.5
 try { zeros[4] = 1 } catch (e) { print(e.message) }      // expect: bytes index 4 is out of range (size 4)
 try { Bytes([1, 300]) } catch (e) { print(e.message) }   // expect: a byte is a whole number from 0 to 255, not 300

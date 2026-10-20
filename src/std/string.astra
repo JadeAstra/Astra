@@ -1,6 +1,6 @@
 // ---- Strings ----
-// The methods a string has besides the built-in ones. A character is a string of size one,
-// so the methods Kotlin has for a Char are here too.
+// The methods a string has besides the built-in ones. Its characters are chars (D24), as
+// s[i] gives them, and so is what each of these functions passes on or gives for one.
 
 // -- Parts of the text --
 
@@ -24,13 +24,13 @@ fun string.dropLast(count : int) : string {
   return count >= this.size ? "" : this.substring(0, this.size - count)
 }
 
-fun string.takeWhile(predicate : (string) -> bool) : string {
+fun string.takeWhile(predicate : (char) -> bool) : string {
   var index = 0
   while (index < this.size and predicate(this[index])) { index += 1 }
   return this.substring(0, index)
 }
 
-fun string.dropWhile(predicate : (string) -> bool) : string {
+fun string.dropWhile(predicate : (char) -> bool) : string {
   var index = 0
   while (index < this.size and predicate(this[index])) { index += 1 }
   return this.substring(index)
@@ -90,7 +90,7 @@ fun string.replaceFirst(oldValue : string, newValue : string) : string {
 }
 
 // The text with its first character put through a function: name.replaceFirstChar { it.uppercase() }
-fun string.replaceFirstChar(transform : (string) -> any?) : string => this.size == 0 ? this : str(transform(this[0])) + this.substring(1)
+fun string.replaceFirstChar(transform : (char) -> any?) : string => this.size == 0 ? this : str(transform(this[0])) + this.substring(1)
 
 fun string.commonPrefixWith(other : string) : string {
   var index = 0
@@ -100,24 +100,24 @@ fun string.commonPrefixWith(other : string) : string {
 
 // -- Characters --
 
-fun string.first() : string {
+fun string.first() : char {
   if (this.size == 0) { throw Error("first() of an empty string") }
   return this[0]
 }
 
-fun string.first(predicate : (string) -> bool) : string {
+fun string.first(predicate : (char) -> bool) : char {
   for character in this {
     if (predicate(character)) { return character }
   }
   throw Error("first(): no character of the string meets the condition")
 }
 
-fun string.last() : string {
+fun string.last() : char {
   if (this.size == 0) { throw Error("last() of an empty string") }
   return this[this.size - 1]
 }
 
-fun string.last(predicate : (string) -> bool) : string {
+fun string.last(predicate : (char) -> bool) : char {
   var index = this.size - 1
   while (index >= 0) {
     if (predicate(this[index])) { return this[index] }
@@ -126,18 +126,18 @@ fun string.last(predicate : (string) -> bool) : string {
   throw Error("last(): no character of the string meets the condition")
 }
 
-fun string.firstOrNull() : string? => this.size == 0 ? null : this[0]
+fun string.firstOrNull() : char? => this.size == 0 ? null : this[0]
 
-fun string.firstOrNull(predicate : (string) -> bool) : string? {
+fun string.firstOrNull(predicate : (char) -> bool) : char? {
   for character in this {
     if (predicate(character)) { return character }
   }
   return null
 }
 
-fun string.lastOrNull() : string? => this.size == 0 ? null : this[this.size - 1]
+fun string.lastOrNull() : char? => this.size == 0 ? null : this[this.size - 1]
 
-fun string.lastOrNull(predicate : (string) -> bool) : string? {
+fun string.lastOrNull(predicate : (char) -> bool) : char? {
   var index = this.size - 1
   while (index >= 0) {
     if (predicate(this[index])) { return this[index] }
@@ -146,16 +146,16 @@ fun string.lastOrNull(predicate : (string) -> bool) : string? {
   return null
 }
 
-fun string.get(index : int) : string {
+fun string.get(index : int) : char {
   if (index < 0 or index >= this.size) {
     throw Error("get: index " + str(index) + " is out of range (length " + str(this.size) + ")")
   }
   return this[index]
 }
 
-fun string.getOrNull(index : int) : string? => index >= 0 and index < this.size ? this[index] : null
+fun string.getOrNull(index : int) : char? => index >= 0 and index < this.size ? this[index] : null
 
-fun string.indexOfFirst(predicate : (string) -> bool) : int {
+fun string.indexOfFirst(predicate : (char) -> bool) : int {
   var index = 0
   for character in this {
     if (predicate(character)) { return index }
@@ -164,7 +164,7 @@ fun string.indexOfFirst(predicate : (string) -> bool) : int {
   return -1
 }
 
-fun string.indexOfLast(predicate : (string) -> bool) : int {
+fun string.indexOfLast(predicate : (char) -> bool) : int {
   var index = this.size - 1
   while (index >= 0) {
     if (predicate(this[index])) { return index }
@@ -173,11 +173,11 @@ fun string.indexOfLast(predicate : (string) -> bool) : int {
   return -1
 }
 
-fun string.forEach(action : (string) -> unit) {
+fun string.forEach(action : (char) -> unit) {
   for character in this { action(character) }
 }
 
-fun string.forEachIndexed(action : (int, string) -> unit) {
+fun string.forEachIndexed(action : (int, char) -> unit) {
   var index = 0
   for character in this {
     action(index, character)
@@ -187,14 +187,14 @@ fun string.forEachIndexed(action : (int, string) -> unit) {
 
 fun string.any() : bool => this.size > 0
 
-fun string.any(predicate : (string) -> bool) : bool {
+fun string.any(predicate : (char) -> bool) : bool {
   for character in this {
     if (predicate(character)) { return true }
   }
   return false
 }
 
-fun string.all(predicate : (string) -> bool) : bool {
+fun string.all(predicate : (char) -> bool) : bool {
   for character in this {
     if (!predicate(character)) { return false }
   }
@@ -203,7 +203,7 @@ fun string.all(predicate : (string) -> bool) : bool {
 
 fun string.none() : bool => this.size == 0
 
-fun string.none(predicate : (string) -> bool) : bool {
+fun string.none(predicate : (char) -> bool) : bool {
   for character in this {
     if (predicate(character)) { return false }
   }
@@ -212,7 +212,7 @@ fun string.none(predicate : (string) -> bool) : bool {
 
 fun string.count() : int => this.size
 
-fun string.count(predicate : (string) -> bool) : int {
+fun string.count(predicate : (char) -> bool) : int {
   var total = 0
   for character in this {
     if (predicate(character)) { total += 1 }
@@ -221,53 +221,45 @@ fun string.count(predicate : (string) -> bool) : int {
 }
 
 // A list of what the function gives for each character.
-fun <R> string.map(transform : (string) -> R) : List<R> {
+fun <R> string.map(transform : (char) -> R) : List<R> {
   val out : List<R> = []
   for character in this { out.add(transform(character)) }
   return out
 }
 
 // The characters that meet the condition, as a string.
-fun string.filter(predicate : (string) -> bool) : string {
-  val out : List<string> = []
+fun string.filter(predicate : (char) -> bool) : string {
+  val out : List<char> = []
   for character in this {
     if (predicate(character)) { out.add(character) }
   }
   return out.join("")
 }
 
-fun string.filterNot(predicate : (string) -> bool) : string {
-  val out : List<string> = []
+fun string.filterNot(predicate : (char) -> bool) : string {
+  val out : List<char> = []
   for character in this {
     if (!predicate(character)) { out.add(character) }
   }
   return out.join("")
 }
 
-// The characters, as a list of strings of size one.
-fun string.toList() : List<string> {
-  val out : List<string> = []
+// The characters, as a list.
+fun string.toList() : List<char> {
+  val out : List<char> = []
   for character in this { out.add(character) }
   return out
 }
 
-fun string.toMutableList() : List<string> => this.toList()
-fun string.toCharArray() : List<string> => this.toList()
-fun string.toSet() : Set<string> => Set(this)
+fun string.toMutableList() : List<char> => this.toList()
+fun string.toCharArray() : List<char> => this.toList()
+fun string.toSet() : Set<char> => Set(this)
 
-fun string.uppercaseChar() : string => this.uppercase()
-fun string.lowercaseChar() : string => this.lowercase()
-
-// The number a digit stands for: "7".digitToInt() is 7.
-fun string.digitToIntOrNull() : int? {
-  val digit = this.size == 1 ? "0123456789".indexOf(this) : -1
-  return digit < 0 ? null : digit
-}
-
-fun string.digitToInt() : int {
-  val digit = this.digitToIntOrNull()
-  if (digit == null) { throw Error("\"" + this + "\" is not a digit") }
-  return digit
+// The number a digit stands for, or null: '7'.digitToIntOrNull() is 7 (digitToInt() is built in).
+fun char.digitToIntOrNull(radix : int = 10) : int? {
+  val c = this.code
+  val digit = c >= 48 and c <= 57 ? c - 48 : c >= 97 and c <= 122 ? c - 87 : c >= 65 and c <= 90 ? c - 55 : radix
+  return digit < radix ? digit : null
 }
 
 // -- Empty and missing text --

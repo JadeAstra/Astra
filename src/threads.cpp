@@ -707,7 +707,7 @@ ObjClass* holder(VM& vm, const char* name) {
 }
 
 void define(VM& vm, ObjClass* on, const char* name, int minArgs, int maxArgs, NativeFn fn) {
-    on->statics.set(vm.intern(name), Value::object(vm.alloc<ObjNative>(on->name->chars + "." + name, minArgs, maxArgs, fn)));
+    on->statics.set(vm.intern(name), Value::object(vm.alloc<ObjNative>(on->name->utf8() + "." + name, minArgs, maxArgs, fn)));
 }
 
 }  // namespace

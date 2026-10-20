@@ -133,7 +133,7 @@ struct FunctionDecl : Node {
 };
 
 struct LiteralExpr : Expr {
-    enum class Type { Null, Bool, Int, Float, String };
+    enum class Type { Null, Bool, Int, Float, String, Char };  // a Char's code point is intValue
     Type type = Type::Null;
     bool boolValue = false;
     int64_t intValue = 0;

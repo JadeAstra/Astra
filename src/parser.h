@@ -57,7 +57,9 @@ private:
     TypeAnnotation checkedType();
     bool tightNullable_ = false;     // after `is` and `as`, the '?' of a nullable type must touch the type
     bool adjacentToPrevious() const;
-    bool pendingTypeClose_ = false;  // half of a '>>' that closed an inner type argument list
+    // How many more type argument lists the '>>' or '>>>' at hand closes, besides the inner one
+    // that read it.
+    int pendingTypeClose_ = 0;
     std::vector<TypeAnnotation> typeArgumentsRest();  // after '<': the type arguments and '>'
     std::vector<TypeParam> typeParameters();            // `<T, U : Bound>`; the '<' is next
 

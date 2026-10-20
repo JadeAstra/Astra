@@ -15,14 +15,13 @@ print(2.4.roundToInt(), 2.5.roundToInt(), (-2.5).roundToInt(), (-2.6).roundToInt
 print(2.9.toInt(), (-2.9).toInt(), 7.toInt(), 7.toDouble(), 7.toFloat(), 2.5.toLong(), type(7.toDouble()), type(2.9.toInt()))   // expect: 2 -2 7 7.0 7.0 2 float int
 print((-7).absoluteValue, 7.absoluteValue, (-2.5).absoluteValue, (-7).sign, 0.sign, 3.sign, (-0.5).sign)   // expect: 7 7 2.5 -1 0 1 -1.0
 print(2.pow(10), 2.pow(-1), 2.5.pow(2), 9.pow(0.5), (-7).mod(3), 7.mod(-3), 7.mod(3), 7.5.mod(2))   // expect: 1024 0.5 6.25 3.0 2 -2 1 1.5
-print(1.compareTo(2), 2.5.compareTo(2), 3.compareTo(3.0), 65.toChar(), 0x1F600.toChar().length)   // expect: -1 1 0 A 1
+print(1.compareTo(2), 2.5.compareTo(2), 3.compareTo(3.0), 65.char, 0x1F600.char.toString().length)   // expect: -1 1 0 A 1
 print((0.0 / 0.0).isNaN(), 1.5.isNaN(), (1.0 / 0.0).isInfinite(), 1.isFinite(), (1.0 / 0.0).isFinite(), 3.isNaN())   // expect: true false true true false false
 
-// The limits Kotlin's types have. Astra's own whole numbers go on to Long's.
-print(Int.maxValue, Int.minValue, Long.maxValue, Long.minValue)   // expect: 2147483647 -2147483648 9223372036854775807 -9223372036854775808
-print(Int.maxValue + 1, Double.maxValue > 1e300, Double.minValue > 0, Double.minValue < 1e-300, Float.maxValue < 1e39)   // expect: 2147483648 true true true true
-print(Double.positiveInfinity > Double.maxValue, Double.negativeInfinity < -Double.maxValue, Double.nan.isNaN(), Double.nan == Double.nan)   // expect: true true true false
-var smallest = Int.maxValue
+// The limits of Astra's numbers, at their real values (D76).
+print(int.maxValue, int.minValue, float.maxValue > 1e300, float.minValue == -float.maxValue, float.minPositive > 0, float.minPositive < 1e-300)   // expect: 9223372036854775807 -9223372036854775808 true true true true
+print(float.positiveInfinity > float.maxValue, float.negativeInfinity < float.minValue, float.nan.isNaN(), float.nan == float.nan)   // expect: true true true false
+var smallest = int.maxValue
 for n in [5, 3, 8] { if (n < smallest) { smallest = n } }
 print(smallest)                                              // expect: 3
 

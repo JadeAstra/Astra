@@ -256,10 +256,10 @@ class Picture {
   fun set(x : int, y : int, color : int) {
     if (x < 0 or y < 0 or x >= width or y >= height) { return }
     val at = (y * width + x) * 4
-    pixels[at] = (color >> 16) & 255
-    pixels[at + 1] = (color >> 8) & 255
-    pixels[at + 2] = color & 255
-    pixels[at + 3] = (color >> 24) & 255
+    pixels[at] = (color >> 16).toByteWrapped()
+    pixels[at + 1] = (color >> 8).toByteWrapped()
+    pixels[at + 2] = color.toByteWrapped()
+    pixels[at + 3] = (color >> 24).toByteWrapped()
   }
 
   // Sets every pixel, or every pixel of a rectangle, to a colour.

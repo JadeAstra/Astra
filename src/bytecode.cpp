@@ -199,12 +199,18 @@ const OpInfo kOps[] = {
     {"FIELD_DESTINATION", Operand::U16},
     {"WITH_REF_RESULT", Operand::None},
     {"NUMERIC", Operand::U8},
+    {"USHR", Operand::None},
+    {"ADD_WRAP", Operand::None},
+    {"SUB_WRAP", Operand::None},
+    {"MUL_WRAP", Operand::None},
     {"OWN_LOCAL", Operand::U16},
     {"WITH_DESTINATION_AT", Operand::U8},
     {"WITH_FRAME_DESTINATION", Operand::None},
 };
 
-const char* const kTypeNames[] = {"", "int", "float", "Number", "string", "bool", "List", "Map", "Range", "Function", "Bytes", "Type"};
+const char* const kTypeNames[] = {"", "int", "float", "Number", "string", "bool", "List", "Map", "Range", "Function", "Bytes", "Type", "",
+                                   "char", "byte", "int16", "int32", "uint16", "uint32", "float32"};
+static_assert(sizeof(kTypeNames) / sizeof(kTypeNames[0]) == kTypeCount_, "kTypeNames must match TypeId");
 
 static_assert(sizeof(kOps) / sizeof(kOps[0]) == static_cast<size_t>(Op::Count_), "kOps must match the Op enum");
 
@@ -267,14 +273,14 @@ void decodeOperands(const std::vector<uint8_t>& code, size_t ip, Operand operand
 }  // namespace
 
 uint8_t builtinTypeId(const std::string& name) {
-    for (uint8_t id = kTypeInt; id < kTypeInstance; id++)
-        if (name == kTypeNames[id]) return id;
+    for (uint8_t id = kTypeInt; id < kTypeCount_; id++)
+        if (id != kTypeInstance && name == kTypeNames[id]) return id;
     return 0;
 }
 
 std::string typeText(uint8_t type, const std::string& className) {
     uint8_t id = type & kTypeMask;
-    std::string text = id == kTypeInstance ? className : id >= kTypeInt && id < kTypeInstance ? kTypeNames[id] : "?";
+    std::string text = id == kTypeInstance ? className : isBuiltinTypeId(id) ? kTypeNames[id] : "?";
     if (type & kTypeNullable) text += '?';
     return text;
 }
@@ -493,6 +499,13 @@ static int analyzeStack(FunctionProto& f, const Program& program, bool partial) 
                     break;
                 case Op::WithRefResult:
                     break;
+                case Op::Ushr:
+                case Op::AddWrap:
+                case Op::SubWrap:
+                case Op::MulWrap:
+                    pops = 2;
+                    pushes = 1;
+                    break;
                 case Op::Numeric:
                     if (a >= static_cast<int>(NumericOp::Count_)) fail("unknown numeric operation");
                     pops = numericArity(static_cast<uint8_t>(a));
@@ -632,7 +645,7 @@ static int analyzeStack(FunctionProto& f, const Program& program, bool partial) 
                     break;
                 case Op::MakeType: {
                     requireName(a);
-                    const int operands = shapeOperands(asString(f.constants[static_cast<size_t>(a)])->chars);
+                    const int operands = shapeOperands(asString(f.constants[static_cast<size_t>(a)])->utf8());
                     if (operands < 0) fail("bad type shape");
                     pops = operands;
                     pushes = 1;
@@ -745,7 +758,7 @@ static int analyzeStack(FunctionProto& f, const Program& program, bool partial) 
                     break;
                 case Op::Extension:
                     requireName(a);
-                    if ((b & kTypeMask) > kTypeInstance) fail("unknown type");
+                    if ((b & kTypeMask) >= kTypeCount_) fail("unknown type");
                     pops = (b & kTypeMask) == kTypeInstance ? 2 : 1;
                     break;
                 case Op::Inherit:
@@ -771,7 +784,7 @@ static int analyzeStack(FunctionProto& f, const Program& program, bool partial) 
                 case Op::StaticField: {
                     requireName(a);
                     int id = b & kTypeMask;
-                    if (id > kTypeInstance || (b & ~(0xFF | kFieldVal)) != 0) fail("bad field declaration");
+                    if (id >= kTypeCount_ || (b & ~(0xFF | kFieldVal)) != 0) fail("bad field declaration");
                     pops = id == kTypeInstance ? 3 : 2;
                     pushes = 1;
                     break;
@@ -784,7 +797,7 @@ static int analyzeStack(FunctionProto& f, const Program& program, bool partial) 
                 case Op::Cast:
                 case Op::CastOrNull: {
                     int id = a & kTypeMask;
-                    if (id < kTypeInt || id > kTypeInstance) fail("unknown type");
+                    if (id < kTypeInt || id >= kTypeCount_) fail("unknown type");
                     pops = id == kTypeInstance ? 2 : 1;
                     pushes = 1;
                     break;
@@ -867,7 +880,7 @@ static int analyzeStack(FunctionProto& f, const Program& program, bool partial) 
                 case Op::DeclareField: {
                     requireName(a);
                     int id = b & kTypeMask;
-                    if (id > kTypeInstance || (b & ~(0xFF | kFieldVal | kFieldRequired | kFieldOverride)) != 0) fail("bad field declaration");
+                    if (id >= kTypeCount_ || (b & ~(0xFF | kFieldVal | kFieldRequired | kFieldOverride)) != 0) fail("bad field declaration");
                     pops = id == kTypeInstance ? 2 : 1;
                     pushes = 1;
                     break;
@@ -919,7 +932,7 @@ static int analyzeStack(FunctionProto& f, const Program& program, bool partial) 
                 case Op::CheckReturn:
                 case Op::DefineTypedGlobal: {
                     int id = (op == Op::CheckReturn ? a : b) & kTypeMask;
-                    if (id < kTypeInt || id > kTypeInstance) fail("unknown type");
+                    if (id < kTypeInt || id >= kTypeCount_) fail("unknown type");
                     if (op == Op::DefineTypedGlobal) {
                         if (static_cast<size_t>(a) >= program.globalNames.size()) fail("global out of range");
                     } else {
@@ -978,7 +991,7 @@ std::string constantText(const Value& v) {
         case ValueKind::Int: return std::to_string(v.as.i);
         case ValueKind::Float: return formatFloat(v.as.d);
         case ValueKind::Obj:
-            if (v.isString()) return quoteString(asString(v)->chars);
+            if (v.isString()) return quoteString(asString(v)->utf8());
             return "<object>";
         default: return "?";
     }
@@ -1047,7 +1060,7 @@ void disassembleFunction(const FunctionProto& f, const Program& program, std::os
             case Op::Setter:
             case Op::StaticGetter:
             case Op::StaticSetter:
-                out << " " << a << "  ; " << asString(f.constants[a])->chars;
+                out << " " << a << "  ; " << asString(f.constants[a])->utf8();
                 break;
             case Op::Invoke:
             case Op::InvokeTrailing:
@@ -1055,20 +1068,20 @@ void disassembleFunction(const FunctionProto& f, const Program& program, std::os
             case Op::InvokeOwnTrailing:
             case Op::SuperInvoke:
             case Op::SuperInvokeTrailing:
-                out << " " << a << " argc=" << b << "  ; " << asString(f.constants[a])->chars;
+                out << " " << a << " argc=" << b << "  ; " << asString(f.constants[a])->utf8();
                 break;
             case Op::GetImplicit:
             case Op::SetImplicit:
-                out << " " << a << " " << b << "  ; " << asString(f.constants[a])->chars;
+                out << " " << a << " " << b << "  ; " << asString(f.constants[a])->utf8();
                 break;
             case Op::CallNamed:
                 out << " positional=" << a << " named=" << b;
                 break;
             case Op::TryImplicit:
-                out << " " << a << " -> " << b << "  ; " << asString(f.constants[a])->chars;
+                out << " " << a << " -> " << b << "  ; " << asString(f.constants[a])->utf8();
                 break;
             case Op::InvokeImplicit:
-                out << " " << a << " " << b << " argc=" << static_cast<int>(f.code[ip + 5]) << "  ; " << asString(f.constants[a])->chars;
+                out << " " << a << " " << b << " argc=" << static_cast<int>(f.code[ip + 5]) << "  ; " << asString(f.constants[a])->utf8();
                 break;
             case Op::Closure:
                 out << " " << a << "  ; " << f.protos[a]->name;
@@ -1112,7 +1125,7 @@ void disassembleFunction(const FunctionProto& f, const Program& program, std::os
                 break;
             case Op::CheckType:
             case Op::CheckParam:
-                out << " " << a << "  ; " << asString(f.constants[a])->chars << " : " << typeText(static_cast<uint8_t>(b), "<class>");
+                out << " " << a << "  ; " << asString(f.constants[a])->utf8() << " : " << typeText(static_cast<uint8_t>(b), "<class>");
                 break;
             case Op::CheckReturn:
             case Op::IsType:
@@ -1122,7 +1135,7 @@ void disassembleFunction(const FunctionProto& f, const Program& program, std::os
                 break;
             case Op::StaticField:
             case Op::DeclareField:
-                out << " " << a << "  ; " << ((b & kFieldVal) ? "val " : "var ") << asString(f.constants[a])->chars;
+                out << " " << a << "  ; " << ((b & kFieldVal) ? "val " : "var ") << asString(f.constants[a])->utf8();
                 if ((b & kTypeMask) != 0) out << " : " << typeText(static_cast<uint8_t>(b & 0xFF), "<class>");
                 if (b & kFieldRequired) out << " (set by init)";
                 break;
@@ -1161,7 +1174,7 @@ int shapeOperands(const std::string& shape) {
             at++;
         } else if (c == 'P') {
             operands++;
-        } else if (std::string_view("?aifnsbyrtFLM").find(c) == std::string_view::npos) {
+        } else if (std::string_view("?aifnsbyrtFLMcuhdHDg").find(c) == std::string_view::npos) {
             return -1;
         }
     }
@@ -1184,10 +1197,10 @@ void disassemble(const Program& program, std::ostream& out) {
 namespace {
 
 const char kMagic[4] = {'A', 'S', 'T', 'R'};
-const uint8_t kFormatVersion = 14;
+const uint8_t kFormatVersion = 16;
 const int kMaxProtoNesting = 200;
 
-enum ConstantTag : uint8_t { TagInt = 0, TagFloat = 1, TagString = 2 };
+enum ConstantTag : uint8_t { TagInt = 0, TagFloat = 1, TagString = 2, TagChar = 3, TagByte = 4 };
 
 struct Writer {
     std::ostream& out;
@@ -1217,7 +1230,7 @@ struct Writer {
         u64(f.classParams);
         u8(f.typeArgs);
         u32(static_cast<uint32_t>(f.paramNames.size()));
-        for (const ObjString* param : f.paramNames) str(param->chars);
+        for (const ObjString* param : f.paramNames) str(param->utf8());
 
         u32(static_cast<uint32_t>(f.upvalues.size()));
         for (const UpvalueDesc& uv : f.upvalues) {
@@ -1234,7 +1247,7 @@ struct Writer {
         u32(static_cast<uint32_t>(f.paramTypes.size()));
         for (size_t i = 0; i < f.paramTypes.size(); i++) {
             u8(f.paramTypes[i]);
-            str(i < f.paramClasses.size() && f.paramClasses[i] != nullptr ? f.paramClasses[i]->chars : std::string());
+            str(i < f.paramClasses.size() && f.paramClasses[i] != nullptr ? f.paramClasses[i]->utf8() : std::string());
             u8(i < f.paramCounts.size() ? f.paramCounts[i] : 0);
         }
 
@@ -1270,9 +1283,12 @@ struct Writer {
                 std::memcpy(&bits, &c.as.d, sizeof bits);
                 u8(TagFloat);
                 u64(bits);
+            } else if (c.isChar() || c.isByte()) {
+                u8(c.isChar() ? TagChar : TagByte);
+                u64(static_cast<uint64_t>(c.as.i));
             } else {
                 u8(TagString);
-                str(asString(c)->chars);
+                str(asString(c)->utf8());
             }
         }
 
@@ -1406,6 +1422,18 @@ struct Reader {
                 case TagString:
                     f->constants.push_back(Value::object(vm.intern(str())));
                     break;
+                case TagChar: {
+                    const uint64_t c = u64();
+                    if (!isCharacter(static_cast<int64_t>(c))) corrupt();
+                    f->constants.push_back(Value::character(static_cast<uint32_t>(c)));
+                    break;
+                }
+                case TagByte: {
+                    const uint64_t b = u64();
+                    if (b > 255) corrupt();
+                    f->constants.push_back(Value::byte(static_cast<uint8_t>(b)));
+                    break;
+                }
                 default:
                     corrupt();
             }
@@ -1468,7 +1496,7 @@ void renumber(FunctionProto& f, const Renumbering& r, VM& vm) {
     // The script a worker runs is named by a string the compiler made: "\x01<module>\x01<path>".
     for (Value& c : f.constants) {
         if (!c.isObjType(ObjType::String)) continue;
-        const std::string& text = asString(c)->chars;
+        const std::string& text = asString(c)->utf8();
         if (text.size() < 3 || text[0] != '\x01') continue;
         const size_t end = text.find('\x01', 1);
         if (end == std::string::npos) continue;
@@ -1666,7 +1694,7 @@ struct Reach {
     bool reached(const FunctionProto& module, const DeclarationSpan& span) const {
         if (span.kind == DeclarationSpan::Global) return reachedGlobal[span.key] != 0;
         return span.key < module.constants.size() && module.constants[span.key].isString() &&
-               reachedName.count(bare(asString(module.constants[span.key])->chars)) != 0;
+               reachedName.count(bare(asString(module.constants[span.key])->utf8())) != 0;
     }
 
     void function(FunctionProto* f) {
@@ -1698,7 +1726,7 @@ struct Reach {
             if (which == 2) global(b);
             if (makesFunction(op) && static_cast<size_t>(a) < f.protos.size()) function(f.protos[static_cast<size_t>(a)]);
             if (usesMemberName(op) && static_cast<size_t>(a) < f.constants.size() && f.constants[static_cast<size_t>(a)].isString())
-                name(asString(f.constants[static_cast<size_t>(a)])->chars);
+                name(asString(f.constants[static_cast<size_t>(a)])->utf8());
             at += 1 + operandSize(kOps[raw].operand);
         }
     }
@@ -1855,7 +1883,7 @@ LeftOut leaveOutUnreachable(Program& program, const std::vector<std::string>& gl
             if (span.kind == DeclarationSpan::Global) {
                 reach.spansOf[span.key].emplace_back(module, i);
             } else if (span.key < module->constants.size() && module->constants[span.key].isString()) {
-                reach.extensionsNamed[Reach::bare(asString(module->constants[span.key])->chars)].emplace_back(module, i);
+                reach.extensionsNamed[Reach::bare(asString(module->constants[span.key])->utf8())].emplace_back(module, i);
             }
         }
     }

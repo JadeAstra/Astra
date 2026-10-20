@@ -36,7 +36,7 @@ namespace {
 // A value is written out as bytes on the one side and built again on the other. It can hold
 // null, booleans, numbers, strings, bytes, and lists and maps of those.
 
-enum : char { kNull, kFalse, kTrue, kInt, kFloat, kString, kBytes, kList, kMap };
+enum : char { kNull, kFalse, kTrue, kInt, kFloat, kString, kBytes, kList, kMap, kChar, kByte };
 
 void putRaw(std::string& out, const void* data, size_t size) { out.append(static_cast<const char*>(data), size); }
 
@@ -59,12 +59,17 @@ void encode(VM& vm, Value v, std::string& out, int depth) {
             out += kFloat;
             putRaw(out, &v.as.d, sizeof v.as.d);
             return;
+        case ValueKind::Char:
+        case ValueKind::Byte:
+            out += v.isChar() ? kChar : kByte;
+            putRaw(out, &v.as.i, sizeof v.as.i);
+            return;
         default: break;
     }
     if (v.isString()) {
         out += kString;
-        putSize(out, asString(v)->chars.size());
-        out += asString(v)->chars;
+        putSize(out, asString(v)->utf8().size());
+        out += asString(v)->utf8();
     } else if (v.isObjType(ObjType::Bytes)) {
         out += kBytes;
         putSize(out, asBytes(v)->data.size());
@@ -118,6 +123,12 @@ Value decode(VM& vm, Reader& in) {
         case kTrue: return Value::boolean(true);
         case kInt: return Value::integer(in.raw<int64_t>());
         case kFloat: return Value::number(in.raw<double>());
+        case kChar: {
+            const int64_t c = in.raw<int64_t>();
+            if (!isCharacter(c)) throw std::runtime_error("a char in a message that is not a character");
+            return Value::character(static_cast<uint32_t>(c));
+        }
+        case kByte: return Value::byte(static_cast<uint8_t>(in.raw<int64_t>()));
         case kString: return vm.str(std::string(in.text()));
         case kBytes: {
             const std::string_view data = in.text();
@@ -257,7 +268,7 @@ void registerWorkers(VM& vm) {
     // start(script, object, daemon): `script` is what the compiler made of the path written in
     // Worker("..."): the number of the module the script became, and the path.
     def("start", 3, 3, [](VM& vm, int, Value* args) -> Value {
-        const std::string spec = args[0].isString() ? asString(args[0])->chars : std::string();
+        const std::string spec = args[0].isString() ? asString(args[0])->utf8() : std::string();
         const size_t second = spec.size() > 1 && spec[0] == '\x01' ? spec.find('\x01', 1) : std::string::npos;
         if (second == std::string::npos)
             throw vm.runtimeError("a worker's script is named by a string written in the call itself, as in Worker(\"physics.astra\"), "

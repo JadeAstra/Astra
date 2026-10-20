@@ -107,6 +107,6 @@ print([1, 2, 3].joinToString(separator = "", transform = { it + 1 }), ["a", null
 
 // Maps and sets from a list.
 print(words.associate { it to it.length })               // expect: {"pear": 4, "fig": 3, "banana": 6, "kiwi": 4}
-print(words.associateBy { it[0] }, words.associateBy({ it[0] }, { it.length }))   // expect: {"p": "pear", "f": "fig", "b": "banana", "k": "kiwi"} {"p": 4, "f": 3, "b": 6, "k": 4}
+print(words.associateBy { it[0] }, words.associateBy({ it[0] }, { it.length }))   // expect: {'p': "pear", 'f': "fig", 'b': "banana", 'k': "kiwi"} {'p': 4, 'f': 3, 'b': 6, 'k': 4}
 print(words.associateWith { it.length }["fig"], words.groupBy { it.length })   // expect: 3 {4: ["pear", "kiwi"], 3: ["fig"], 6: ["banana"]}
 print(words.groupBy({ it.length }, { it.upper() })[4], [1 to "a", 2 to "b"].toMap(), [1, 1, 2].toSet())   // expect: ["PEAR", "KIWI"] {1: "a", 2: "b"} {1, 2}

@@ -228,4 +228,3 @@ fun elide(text : string, font : Font, maxWidth : int) : string {
   return text.substring(0, lo) + ellipsis
 }
 
-internal const maxInt = 2147483647

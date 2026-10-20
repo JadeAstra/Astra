@@ -59,20 +59,29 @@ int compareValues(VM& vm, Value a, Value b) {
     if (a.isNull() || b.isNull()) return (b.isNull() ? 1 : 0) - (a.isNull() ? 1 : 0);
     if (a.isNumber() && b.isNumber()) return compareNumbers(a, b);
     if (a.isString() && b.isString()) {
-        const int order = asString(a)->chars.compare(asString(b)->chars);
-        return (order > 0) - (order < 0);
+        return compareText(asString(a), asString(b));
     }
     if (a.isBool() && b.isBool()) return static_cast<int>(a.as.b) - static_cast<int>(b.as.b);
+    // Chars by their numbers; a byte as the int it holds.
+    if (a.isChar() && b.isChar()) return (a.as.i > b.as.i) - (a.as.i < b.as.i);
+    if (a.isByte()) a = Value::integer(a.as.i);
+    if (b.isByte()) b = Value::integer(b.as.i);
+    if (a.isNumber() && b.isNumber()) return compareNumbers(a, b);
     throw vm.runtimeError("cannot compare " + vm.typeName(a) + " and " + vm.typeName(b));
 }
 
-int64_t integerPower(int64_t base, int64_t exponent) {
-    uint64_t result = 1, b = static_cast<uint64_t>(base);
-    for (uint64_t e = static_cast<uint64_t>(exponent); e != 0; e >>= 1) {
-        if (e & 1) result *= b;
-        b *= b;
+// An int to a power of 0 or more, an error where it does not fit in an int (D27).
+int64_t integerPower(VM& vm, int64_t base, int64_t exponent) {
+    int64_t result = 1, b = base;
+    bool bOverflowed = false;
+    for (int64_t e = exponent; e != 0; e >>= 1) {
+        if (e & 1) {
+            if (bOverflowed || mulOverflows(result, b, result))
+                throw vm.runtimeError(std::to_string(base) + " to the power " + std::to_string(exponent) + " does not fit in an int");
+        }
+        if (e > 1 && !bOverflowed) bOverflowed = mulOverflows(b, b, b);
     }
-    return static_cast<int64_t>(result);
+    return result;
 }
 
 // ---- Strings ----
@@ -82,6 +91,12 @@ bool parseWhole(std::string_view s, int radix, int64_t& out) {
     if (s.empty()) return false;
     auto result = std::from_chars(s.data(), s.data() + s.size(), out, radix);
     return result.ec == std::errc() && result.ptr == s.data() + s.size();
+}
+
+// An int's 64 bits, for the unsigned helpers (D44).
+uint64_t wholeOnly(VM& vm, Value v, const char* what) {
+    if (!v.isInt()) throw vm.runtimeError(std::string(what) + " is for ints, not " + vm.typeName(v));
+    return static_cast<uint64_t>(v.as.i);
 }
 
 int radixOf(VM& vm, int argc, const Value* args, int i) {
@@ -279,11 +294,13 @@ std::string formatText(VM& vm, const std::string& pattern, int argc, const Value
                 if (conversion == 'S') body = changeCase(body, true);
                 break;
             case 'c':
-                if (value.isInt()) {
+                if (value.isChar()) {
+                    appendUtf8(body, static_cast<uint32_t>(value.as.i));
+                } else if (value.isInt()) {
                     if (value.as.i < 0 || value.as.i > 0x10FFFF) throw vm.runtimeError("format: %c takes a character or its code, not " + vm.stringify(value));
                     appendUtf8(body, static_cast<uint32_t>(value.as.i));
                 } else if (value.isString()) {
-                    body = asString(value)->chars;
+                    body = asString(value)->utf8();
                 } else {
                     throw vm.runtimeError("format: %c takes a character or its code, not " + vm.stringify(value));
                 }
@@ -304,66 +321,79 @@ std::string formatText(VM& vm, const std::string& pattern, int argc, const Value
     return out;
 }
 
+// A char given where a string goes, as Kotlin's overloads taking a Char have it (D25): made
+// the string of it alone, in its place on the stack, where the collector sees it.
+void charAsText(VM& vm, Value& v) {
+    if (v.isChar()) v = vm.characterString(static_cast<uint32_t>(v.as.i));
+}
+
 void registerStringMethods(VM& vm) {
     const BuiltinType T = BuiltinType::String;
 
     vm.defineMethod(T, "contains", 1, 2, [](VM& vm, Value self, int argc, Value* args) -> Value {
-        const std::string& s = asString(self)->chars;
+        charAsText(vm, args[0]);
+        const std::string& s = asString(self)->utf8();
         const std::string& other = vm.toStr(args[0], "search text");
         if (flag(argc, args, 1)) return Value::boolean(fold(s).find(fold(other)) != std::string::npos);
         return Value::boolean(s.find(other) != std::string::npos);
     });
 
     vm.defineMethod(T, "startsWith", 1, 2, [](VM& vm, Value self, int argc, Value* args) -> Value {
+        charAsText(vm, args[0]);
         const std::string& prefix = vm.toStr(args[0], "prefix");
         if (flag(argc, args, 1)) {
-            const std::string s = fold(asString(self)->chars), p = fold(prefix);
+            const std::string s = fold(asString(self)->utf8()), p = fold(prefix);
             return Value::boolean(s.compare(0, p.size(), p) == 0);
         }
-        return Value::boolean(asString(self)->chars.compare(0, prefix.size(), prefix) == 0);
+        return Value::boolean(asString(self)->utf8().compare(0, prefix.size(), prefix) == 0);
     });
 
     vm.defineMethod(T, "endsWith", 1, 2, [](VM& vm, Value self, int argc, Value* args) -> Value {
+        charAsText(vm, args[0]);
         const bool ignoreCase = flag(argc, args, 1);
-        const std::string s = ignoreCase ? fold(asString(self)->chars) : asString(self)->chars;
+        const std::string s = ignoreCase ? fold(asString(self)->utf8()) : asString(self)->utf8();
         const std::string suffix = ignoreCase ? fold(vm.toStr(args[0], "suffix")) : vm.toStr(args[0], "suffix");
         return Value::boolean(s.size() >= suffix.size() && s.compare(s.size() - suffix.size(), suffix.size(), suffix) == 0);
     });
 
     // Where `other` first appears at or after `startIndex`, or -1.
     vm.defineMethod(T, "indexOf", 1, 3, [](VM& vm, Value self, int argc, Value* args) -> Value {
+        charAsText(vm, args[0]);
         const ObjString* text = asString(self);
-        const std::string& other = vm.toStr(args[0], "search text");
+        const ObjString* part = vm.toText(args[0], "search text");
         const size_t start = given(argc, args, 1) ? clampPosition(std::max<int64_t>(vm.toInt(args[1], "start index"), 0), text->length) : 0;
         if (flag(argc, args, 2)) {
+            const std::string& other = part->utf8();
             // Changing case keeps the number of characters, so a position in one is a position in the other.
-            const std::string s = fold(text->chars);
+            const std::string s = fold(text->utf8());
             const size_t at = s.find(fold(other), offsetOfCharacter(s, start));
             return Value::integer(at == std::string::npos ? -1 : static_cast<int64_t>(countCharacters(std::string_view(s).substr(0, at))));
         }
-        const size_t at = text->chars.find(other, text->byteAt(start));
-        return Value::integer(at == std::string::npos ? -1 : static_cast<int64_t>(text->charAt(at)));
+        return Value::integer(text->find(part, start));
     });
 
     // Where `other` last appears, starting at or before `startIndex`, or -1.
     vm.defineMethod(T, "lastIndexOf", 1, 3, [](VM& vm, Value self, int argc, Value* args) -> Value {
+        charAsText(vm, args[0]);
         const ObjString* text = asString(self);
-        const std::string& other = vm.toStr(args[0], "search text");
+        const ObjString* part = vm.toText(args[0], "search text");
         int64_t start = given(argc, args, 1) ? vm.toInt(args[1], "start index") : static_cast<int64_t>(text->length);
         if (start < 0) return Value::integer(-1);
         const size_t from = std::min(static_cast<size_t>(start), text->length);
         if (flag(argc, args, 2)) {
-            const std::string s = fold(text->chars);
+            const std::string& other = part->utf8();
+            const std::string s = fold(text->utf8());
             const size_t at = s.rfind(fold(other), offsetOfCharacter(s, from));
             return Value::integer(at == std::string::npos ? -1 : static_cast<int64_t>(countCharacters(std::string_view(s).substr(0, at))));
         }
-        const size_t at = text->chars.rfind(other, text->byteAt(from));
-        return Value::integer(at == std::string::npos ? -1 : static_cast<int64_t>(text->charAt(at)));
+        return Value::integer(text->find(part, from, true));
     });
 
     vm.defineMethod(T, "replace", 2, 3, [](VM& vm, Value self, int argc, Value* args) -> Value {
+        charAsText(vm, args[0]);
+        charAsText(vm, args[1]);
         const ObjString* text = asString(self);
-        const std::string& s = text->chars;
+        const std::string& s = text->utf8();
         const std::string& from = vm.toStr(args[0], "text to replace");
         const std::string& to = vm.toStr(args[1], "replacement");
         if (from.empty()) return self;
@@ -379,11 +409,11 @@ void registerStringMethods(VM& vm) {
                 const size_t at = folded.find(target, searchFrom);
                 if (at == std::string::npos) break;
                 charsBefore += countCharacters(std::string_view(folded).substr(searchFrom, at - searchFrom));
-                const size_t cut = text->byteAt(charsBefore);
+                const size_t cut = text->utf8Offset(charsBefore);
                 result.append(s, begin, cut - begin);
                 result += to;
                 charsBefore += targetLength;
-                begin = text->byteAt(charsBefore);
+                begin = text->utf8Offset(charsBefore);
                 searchFrom = at + target.size();
             }
         } else {
@@ -401,13 +431,14 @@ void registerStringMethods(VM& vm) {
 
     vm.defineMethod(T, "equals", 1, 2, [](VM&, Value self, int argc, Value* args) -> Value {
         if (!args[0].isString()) return Value::boolean(false);
-        if (flag(argc, args, 1)) return Value::boolean(fold(asString(self)->chars) == fold(asString(args[0])->chars));
-        return Value::boolean(asString(self)->chars == asString(args[0])->chars);
+        if (flag(argc, args, 1)) return Value::boolean(fold(asString(self)->utf8()) == fold(asString(args[0])->utf8()));
+        return Value::boolean(sameText(asString(self), asString(args[0])));
     });
 
     vm.defineMethod(T, "compareTo", 1, 2, [](VM& vm, Value self, int argc, Value* args) -> Value {
-        const std::string& other = vm.toStr(args[0], "text to compare with");
-        const int order = flag(argc, args, 1) ? fold(asString(self)->chars).compare(fold(other)) : asString(self)->chars.compare(other);
+        const ObjString* other = vm.toText(args[0], "text to compare with");
+        if (!flag(argc, args, 1)) return Value::integer(compareText(asString(self), other));
+        const int order = fold(asString(self)->utf8()).compare(fold(other->utf8()));
         return Value::integer((order > 0) - (order < 0));
     });
 
@@ -428,37 +459,36 @@ void registerStringMethods(VM& vm) {
         if (begin < 0 || end > length || begin > end)
             throw vm.runtimeError("substring(" + std::to_string(begin) + ", " + std::to_string(end) +
                                   ") is out of range for a string of length " + std::to_string(length));
-        const size_t from = text->byteAt(static_cast<size_t>(begin));
-        return vm.str(text->chars.substr(from, text->byteAt(static_cast<size_t>(end)) - from));
+        return vm.str(text->slice(static_cast<size_t>(begin), static_cast<size_t>(end)));
     });
 
     vm.defineMethod(T, "lowercase", 0, 0, [](VM& vm, Value self, int, Value*) -> Value {
-        return vm.str(changeCase(asString(self)->chars, false));
+        return vm.str(changeCase(asString(self)->utf8(), false));
     });
     vm.defineMethod(T, "uppercase", 0, 0, [](VM& vm, Value self, int, Value*) -> Value {
-        return vm.str(changeCase(asString(self)->chars, true));
+        return vm.str(changeCase(asString(self)->utf8(), true));
     });
 
     vm.defineMethod(T, "isEmpty", 0, 0, [](VM&, Value self, int, Value*) -> Value {
-        return Value::boolean(asString(self)->chars.empty());
+        return Value::boolean(asString(self)->utf8().empty());
     });
     vm.defineMethod(T, "isNotEmpty", 0, 0, [](VM&, Value self, int, Value*) -> Value {
-        return Value::boolean(!asString(self)->chars.empty());
+        return Value::boolean(!asString(self)->utf8().empty());
     });
     vm.defineMethod(T, "isBlank", 0, 0, [](VM&, Value self, int, Value*) -> Value {
-        return Value::boolean(trimmed(asString(self)->chars).empty());
+        return Value::boolean(trimmed(asString(self)->utf8()).empty());
     });
     vm.defineMethod(T, "isNotBlank", 0, 0, [](VM&, Value self, int, Value*) -> Value {
-        return Value::boolean(!trimmed(asString(self)->chars).empty());
+        return Value::boolean(!trimmed(asString(self)->utf8()).empty());
     });
 
     vm.defineMethod(T, "trimStart", 0, 0, [](VM& vm, Value self, int, Value*) -> Value {
-        const std::string& s = asString(self)->chars;
+        const std::string& s = asString(self)->utf8();
         const size_t begin = s.find_first_not_of(" \t\r\n\f\v");
         return vm.str(begin == std::string::npos ? std::string() : s.substr(begin));
     });
     vm.defineMethod(T, "trimEnd", 0, 0, [](VM& vm, Value self, int, Value*) -> Value {
-        const std::string& s = asString(self)->chars;
+        const std::string& s = asString(self)->utf8();
         const size_t end = s.find_last_not_of(" \t\r\n\f\v");
         return vm.str(end == std::string::npos ? std::string() : s.substr(0, end + 1));
     });
@@ -467,7 +497,7 @@ void registerStringMethods(VM& vm) {
     vm.defineMethod(T, "lines", 0, 0, [](VM& vm, Value self, int, Value*) -> Value {
         ObjList* list = newList(vm);
         TempRoot keep(vm, Value::object(list));
-        for (std::string& line : splitLines(asString(self)->chars)) list->values().push_back(vm.str(std::move(line)));
+        for (std::string& line : splitLines(asString(self)->utf8())) list->values().push_back(vm.str(std::move(line)));
         vm.account(list->values().size() * sizeof(Value));
         return Value::object(list);
     });
@@ -475,6 +505,7 @@ void registerStringMethods(VM& vm) {
     auto pad = [](VM& vm, Value self, int argc, Value* args, bool atStart) -> Value {
         const ObjString* text = asString(self);
         const int64_t length = vm.toInt(args[0], "padded length");
+        if (given(argc, args, 1)) charAsText(vm, args[1]);  // padStart(5, ' ') (D25)
         const std::string with = given(argc, args, 1) ? vm.toStr(args[1], "padding character") : std::string(" ");
         if (countCharacters(with) != 1) throw vm.runtimeError("padding is done with a single character, not " + vm.stringify(args[1]));
         if (length <= static_cast<int64_t>(text->length)) return self;
@@ -485,7 +516,7 @@ void registerStringMethods(VM& vm) {
         std::string padding;
         padding.reserve(static_cast<size_t>(missing) * with.size());
         for (int64_t i = static_cast<int64_t>(text->length); i < length; i++) padding += with;
-        return vm.str(atStart ? padding + text->chars : text->chars + padding);
+        return vm.str(atStart ? padding + text->utf8() : text->utf8() + padding);
     };
     static const auto padText = pad;
     vm.defineMethod(T, "padStart", 1, 2, [](VM& vm, Value self, int argc, Value* args) -> Value {
@@ -498,9 +529,10 @@ void registerStringMethods(VM& vm) {
     // The characters in the opposite order.
     vm.defineMethod(T, "reversed", 0, 0, [](VM& vm, Value self, int, Value*) -> Value {
         const ObjString* text = asString(self);
-        std::string out;
-        out.reserve(text->chars.size());
-        for (size_t i = text->length; i > 0; i--) out += text->character(i - 1);
+        Characters out{std::string(text->units().size(), '\0'), text->width};
+        const size_t width = text->width;
+        for (size_t i = 0; i < text->length; i++)
+            std::memcpy(&out.units[i * width], text->units().data() + (text->length - 1 - i) * width, width);
         return vm.str(std::move(out));
     });
 
@@ -508,31 +540,41 @@ void registerStringMethods(VM& vm) {
     // ...OrNull forms give null instead.
     vm.defineMethod(T, "toInt", 0, 1, [](VM& vm, Value self, int argc, Value* args) -> Value {
         int64_t n;
-        if (!parseWhole(asString(self)->chars, radixOf(vm, argc, args, 0), n))
+        if (!parseWhole(asString(self)->utf8(), radixOf(vm, argc, args, 0), n))
             throw vm.runtimeError(vm.stringify(self).insert(0, "\"") + "\" is not a whole number");
         return Value::integer(n);
     });
     vm.defineMethod(T, "toIntOrNull", 0, 1, [](VM& vm, Value self, int argc, Value* args) -> Value {
         int64_t n;
-        return parseWhole(asString(self)->chars, radixOf(vm, argc, args, 0), n) ? Value::integer(n) : Value::null();
+        return parseWhole(asString(self)->utf8(), radixOf(vm, argc, args, 0), n) ? Value::integer(n) : Value::null();
+    });
+    // Text to an int's 64 bits read as unsigned (D44): "18446744073709551615" is -1.
+    vm.defineMethod(T, "parseUnsigned", 0, 1, [](VM& vm, Value self, int argc, Value* args) -> Value {
+        std::string_view text = asString(self)->utf8();
+        if (!text.empty() && text[0] == '+') text.remove_prefix(1);
+        uint64_t n = 0;
+        auto result = std::from_chars(text.data(), text.data() + text.size(), n, radixOf(vm, argc, args, 0));
+        if (text.empty() || result.ec != std::errc() || result.ptr != text.data() + text.size())
+            throw vm.runtimeError(vm.stringify(self).insert(0, "\"") + "\" is not a whole number from 0 to 18446744073709551615");
+        return Value::integer(static_cast<int64_t>(n));
     });
     vm.defineMethod(T, "toDouble", 0, 0, [](VM& vm, Value self, int, Value*) -> Value {
         double d;
-        if (!parseFloat(asString(self)->chars, d)) throw vm.runtimeError(vm.stringify(self).insert(0, "\"") + "\" is not a number");
+        if (!parseFloat(asString(self)->utf8(), d)) throw vm.runtimeError(vm.stringify(self).insert(0, "\"") + "\" is not a number");
         return Value::number(d);
     });
     vm.defineMethod(T, "toDoubleOrNull", 0, 0, [](VM&, Value self, int, Value*) -> Value {
         double d;
-        return parseFloat(asString(self)->chars, d) ? Value::number(d) : Value::null();
+        return parseFloat(asString(self)->utf8(), d) ? Value::number(d) : Value::null();
     });
 
     vm.defineMethod(T, "format", 0, -1, [](VM& vm, Value self, int argc, Value* args) -> Value {
-        return vm.str(formatText(vm, asString(self)->chars, argc, args));
+        return vm.str(formatText(vm, asString(self)->utf8(), argc, args));
     });
 
 #define ASTRA_CHARACTER_TEST(NAME, WHICH)                                              \
     vm.defineMethod(T, NAME, 0, 0, [](VM&, Value self, int, Value*) -> Value {          \
-        return Value::boolean(charactersAre(asString(self)->chars, CharacterClass::WHICH)); \
+        return Value::boolean(charactersAre(asString(self)->utf8(), CharacterClass::WHICH)); \
     })
     ASTRA_CHARACTER_TEST("isLetter", Letter);
     ASTRA_CHARACTER_TEST("isDigit", Digit);
@@ -595,14 +637,65 @@ void registerNumberMethods(VM& vm) {
     vm.defineMethod(T, "toDouble", 0, 0, fraction);
     vm.defineMethod(T, "toFloat", 0, 0, fraction);
 
-    // The character with this code.
-    vm.defineMethod(T, "toChar", 0, 0, [](VM& vm, Value self, int, Value*) -> Value {
-        const int64_t code = vm.toInt(self, "character code");
-        if (code < 0 || code > 0x10FFFF || (code >= 0xD800 && code <= 0xDFFF))
-            throw vm.runtimeError(std::to_string(code) + " is not a valid Unicode code point");
-        std::string s;
-        appendUtf8(s, static_cast<uint32_t>(code));
-        return vm.str(std::move(s));
+    // An int as a byte (D19): an error past 0 to 255; toByteWrapped() keeps the low 8 bits.
+    vm.defineMethod(T, "toByte", 0, 0, [](VM& vm, Value self, int, Value*) -> Value {
+        const int64_t n = static_cast<int64_t>(wholeOnly(vm, self, "toByte"));
+        if (n < 0 || n > 255)
+            throw vm.runtimeError(std::to_string(n) + " does not fit in a byte, which holds 0 to 255; toByteWrapped() keeps the low 8 bits");
+        return Value::byte(static_cast<uint8_t>(n));
+    });
+    vm.defineMethod(T, "toByteWrapped", 0, 0, [](VM& vm, Value self, int, Value*) -> Value {
+        return Value::byte(static_cast<uint8_t>(wholeOnly(vm, self, "toByteWrapped")));
+    });
+    // The low bits of an int, as the storage widths keep them (D148), read back as an int.
+    vm.defineMethod(T, "toInt16Wrapped", 0, 0, [](VM& vm, Value self, int, Value*) -> Value {
+        return Value::integer(static_cast<int16_t>(wholeOnly(vm, self, "toInt16Wrapped")));
+    });
+    vm.defineMethod(T, "toUint16Wrapped", 0, 0, [](VM& vm, Value self, int, Value*) -> Value {
+        return Value::integer(static_cast<uint16_t>(wholeOnly(vm, self, "toUint16Wrapped")));
+    });
+    vm.defineMethod(T, "toInt32Wrapped", 0, 0, [](VM& vm, Value self, int, Value*) -> Value {
+        return Value::integer(static_cast<int32_t>(wholeOnly(vm, self, "toInt32Wrapped")));
+    });
+    vm.defineMethod(T, "toUint32Wrapped", 0, 0, [](VM& vm, Value self, int, Value*) -> Value {
+        return Value::integer(static_cast<uint32_t>(wholeOnly(vm, self, "toUint32Wrapped")));
+    });
+    // For 32-bit work ported from Kotlin (D148): the low 32 bits as a signed number, and
+    // rotations of them, each giving a signed 32-bit number as Kotlin's Int does.
+    vm.defineMethod(T, "wrap32", 0, 0, [](VM& vm, Value self, int, Value*) -> Value {
+        return Value::integer(static_cast<int32_t>(wholeOnly(vm, self, "wrap32")));
+    });
+    vm.defineMethod(T, "rotateLeft32", 1, 1, [](VM& vm, Value self, int, Value* args) -> Value {
+        const uint32_t bits = static_cast<uint32_t>(wholeOnly(vm, self, "rotateLeft32"));
+        const unsigned count = static_cast<unsigned>(vm.toInt(args[0], "rotation") & 31);
+        return Value::integer(static_cast<int32_t>(count == 0 ? bits : (bits << count) | (bits >> (32 - count))));
+    });
+    vm.defineMethod(T, "rotateRight32", 1, 1, [](VM& vm, Value self, int, Value* args) -> Value {
+        const uint32_t bits = static_cast<uint32_t>(wholeOnly(vm, self, "rotateRight32"));
+        const unsigned count = static_cast<unsigned>(vm.toInt(args[0], "rotation") & 31);
+        return Value::integer(static_cast<int32_t>(count == 0 ? bits : (bits >> count) | (bits << (32 - count))));
+    });
+
+    // An int's 64 bits read as unsigned (D44): there are no unsigned types, but these.
+    vm.defineMethod(T, "toUnsignedString", 0, 1, [](VM& vm, Value self, int argc, Value* args) -> Value {
+        const uint64_t n = wholeOnly(vm, self, "toUnsignedString");
+        char buffer[72];
+        auto result = std::to_chars(buffer, buffer + sizeof(buffer), n, radixOf(vm, argc, args, 0));
+        return vm.str(std::string(buffer, result.ptr));
+    });
+    vm.defineMethod(T, "compareUnsigned", 1, 1, [](VM& vm, Value self, int, Value* args) -> Value {
+        const uint64_t a = wholeOnly(vm, self, "compareUnsigned"), b = wholeOnly(vm, args[0], "compareUnsigned");
+        return Value::integer(a < b ? -1 : a > b ? 1 : 0);
+    });
+    vm.defineMethod(T, "divideUnsigned", 1, 1, [](VM& vm, Value self, int, Value* args) -> Value {
+        const uint64_t a = wholeOnly(vm, self, "divideUnsigned"), b = wholeOnly(vm, args[0], "divideUnsigned");
+        if (b == 0) throw vm.runtimeError("division by zero");
+        return Value::integer(static_cast<int64_t>(a / b));
+    });
+    vm.defineMethod(T, "remainderUnsigned", 1, 1, [](VM& vm, Value self, int, Value* args) -> Value {
+        const uint64_t a = wholeOnly(vm, self, "remainderUnsigned"), b = wholeOnly(vm, args[0], "remainderUnsigned");
+        if (b == 0) throw vm.runtimeError("division by zero");
+        return Value::integer(static_cast<int64_t>(a % b));
     });
 
     // toString(), or toString(radix) for a whole number in another base.
@@ -617,7 +710,7 @@ void registerNumberMethods(VM& vm) {
     });
 
     vm.defineMethod(T, "pow", 1, 1, [](VM& vm, Value self, int, Value* args) -> Value {
-        if (self.isInt() && args[0].isInt() && args[0].as.i >= 0) return Value::integer(integerPower(self.as.i, args[0].as.i));
+        if (self.isInt() && args[0].isInt() && args[0].as.i >= 0) return Value::integer(integerPower(vm, self.as.i, args[0].as.i));
         return Value::number(std::pow(self.toDouble(), vm.toNumber(args[0], "exponent")));
     });
 
@@ -651,30 +744,55 @@ void registerNumberMethods(VM& vm) {
     });
 }
 
+// A char's methods (D24): what kind of character it is, and the same letter in the other case.
+void registerCharMethods(VM& vm) {
+    constexpr BuiltinType T = BuiltinType::Char;
+#define CHARACTER_CLASS(NAME, WHICH)                                                                          \
+    vm.defineMethod(T, NAME, 0, 0, [](VM&, Value self, int, Value*) -> Value {                                 \
+        std::string text;                                                                                     \
+        appendUtf8(text, static_cast<uint32_t>(self.as.i));                                                   \
+        return Value::boolean(charactersAre(text, CharacterClass::WHICH));                                    \
+    });
+    CHARACTER_CLASS("isLetter", Letter)
+    CHARACTER_CLASS("isDigit", Digit)
+    CHARACTER_CLASS("isLetterOrDigit", LetterOrDigit)
+    CHARACTER_CLASS("isWhitespace", Whitespace)
+    CHARACTER_CLASS("isUpperCase", Upper)
+    CHARACTER_CLASS("isLowerCase", Lower)
+#undef CHARACTER_CLASS
+    // The same letter in the other case, where it is one character; the char itself otherwise.
+    vm.defineMethod(T, "upper", 0, 0, [](VM&, Value self, int, Value*) -> Value {
+        std::string text;
+        appendUtf8(text, static_cast<uint32_t>(self.as.i));
+        const Characters result = Characters::fromUtf8(changeCase(text, true));
+        return result.size() == 1 ? Value::character(result[0]) : self;
+    });
+    vm.defineMethod(T, "lower", 0, 0, [](VM&, Value self, int, Value*) -> Value {
+        std::string text;
+        appendUtf8(text, static_cast<uint32_t>(self.as.i));
+        const Characters result = Characters::fromUtf8(changeCase(text, false));
+        return result.size() == 1 ? Value::character(result[0]) : self;
+    });
+    // The number a digit stands for: '7' is 7, and with a radix past 10, 'f' is 15.
+    vm.defineMethod(T, "digitToInt", 0, 1, [](VM& vm, Value self, int argc, Value* args) -> Value {
+        const int radix = radixOf(vm, argc, args, 0);
+        const int64_t c = self.as.i;
+        const int64_t digit = c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'z' ? c - 'a' + 10 : c >= 'A' && c <= 'Z' ? c - 'A' + 10 : 99;
+        if (digit >= radix) throw vm.runtimeError(quoteCharacter(static_cast<uint32_t>(c)) + " is not a digit" + (radix == 10 ? std::string() : " in base " + std::to_string(radix)));
+        return Value::integer(digit);
+    });
+}
+
+// A byte's methods (D19): the int it holds.
+void registerByteMethods(VM& vm) {
+    vm.defineMethod(BuiltinType::Byte, "toInt", 0, 0, [](VM&, Value self, int, Value*) -> Value { return Value::integer(self.as.i); });
+}
+
 // Int.maxValue and the like. Astra has one whole-number type and one for fractions; the
 // four names are Kotlin's, so that a limit means the same number as it does there.
-void registerNumberConstants(VM& vm) {
-    auto object = [&](const char* name, std::initializer_list<std::pair<const char*, Value>> members) {
-        ObjClass* holder = vm.alloc<ObjClass>(vm.intern(name));
-        for (const auto& member : members) holder->statics.set(vm.intern(member.first), member.second);
-        vm.defineGlobal(name, Value::object(holder));
-    };
-    const double infinity = std::numeric_limits<double>::infinity();
-    const double nan = std::numeric_limits<double>::quiet_NaN();
-
-    object("Int", {{"maxValue", Value::integer(2147483647)}, {"minValue", Value::integer(-2147483647 - 1)}});
-    object("Long", {{"maxValue", Value::integer(std::numeric_limits<int64_t>::max())},
-                    {"minValue", Value::integer(std::numeric_limits<int64_t>::min())}});
-    object("Double", {{"maxValue", Value::number(std::numeric_limits<double>::max())},
-                      {"minValue", Value::number(std::numeric_limits<double>::denorm_min())},
-                      {"positiveInfinity", Value::number(infinity)},
-                      {"negativeInfinity", Value::number(-infinity)},
-                      {"nan", Value::number(nan)}});
-    object("Float", {{"maxValue", Value::number(static_cast<double>(std::numeric_limits<float>::max()))},
-                     {"minValue", Value::number(static_cast<double>(std::numeric_limits<float>::denorm_min()))},
-                     {"positiveInfinity", Value::number(infinity)},
-                     {"negativeInfinity", Value::number(-infinity)},
-                     {"nan", Value::number(nan)}});
+void registerNumberConstants(VM&) {
+    // Astra's are `int.maxValue` and the like, which the compiler writes in place (D76); Kotlin's
+    // holders, Int, Long, Double and Float, are errors saying so.
 }
 
 // ---- Lists ----
@@ -1223,6 +1341,8 @@ void registerStdlib(VM& vm) {
     registerGlobals(vm);
     registerStringMethods(vm);
     registerNumberMethods(vm);
+    registerCharMethods(vm);
+    registerByteMethods(vm);
     registerNumberConstants(vm);
     registerListMethods(vm);
     registerMapMethods(vm);

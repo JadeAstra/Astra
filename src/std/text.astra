@@ -87,8 +87,8 @@ class StringBuilder {
     return this
   }
 
-  fun get(index : int) : string => toString().get(index)
-  op [](index : int) : string => toString().get(index)
+  fun get(index : int) : char => toString().get(index)
+  op [](index : int) : char => toString().get(index)
   fun substring(startIndex : int, endIndex : int? = null) : string => toString().substring(startIndex, endIndex == null ? count : endIndex)
   fun indexOf(text : string, startIndex : int = 0) : int => toString().indexOf(text, startIndex)
   fun lastIndexOf(text : string) : int => toString().lastIndexOf(text)

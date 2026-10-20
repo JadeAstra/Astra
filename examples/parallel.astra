@@ -73,7 +73,7 @@ val height = 512
 val picture = Bytes(width * height)
 val (_, painting) = timed {
   picture.parallelChunks { positions ->
-    for i in positions { picture[i] = (i % width + i / width) * 255 / (width + height - 2) }
+    for i in positions { picture[i] = ((i % width + i / width) * 255 / (width + height - 2)).toByte() }
   }
 }
 print("a ${width} by ${height} picture filled in %.1f ms; its corners are ${picture[0]} and ${picture[width * height - 1]}".format(painting))

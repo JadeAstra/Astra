@@ -489,16 +489,16 @@ std::vector<TypeAnnotation> Parser::typeArgumentsRest() {
             args.push_back(typeExpression());
         }
     } while (match(TokenType::Comma));
-    if (check(TokenType::Shr)) {
-        if (pendingTypeClose_) {
-            pendingTypeClose_ = false;
-            advance();
+    if (check(TokenType::Shr) || check(TokenType::Ushr)) {
+        // `List<List<int>>`, `Map<K, List<List<int>>>`: the token closes this list and the ones
+        // around it; the outermost of them reads it.
+        if (pendingTypeClose_ > 0) {
+            if (--pendingTypeClose_ == 0) advance();
         } else {
-            pendingTypeClose_ = true;
+            pendingTypeClose_ = check(TokenType::Shr) ? 1 : 2;
         }
-    } else if (pendingTypeClose_) {
-        // The outer list's '>' was the second half of a '>>' already read.
-        pendingTypeClose_ = false;
+    } else if (pendingTypeClose_ > 0) {
+        pendingTypeClose_--;
     } else {
         expect(TokenType::Gt, "'>' to end the type arguments");
     }
@@ -528,11 +528,10 @@ std::vector<TypeParam> Parser::typeParameters() {
         params.push_back(std::move(p));
     } while (match(TokenType::Comma));
     typeParamScopes_.pop_back();
-    if (check(TokenType::Shr) && pendingTypeClose_) {
-        pendingTypeClose_ = false;
-        advance();
-    } else if (pendingTypeClose_) {
-        pendingTypeClose_ = false;
+    if ((check(TokenType::Shr) || check(TokenType::Ushr)) && pendingTypeClose_ > 0) {
+        if (--pendingTypeClose_ == 0) advance();
+    } else if (pendingTypeClose_ > 0) {
+        pendingTypeClose_--;
     } else {
         expect(TokenType::Gt, "'>' to end the type parameters");
     }
@@ -552,7 +551,7 @@ bool Parser::isTypeParam(const std::string& name) const {
 bool Parser::typeArgumentsBeforeCall(std::vector<TypeAnnotation>& into) {
     if (!check(TokenType::Lt) || peek().newlineBefore) return false;
     const size_t start = p_;
-    const bool savedClose = pendingTypeClose_;
+    const int savedClose = pendingTypeClose_;
     try {
         advance();
         std::vector<TypeAnnotation> args = typeArgumentsRest();
@@ -1215,6 +1214,7 @@ std::string Parser::operatorName() {
         case TokenType::GtEq:
         case TokenType::Shl:
         case TokenType::Shr:
+        case TokenType::Ushr:
         case TokenType::Amp:
         case TokenType::Pipe:
         case TokenType::Caret:
@@ -1558,6 +1558,7 @@ ExprPtr Parser::assignment() {
         case TokenType::PercentEq:
         case TokenType::ShlEq:
         case TokenType::ShrEq:
+        case TokenType::UshrEq:
         case TokenType::AmpEq:
         case TokenType::PipeEq:
         case TokenType::CaretEq: {
@@ -1744,7 +1745,7 @@ ExprPtr Parser::bitAnd() {
 
 ExprPtr Parser::shift() {
     ExprPtr left = additive();
-    while (check(TokenType::Shl) || check(TokenType::Shr)) {
+    while (check(TokenType::Shl) || check(TokenType::Shr) || check(TokenType::Ushr)) {
         const Token& op = advance();
         ExprPtr right = additive();
         left = binary(op, std::move(left), std::move(right));
@@ -1754,7 +1755,7 @@ ExprPtr Parser::shift() {
 
 ExprPtr Parser::additive() {
     ExprPtr left = multiplicative();
-    while (check(TokenType::Plus) || (check(TokenType::Minus) && !peek().newlineBefore)) {
+    while (check(TokenType::Plus) || check(TokenType::AmpPlus) || ((check(TokenType::Minus) || check(TokenType::AmpMinus)) && !peek().newlineBefore)) {
         const Token& op = advance();
         ExprPtr right = multiplicative();
         left = binary(op, std::move(left), std::move(right));
@@ -1764,7 +1765,7 @@ ExprPtr Parser::additive() {
 
 ExprPtr Parser::multiplicative() {
     ExprPtr left = cast();
-    while (check(TokenType::Star) || check(TokenType::Slash) || check(TokenType::Percent)) {
+    while (check(TokenType::Star) || check(TokenType::AmpStar) || check(TokenType::Slash) || check(TokenType::Percent)) {
         const Token& op = advance();
         ExprPtr right = cast();
         left = binary(op, std::move(left), std::move(right));
@@ -1970,6 +1971,12 @@ ExprPtr Parser::primary() {
             auto e = node<LiteralExpr>(t);
             e->type = LiteralExpr::Type::String;
             e->stringValue = t.stringValue;
+            return e;
+        }
+        case TokenType::Char: {
+            auto e = node<LiteralExpr>(t);
+            e->type = LiteralExpr::Type::Char;
+            e->intValue = t.intValue;
             return e;
         }
         case TokenType::True:
@@ -2192,6 +2199,7 @@ bool Parser::startsExpression() const {
         case TokenType::Float:
         case TokenType::String:
         case TokenType::InterpString:
+        case TokenType::Char:
         case TokenType::True:
         case TokenType::False:
         case TokenType::Null:

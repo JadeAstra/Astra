@@ -1,0 +1,31 @@
+// Strings kept at flexible width (D20): 1, 2 or 4 bytes a character, the narrowest its widest
+// character needs, so positions are direct; equal strings are equal whatever made them. And
+// raw strings with $$ in front, whose lone dollar signs are text (D112).
+
+val latin = "café"
+val greek = "αβγ"
+val emoji = "a😀b"
+print(latin.length, greek.length, emoji.length, latin[3], greek[1], emoji[1], emoji[2])   // expect: 4 3 3 é β 😀 b
+
+// Joined at the wider part's width; read back by position.
+val mixed = latin + greek + emoji
+print(mixed, mixed.length, mixed[4], mixed[8], mixed.slice(3, 6))   // expect: caféαβγa😀b 10 α 😀 éαβ
+print(mixed.indexOf("γa"), mixed.indexOf("😀"), mixed.indexOf("é"), mixed.lastIndexOf("a"), mixed.indexOf("zz"), mixed.indexOf("a", 5))   // expect: 6 8 3 7 -1 7
+
+// A part of a wide string, narrow again, equals the same text made narrow, and is the same key.
+val back = mixed.substring(0, 4)
+val keys = {"café": 1, "x": 2}
+print(back == latin, back == "café", (greek + "x").substring(3) == "x", keys[back], keys[(greek + "x").substring(3)])   // expect: true true true 1 2
+print(mixed.reversed(), emoji.reversed(), "${latin}-${greek}-${emoji}-${1}")   // expect: b😀aγβαéfac b😀a café-αβγ-a😀b-1
+
+// Ordered by the characters' numbers, whatever their widths.
+print("b" < "é", "é" < "α", "α" < "😀", "abc".compareTo("abd"), "αβ".compareTo("αa"), ["😀", "b", "α", "é"].sorted())
+// expect: true true true -1 1 ["b", "é", "α", "😀"]
+print(mixed.split("γ"), "a,é,😀".split(","), "é".code, latin.uppercase(), greek.uppercase())   // expect: ["caféαβ", "a😀b"] ["a", "é", "😀"] 233 CAFÉ ΑΒΓ
+
+// $$""": $$name and $${...} are read; a lone $ is text. Three in front allow two in a row.
+val total = 12
+val name = "box"
+print($$"""cost: $5, total: $$total, sum $${total * 2}, $name and $$$total""")   // expect: cost: $5, total: 12, sum 24, $name and $12
+print($$$"""a $$b $$$name $$$$name ${x}""", """plain $name ${total + 1} \n""")   // expect: a $$b box $box ${x} plain box 13 \n
+print("in ${ $$"""$$name $x""" } out")   // expect: in box $x out

@@ -40,7 +40,7 @@ print(until, (0..<until).toList())      // expect: 5 [0, 1, 2, 3, 4]
 
 var chars = []
 for c in "abc" { chars.push(c) }
-print(chars)                            // expect: ["a", "b", "c"]
+print(chars)                            // expect: ['a', 'b', 'c']
 
 var keys = []
 var m = {one: 1, two: 2, three: 3}

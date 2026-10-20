@@ -155,7 +155,7 @@ void VM::refreshFromRoot() {
     mapEntryClass_ = root_->mapEntryClass_;
     hasExtensions_ = root_->hasExtensions_;
     if (extensionEpoch_ != root_->extensionEpoch_) {
-        for (size_t i = 0; i < 16; i++) {
+        for (size_t i = 0; i < kTypeCount_; i++) {
             typeExtensions_[i].clear();
             typeExtensions_[i].addAll(root_->typeExtensions_[i]);
         }
@@ -267,8 +267,8 @@ struct Dealt {
 
 std::string describe(const VM& vm, const Obj* obj) {
     switch (obj->type) {
-        case ObjType::Instance: return "this " + static_cast<const ObjInstance*>(obj)->cls->name->chars;
-        case ObjType::Class: return "class " + static_cast<const ObjClass*>(obj)->name->chars;
+        case ObjType::Instance: return "this " + static_cast<const ObjInstance*>(obj)->cls->name->utf8();
+        case ObjType::Class: return "class " + static_cast<const ObjClass*>(obj)->name->utf8();
         case ObjType::Upvalue: return "this variable";
         default: return "this " + vm.typeName(Value::object(const_cast<Obj*>(obj)));
     }
@@ -416,7 +416,7 @@ void VM::markNotParallel(const std::string& global, std::initializer_list<const 
             const Table::Entry& entry = members.entries()[i];
             if (entry.key == nullptr || !entry.value.isObjType(ObjType::Native)) continue;
             bool excepted = false;
-            for (const char* name : except) excepted = excepted || entry.key->chars == name;
+            for (const char* name : except) excepted = excepted || entry.key->utf8() == name;
             asNative(entry.value)->parallelSafe = excepted;
         }
     }

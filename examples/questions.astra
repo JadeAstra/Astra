@@ -39,6 +39,6 @@ startCoroutine {
   val colour = ask("And your favourite colour, ${name.ifBlank { "stranger" }}?")
   heart.cancel()
   print()
-  print("Hello, ${name.ifBlank { "stranger" }}. ${colour.ifBlank { "No colour" }.replaceFirstChar { it.uppercase() }} it is.")
+  print("Hello, ${name.ifBlank { "stranger" }}. ${colour.ifBlank { "No colour" }.replaceFirstChar { it.upper() }} it is.")
   print("While you were typing, the event loop ran $beats times.")
 }

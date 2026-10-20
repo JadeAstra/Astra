@@ -4,6 +4,7 @@
 #include <new>
 
 #include <charconv>
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <functional>
@@ -20,15 +21,6 @@ uint32_t newShape() {
     return shape;
 }
 
-uint32_t hashString(std::string_view s) {
-    uint32_t hash = 2166136261u;  // FNV-1a
-    for (unsigned char c : s) {
-        hash ^= c;
-        hash *= 16777619u;
-    }
-    return hash;
-}
-
 bool valueBytesEqual(const ValueLayout& layout, const uint8_t* x, const uint8_t* y, int depth);
 
 bool valuesEqual(const Value& a, const Value& b) {
@@ -40,6 +32,8 @@ bool valuesEqual(const Value& a, const Value& b) {
             case ValueKind::Bool:
                 return a.as.b == b.as.b;
             case ValueKind::Int:
+            case ValueKind::Char:
+            case ValueKind::Byte:
                 return a.as.i == b.as.i;
             case ValueKind::Float:
                 return a.as.d == b.as.d;
@@ -54,15 +48,25 @@ bool valuesEqual(const Value& a, const Value& b) {
                 if (a.as.obj->type == ObjType::String && b.as.obj->type == ObjType::String) {
                     const ObjString* x = asString(a);
                     const ObjString* y = asString(b);
-                    return x->hash == y->hash && x->chars == y->chars;
+                    return sameText(x, y);
                 }
                 return false;
         }
         return false;
     }
 
-    if (a.kind == ValueKind::Int && b.kind == ValueKind::Float) return static_cast<double>(a.as.i) == b.as.d;
-    if (a.kind == ValueKind::Float && b.kind == ValueKind::Int) return a.as.d == static_cast<double>(b.as.i);
+    // A char and a string of that character alone are equal (D25).
+    if (a.kind == ValueKind::Char || b.kind == ValueKind::Char) {
+        const Value& c = a.kind == ValueKind::Char ? a : b;
+        const Value& s = a.kind == ValueKind::Char ? b : a;
+        return s.isString() && asString(s)->length == 1 && asString(s)->at(0) == static_cast<uint32_t>(c.as.i);
+    }
+    // A byte is the number it holds.
+    const bool wholeA = a.kind == ValueKind::Int || a.kind == ValueKind::Byte;
+    const bool wholeB = b.kind == ValueKind::Int || b.kind == ValueKind::Byte;
+    if (wholeA && wholeB) return a.as.i == b.as.i;
+    if (wholeA && b.kind == ValueKind::Float) return static_cast<double>(a.as.i) == b.as.d;
+    if (a.kind == ValueKind::Float && wholeB) return a.as.d == static_cast<double>(b.as.i);
     return false;
 }
 
@@ -71,7 +75,10 @@ size_t hashValue(const Value& v) {
         case ValueKind::Bool:
             return v.as.b ? 11 : 7;
         case ValueKind::Int:
+        case ValueKind::Byte:
             return std::hash<int64_t>()(v.as.i);
+        case ValueKind::Char:
+            return hashCharacter(kEmptyStringHash, static_cast<uint32_t>(v.as.i));  // as the string of it alone
         case ValueKind::Float: {
             // Integral floats must hash like the equal int so 1 and 1.0 are the same map key.
             double d = v.as.d;
@@ -139,6 +146,9 @@ bool valueBytesEqual(const ValueLayout& layout, const uint8_t* x, const uint8_t*
             case ValueField::Bool:
                 if (*p != *q) return false;
                 break;
+            case ValueField::Narrow:
+                if (!valuesEqual(readNarrow(field.narrow, p), readNarrow(field.narrow, q))) return false;
+                break;
             case ValueField::Float:
                 if (!(floatAt(p) == floatAt(q))) return false;
                 break;
@@ -171,6 +181,11 @@ size_t valueBytesHash(const ValueLayout& layout, const uint8_t* x, int depth) {
                 break;
             }
             case ValueField::Bool: h = mixHash(h, *p ? 11 : 7); break;
+            case ValueField::Narrow: {
+                const Value v = readNarrow(field.narrow, p);
+                h = mixHash(h, hashValue(v.isFloat() && v.as.d == 0.0 ? Value::number(0.0) : v));
+                break;
+            }
             case ValueField::Float: h = mixHash(h, hashValue(Value::number(floatAt(p) == 0.0 ? 0.0 : floatAt(p)))); break;
             case ValueField::Object: h = mixHash(h, keyHash(objectAt(p), depth + 1)); break;
             case ValueField::Any: h = mixHash(h, keyHash(valueAt(p), depth + 1)); break;
@@ -207,6 +222,7 @@ KeyItem keyItem(const ObjList* list, size_t i) {
             return KeyItem{Value::integer(v)};
         }
         case ListStore::Floats: return KeyItem{Value::number(floatAt(at))};
+        case ListStore::Narrow: return KeyItem{readNarrow(list->pack->narrow, at)};
         case ListStore::Bools: return KeyItem{Value::boolean(*at != 0)};
         default: return KeyItem{Value::null(), at, list->pack->itemClass};
     }
@@ -378,6 +394,22 @@ std::string quoteString(std::string_view s) {
     return out;
 }
 
+std::string quoteCharacter(uint32_t c) {
+    switch (c) {
+        case '\'': return "'\\''";
+        case '\\': return "'\\\\'";
+        case '\n': return "'\\n'";
+        case '\t': return "'\\t'";
+        case '\r': return "'\\r'";
+        case 0: return "'\\0'";
+        default: {
+            std::string out = "'";
+            appendUtf8(out, c);
+            return out + "'";
+        }
+    }
+}
+
 // ---- Table ----
 
 void Table::set(ObjString* key, Value value) {
@@ -433,35 +465,295 @@ size_t countCharacters(std::string_view s) {
     return count;
 }
 
+void appendUtf8(std::string& out, uint32_t c) {
+    if (c < 0x80) {
+        out += static_cast<char>(c);
+    } else if (c < 0x800) {
+        out += static_cast<char>(0xC0 | (c >> 6));
+        out += static_cast<char>(0x80 | (c & 0x3F));
+    } else if (c < 0x10000) {
+        out += static_cast<char>(0xE0 | (c >> 12));
+        out += static_cast<char>(0x80 | ((c >> 6) & 0x3F));
+        out += static_cast<char>(0x80 | (c & 0x3F));
+    } else {
+        out += static_cast<char>(0xF0 | (c >> 18));
+        out += static_cast<char>(0x80 | ((c >> 12) & 0x3F));
+        out += static_cast<char>(0x80 | ((c >> 6) & 0x3F));
+        out += static_cast<char>(0x80 | (c & 0x3F));
+    }
+}
+
+namespace {
+
+size_t utf8Size(uint32_t c) { return c < 0x80 ? 1 : c < 0x800 ? 2 : c < 0x10000 ? 3 : 4; }
+
+// The character starting at text[i], moving i past it; a byte that does not start a valid
+// one is U+FFFD and moves i by one.
+uint32_t decodeUtf8(std::string_view text, size_t& i) {
+    const unsigned char lead = static_cast<unsigned char>(text[i]);
+    if (lead < 0x80) {
+        i++;
+        return lead;
+    }
+    const size_t size = lead >= 0xF0 && lead <= 0xF4 ? 4 : lead >= 0xE0 ? (lead <= 0xEF ? 3 : 0) : lead >= 0xC2 ? 2 : 0;
+    if (size == 0 || i + size > text.size()) {
+        i++;
+        return 0xFFFD;
+    }
+    uint32_t c = size == 2 ? lead & 0x1F : size == 3 ? lead & 0x0F : lead & 0x07;
+    for (size_t k = 1; k < size; k++) {
+        const unsigned char next = static_cast<unsigned char>(text[i + k]);
+        if ((next & 0xC0) != 0x80) {
+            i++;
+            return 0xFFFD;
+        }
+        c = (c << 6) | (next & 0x3F);
+    }
+    // Too long a spelling, a surrogate, or past the last character.
+    if ((size == 3 && c < 0x800) || (size == 4 && c < 0x10000) || (c >= 0xD800 && c <= 0xDFFF) || c > 0x10FFFF) {
+        i++;
+        return 0xFFFD;
+    }
+    i += size;
+    return c;
+}
+
+void putUnit(std::string& out, size_t at, uint8_t width, uint32_t c) {
+    if (width == 1) {
+        out[at] = static_cast<char>(c);
+    } else if (width == 2) {
+        const uint16_t unit = static_cast<uint16_t>(c);
+        std::memcpy(&out[2 * at], &unit, 2);
+    } else {
+        std::memcpy(&out[4 * at], &c, 4);
+    }
+}
+
+}  // namespace
+
+namespace {
+
+// Characters of type From written out as type To, at least as wide.
+template <typename From, typename To>
+void widenUnits(const char* in, size_t count, char* out) {
+    for (size_t k = 0; k < count; k++) {
+        From c;
+        std::memcpy(&c, in + k * sizeof(From), sizeof(From));
+        const To wide = c;
+        std::memcpy(out + k * sizeof(To), &wide, sizeof(To));
+    }
+}
+
+// UTF-8 text past its ASCII start, decoded into characters of type Unit.
+template <typename Unit>
+void decodeInto(std::string_view text, size_t i, char* out) {
+    for (size_t k = 0; k < i; k++) {
+        const Unit c = static_cast<unsigned char>(text[k]);
+        std::memcpy(out + k * sizeof(Unit), &c, sizeof(Unit));
+    }
+    for (size_t k = i; i < text.size(); k++) {
+        const Unit c = static_cast<Unit>(decodeUtf8(text, i));
+        std::memcpy(out + k * sizeof(Unit), &c, sizeof(Unit));
+    }
+}
+
+}  // namespace
+
+Characters Characters::fromUtf8(std::string text) {
+    size_t ascii = 0;
+    while (ascii < text.size() && static_cast<unsigned char>(text[ascii]) < 0x80) ascii++;
+    if (ascii == text.size()) return Characters{std::move(text), 1};
+
+    // Once to find how many characters there are and the width they need, once to keep them.
+    size_t count = ascii;
+    uint32_t widest = 0;
+    for (size_t i = ascii; i < text.size(); count++) widest = std::max(widest, decodeUtf8(text, i));
+    Characters out;
+    out.width = widest < 0x100 ? 1 : widest < 0x10000 ? 2 : 4;
+    out.units.resize(count * out.width);
+    if (out.width == 1) decodeInto<uint8_t>(text, ascii, out.units.data());
+    else if (out.width == 2) decodeInto<uint16_t>(text, ascii, out.units.data());
+    else decodeInto<uint32_t>(text, ascii, out.units.data());
+    return out;
+}
+
+void Characters::widen(const char* in, size_t count, uint8_t from, uint8_t to, std::string& out) {
+    if (from == to) {
+        out.append(in, count * from);
+        return;
+    }
+    const size_t start = out.size();
+    out.resize(start + count * to);
+    char* at = out.data() + start;
+    if (from == 1 && to == 2) widenUnits<uint8_t, uint16_t>(in, count, at);
+    else if (from == 1) widenUnits<uint8_t, uint32_t>(in, count, at);
+    else widenUnits<uint16_t, uint32_t>(in, count, at);
+}
+
+void Characters::appendUtf8Text(std::string_view text) {
+    size_t i = 0;
+    while (i < text.size() && static_cast<unsigned char>(text[i]) < 0x80) i++;
+    if (i == text.size()) {
+        append(text.data(), text.size(), 1);
+        return;
+    }
+    append(fromUtf8(std::string(text)));
+}
+
+namespace {
+
+// The hash of `length` characters of type Unit, and the widest of them.
+template <typename Unit>
+uint32_t hashUnits(const char* data, size_t length, uint32_t& widest, uint32_t hash = kEmptyStringHash) {
+    uint32_t all = 0, most = 0;
+    for (size_t i = 0; i < length; i++) {
+        Unit c;
+        std::memcpy(&c, data + i * sizeof(Unit), sizeof(Unit));
+        hash = hashCharacter(hash, c);
+        if constexpr (sizeof(Unit) == 1) all |= c;  // below 128 if their bits together are
+        else most = std::max<uint32_t>(most, c);
+    }
+    widest = sizeof(Unit) == 1 ? all : most;
+    return hash;
+}
+
+}  // namespace
+
+ObjString::Made ObjString::make(Characters characters) {
+    const size_t length = characters.size();
+    uint32_t widest = 0;
+    const char* data = characters.units.data();
+    const uint32_t hash = characters.width == 1   ? hashUnits<uint8_t>(data, length, widest)
+                          : characters.width == 2 ? hashUnits<uint16_t>(data, length, widest)
+                                                  : hashUnits<uint32_t>(data, length, widest);
+    const uint8_t width = widest < 0x100 ? 1 : widest < 0x10000 ? 2 : 4;
+    if (width < characters.width) {
+        // Kept at the narrowest width that holds it, so that equal strings are kept alike.
+        std::string narrow(length * width, '\0');
+        for (size_t i = 0; i < length; i++) putUnit(narrow, i, width, characters[i]);
+        characters.units = std::move(narrow);
+    }
+    return Made{std::move(characters.units), hash, width, widest < 0x80, length};
+}
+
+ObjString::Made ObjString::join(const ObjString* first, const ObjString* second) {
+    const uint8_t width = std::max(first->width, second->width);
+    std::string units;
+    units.reserve((first->length + second->length) * width);
+    Characters::widen(first->units().data(), first->length, first->width, width, units);
+    Characters::widen(second->units().data(), second->length, second->width, width, units);
+    uint32_t widest = 0;
+    const char* data = second->units().data();
+    const uint32_t hash = second->width == 1   ? hashUnits<uint8_t>(data, second->length, widest, first->hash)
+                          : second->width == 2 ? hashUnits<uint16_t>(data, second->length, widest, first->hash)
+                                               : hashUnits<uint32_t>(data, second->length, widest, first->hash);
+    return Made{std::move(units), hash, width, first->ascii && second->ascii, first->length + second->length};
+}
+
+ObjString::ObjString(Made made)
+    : Obj(ObjType::String), hash(made.hash), width(made.width), ascii(made.ascii), length(made.length), units_(std::move(made.units)) {}
+
+const std::string& ObjString::makeUtf8() const {
+    auto text = std::make_unique<std::string>();
+    text->reserve(length * 2);
+    for (size_t i = 0; i < length; i++) appendUtf8(*text, at(i));
+    const std::string* expected = nullptr;
+    if (utf8_.compare_exchange_strong(expected, text.get(), std::memory_order_acq_rel)) return *text.release();
+    return *expected;  // another core made it first
+}
+
+size_t ObjString::utf8Offset(size_t index) const {
+    if (ascii) return index;
+    size_t offset = 0;
+    for (size_t i = 0; i < index && i < length; i++) offset += utf8Size(at(i));
+    return offset;
+}
+
+int64_t ObjString::find(const ObjString* part, size_t from, bool last) const {
+    // A character of `part` too wide for this string's width is not in it.
+    if (part->width > width || part->length > length) return -1;
+    const size_t m = part->length;
+    std::string widened;
+    const std::string* needle = &part->units();
+    if (part->width != width) {
+        Characters::widen(part->units().data(), m, part->width, width, widened);
+        needle = &widened;
+    }
+    const size_t bytes = m * width;
+    auto matches = [&](size_t i) { return std::memcmp(units_.data() + i * width, needle->data(), bytes) == 0; };
+    if (last && width == 1) {
+        const size_t at = std::string_view(units_).rfind(*needle, from);
+        return at == std::string_view::npos ? -1 : static_cast<int64_t>(at);
+    }
+    if (last) {
+        for (size_t i = std::min(from, length - m) + 1; i-- > 0;)
+            if (matches(i)) return static_cast<int64_t>(i);
+        return -1;
+    }
+    if (width == 1) {
+        const size_t at = std::string_view(units_).find(*needle, from);
+        return at == std::string_view::npos ? -1 : static_cast<int64_t>(at);
+    }
+    for (size_t i = from; i + m <= length; i++)
+        if (matches(i)) return static_cast<int64_t>(i);
+    return -1;
+}
+
+namespace {
+
+template <typename A, typename B>
+int compareUnits(const ObjString* a, const ObjString* b) {
+    const size_t common = std::min(a->length, b->length);
+    const char* x = a->units().data();
+    const char* y = b->units().data();
+    for (size_t i = 0; i < common; i++) {
+        A p;
+        B q;
+        std::memcpy(&p, x + i * sizeof(A), sizeof(A));
+        std::memcpy(&q, y + i * sizeof(B), sizeof(B));
+        if (p != q) return static_cast<uint32_t>(p) < static_cast<uint32_t>(q) ? -1 : 1;
+    }
+    return a->length < b->length ? -1 : a->length > b->length;
+}
+
+template <typename A>
+int compareWith(const ObjString* a, const ObjString* b) {
+    return b->width == 1 ? compareUnits<A, uint8_t>(a, b) : b->width == 2 ? compareUnits<A, uint16_t>(a, b) : compareUnits<A, uint32_t>(a, b);
+}
+
+// The widest of characters `begin` to `end` of type Unit.
+template <typename Unit>
+uint32_t widestUnit(const char* data, size_t begin, size_t end) {
+    uint32_t widest = 0;
+    for (size_t i = begin; i < end; i++) {
+        Unit c;
+        std::memcpy(&c, data + i * sizeof(Unit), sizeof(Unit));
+        widest = std::max<uint32_t>(widest, c);
+    }
+    return widest;
+}
+
+}  // namespace
+
+int compareText(const ObjString* a, const ObjString* b) {
+    if (a->width == 1 && b->width == 1) {
+        const int order = a->units().compare(b->units());
+        return order < 0 ? -1 : order > 0;
+    }
+    return a->width == 1 ? compareWith<uint8_t>(a, b) : a->width == 2 ? compareWith<uint16_t>(a, b) : compareWith<uint32_t>(a, b);
+}
+
+Characters ObjString::slice(size_t begin, size_t end) const {
+    if (width == 1) return Characters{units_.substr(begin, end - begin), 1};
+    const uint32_t widest = width == 2 ? widestUnit<uint16_t>(units_.data(), begin, end) : widestUnit<uint32_t>(units_.data(), begin, end);
+    const uint8_t to = widest < 0x100 ? 1 : widest < 0x10000 ? 2 : 4;
+    if (to == width) return Characters{units_.substr(begin * width, (end - begin) * width), width};
+    Characters out{std::string((end - begin) * to, '\0'), to};
+    for (size_t i = begin; i < end; i++) putUnit(out.units, i - begin, to, at(i));
+    return out;
+}
+
 thread_local uint8_t currentCore = 0;
-
-void ObjString::index() const {
-    if (indexed_.load(std::memory_order_acquire)) return;
-    // A string is shared between cores, and two may ask for a position in it at the same
-    // moment: one of them makes the table and the other waits for it.
-    static std::mutex making;
-    std::lock_guard<std::mutex> hold(making);
-    if (indexed_.load(std::memory_order_relaxed)) return;
-    std::vector<uint32_t> starts;
-    starts.reserve(length + 1);
-    for (size_t i = 0; i < chars.size(); i++)
-        if ((static_cast<unsigned char>(chars[i]) & 0xC0) != 0x80) starts.push_back(static_cast<uint32_t>(i));
-    starts.push_back(static_cast<uint32_t>(chars.size()));
-    starts_ = std::move(starts);
-    indexed_.store(true, std::memory_order_release);
-}
-
-size_t ObjString::byteAt(size_t at) const {
-    if (isAscii()) return at;
-    index();
-    return starts_[at < starts_.size() ? at : starts_.size() - 1];
-}
-
-size_t ObjString::charAt(size_t offset) const {
-    if (isAscii()) return offset;
-    index();
-    return static_cast<size_t>(std::lower_bound(starts_.begin(), starts_.end(), static_cast<uint32_t>(offset)) - starts_.begin());
-}
 
 // ---- ValueMap ----
 

@@ -1,0 +1,71 @@
+// Strings: built from parts, read by position, searched, compared and used as keys, in
+// ASCII text and in text with characters beyond it (Latin-1, Greek, an emoji).
+val texts = ["the quick brown fox jumps over the lazy dog", "café crème brûlée à la carte", "αβγδε ζηθικ λμνξο", "on y va 😀 ce soir"]
+
+fun build(rounds : int) : int {
+    var total = 0
+    for (r in 0..<rounds) {
+        for (t in texts) {
+            val joined = t + "/" + r + " " + t.substring(4, 9)
+            val shown = "${t}:${r}:${joined.length}"
+            total += joined.length + shown.length
+        }
+    }
+    return total
+}
+
+fun read(rounds : int) : int {
+    var total = 0
+    for (r in 0..<rounds) {
+        for (t in texts) {
+            var i = 0
+            while (i < t.length) {
+                if (t[i] == " ") { total += i }
+                i += 1
+            }
+        }
+    }
+    return total
+}
+
+fun search(rounds : int) : int {
+    var total = 0
+    for (r in 0..<rounds) {
+        for (t in texts) {
+            total += t.indexOf("a") + t.lastIndexOf(" ") + t.indexOf("zz")
+            if (t.startsWith("on")) { total += 1 }
+            total += t.split(" ").size
+        }
+    }
+    return total
+}
+
+fun keys(rounds : int) : int {
+    var counts = {:}
+    var total = 0
+    for (r in 0..<rounds) {
+        for (t in texts) {
+            for (word in t.split(" ")) {
+                counts[word] = (counts[word] ?: 0) + 1
+            }
+        }
+    }
+    for (k in counts.keys) { total += counts[k] as int }
+    return total
+}
+
+fun sorting(rounds : int) : int {
+    var total = 0
+    for (r in 0..<rounds) {
+        var words = []
+        for (t in texts) { for (w in t.split(" ")) { words.add(w) } }
+        words.sort()
+        total += words[0].length
+    }
+    return total
+}
+
+val started = clock()
+val check = build(100000) + read(20000) + search(100000) + keys(50000) + sorting(30000)
+val seconds = clock() - started
+print("strings", check, seconds)

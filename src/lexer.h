@@ -25,10 +25,12 @@ enum class TokenType {
     Arrow, ThinArrow, DotDot, DotDotLt,   // => -> .. ..<
     Amp, Pipe, Caret, Tilde, AmpEq, PipeEq, CaretEq,   // & | ^ ~ &= |= ^=
     Shl, Shr, ShlEq, ShrEq,   // << >> <<= >>=
+    Ushr, UshrEq,             // >>> >>>= (D44)
+    AmpPlus, AmpMinus, AmpStar,   // &+ &- &*: arithmetic that wraps around (D27)
     PlusPlus, MinusMinus,     // ++ --
 
     // Literals
-    Identifier, Int, Float, String, InterpString,
+    Identifier, Int, Float, String, InterpString, Char,
 
     // Keywords
     Val, Var, Fun, Class, Static, Operator, This, Super,
@@ -112,8 +114,9 @@ private:
     Token& add(TokenType type, size_t start, int line, int col);
     void scanToken();
     void number(size_t start, int line, int col);
-    void string(char quote, size_t start, int line, int col);
+    void string(char quote, size_t start, int line, int col, size_t dollars = 1);
     void escape(std::string& out);
+    void character(size_t start, int line, int col);
     size_t findInterpolationEnd(size_t p) const;
     size_t skipString(size_t p) const;
 };
