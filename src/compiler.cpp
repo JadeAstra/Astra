@@ -472,6 +472,10 @@ public:
         const int start = static_cast<int>(code().size());
         hoistClassStructure(cls);
         noteDeclaration(start, classGlobal(cls));
+        int key = classGlobal(cls);
+        if (key < 0 && !cls.isExternal)
+            if (const GlobalName* object = findGlobal(cls.isObject ? "(object " + cls.name + ")" : cls.name, cls, true)) key = object->slot;
+        emitClassMetas(cls, cls.name, key);
     }
 
     // The global a top-level class is reached by, for noteDeclaration: the class, or for an
@@ -1445,6 +1449,14 @@ private:
         const int module = session_.loadWorker(literal.stringValue, directory_, file_, literal);
         workerLiteral_ = &literal;
         workerSpec_ = std::string(1, '\x01') + std::to_string(module) + '\x01' + literal.stringValue;
+    }
+
+    // A global of the standard library's that the compiler calls itself, by its name.
+    int stdGlobal(const std::string& name, const Node& at) const {
+        auto found = session_.builtins_->names.find(name);
+        if (found == session_.builtins_->names.end() || !found->second.declared || found->second.slot < 0)
+            throw error(at, "the standard library has no " + name + " here");
+        return found->second.slot;
     }
 
     // Whether `name` is a built-in that only the standard library's own source may use, and
@@ -3062,9 +3074,12 @@ private:
                 break;
             }
 
-            case StmtKind::Class:
-                compileClass(static_cast<const ClassStmt&>(stmt));
+            case StmtKind::Class: {
+                const auto& cls = static_cast<const ClassStmt&>(stmt);
+                compileClass(cls);
+                emitClassMetas(cls, cls.name, -1);
                 break;
+            }
 
             case StmtKind::TypeAlias:
                 break;  // another way of writing a type (D41), for the checker
@@ -3743,6 +3758,7 @@ private:
         emitGet(storage, s);
         if (s.isData) {
             for (const HeaderParam& param : s.header) emit(Op::DataField, stringConstant(param.name));
+            if (s.header.empty()) emit(Op::DataField, stringConstant(""));  // an annotation with no values: Marked()
         }
         // Its objects can change in what == sees, so they are no keys (D26).
         if (session_.checker != nullptr && session_.checker->unstableKey(s)) emit(Op::UnstableKey);
@@ -4746,6 +4762,131 @@ private:
         emit(Op::Pop);
     }
 
+    // ---- Reflection (M6.6 part 8, group 6; D38, D50) ----
+
+    // The two functions that describe a class's members for reflection, each given to the class
+    // by Op::ClassMeta: `which` 0 its fields, with its annotations and an enum class's kinds;
+    // 1 its methods and constructors. Each is called with the class's own type arguments, as a
+    // generic function is, and gives lists that the standard library's Class reads
+    // (src/reflect.cpp, "What a class says of itself"). Gives the nested function's number.
+    int compileMeta(const ClassStmt& s, const ReflectedClass& r, int which) {
+        FunctionState state;
+        state.enclosing = fs_;
+        state.kind = FunctionKind::StaticMethod;  // reaching no type parameters but the class's
+        state.proto = newProto();
+        state.proto->name = s.name + (which == 0 ? " (fields)" : " (methods)");
+        state.proto->source = file_;
+        state.proto->typeArgs = kTypeArgsOwn;
+        state.scopeDepth = 1;
+        for (const TypeParam& p : s.typeParams) state.typeParams.push_back(p.name);
+        state.add(Local{"", 1, VarInfo{}});
+        InlineBlock* const outerInline = inline_;
+        inline_ = nullptr;
+        fs_ = &state;
+        line_ = s.line;
+        if (which == 0) {
+            for (const ReflectedMember& m : r.fields) {
+                emit(Op::Const, stringConstant(m.name));
+                emitMetaType(m.type, s);
+                emit(Op::Const, intConstant(m.flags));
+                emitAnnotations(m.annotations);
+                emitBuildList(4, s);
+            }
+            emitBuildList(r.fields.size(), s);
+            emitAnnotations(&s.annotations);
+            for (const RuntimeType& kind : r.kinds) emitMetaType(kind, s);
+            emitBuildList(r.kinds.size(), s);
+            emitBuildList(3, s);
+        } else {
+            for (const ReflectedMember& m : r.methods) {
+                emit(Op::Const, stringConstant(m.name));
+                emit(Op::Const, stringConstant(formNameOf(s, *m.fn)));
+                emitMetaParams(m, s);
+                emitMetaType(m.type, s);
+                emitAnnotations(m.annotations);
+                emitBuildList(5, s);
+            }
+            emitBuildList(r.methods.size(), s);
+            for (const ReflectedMember& m : r.constructors) {
+                emitMetaParams(m, s);
+                emitAnnotations(m.annotations);
+                emitBuildList(2, s);
+            }
+            emitBuildList(r.constructors.size(), s);
+            emitBuildList(2, s);
+        }
+        emit(Op::Return);
+        finish(state);
+        fs_ = state.enclosing;
+        inline_ = outerInline;
+        const int index = static_cast<int>(fs_->proto->protos.size());
+        fs_->proto->protos.push_back(state.proto);
+        return index;
+    }
+
+    void emitBuildList(size_t count, const Node& at) {
+        if (count > 0xFFFF) throw error(at, "a class has too many members to describe");
+        emit(Op::BuildList, static_cast<int>(count));
+    }
+
+    // A member's type in its description: `any?` where it cannot be named as the program runs,
+    // and null where a method gives nothing.
+    void emitMetaType(const RuntimeType& t, const Node& at) {
+        if (t.kind == RuntimeType::Unknown) {
+            emit(Op::Null);
+            return;
+        }
+        std::string shape;
+        std::vector<TypeOperand> operands;
+        if (!shapeOf(t, shape, operands) || !emitShape(shape, operands, at)) {
+            emitShape("?a", {}, at);
+        }
+    }
+
+    // A method's or constructor's parameters: each its name, its type, whether it may be left
+    // out, and its annotations.
+    void emitMetaParams(const ReflectedMember& m, const Node& at) {
+        for (size_t i = 0; i < m.params.size(); i++) {
+            emit(Op::Const, stringConstant(m.paramNames[i]));
+            emitMetaType(m.params[i], at);
+            emit(m.optional[i] ? Op::True : Op::False);
+            emitAnnotations(i < m.paramAnnotations.size() ? m.paramAnnotations[i] : nullptr);
+            emitBuildList(4, at);
+        }
+        emitBuildList(m.params.size(), at);
+    }
+
+    // The annotations written on a declaration, made as the program runs (D153).
+    void emitAnnotations(const Annotations* written) {
+        const size_t count = written != nullptr ? written->size() : 0;
+        for (size_t i = 0; i < count; i++) compileExpr(*(*written)[i].call);
+        emitBuildList(count, Node{});
+    }
+
+    // Gives a class the functions describing it (compileMeta), at the top of the script for a
+    // class set up ahead, each kept in a built program only where reflection reaches it (D50):
+    // `key` the global of the top-level declaration it is part of. Then the same for the classes
+    // inside it.
+    void emitClassMetas(const ClassStmt& s, const std::string& bound, int key) {
+        if (s.isExternal || session_.checker == nullptr) return;
+        ReflectedClass r;
+        if (session_.checker->reflected(s, r)) {
+            const std::string storage = s.isObject ? "(object " + bound + ")" : bound;
+            for (int which = 0; which < 2; which++) {
+                const int start = static_cast<int>(code().size());
+                line_ = s.line;
+                const int meta = compileMeta(s, r, which);
+                line_ = s.line;
+                emitGet(storage, s);
+                emit(Op::ClassMeta, meta);
+                emitByte(which);
+                emit(Op::Pop);
+                if (key >= 0) noteDeclaration(start, key, which == 0 ? DeclarationSpan::Reflect : DeclarationSpan::ReflectMethods);
+            }
+        }
+        for (const auto& inner : s.nested) emitClassMetas(*inner, bound + "." + inner->name, key);
+    }
+
     // ---- Changing a value through its place (M6.6 part 4, value-lists.html section 8) ----
 
     // The object of `obj.name`: as a value is read, or, where the checker found it to be the
@@ -5260,6 +5401,30 @@ private:
                 } else if (type.typed()) {
                     emitTypeOperand(e.safe ? Op::CastOrNull : Op::Cast, type, e.type);
                 }
+                break;
+            }
+
+            case ExprKind::ClassOf: {
+                // `Image#`, `x#` (D48): the standard library's Class, made from the type and from
+                // the function written here, whose rights to members it has.
+                const auto& e = static_cast<const ClassOfExpr&>(expr);
+                line_ = e.line;
+                emit(Op::GetGlobal, stdGlobal("__classOf", e));
+                RuntimeType named;
+                const int how = session_.checker != nullptr ? session_.checker->namedClassOf(e, named) : 0;
+                if (how == 1) {
+                    std::string shape;
+                    std::vector<TypeOperand> operands;
+                    if (!shapeOf(named, shape, operands) || !emitShape(shape, operands, e))
+                        throw error(e, "this class cannot be named where the program runs");
+                } else {
+                    compileExpr(*e.value);
+                }
+                line_ = e.line;
+                emit(Op::ClassOf);
+                emitByte(how == 1 ? 0 : how == 2 ? 2 : 1);
+                emit(Op::Call);
+                emitByte(2);
                 break;
             }
 
@@ -6244,6 +6409,21 @@ int CompilerSession::compileFile(const std::string& path) {
     keepUnits();
     keepingUnits_ = false;
     return program.entry;
+}
+
+const std::vector<StmtPtr>* CompilerSession::statementsOf(const std::string& path) const {
+    auto found = parsed_.find(fileKeyOf(fs::path(path)));
+    return found == parsed_.end() ? nullptr : found->second.get();
+}
+
+int CompilerSession::globalOf(const std::string& path, const std::string& name) {
+    const std::string key = fileKeyOf(fs::path(path));
+    auto& mine = privates_[key];
+    if (auto it = mine.find(name); it != mine.end()) return it->second.slot;
+    Namespace* ns = namespaceOf(fs::path(key).parent_path().string());
+    if (auto it = ns->names.find(name); it != ns->names.end() && it->second.declared) return it->second.slot;
+    if (auto it = builtins_->names.find(name); it != builtins_->names.end() && it->second.declared) return it->second.slot;
+    return -1;
 }
 
 // ---- Units kept compiled (D145, points 1 and 2) ----

@@ -1,0 +1,3 @@
+// Kotlin's `::class` says what Astra writes (D48).
+class Box
+print(Box::class)   // expect compile error: Kotlin's X::class is written X# in Astra, and x::class x# (D48)

@@ -6,6 +6,7 @@
 #include <ostream>
 #include <stdexcept>
 #include <unordered_map>
+#include <set>
 #include <unordered_set>
 
 #include "vm.h"
@@ -216,6 +217,8 @@ const OpInfo kOps[] = {
     {"WITH_FRAME_DESTINATION", Operand::None},
     {"FROM_END", Operand::None},
     {"ITER_NEXT_PAIR", Operand::U16I32},
+    {"CLASS_OF", Operand::U8},
+    {"CLASS_META", Operand::U16U8},
 };
 
 const char* const kTypeNames[] = {"", "int", "float", "Number", "string", "bool", "List", "Map", "Range", "Function", "Bytes", "Type", "",
@@ -892,6 +895,16 @@ static int analyzeStack(FunctionProto& f, const Program& program, bool partial) 
                     pops = 3;
                     pushes = 1;
                     break;
+                case Op::ClassOf:
+                    if (a > 2) fail("bad operand of a class");
+                    pops = 1;
+                    pushes = 2;
+                    break;
+                case Op::ClassMeta:
+                    if (static_cast<size_t>(a) >= f.protos.size()) fail("nested function out of range");
+                    if (b > 1) fail("bad description of a class");
+                    pops = pushes = 1;
+                    break;
                 case Op::MethodForms:
                 case Op::StaticForms:
                     if (static_cast<size_t>(a) >= f.protos.size() || !f.protos[a]->chooser) fail("bad set of forms");
@@ -1135,6 +1148,9 @@ void disassembleFunction(const FunctionProto& f, const Program& program, std::os
             case Op::MethodForms:
             case Op::StaticForms:
                 out << " " << a << " count=" << b << "  ; " << f.protos[a]->name;
+                break;
+            case Op::ClassMeta:
+                out << " " << a << (b == 0 ? " fields" : " methods") << "  ; " << f.protos[a]->name;
                 break;
             case Op::DefaultArg:
             case Op::IterNext:
@@ -1439,7 +1455,7 @@ struct Reader {
             span.end = u32();
             span.key = u16();
             const uint8_t kind = u8();
-            if (kind > DeclarationSpan::Extension || span.start > span.end || span.end > codeSize) corrupt();
+            if (kind > DeclarationSpan::ReflectMethods || span.start > span.end || span.end > codeSize) corrupt();
             span.kind = static_cast<DeclarationSpan::Kind>(kind);
             f->spans.push_back(span);
         }
@@ -1506,7 +1522,7 @@ void writeU16(std::vector<uint8_t>& code, size_t at, int v) {
 void renumber(FunctionProto& f, const Renumbering& r, VM& vm) {
     std::vector<uint8_t>& code = f.code;
     for (DeclarationSpan& span : f.spans)
-        if (span.kind == DeclarationSpan::Global) span.key = static_cast<uint16_t>(r.global(span.key));
+        if (span.kind != DeclarationSpan::Extension) span.key = static_cast<uint16_t>(r.global(span.key));
     for (size_t ip = 0; ip < code.size();) {
         const uint8_t raw = code[ip];
         if (raw >= static_cast<uint8_t>(Op::Count_)) break;  // malformed: verifying will say so
@@ -1701,7 +1717,7 @@ bool usesMemberName(Op op) {
 
 // An instruction that makes a function of the code's own nested ones: its first operand.
 bool makesFunction(Op op) {
-    return op == Op::Closure || op == Op::MakeForms || op == Op::MethodForms || op == Op::StaticForms;
+    return op == Op::Closure || op == Op::MakeForms || op == Op::MethodForms || op == Op::StaticForms || op == Op::ClassMeta;
 }
 
 struct Reach {
@@ -1715,6 +1731,14 @@ struct Reach {
     std::unordered_map<int, std::vector<std::pair<FunctionProto*, size_t>>> spansOf;
     std::vector<std::pair<FunctionProto*, size_t>> spanWork;  // spans to look through
     std::vector<FunctionProto*> protoWork;                   // whole functions to look through
+
+    // Reflection (D50): whether code reached makes a class with `#`, and whether code reached
+    // uses a class's methods or constructors; the spans describing classes (Op::ClassMeta), and
+    // which of them are kept: those of the classes kept, the methods' only where they are used.
+    bool reflects = false;
+    bool reflectsMethods = false;
+    std::vector<std::pair<FunctionProto*, size_t>> metaSpans;
+    std::set<std::pair<const FunctionProto*, size_t>> metaKept;
 
     explicit Reach(Program& p) : program(p), reachedGlobal(p.globalNames.size(), 0) {}
 
@@ -1741,6 +1765,8 @@ struct Reach {
     // Whether the span was reached: its global, or for an extension its name.
     bool reached(const FunctionProto& module, const DeclarationSpan& span) const {
         if (span.kind == DeclarationSpan::Global) return reachedGlobal[span.key] != 0;
+        if (span.kind == DeclarationSpan::Reflect || span.kind == DeclarationSpan::ReflectMethods)
+            return metaKept.count({&module, static_cast<size_t>(&span - module.spans.data())}) != 0;
         return span.key < module.constants.size() && module.constants[span.key].isString() &&
                reachedName.count(bare(asString(module.constants[span.key])->utf8())) != 0;
     }
@@ -1773,24 +1799,40 @@ struct Reach {
             if (which == 1) global(a);
             if (which == 2) global(b);
             if (makesFunction(op) && static_cast<size_t>(a) < f.protos.size()) function(f.protos[static_cast<size_t>(a)]);
-            if (usesMemberName(op) && static_cast<size_t>(a) < f.constants.size() && f.constants[static_cast<size_t>(a)].isString())
-                name(asString(f.constants[static_cast<size_t>(a)])->utf8());
+            if (usesMemberName(op) && static_cast<size_t>(a) < f.constants.size() && f.constants[static_cast<size_t>(a)].isString()) {
+                const std::string& used = asString(f.constants[static_cast<size_t>(a)])->utf8();
+                name(used);
+                if (used == "methods" || used == "method" || used == "constructors" || used == "call") reflectsMethods = true;
+            }
+            if (op == Op::ClassOf) reflects = true;
             at += 1 + operandSize(kOps[raw].operand);
         }
     }
 
     void run() {
-        while (!spanWork.empty() || !protoWork.empty()) {
-            if (!spanWork.empty()) {
-                auto [module, index] = spanWork.back();
-                spanWork.pop_back();
-                const DeclarationSpan span = module->spans[index];
-                look(*module, span.start, span.end, false);
-            } else {
-                FunctionProto* f = protoWork.back();
-                protoWork.pop_back();
-                look(*f, 0, f->code.size(), !f->spans.empty());
+        for (;;) {
+            while (!spanWork.empty() || !protoWork.empty()) {
+                if (!spanWork.empty()) {
+                    auto [module, index] = spanWork.back();
+                    spanWork.pop_back();
+                    const DeclarationSpan span = module->spans[index];
+                    look(*module, span.start, span.end, false);
+                } else {
+                    FunctionProto* f = protoWork.back();
+                    protoWork.pop_back();
+                    look(*f, 0, f->code.size(), !f->spans.empty());
+                }
             }
+            // What describes the classes kept, once reflection is used: that may reach more.
+            bool more = false;
+            for (const auto& [module, index] : metaSpans) {
+                const DeclarationSpan& span = module->spans[index];
+                if (!reflects || (span.kind == DeclarationSpan::ReflectMethods && !reflectsMethods)) continue;
+                if (span.key >= reachedGlobal.size() || !reachedGlobal[span.key] || !metaKept.insert({module, index}).second) continue;
+                spanWork.emplace_back(module, index);
+                more = true;
+            }
+            if (!more) return;
         }
     }
 };
@@ -1930,6 +1972,8 @@ LeftOut leaveOutUnreachable(Program& program, const std::vector<std::string>& gl
             const DeclarationSpan& span = module->spans[i];
             if (span.kind == DeclarationSpan::Global) {
                 reach.spansOf[span.key].emplace_back(module, i);
+            } else if (span.kind == DeclarationSpan::Reflect || span.kind == DeclarationSpan::ReflectMethods) {
+                reach.metaSpans.emplace_back(module, i);
             } else if (span.key < module->constants.size() && module->constants[span.key].isString()) {
                 reach.extensionsNamed[Reach::bare(asString(module->constants[span.key])->utf8())].emplace_back(module, i);
             }

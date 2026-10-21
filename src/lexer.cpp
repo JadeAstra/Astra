@@ -204,6 +204,7 @@ void Lexer::scanToken() {
         case ';': type = TokenType::Semicolon; break;
         case ':': type = TokenType::Colon; break;
         case '@': type = TokenType::At; break;
+        case '#': type = TokenType::Hash; break;
         case '?':
             // `c ?.5 : x` is still a conditional: a digit cannot start a member name.
             if (next('.') && !(pos_ + 2 < end_ && isDigit(src_[pos_ + 2]))) {

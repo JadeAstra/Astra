@@ -1,7 +1,6 @@
-// No annotation but @Volatile is part of the language. One that would have meant something
-// in Kotlin is reported, not passed over.
+// Kotlin's annotations for the JVM are reported with what Astra writes in their place (D153).
 class Counter {
   var count = 0
   @Synchronized fun add() { count += 1 }
 }
-// expect compile error: annotations are not part of Astra: '@Synchronized' has to be written out as code. Only @Volatile is accepted, and means nothing
+// expect compile error: @Synchronized is for the JVM: guard what it guards with a Lock, lock.withLock { ... } (D153)

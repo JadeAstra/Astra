@@ -1,0 +1,54 @@
+// astra test (D153): tests, what runs around them, and what a failure reports.
+val log : open List<string> = []
+
+@BeforeAll fun startAll() { log.add("all") }
+@BeforeTest fun start() { log.add("before") }
+@AfterTest fun end() { log.add("after") }
+@AfterAll fun endAll() { print("  " + log.join(",")) }
+
+@Test fun adds() { assertEquals(4, 2 + 2) }
+@Test fun fails() { assertEquals(5, 2 + 2, "the sum") }
+@Test fun throws() { error("broken") }
+@Test fun catches() {
+  val e = assertFails { error("x") }
+  assertTrue(e is IllegalStateException)
+  val wrong = assertFailsWith<IllegalArgumentException> { require(false) { "no" } }
+  assertEquals("no", wrong.message)
+}
+@Test @Timeout(200) fun loops() {
+  var n = 0
+  while (true) { n++ }
+}
+@Test fun writes(@TempDir dir : File) {
+  assertTrue(dir.isDirectory)
+  val file = File(dir, "a.txt")
+  file.writeText("hi")
+  assertEquals("hi", file.readText())
+}
+
+class Counter {
+  var n = 0
+  @BeforeTest fun start() { n = 10 }
+  @Test fun counts() {
+    n++
+    assertEquals(11, n)
+  }
+  @Test fun fresh() { assertEquals(10, n) }
+}
+
+// expect:   ok    adds
+// expect:   FAIL  fails
+// expect:         AssertionError: the sum. Expected <5>, actual <4>.
+// expect:           at fails (basics.astra:10)
+// expect:   FAIL  throws
+// expect:         IllegalStateException: broken
+// expect:           at throws (basics.astra:11)
+// expect:   ok    catches
+// expect:   FAIL  loops
+// expect:         AssertionError: the test ran longer than its time limit, 200 ms
+// expect:           at loops (basics.astra:20)
+// expect:   ok    writes
+// expect:   ok    Counter.counts
+// expect:   ok    Counter.fresh
+// expect:   all,before,after,before,after,before,after,before,after,before,after,before,after,before,after,before,after
+// expect: 8 tests: 5 passed, 3 failed

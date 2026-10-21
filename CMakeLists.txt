@@ -37,6 +37,7 @@ add_library(astra_core OBJECT
   src/vm.cpp
   src/builtins.cpp
   src/stdlib.cpp
+  src/reflect.cpp
   src/threads.cpp
   src/io.cpp
   src/worker.cpp

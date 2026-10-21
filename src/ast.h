@@ -19,7 +19,7 @@ struct Node {
 
 enum class ExprKind {
     Literal, Interp, Name, This, Super, Unary, Binary, Logical, Ternary, Assign,
-    Call, Member, Index, List, Map, Range, Is, Function, IncDec, Elvis, Jump, Cast, In, When, Statement, Object,
+    Call, Member, Index, List, Map, Range, Is, Function, IncDec, Elvis, Jump, Cast, In, When, Statement, Object, ClassOf,
 };
 
 struct Expr : Node {
@@ -29,6 +29,14 @@ struct Expr : Node {
 };
 
 using ExprPtr = std::unique_ptr<Expr>;
+
+// `@JsonField("id")` written on a declaration (D153): an object of the annotation's class, made
+// as a call to it is when reflection reads it. `name` as written: `JsonField`, `ui.Tag`.
+struct Annotation : Node {
+    std::string name;
+    ExprPtr call;  // a CallExpr
+};
+using Annotations = std::vector<Annotation>;
 
 struct Stmt;
 using StmtPtr = std::unique_ptr<Stmt>;
@@ -93,6 +101,8 @@ struct FunctionDecl : Node {
     std::vector<TypeAnnotation> paramTypes;  // one per parameter
     std::vector<ExprPtr> paramDefaults;      // one per parameter; null when it has no default value
     std::vector<Node> paramPositions;        // one per parameter, for error messages
+    std::vector<Annotations> paramAnnotations;  // one per parameter, or none at all (D153)
+    Annotations annotations;
     TypeAnnotation returnType;
     std::vector<StmtPtr> body;
     bool isStatic = false;
@@ -296,6 +306,14 @@ struct IsExpr : Expr {
     IsExpr() : Expr(ExprKind::Is) {}
 };
 
+// `Image#`, the class named Image, or `x#`, the class of the object x (D48); `Box<int>#` with type
+// arguments. Which of the two the checker says (Checker::namedClassOf).
+struct ClassOfExpr : Expr {
+    ExprPtr value;
+    std::vector<TypeAnnotation> typeArgs;
+    ClassOfExpr() : Expr(ExprKind::ClassOf) {}
+};
+
 // `value as Type` insists on the type; `value as? Type` gives null instead of an error.
 struct CastExpr : Expr {
     ExprPtr value;
@@ -351,6 +369,7 @@ struct VarStmt : Stmt {
     bool isAbstract = false;  // `abstract val x`: for a subclass to supply
     bool isLateinit = false;  // `lateinit var x : T`: given its value after the object is made (D36)
     bool isLazy = false;      // `lazy val x = ...`: its value worked out when first read (D37)
+    Annotations annotations;  // (D153)
     uint8_t access = 0;       // the access word in front of a field of a class, as for FunctionDecl
     uint8_t setAccess = 0;    // the one in front of `set` under it (`private set`): who may assign
 
@@ -523,6 +542,7 @@ struct HeaderParam : Node {
     std::string name;
     TypeAnnotation type;
     bool isField = false;
+    Annotations annotations;  // (D153)
 
     // With a generated initializer this is the argument's default, making it optional. In a
     // class that writes its own init it is simply the field's initial value.
@@ -556,6 +576,8 @@ struct ExtendStmt : Stmt {
 
 struct ClassStmt : Stmt {
     std::string name;
+    Annotations annotations;     // (D153)
+    bool isAnnotation = false;   // `annotation JsonField(val name : string = "")` (D153)
 
     // `external object Math { ... }`: an object the C++ provides, declared so that its
     // functions are checked and its constants known; nothing of it is compiled.

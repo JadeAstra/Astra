@@ -875,6 +875,7 @@ void registerBuiltins(VM& vm) {
     registerRangeMethods(vm);
     registerBytes(vm);
     registerStdlib(vm);
+    registerReflection(vm);
     registerThreads(vm);
     registerIo(vm);
     registerWorkers(vm);

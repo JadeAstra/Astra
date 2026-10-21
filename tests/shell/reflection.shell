@@ -1,0 +1,13 @@
+// `#` and annotations in the shell (D48, D153): a class declared in one input is reflected on
+// in the next.
+class Point(val x : int, var y : int)
+Point#.fields
+// expect: [x : int, y : int]
+annotation Tag(val value : int)
+@Tag(3) class Marked
+Marked#.annotations
+// expect: [Tag(value=3)]
+Point(1, 2)# == Point#
+// expect: true
+@Tag("three") class Wrong
+// expect error: <shell>:1:6: error: Tag(...) takes an int for 'value', not a string

@@ -1,0 +1,24 @@
+// Reflection (D48) and annotations (D153), as the checker sees them.
+
+annotation Named(val name : string)
+annotation Holds(val items : List<int>, val kind : Class)
+annotation Bad(val f : () -> unit)          // check: an annotation holds constants: an int, a float, a bool, a char, a byte, a string, a Class, an enum, another annotation, or a list of those; not a () -> unit (D153)
+class Plain(val x : int)
+val label = "x" + clock()
+
+@Named("a") class A
+@Plain(1) class B                           // check: 'Plain' is no annotation: one is declared annotation Plain(val value : T) (D153)
+@Named(label) class C                       // check: an annotation is given constants: numbers, text, a class (Box#), an enum's entry, another annotation, or a list of those (D153)
+@Holds([1, 2], A#) class D
+@Named(3) class E                           // check: Named(...) takes a string for 'name', not an int
+@Named("a") @Named("b") class F             // check: @Named is written twice here
+@Test class G                               // check: @Test goes on a function, for astra test (D153)
+@Test fun t(@TempDir dir : File, @Named("p") n : int) { }
+@TempDir fun u() { }                        // check: @TempDir goes on a test's parameter, a File given a directory of its own (D153)
+
+fun classes(p : Plain?, q : Plain) {
+  print(p#)                                 // check: p may be null, which is of no class: write p!!#, or test it first (D48)
+  print(q#, Plain#, Plain<int>#)            // check: Plain takes 0 type arguments, not 1
+  print(q.class)                            // check: Plain has no member 'class'; the class of an object is written x# (D48)
+  print(Plain.className)                    // check: Plain.className is written Plain#.name: `#` gives a class (D48)
+}

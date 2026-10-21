@@ -48,7 +48,10 @@ private:
 
     void endStatement();
     void skipSemicolons();
-    void skipAnnotations();
+    Annotations annotations();
+    bool annotationNext() const;
+    void attachAnnotations(Stmt& declared, Annotations written, const Token& at);
+    static std::string jvmAnnotation(const std::string& name);
 
     StmtPtr declaration();
     StmtPtr externalDeclaration();
@@ -92,6 +95,7 @@ private:
     bool externalBody_ = false;  // in `external object`: the C++ provides the methods
     bool abstractMember_ = false;  // so may the member being read now, which is marked abstract
     void classMember(ClassStmt& s, bool inStatic);
+    void classMemberBody(ClassStmt& s, bool inStatic);
     std::unique_ptr<FunctionDecl> method();
     std::unique_ptr<FunctionDecl> accessor();
     std::string operatorName();

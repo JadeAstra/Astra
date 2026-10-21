@@ -67,7 +67,7 @@ class Counter {
 }
 Counter.made = 0
 Counter.create(); Counter.create()
-print(Counter.describe(), Counter.className) // expect: made 2 Counter
+print(Counter.describe(), Counter#.name) // expect: made 2 Counter
 
 class Parent { static { fun make() { return "parent-made" } } }
 class Child : Parent { }

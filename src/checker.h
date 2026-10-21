@@ -53,6 +53,23 @@ struct CheckDiagnostic {
 // What it finds is a compile error: the program does not run (M6.5 part 3, step 5). `astra
 // check` lists all of it. A parameter has its type written; a local's type is worked out from
 // its first value, and a value whose type cannot be known is `any`, used through a cast.
+// A member of a class as reflection lists it (D38), for the description the compiler writes.
+struct ReflectedMember {
+    std::string name;
+    const Annotations* annotations = nullptr;  // those written on it (D153)
+    const FunctionDecl* fn = nullptr;   // a method's or an init's; null for a field and a generated init
+    RuntimeType type;                   // a field's type, a method's result; Unknown where it gives nothing
+    int flags = 0;                      // a field's: 1 it may be set, 2 a property worked out by its getter
+    std::vector<std::string> paramNames;
+    std::vector<RuntimeType> params;
+    std::vector<bool> optional;         // the parameter has a default
+    std::vector<const Annotations*> paramAnnotations;  // each parameter's, where any are written
+};
+struct ReflectedClass {
+    std::vector<ReflectedMember> fields, methods, constructors;
+    std::vector<RuntimeType> kinds;     // an enum class's (D39)
+};
+
 class Checker {
 public:
     Checker();
@@ -160,6 +177,13 @@ public:
     // Whether an expression of a value type is a place a change is made through (M6.6 part 4):
     // `p` in `p.x = 4` for a var p, `pts[i]`, `obj.pos`.
     bool isValuePlace(const Expr& e) const;
+
+    // `Image#` and `x#` (D48): 0 where it is the class of the object x; 1 where it names a class
+    // or a built-in type, written in `out`; 2 where it names a class declared inside a function,
+    // whose name gives the class itself.
+    int namedClassOf(const ClassOfExpr& e, RuntimeType& out) const;
+    // A class's own members, as reflection lists them (D38); false where the class is not known.
+    bool reflected(const ClassStmt& cls, ReflectedClass& out);
 
     // Where an item of a list of values is read where it is, not copied (M6.6 part 4,
     // value-lists.html section 6): `pts[i]`, a for loop's variable; and the parameters, and

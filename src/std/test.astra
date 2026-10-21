@@ -1,0 +1,100 @@
+// ---- Tests (D153): what `astra test` runs ----
+// A function written @Test is a test: `astra test file.astra` runs it, and it passes unless it
+// throws. Around each test run the functions written @BeforeTest and @AfterTest, and around
+// all of a file's tests those written @BeforeAll and @AfterAll. A test may be a method of a
+// class, which is made anew for each of its tests, with no arguments; its own @BeforeTest and
+// @AfterTest methods run on that object, and its static @BeforeAll and @AfterAll methods once.
+//
+//   @Test fun adds() { assertEquals(4, 2 + 2) }
+//   @Test @Timeout(500) fun quick() { ... }
+//   @Test fun writes(@TempDir dir : File) { File(dir, "a.txt").writeText("hi") }
+
+annotation Test
+annotation BeforeTest
+annotation AfterTest
+annotation BeforeAll
+annotation AfterAll
+// The longest the test may run, in milliseconds: once that is past it fails, stopped where it is.
+annotation Timeout(val millis : int)
+// A test's parameter that is given a File naming a new, empty directory of its own, deleted
+// with what it holds once the test is over.
+annotation TempDir
+
+// -- What a test checks, as Kotlin's: each throws an AssertionError where it does not hold --
+
+fun __failed(message : string?, what : string) : nothing {
+  throw AssertionError(message == null ? what : message + ". " + what)
+}
+
+fun fail(message : string? = null) : nothing {
+  throw AssertionError(message)
+}
+
+fun assertEquals(expected : any?, actual : any?, message : string? = null) {
+  if (expected != actual) { __failed(message, "Expected <$expected>, actual <$actual>.") }
+}
+
+fun assertNotEquals(illegal : any?, actual : any?, message : string? = null) {
+  if (illegal == actual) { __failed(message, "Illegal value: <$actual>.") }
+}
+
+// A float near enough to what was expected.
+fun assertEquals(expected : float, actual : float, absoluteTolerance : float, message : string? = null) {
+  if (!(Math.abs(expected - actual) <= absoluteTolerance)) {
+    __failed(message, "Expected <$expected> with absolute tolerance <$absoluteTolerance>, actual <$actual>.")
+  }
+}
+
+fun assertSame(expected : any?, actual : any?, message : string? = null) {
+  if (expected !== actual) { __failed(message, "Expected <$expected>, actual <$actual> is not same.") }
+}
+
+fun assertNotSame(illegal : any?, actual : any?, message : string? = null) {
+  if (illegal === actual) { __failed(message, "Expected not same as <$actual>.") }
+}
+
+fun assertTrue(actual : bool, message : string? = null) {
+  if (!actual) { __failed(message, "Expected value to be true.") }
+}
+
+fun assertFalse(actual : bool, message : string? = null) {
+  if (actual) { __failed(message, "Expected value to be false.") }
+}
+
+fun assertNull(actual : any?, message : string? = null) {
+  if (actual != null) { __failed(message, "Expected value to be null, but was: <$actual>.") }
+}
+
+fun <T> assertNotNull(actual : T?, message : string? = null) : T {
+  if (actual == null) { __failed(message, "Expected value to be not null.") }
+  return actual!!
+}
+
+fun <T> assertContains(items : List<T>, element : T, message : string? = null) {
+  if (!items.contains(element)) { __failed(message, "Expected the collection to contain the element.\nCollection <$items>, element <$element>.") }
+}
+
+fun assertContains(text : string, other : string, message : string? = null) {
+  if (!text.contains(other)) { __failed(message, "Expected the char sequence to contain the substring.\nCharSequence <$text>, substring <$other>.") }
+}
+
+// What the block throws, which it has to: an Exception or an Error.
+fun assertFails(block : () -> unit) : Throwable {
+  try {
+    block()
+  } catch (e : Throwable) {
+    return e
+  }
+  __failed(null, "Expected an exception to be thrown, but was completed successfully.")
+}
+
+// What the block throws, which has to be a T.
+fun <T> assertFailsWith(message : string? = null, block : () -> unit) : T {
+  try {
+    block()
+  } catch (e : Throwable) {
+    if (e is T) { return e as T }
+    __failed(message, "Expected an exception of the class asked for to be thrown, but was $e.")
+  }
+  __failed(message, "Expected an exception to be thrown, but was completed successfully.")
+}

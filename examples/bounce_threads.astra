@@ -31,9 +31,9 @@ val palette = [Color.red, Color.blue, Color.green, Color.orange, Color(160, 60, 
 // half changed, so a ball can be added to a group while its thread is going through it.
 val groups = List(threadCount) { [] }
 var ballCount = 0
-@Volatile var width : Number = 760.0
-@Volatile var height : Number = 520.0
-@Volatile var paused = false
+var width : Number = 760.0
+var height : Number = 520.0
+var paused = false
 val steps = AtomicInteger()          // how many times a group has been moved, for the status line
 
 fun addBall(x : Number, y : Number) {

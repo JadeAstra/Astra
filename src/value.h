@@ -865,6 +865,16 @@ struct ObjClass final : Obj {
     // given as a generic function is; and what they made, by the type of this class they were
     // made for (null for an object made without one), in VM::supertypesOf.
     std::vector<ObjClosure*> supertypeMakers;
+
+    // What reflection reads of the class (D38): the nested functions describing its fields (0)
+    // and its methods and constructors (1), given by Op::ClassMeta, each made a function the
+    // first time it is asked for. Null where it has none, as in a built program that does not
+    // reflect on it (D50).
+    const FunctionProto* metaProto[2] = {nullptr, nullptr};
+    ObjClosure* meta[2] = {nullptr, nullptr};
+    // What each gave, by the type of the class it was asked for (null for the class bare), in
+    // VM::classDescription.
+    std::unordered_map<const ObjTypeInfo*, Value> described[2];
     std::unordered_map<const ObjTypeInfo*, std::vector<ObjTypeInfo*>> supertypesMade;
 
     // Static fields declared with `static val` / `static var` (their values are in `statics`),

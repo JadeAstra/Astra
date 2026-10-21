@@ -83,8 +83,8 @@ td.when { min-width: 9em; }
 <nav>
 <h2>Contents</h2>
 <ul>
-<li><a href="#choices">Choices to confirm</a> (nineteen from the first half; seven from part 8, group 1; twelve from group 2; eleven from group 3; eleven from group 4; eleven from group 5)</li>
-<li><a href="#gaps">Gaps left</a> (forty-five)</li>
+<li><a href="#choices">Choices to confirm</a> (nineteen from the first half; seven from part 8, group 1; twelve from group 2; eleven from group 3; eleven from group 4; eleven from group 5; eleven from group 6)</li>
+<li><a href="#gaps">Gaps left</a> (fifty-one)</li>
 </ul>
 </nav>
 
@@ -580,6 +580,72 @@ td.when { min-width: 9em; }
 <div class="verdict"><span class="label">Your choice</span><span class="blank"></span></div>
 </section>
 
+<section class="decision" id="p8-hash-reads">
+<h3><span class="code">8.6a</span>What <code>#</code> names (part 8, group 6)</h3>
+<p>D48 says <code>Image#</code> is the class named Image and <code>x#</code> the class of the object x. As built, a name, or a dotted path (<code>Outer.Inner#</code>, <code>ui.Button#</code>), that names a class and is not a variable, a member or a function, is the class; so is a built-in type&#39;s, <code>int#</code>, <code>List#</code>. An object&#39;s name (<code>object Config</code>) is the object, whose class <code>Config#</code> gives, the same thing. <code>Box&lt;int&gt;#</code> is the class with type arguments, a class unequal to <code>Box#</code>. <code>x#</code> on a value that may be null is a compile error, as Kotlin&#39;s <code>x::class</code> is; Kotlin&#39;s <code>::</code> is an error saying what to write.</p>
+<div class="verdict"><span class="label">Your choice</span><span class="blank"></span></div>
+</section>
+
+<section class="decision" id="p8-class-value">
+<h3><span class="code">8.6b</span>What a Class is (part 8, group 6)</h3>
+<p>A class of the standard library (<code>reflect.astra</code>) holding the type it is of, <code>x#.type</code>, a <code>Type</code>, and comparing by it: <code>Box&lt;int&gt;#</code> from anywhere equals the class of any <code>Box&lt;int&gt;</code>, though code in different places is listed different members (8.6d). A built-in type is a class with no members. A field&#39;s and a parameter&#39;s type, and a method&#39;s result, are <code>Type</code>s, as Kotlin has <code>KClass</code> and <code>KType</code>; a method that gives nothing has <code>null</code> for its result. <code>Class</code> has <code>isInstance(x)</code> besides what D48 lists, and its <code>toString()</code> is the type as written, <code>Box&lt;int&gt;</code>.</p>
+<div class="verdict"><span class="label">Your choice</span><span class="blank"></span></div>
+</section>
+
+<section class="decision" id="p8-members-listed">
+<h3><span class="code">8.6c</span>Which members are listed (part 8, group 6)</h3>
+<p>A class&#39;s own and those it inherits, those of the classes above first, one declared again below in the place of the one above; for methods, its interfaces&#39; too. Fields are the header&#39;s and the body&#39;s, properties, <code>get name()</code> ones included, and an enum&#39;s <code>name</code> and <code>ordinal</code>. Static members are not listed (Kotlin lists a companion&#39;s apart). Constructors are the class&#39;s own <code>init</code>s or its header&#39;s, none for an interface, an abstract class, an object or an enum. <code>method(name)</code> gives the first form of a name with several.</p>
+<div class="verdict"><span class="label">Your choice</span><span class="blank"></span></div>
+</section>
+
+<section class="decision" id="p8-rights">
+<h3><span class="code">8.6d</span>Who may see a member (part 8, group 6)</h3>
+<p>D38: what the asking code may use. As built, the code is the function where the <code>#</code> is written: the Class keeps it, and the classes it gives (<code>superclass</code>, <code>interfaces</code>) keep it too. A field the code may read but not assign to (<code>private set</code>) is listed with <code>isMutable</code> false. Once listed, a member is read, set or called whoever then does it, as a Java <code>Field</code> made accessible is.</p>
+<div class="verdict"><span class="label">Your choice</span><span class="blank"></span></div>
+</section>
+
+<section class="decision" id="p8-wrapping">
+<h3><span class="code">8.6e</span>What is wrapped in an InvocationTargetException (part 8, group 6)</h3>
+<p>D49 says what a method called by name throws, and a field&#39;s get and set when they run accessors. As built, every Exception they throw; an Error (a stack overflow, an AssertionError) passes as it is, as a bare catch lets it (D151), where Java wraps those too. <code>get</code> and <code>set</code> say <code>throws InvocationTargetException</code> on every field, as the compiler cannot know which run an accessor. Its message is the cause&#39;s text (Java&#39;s has none). The arguments are checked before the call: their number, against the parameters with defaults, and each one&#39;s type; a wrong one is an <code>IllegalArgumentException</code>, not wrapped.</p>
+<div class="verdict"><span class="label">Your choice</span><span class="blank"></span></div>
+</section>
+
+<section class="decision" id="p8-meta-types">
+<h3><span class="code">8.6f</span>Types that cannot be named as the program runs (part 8, group 6)</h3>
+<p>A member&#39;s type is kept as the program writes it, with the class&#39;s type arguments where they are known (<code>Box&lt;int&gt;#.fields</code> gives <code>item : List&lt;int&gt;</code>). What cannot be made when running is <code>any?</code>: a function type&#39;s parameters, a class declared inside a function; a type parameter not given, as for <code>Box#</code> or a generic method&#39;s own, is <code>any</code>.</p>
+<div class="verdict"><span class="label">Your choice</span><span class="blank"></span></div>
+</section>
+
+<section class="decision" id="p8-keeping">
+<h3><span class="code">8.6g</span>What a built program keeps for reflection (part 8, group 6)</h3>
+<p>D50 asks for the classes whose objects can reach each <code>x#</code>, followed across the program. As built, a simpler rule that never keeps less: each class has two descriptions, of its fields and of its methods and constructors, which a built program leaves out unless some code it keeps writes a <code>#</code>; then it keeps the fields&#39; description of every class it keeps, and the methods&#39; only if some code kept uses a member called <code>methods</code>, <code>method</code>, <code>constructors</code> or <code>call</code> (of any class). A class named in a description&#39;s types is kept with it. A program that reflects on nothing is as small as before.</p>
+<div class="verdict"><span class="label">Your choice</span><span class="blank"></span></div>
+</section>
+
+<section class="decision" id="p8-annotation-decl">
+<h3><span class="code">8.6h</span>What an annotation is (part 8, group 6)</h3>
+<p>Declared <code>annotation Name(val a : T = default)</code>: a header of vals and nothing else, no supertypes or type parameters. It holds what an argument may be: an int, a float, a bool, a char, a byte, a string, a Class, an enum, another annotation, or a list of those, none nullable. It is a data class, compared and printed by its values (<code>JsonField(name="id", optional=false)</code>), as Kotlin&#39;s are. On a header field it is both the field&#39;s and the constructor parameter&#39;s (Kotlin asks which with <code>@field:</code>, an error here). The same one written twice on a declaration is an error; on a variable outside a class, or on a static field, it is an error, as nothing reads it.</p>
+<div class="verdict"><span class="label">Your choice</span><span class="blank"></span></div>
+</section>
+
+<section class="decision" id="p8-jvm-annotations">
+<h3><span class="code">8.6i</span>Which of Kotlin&#39;s annotations are errors (part 8, group 6)</h3>
+<p>D153 names <code>@Synchronized</code>, <code>@JvmStatic</code>, <code>@Throws</code> and <code>@Suppress</code>; L47 <code>@Volatile</code>. Also refused, each saying it is for the JVM and to delete it: <code>@JvmField</code>, <code>@JvmName</code>, <code>@JvmOverloads</code>, <code>@JvmInline</code>, <code>@JvmDefault</code>, <code>@JvmSuppressWildcards</code>, <code>@JvmWildcard</code>, <code>@JvmRecord</code>, <code>@JvmMultifileClass</code>, <code>@JvmSynthetic</code>, <code>@JvmSerializableLambda</code>, <code>@PublishedApi</code>, <code>@Strictfp</code>, <code>@Transient</code> and <code>@SuppressWarnings</code>. Any other annotation not declared is an error saying it is no annotation. The tests and the example that wrote <code>@Volatile</code> lost it.</p>
+<div class="verdict"><span class="label">Your choice</span><span class="blank"></span></div>
+</section>
+
+<section class="decision" id="p8-astra-test">
+<h3><span class="code">8.6j</span>How astra test runs (part 8, group 6)</h3>
+<p>D153 names the annotations. As built: <code>@Test</code>, <code>@BeforeTest</code>, <code>@AfterTest</code>, <code>@BeforeAll</code>, <code>@AfterAll</code> and <code>@Timeout(millis)</code> go on functions, and <code>@TempDir</code>, JUnit 5&#39;s name, on a test&#39;s parameter, a File naming a new directory deleted afterwards. Each file is compiled and run as a program, then its top-level tests, then each class with <code>@Test</code> methods, made anew for each test with no arguments; the file&#39;s <code>@BeforeTest</code> and <code>@AfterTest</code> run around every test, a class&#39;s inside them, and a class&#39;s static <code>@BeforeAll</code> and <code>@AfterAll</code> once. A test past its time limit is stopped at the next safe point with an AssertionError. A folder given means its files whose text has <code>@Test</code>. It prints each test, ok or FAIL with what was thrown and where (the standard library&#39;s own lines left out), then the counts, and exits with 1 if any failed. The assertions are kotlin.test&#39;s names.</p>
+<div class="verdict"><span class="label">Your choice</span><span class="blank"></span></div>
+</section>
+
+<section class="decision" id="p8-type-function">
+<h3><span class="code">8.6k</span>type(x) and className (part 8, group 6)</h3>
+<p>D48 removes <code>className</code>, for <code>Image#.name</code>; a use of it is an error saying so. <code>type(x)</code>, which L26 named as what there was before <code>#</code>, is kept, giving the name of a value&#39;s type as before.</p>
+<div class="verdict"><span class="label">Your choice</span><span class="blank"></span></div>
+</section>
+
 <h2 id="gaps">Gaps left</h2>
 <p class="note">Each is known, and the code around it is tested; none gives a wrong result. Most make something slower or leave a feature for a later part.</p>
 
@@ -630,6 +696,12 @@ td.when { min-width: 9em; }
 <tr><td class="part">8.5</td><td>The C++ functions that throw IOException are known by a table in the checker, not by declarations of their own (8.5f).</td><td class="when">Group 8, files</td></tr>
 <tr><td class="part">8.5</td><td>An error from <code>close()</code> after one from the block of <code>use { }</code> replaces it, where Java keeps it as suppressed (8.5i).</td><td class="when">Not placed yet</td></tr>
 <tr><td class="part">8.5</td><td>Working out what is thrown costs about half a millisecond more at every start, and checking Jade whole 25% more (13.5 ms against 10.8).</td><td class="when">With the next measurements</td></tr>
+<tr><td class="part">8.6</td><td>D50&#39;s following of which classes&#39; objects reach each <code>x#</code> is done by a simpler rule that keeps more (8.6g).</td><td class="when">Not placed yet</td></tr>
+<tr><td class="part">8.6</td><td>An anonymous object&#39;s class, and that of an enum&#39;s entry with a body, describe nothing: their fields and methods are not listed.</td><td class="when">Not placed yet</td></tr>
+<tr><td class="part">8.6</td><td>A class&#39;s static members are not listed, and there is no way to choose among the forms of a method by their parameters but going through <code>methods</code> (8.6c).</td><td class="when">Not placed yet</td></tr>
+<tr><td class="part">8.6</td><td>A test held in a wait (<code>sleep</code>, <code>join</code>, a read) past its <code>@Timeout</code> is stopped only once the wait ends.</td><td class="when">Not placed yet</td></tr>
+<tr><td class="part">8.6</td><td><code>@Deprecated</code>, which D153 places at 1.0.</td><td class="when">1.0</td></tr>
+<tr><td class="part">8.6</td><td>Reflection and astra test cost about 0.7 ms at every start (9.3 ms against 8.6 for a script printing one line, built with Clang): half the descriptions of the standard library&#39;s classes, half <code>reflect.astra</code> and <code>test.astra</code>. Compiling a program afresh costs 1.1 ms more for the descriptions of Jade&#39;s classes (7.3 ms against 6.2); a later run starts from the cache.</td><td class="when">With the next measurements</td></tr>
 <tr><td class="part">All</td><td>Under MSVC, code placement alone moves the <code>fields</code> benchmark by 10 to 20% with the same loop. Not a gap in Astra, but a caution in reading timings: compare against a baseline built the same way, and count instructions, before calling a change slower.</td><td class="when">D160: the Clang build's dispatch, M6.7</td></tr>
 </tbody>
 </table></div>

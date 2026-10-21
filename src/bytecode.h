@@ -160,7 +160,7 @@ enum class Op : uint8_t {
 
     // Data classes and taking values apart. DataField adds a header field to the parts of a
     // data class; Component gives part `index` of a list or of a data object.
-    DataField,          // u16 name                        class -> class
+    DataField,          // u16 name                        class -> class  ("": a data class with no header fields)
     UnstableKey,        //                                 class -> class: its objects can change in what == sees (D26)
     Lazy,               //                                 closure -> a lazy value, worked out when first read (D37)
     Extend,             //                                 class interface -> class: fitted to the interface (D33)
@@ -343,6 +343,14 @@ enum class Op : uint8_t {
     // with no entry made for them (D64, D73).
     IterNextPair,       // u16 slot, i32 target            -> a b
 
+    // Reflection (M6.6 part 8, group 6, D48). ClassOf makes what a `#` was given the type of a
+    // class, and pushes the function it is written in, whose rights to members the Class keeps:
+    // `how` 0 a type, 1 a value, of whose class, 2 a class itself. ClassMeta gives a class the
+    // nested function that describes its members for reflection, made into a function when
+    // first asked for: `which` 0 its fields, 1 its methods and constructors (ObjClass::meta).
+    ClassOf,            // u8 how                          operand -> type function
+    ClassMeta,          // u16 nested function, u8 which   class -> class
+
     Count_,
 };
 
@@ -475,7 +483,10 @@ constexpr uint16_t kCapturedReceiver = 0x8000;
 // or a class is reached by its global, `key` its slot; an extension function, which is found by
 // its name, by any use of that name, `key` the constant that is its name.
 struct DeclarationSpan {
-    enum Kind : uint8_t { Global, Extension };
+    // Reflect and ReflectMethods: what describes a class's fields, or its methods, for
+    // reflection (Op::ClassMeta), kept only where reflection reaches it (D50); `key` is the
+    // global of the declaration the class is part of.
+    enum Kind : uint8_t { Global, Extension, Reflect, ReflectMethods };
     uint32_t start;
     uint32_t end;
     uint16_t key;

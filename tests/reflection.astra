@@ -1,0 +1,126 @@
+// Reflection (M6.6 part 8, group 6; D38, D48 to D50).
+
+interface Shape { fun area() : float }
+interface Named
+class Base<T>(val item : T)
+class Circle(val r : float) : Shape {
+  override fun area() : float => 3.0 * r * r
+}
+class Square(val side : float) : Shape, Named {
+  override fun area() : float => side * side
+}
+class Box<T>(item : T) : Base<List<T>>([item])
+
+// -- A class named, and an object's --
+val c = Circle(2.0)
+print(Circle#, c#, Circle# == c#, Circle#.name)        // expect: Circle Circle true Circle
+print(Square#.interfaces, Circle#.superclass)          // expect: [Shape, Named] null
+print(Box<int>#, Box<int>#.typeArguments)              // expect: Box<int> [int]
+val b = Box<string>("x")
+print(b#, b#.superclass, b# == Box#, b# == Box<string>#)  // expect: Box<string> Base<List<string>> false true
+print(int#, 3#, "s"#, [1, 2]#, [1, 2]#.typeArguments)  // expect: int int string List<int> [int]
+print(Shape#.isInstance(c), Named#.isInstance(c))      // expect: true false
+
+// -- Lists of classes, and a class found by its name among them (D50) --
+val kinds = [Circle#, Square#]
+print(Class.namedFrom("Square", kinds), Class.namedFrom("Box", kinds))  // expect: Square null
+val shapes : List<Shape> = [Circle(1.0), Square(2.0)]
+print(shapes.map { it#.name })                         // expect: ["Circle", "Square"]
+when (shapes[1]#) {
+  Circle# -> print("round")
+  Square# -> print("square")                           // expect: square
+  else -> print("other")
+}
+
+// -- `class` is a member's name again (D48) --
+class Token(val class : string)
+print(Token("word").class)                             // expect: word
+
+// -- Fields: read and set by name --
+class Person(val name : string, var age : int) {
+  private var secret = "hidden"
+  val adult : bool
+    get() => age >= 18
+  fun greet(other : string, loud : bool = false) : string => (loud ? "HELLO " : "hello ") + other + " from " + name
+  fun birthday() { age++ }
+  fun peek() : List<string> => Person#.fields.map { it.name }   // the class's own code sees what it keeps private
+}
+val p = Person("Ann", 17)
+print(Person#.fields)                                  // expect: [name : string, age : int, adult : bool]
+print(p.peek())                                        // expect: ["name", "age", "secret", "adult"]
+val age = Person#.field("age")!!
+print(age.get(p), age.isMutable, Person#.field("name")!!.isMutable)   // expect: 17 true false
+age.set(p, 18)
+print(p.age, Person#.field("adult")!!.get(p))           // expect: 18 true
+print(Person#.field("secret"))                         // expect: null
+
+// -- Methods: called by name --
+print(Person#.methods)                                 // expect: [greet(other : string, loud : bool) : string, birthday(), peek() : List<string>]
+val greet = Person#.method("greet")!!
+print(greet.call(p, "Bob"), greet.call(p, "Bob", true))   // expect: hello Bob from Ann HELLO Bob from Ann
+print(greet.parameters.map { it.isOptional })          // expect: [false, true]
+Person#.method("birthday")!!.call(p)
+print(p.age)                                           // expect: 19
+
+// -- Constructors --
+print(Person#.constructors)                            // expect: [Person(name : string, age : int)]
+val made = Person#.constructors[0].call("Cy", 40) as Person
+print(made.name, made.age)                             // expect: Cy 40
+print(Box<int>#.constructors[0].call(5)#)              // expect: Box<int>
+print(Shape#.constructors, Circle#.constructors.size)  // expect: [] 1
+
+// -- Inherited members, and those a generic class's type arguments give --
+print(Box<int>#.fields, Box#.fields)                   // expect: [item : List<int>] [item : List<any>]
+print(Circle#.methods.map { it.name }, Shape#.methods)  // expect: ["area"] [area() : float]
+
+// -- What a call by name throws (D49) --
+class Thrower {
+  fun fail(n : int) : int { throw IllegalStateException("no $n") }
+}
+try {
+  Thrower#.method("fail")!!.call(Thrower(), 3)
+} catch (e : InvocationTargetException) {
+  print(e.cause, e.cause is IllegalStateException)     // expect: IllegalStateException: no 3 true
+}
+try {
+  Thrower#.method("fail")!!.call(Thrower(), "three")
+} catch (e : IllegalArgumentException) {
+  print(e.message)                                     // expect: Thrower.fail: n is int, which three is not
+}
+try {
+  greet.call(Thrower(), "x")
+} catch (e : IllegalArgumentException) {
+  print(e.message!!.startsWith("Thrower@") or e.message!!.contains("not an object of Person"))   // expect: true
+}
+
+// -- Enum classes: their kinds --
+enum class Event {
+  class Click(val x : int) : Event()
+  object Close : Event()
+}
+print(Event#.kinds, Event.Close#, Event#.kinds[1] == Event.Close#)   // expect: [Click, Close] Close true
+
+// -- Annotations (D153) --
+enum Level { LOW, HIGH }
+annotation JsonField(val name : string = "", val level : Level = Level.LOW)
+annotation Marked
+annotation Tagged(val tags : List<string>, val kind : Class)
+
+@Marked @Tagged(["a", "b"], Person#)
+class Record(@JsonField("id", Level.HIGH) val key : int, val plain : string) {
+  @JsonField var note = ""
+  @Marked fun save(@JsonField("where") place : string) { }
+}
+print(Record#.annotations)                             // expect: [Marked(), Tagged(tags=["a", "b"], kind=Person)]
+val tagged = Record#.annotation<Tagged>()!!
+print(tagged.tags, tagged.kind, Record#.annotation<JsonField>())   // expect: ["a", "b"] Person null
+for (f in Record#.fields) {
+  val json = f.annotation<JsonField>()
+  print(f.name, json == null ? "-" : "'${json.name}' ${json.level}")
+}
+// expect: key 'id' HIGH
+// expect: plain -
+// expect: note '' LOW
+val save = Record#.method("save")!!
+print(save.annotations.size, save.parameters[0].annotation<JsonField>()!!.name)   // expect: 1 where
+print(Record#.constructors[0].parameters[0].annotation<JsonField>()!!.name)       // expect: id

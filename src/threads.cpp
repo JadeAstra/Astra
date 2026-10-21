@@ -141,6 +141,10 @@ void VM::yieldLock() {
 
 void VM::safePoint() {
     if (stopRequested_.load(std::memory_order_relaxed)) throw WorkerStop{};
+    if (timeLimitPassed_.load(std::memory_order_relaxed) && keyCalls_ == 0) {
+        timeLimitPassed_ = false;
+        throw runtimeError(Thrown::AssertionError, "the test ran longer than its time limit, " + std::to_string(timeLimitMillis_.load()) + " ms");
+    }
     if (keyCalls_ > 0) return;  // inside a key's == or hashCode (D26)
     if (bytesAllocated_ > nextGC_) collectGarbage();
     if (attention_.load(std::memory_order_relaxed)) {

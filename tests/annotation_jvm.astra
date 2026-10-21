@@ -1,0 +1,2 @@
+// Kotlin's annotations for the JVM say what Astra writes in their place (D153).
+@Volatile var running = true    // expect compile error: @Volatile is for the JVM: one thread runs Astra code at a time, so a variable is always seen whole; delete it (D153)

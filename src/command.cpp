@@ -7,9 +7,12 @@
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
+#include <condition_variable>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <mutex>
+#include <thread>
 #include <sstream>
 #include <string>
 #include <unordered_map>
@@ -228,6 +231,8 @@ const char* const kUsage =
     "                                        --windowed gives it no console window,\n"
     "                                        --icon gives it an icon\n"
     "  astra check <file>                    check a source file's types, running nothing\n"
+    "  astra test [<file or folder>...]      run the tests (@Test) of the files, or of those in\n"
+    "                                        the folders (the current one if none is given)\n"
     "  astra dis <file>                      list the bytecode of a source or bytecode file\n"
     "  astra --version\n"
     "  astra --help\n";
@@ -687,6 +692,313 @@ int shell() {
     return 0;
 }
 
+// ---- astra test (D153) ----
+//
+// Each file is compiled and run as a program of its own; then its functions written @Test are
+// called, each with those written @BeforeTest before it and @AfterTest after it, and those
+// written @BeforeAll and @AfterAll before and after them all. A class with methods written
+// @Test is made anew for each of them, with no arguments, and its own such methods run on it;
+// its static @BeforeAll and @AfterAll methods run once. A test passes unless it throws.
+
+const Annotation* annotationNamed(const Annotations& written, const char* name) {
+    for (const Annotation& a : written)
+        if (a.name == name) return &a;
+    return nullptr;
+}
+
+// The functions of a file's top level, or the methods of a class, that astra test runs.
+struct TestGroup {
+    const ClassStmt* cls = nullptr;
+    std::vector<const FunctionDecl*> tests, beforeTest, afterTest, beforeAll, afterAll;
+    bool any() const { return !tests.empty(); }
+    void note(const FunctionDecl& fn) {
+        if (annotationNamed(fn.annotations, "Test")) tests.push_back(&fn);
+        if (annotationNamed(fn.annotations, "BeforeTest")) beforeTest.push_back(&fn);
+        if (annotationNamed(fn.annotations, "AfterTest")) afterTest.push_back(&fn);
+        if (annotationNamed(fn.annotations, "BeforeAll")) beforeAll.push_back(&fn);
+        if (annotationNamed(fn.annotations, "AfterAll")) afterAll.push_back(&fn);
+    }
+};
+
+class TestRun {
+public:
+    TestRun(VM& vm, CompilerSession& session, Checker& checker, const std::string& path)
+        : vm_(vm), session_(session), checker_(checker), path_(path) {}
+    int passed = 0, failed = 0;
+
+    void run(int entry) {
+        const std::vector<StmtPtr>* statements = session_.statementsOf(path_);
+        if (statements == nullptr) return;
+        TestGroup top;
+        std::vector<TestGroup> classes;
+        for (const StmtPtr& s : *statements) {
+            if (s->kind == StmtKind::Function) top.note(*static_cast<const FunctionStmt&>(*s).fn);
+            if (s->kind != StmtKind::Class) continue;
+            TestGroup group;
+            group.cls = static_cast<const ClassStmt*>(s.get());
+            for (const auto& method : group.cls->methods) group.note(*method);
+            if (group.any()) classes.push_back(std::move(group));
+        }
+        std::cout << path_ << "\n";
+        try {
+            vm_.runModule(entry);
+        } catch (AstraThrow& thrown) {
+            std::cout << "  FAIL  the file's own code, before its tests\n" << describe(thrown);
+            failed++;
+            return;
+        }
+        if (!all(top.beforeAll, Value::null(), "@BeforeAll")) return;
+        for (const FunctionDecl* test : top.tests) one(top, *test, Value::null(), nullptr);
+        for (TestGroup& group : classes) {
+            const Value cls = vm_.globalAt(session_.globalOf(path_, group.cls->name));
+            TempRoot keep(vm_, cls);
+            if (!all(group.beforeAll, cls, "@BeforeAll")) continue;
+            for (const FunctionDecl* test : group.tests) one(group, *test, cls, &top);
+            all(group.afterAll, cls, "@AfterAll");
+        }
+        all(top.afterAll, Value::null(), "@AfterAll");
+    }
+
+private:
+    VM& vm_;
+    CompilerSession& session_;
+    Checker& checker_;
+    std::string path_;
+
+    // What a test that failed threw, and where.
+    std::string describe(AstraThrow& thrown) {
+        std::string text;
+        try {
+            text = vm_.stringify(thrown.value);
+        } catch (const AstraThrow&) {
+            text = "an exception whose toString() failed";
+        }
+        // Where in the program: the standard library's own lines, as assertEquals's, left out.
+        std::string out = "        " + text + "\n";
+        int shown = 0;
+        for (const std::string& line : thrown.trace)
+            if (line.find("(<std>:") == std::string::npos && shown++ < 6) out += "          " + line + "\n";
+        return out;
+    }
+
+    // The function or method itself: a global, or the member of the object or class.
+    Value callee(const FunctionDecl& fn, Value on) {
+        if (on.isNull()) return vm_.globalAt(session_.globalOf(path_, fn.name));
+        return vm_.memberGet(on, vm_.intern(fn.name));
+    }
+
+    // Calls one, stopped at a safe point once `timeout` ms have passed; false, and what it
+    // threw in `failure`, where it throws.
+    bool call(Value fn, const std::vector<Value>& args, int64_t timeout, std::string& failure) {
+        std::mutex mutex;
+        std::condition_variable wake;
+        bool done = false;
+        std::thread watch;
+        if (timeout > 0)
+            watch = std::thread([&] {
+                std::unique_lock<std::mutex> hold(mutex);
+                if (!wake.wait_for(hold, std::chrono::milliseconds(timeout), [&] { return done; })) vm_.timeLimitPassed(timeout);
+            });
+        bool ok = true;
+        try {
+            TempRoot keep(vm_, fn);
+            vm_.call(fn, static_cast<int>(args.size()), args.data());
+        } catch (AstraThrow& thrown) {
+            failure = describe(thrown);
+            ok = false;
+        } catch (const AstraExit& exit) {
+            failure = "        exit(" + std::to_string(exit.code) + ") was called\n";
+            ok = false;
+        }
+        if (watch.joinable()) {
+            {
+                std::lock_guard<std::mutex> hold(mutex);
+                done = true;
+            }
+            wake.notify_all();
+            watch.join();
+        }
+        vm_.clearTimeLimit();
+        return ok;
+    }
+
+    // The functions run around tests; false where one fails, which is reported.
+    bool all(const std::vector<const FunctionDecl*>& fns, Value on, const char* what) {
+        for (const FunctionDecl* fn : fns) {
+            std::string failure;
+            if (!call(callee(*fn, on), {}, 0, failure)) {
+                std::cout << "  FAIL  " << what << " " << fn->name << "\n" << failure;
+                failed++;
+                return false;
+            }
+        }
+        return true;
+    }
+
+    int64_t timeoutOf(const FunctionDecl& test) {
+        const Annotation* limit = annotationNamed(test.annotations, "Timeout");
+        if (limit == nullptr) return 0;
+        const auto& call = static_cast<const CallExpr&>(*limit->call);
+        if (call.args.empty()) return 0;
+        ConstValue value;
+        if (call.args[0]->kind == ExprKind::Literal && static_cast<const LiteralExpr&>(*call.args[0]).type == LiteralExpr::Type::Int)
+            return static_cast<const LiteralExpr&>(*call.args[0]).intValue;
+        if (checker_.folded(*call.args[0], value) && value.kind == ConstValue::Int) return value.i;
+        return 0;
+    }
+
+    // One test, with what runs around it: the file's @BeforeTest functions, then for a test of
+    // a class an object of it and its own, and after it the same the other way round.
+    void one(const TestGroup& group, const FunctionDecl& test, Value cls, const TestGroup* top) {
+        std::string failure;
+        std::vector<std::filesystem::path> made;
+        std::vector<Value> args;
+        bool ok = true;
+        for (size_t i = 0; ok && i < test.params.size(); i++) {
+            if (i >= test.paramAnnotations.size() || annotationNamed(test.paramAnnotations[i], "TempDir") == nullptr) {
+                failure = "        a test takes no parameters but those written @TempDir\n";
+                ok = false;
+                break;
+            }
+            std::error_code ec;
+            std::filesystem::path dir = std::filesystem::temp_directory_path(ec) /
+                                        ("astra-test-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + "-" + std::to_string(i));
+            std::filesystem::create_directories(dir, ec);
+            made.push_back(dir);
+            const Value text = vm_.str(dir.string());
+            TempRoot keepText(vm_, text);
+            const Value fileClass = vm_.globalAt(session_.globalOf(path_, "File"));
+            try {
+                args.push_back(vm_.call(fileClass, 1, &text));
+            } catch (AstraThrow& thrown) {
+                failure = describe(thrown);
+                ok = false;
+            }
+        }
+        std::vector<std::unique_ptr<TempRoot>> keepArgs;
+        for (const Value& arg : args) keepArgs.push_back(std::make_unique<TempRoot>(vm_, arg));
+
+        Value object = Value::null();
+        auto around = [&](const std::vector<const FunctionDecl*>& fns, Value on) {
+            for (const FunctionDecl* fn : fns) {
+                if (!ok) return;
+                ok = call(callee(*fn, on), {}, 0, failure);
+            }
+        };
+        if (ok && top != nullptr) around(top->beforeTest, Value::null());
+        if (ok && group.cls != nullptr) {
+            try {
+                object = vm_.call(cls, 0, nullptr);
+            } catch (AstraThrow& thrown) {
+                failure = describe(thrown);
+                ok = false;
+            }
+        }
+        TempRoot keepObject(vm_, object);
+        if (ok) around(group.beforeTest, object);
+        if (ok) ok = call(callee(test, object), args, timeoutOf(test), failure);
+        // What comes after runs even where the test failed, as long as it began.
+        std::string after;
+        bool afterOk = true;
+        for (const FunctionDecl* fn : group.afterTest)
+            if (afterOk) afterOk = call(callee(*fn, object), {}, 0, after);
+        if (top != nullptr)
+            for (const FunctionDecl* fn : top->afterTest)
+                if (afterOk) afterOk = call(callee(*fn, Value::null()), {}, 0, after);
+        if (ok && !afterOk) {
+            ok = false;
+            failure = after;
+        }
+        for (const std::filesystem::path& dir : made) {
+            std::error_code ec;
+            std::filesystem::remove_all(dir, ec);
+        }
+        const std::string name = group.cls != nullptr ? group.cls->name + "." + test.name : test.name;
+        if (ok) {
+            passed++;
+            std::cout << "  ok    " << name << "\n";
+        } else {
+            failed++;
+            std::cout << "  FAIL  " << name << "\n" << failure;
+        }
+    }
+};
+
+// The files `astra test` is given, and those in the folders it is given whose text has @Test.
+std::vector<std::string> testFiles(std::vector<std::string> given) {
+    if (given.empty()) given.push_back(".");
+    std::vector<std::string> files;
+    for (const std::string& path : given) {
+        std::error_code ec;
+        if (!std::filesystem::is_directory(path, ec)) {
+            files.push_back(path);
+            continue;
+        }
+        std::vector<std::string> found;
+        for (auto it = std::filesystem::recursive_directory_iterator(path, ec); !ec && it != std::filesystem::recursive_directory_iterator(); it.increment(ec)) {
+            if (!it->is_regular_file(ec) || it->path().extension() != ".astra") continue;
+            std::string text;
+            if (readFile(it->path().string(), text) && text.find("@Test") != std::string::npos) found.push_back(it->path().string());
+        }
+        std::sort(found.begin(), found.end());
+        files.insert(files.end(), found.begin(), found.end());
+    }
+    return files;
+}
+
+int testFilesCommand(const std::vector<std::string>& given) {
+    int passed = 0, failed = 0, broken = 0;
+    auto counts = [&] {
+        std::cout << passed + failed << (passed + failed == 1 ? " test: " : " tests: ") << passed << " passed, " << failed << " failed";
+        if (broken > 0) std::cout << "; " << broken << (broken == 1 ? " file" : " files") << " could not be compiled";
+        std::cout << "\n";
+        return failed == 0 && broken == 0 ? 0 : 1;
+    };
+    const std::vector<std::string> files = testFiles(given);
+    for (const std::string& path : files) {
+        std::string data;
+        if (!readFile(path, data)) {
+            std::cerr << "astra: cannot read '" << path << "'\n";
+            broken++;
+            continue;
+        }
+        VM vm;
+        Checker checker;
+        CompilerSession session(vm, &checker);
+        session.libraryPaths = libraryPaths();
+        int entry;
+        try {
+            entry = session.compileFile(path);
+        } catch (const CompileError& e) {
+            std::cerr << e.format() << "\n";
+            broken++;
+            continue;
+        }
+        vm.load(session.program);
+        TestRun run(vm, session, checker, path);
+        try {
+            run.run(entry);
+        } catch (const AstraExit& exit) {
+            std::cout << "  FAIL  exit(" << exit.code << ") was called\n";
+            run.failed++;
+        }
+        passed += run.passed;
+        failed += run.failed;
+        finishKeeping();
+        if (vm.threadsAlive()) {
+            // A thread a test left running cannot have its VM taken apart under it: the run ends
+            // here, as a program's does (runProgram).
+            const bool more = &path != &files.back();
+            if (more) std::cout << "  a thread is still running: the files after this one are not tested\n";
+            const int code = counts();
+            std::cout.flush();
+            std::cerr.flush();
+            std::_Exit(more ? 1 : code);
+        }
+    }
+    return counts();
+}
+
 int dispatch(const std::vector<std::string>& args) {
     if (args.empty()) return shell();
 
@@ -782,6 +1094,8 @@ int dispatch(const std::vector<std::string>& args) {
         }
         return checkFile(args.back(), standardLibrary);
     }
+
+    if (command == "test") return testFilesCommand(std::vector<std::string>(args.begin() + 1, args.end()));
 
     if (command == "dis") {
         if (args.size() != 2) {

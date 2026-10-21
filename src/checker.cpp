@@ -1986,7 +1986,7 @@ struct Checker::Impl {
 
     // Members every object has, which the VM gives without a declaration.
     static bool builtinMember(const std::string& name) {
-        return name == "toString" || name == "hashCode" || name == "equals" || name == "class";
+        return name == "toString" || name == "hashCode" || name == "equals";
     }
 
     // Whether a member not found on a class should be reported. Every field is declared
@@ -3502,6 +3502,7 @@ struct Checker::Impl {
                 if (i.type.isOpen) notMadeOpen(value, resolve(i.type, *unit), i, "is");
                 return Type::of(Type::Bool);
             }
+            case ExprKind::ClassOf: return classOfExpr(static_cast<const ClassOfExpr&>(e));
             case ExprKind::Cast: {
                 const auto& c = static_cast<const CastExpr&>(e);
                 const Type value = expr(*c.value);
@@ -4806,7 +4807,12 @@ struct Checker::Impl {
                     }
                     return unknownType();
                 }
-                if (ClassInfo* k = classNamed(base)) return staticMember(k, m);
+                if (ClassInfo* k = classNamed(base)) {
+                    if ((m.name == "className" || m.name == "class") && k->statics.count(m.name) == 0)
+                        report(m, base + "." + m.name + " is written " + base + "#" + (m.name == "className" ? ".name" : "") +
+                                      ": `#` gives a class (D48)");
+                    return staticMember(k, m);
+                }
             }
         }
         Type obj = expr(*m.object);
@@ -4861,6 +4867,55 @@ struct Checker::Impl {
         return text;
     }
     std::unordered_map<const Node*, ConstValue> builtinConstants;  // `int.maxValue` and the like
+
+    // `Image#`, `ui.Button#`, `Box<int>#`, `int#`: the class or built-in type a `#` names (D48).
+    std::unordered_map<const Expr*, Type> namedClasses;
+
+    // The type `value#` names, when `value` is a class's or a built-in type's name, not a value.
+    bool typeNamedBy(const ClassOfExpr& c, Type& found) {
+        std::string dotted;
+        const Expr* at = c.value.get();
+        while (at->kind == ExprKind::Member) {
+            const auto& m = static_cast<const MemberExpr&>(*at);
+            if (m.safe) return false;
+            dotted = "." + m.name + dotted;
+            at = m.object.get();
+        }
+        if (at->kind != ExprKind::Name) return false;
+        const std::string& first = static_cast<const NameExpr&>(*at).name;
+        if (findLocal(first) != nullptr || nameIsMember(first)) return false;
+        if (const GlobalSym* g = findGlobal(*unit, first); g != nullptr && (g->var != nullptr || !g->funcs.empty())) return false;
+        TypeAnnotation written;
+        written.line = c.line;
+        written.col = c.col;
+        written.name = first + dotted;
+        written.args = c.typeArgs;
+        silent++;
+        Type t = resolve(written, *unit);
+        silent--;
+        if (t.kind == Type::Class && t.cls != nullptr && t.cls->isObject) return false;  // the name of the object
+        if (!t.known() || t.kind == Type::Unit || t.kind == Type::Nothing) return false;
+        found = resolve(written, *unit);  // reported this time
+        return true;
+    }
+
+    Type classOfExpr(const ClassOfExpr& c) {
+        Type named;
+        if (typeNamedBy(c, named)) {
+            if (named.kind == Type::Class && !c.typeArgs.empty() && c.typeArgs.size() != named.cls->typeParams.size())
+                report(c, named.cls->name + " takes " + std::to_string(named.cls->typeParams.size()) + " type argument" +
+                              (named.cls->typeParams.size() == 1 ? "" : "s") + ", not " + std::to_string(c.typeArgs.size()));
+            if (named.kind == Type::Class && c.typeArgs.empty()) named.args.clear();  // `Box#`: what it holds not said
+            if (silent == 0) namedClasses[&c] = named;
+        } else {
+            if (!c.typeArgs.empty()) report(c, "type arguments go with the name of a class, as in Box<int>#; a value's class has its own");
+            const Type value = expr(*c.value);
+            if (value.nullable || value.kind == Type::Null)
+                report(c, placeText(*c.value) + " may be null, which is of no class: write " + placeText(*c.value) +
+                              "!!#, or test it first (D48)");
+        }
+        return stdClassType("Class");
+    }
 
     // Whether a bare name is a member of something the code runs on, rather than a class.
     bool nameIsMember(const std::string& base) {
@@ -4965,7 +5020,9 @@ struct Checker::Impl {
                 else if (k->isEnum && name == "ordinal") result = Type::of(Type::Int);
                 else if (k->isEnum && name == "name") result = Type::of(Type::String);
                 else if (findExtensions(plain, name).empty() && reportMissing(k, name))
-                    report(at, name == "length" && (k->unit != nullptr && k->unit->prelude) ? goneAdvice(name) : k->name + " has no member '" + name + "'");
+                    report(at, name == "length" && (k->unit != nullptr && k->unit->prelude) ? goneAdvice(name)
+                               : name == "class" ? k->name + " has no member 'class'; the class of an object is written x# (D48)"
+                                                 : k->name + " has no member '" + name + "'");
             }
         } else if (!builtinProperty(obj, name, result)) {
             if (name == "length" && builtinDeclared(plain))
@@ -6906,7 +6963,120 @@ struct Checker::Impl {
                 checkClass(classOf[static_cast<const ClassStmt*>(s.get())]);
             }
         }
+        unit = u;
+        ctx = &top;
+        scopes.clear();
+        push();
+        for (const StmtPtr& s : *u->statements) {
+            if (s->kind == StmtKind::Function) annotationsOfFunction(*static_cast<const FunctionStmt&>(*s).fn);
+            else if (s->kind == StmtKind::Class) annotationsOfClass(static_cast<const ClassStmt&>(*s));
+        }
+        pop();
         ctx = nullptr;
+    }
+
+    // ---- Annotations (D153) ----
+
+    // Where an annotation is written, for the standard library's, which go in one place only.
+    enum class AnnotationPlace { Class, Function, Field, Parameter };
+
+    void annotationsOfClass(const ClassStmt& c) {
+        checkAnnotations(c.annotations, AnnotationPlace::Class);
+        if (c.isAnnotation) annotationValues(c);
+        for (const HeaderParam& p : c.header) checkAnnotations(p.annotations, p.isField ? AnnotationPlace::Field : AnnotationPlace::Parameter);
+        for (const auto& field : c.fields) checkAnnotations(field->annotations, AnnotationPlace::Field);
+        for (const auto& field : c.staticFields)
+            if (!field->annotations.empty()) report(field->annotations[0], "an annotation on a static field is never read: reflection lists an object's members (D153)");
+        for (const auto& method : c.methods) annotationsOfFunction(*method);
+        for (const auto& nested : c.nested) annotationsOfClass(*nested);
+    }
+
+    void annotationsOfFunction(const FunctionDecl& fn) {
+        checkAnnotations(fn.annotations, AnnotationPlace::Function);
+        for (const Annotations& written : fn.paramAnnotations) checkAnnotations(written, AnnotationPlace::Parameter);
+    }
+
+    // What an annotation names: its class, or null where that is not an annotation.
+    ClassInfo* annotationClass(const Annotation& a) {
+        TypeAnnotation written;
+        written.line = a.line;
+        written.col = a.col;
+        written.name = a.name;
+        silent++;
+        const Type t = resolve(written, *unit);
+        silent--;
+        return t.kind == Type::Class && t.cls != nullptr && t.cls->decl != nullptr && t.cls->decl->isAnnotation ? t.cls : nullptr;
+    }
+
+    void checkAnnotations(const Annotations& written, AnnotationPlace place) {
+        for (const Annotation& a : written) {
+            ClassInfo* k = annotationClass(a);
+            if (k == nullptr) {
+                report(a, "'" + a.name + "' is no annotation: one is declared annotation " + a.name + "(val value : T) (D153)");
+                continue;
+            }
+            expr(*a.call);  // its arguments as a call to its class takes them
+            for (const ExprPtr& arg : static_cast<const CallExpr&>(*a.call).args) annotationArgument(*arg);
+            for (const Annotation& other : written)
+                if (&other < &a && annotationClass(other) == k) report(a, "@" + a.name + " is written twice here");
+            if (k->unit != nullptr && k->unit->prelude) {
+                // The standard library's own, read by `astra test`, each for one place.
+                const std::string& n = k->name;
+                const bool onFunction = n == "Test" || n == "BeforeTest" || n == "AfterTest" || n == "BeforeAll" || n == "AfterAll" || n == "Timeout";
+                if (onFunction && place != AnnotationPlace::Function) report(a, "@" + n + " goes on a function, for astra test (D153)");
+                if (n == "TempDir" && place != AnnotationPlace::Parameter)
+                    report(a, "@TempDir goes on a test's parameter, a File given a directory of its own (D153)");
+            }
+        }
+    }
+
+    // What an annotation's argument may be: a constant, a class (`Box#`), an enum's entry,
+    // another annotation, or a list of those, each known when compiling.
+    void annotationArgument(const Expr& e) {
+        if (foldQuietly(e).kind != ConstValue::None) return;
+        if (e.kind == ExprKind::ClassOf && namedClasses.count(&e) != 0) return;
+        if (e.kind == ExprKind::List) {
+            for (const ExprPtr& item : static_cast<const ListExpr&>(e).items) annotationArgument(*item);
+            return;
+        }
+        silent++;
+        const Type t = expr(e);
+        silent--;
+        if ((e.kind == ExprKind::Name || e.kind == ExprKind::Member) && t.kind == Type::Class && t.cls != nullptr && t.cls->isEnum) return;
+        if (e.kind == ExprKind::Call && t.kind == Type::Class && t.cls != nullptr && t.cls->decl != nullptr && t.cls->decl->isAnnotation) {
+            for (const ExprPtr& arg : static_cast<const CallExpr&>(e).args) annotationArgument(*arg);
+            return;
+        }
+        report(e, "an annotation is given constants: numbers, text, a class (Box#), an enum's entry, another annotation, or a list of those (D153)");
+    }
+
+    // What an annotation may hold: what its arguments may be.
+    void annotationValues(const ClassStmt& c) {
+        ClassInfo* k = classOf[&c];
+        if (k == nullptr) return;
+        std::function<bool(const Type&)> holdable = [&](const Type& t) {
+            switch (t.kind) {
+                case Type::Int:
+                case Type::Float:
+                case Type::Bool:
+                case Type::String:
+                case Type::Char:
+                case Type::Byte: return t.storage == 0;
+                case Type::List: return t.args.size() == 1 && holdable(t.args[0]);
+                case Type::Class:
+                    return t.cls != nullptr && (t.cls->isEnum || (t.cls->decl != nullptr && t.cls->decl->isAnnotation) ||
+                                                (t.cls->name == "Class" && t.cls->unit != nullptr && t.cls->unit->prelude));
+                default: return false;
+            }
+        };
+        for (const HeaderParam& p : c.header) {
+            auto f = k->fields.find(p.name);
+            if (f == k->fields.end()) continue;
+            const Type t = fieldType(f->second);
+            if (t.known() && (t.nullable || !holdable(t)))
+                report(p, "an annotation holds constants: an int, a float, a bool, a char, a byte, a string, a Class, an enum, another annotation, or a list of those; not " +
+                              describe(t) + " (D153)");
+        }
     }
 
     // ---- Files whose bodies are not checked again (D145) ----
@@ -7925,6 +8095,105 @@ bool Checker::rangeWord(const CallExpr& call, std::string& which) const {
 bool Checker::callsOnObject(const CallExpr& call) const { return impl_->onObjectCalls.count(&call) != 0; }
 bool Checker::memberLocalCall(const CallExpr& call) const { return impl_->memberLocalCalls.count(&call) != 0; }
 
+bool Checker::reflected(const ClassStmt& cls, ReflectedClass& out) {
+    auto found = impl_->classOf.find(&cls);
+    if (found == impl_->classOf.end()) return false;
+    ClassInfo* k = found->second;
+    Impl& c = *impl_;
+    auto runtime = [](const Type& t) {
+        RuntimeType r = runtimeTypeOf(readType(t));
+        if (r.kind == RuntimeType::Unknown && t.kind != Type::Unit && t.kind != Type::Nothing) {
+            r.kind = RuntimeType::Any;  // what cannot be named when the program runs: anything
+            r.nullable = true;
+        }
+        return r;
+    };
+    auto function = [&](FuncInfo* f, ReflectedMember& m) {
+        c.resolveFunc(f);
+        for (size_t i = 0; i < f->params.size(); i++) {
+            if (f->decl != nullptr && i < f->decl->paramAnnotations.size()) {
+                m.paramAnnotations.resize(i + 1, nullptr);
+                m.paramAnnotations[i] = &f->decl->paramAnnotations[i];
+            }
+            m.paramNames.push_back(i < f->paramNames.size() ? f->paramNames[i] : "");
+            m.params.push_back(runtime(static_cast<int>(i) == f->vararg ? openListOf(f->varargItem) : f->params[i]));
+            m.optional.push_back(i < f->hasDefault.size() && f->hasDefault[i]);
+        }
+    };
+    if (k->isEnum) {
+        // Every entry's name and place (D48).
+        ReflectedMember name, ordinal;
+        name.name = "name";
+        name.type.kind = RuntimeType::String;
+        ordinal.name = "ordinal";
+        ordinal.type.kind = RuntimeType::Int;
+        out.fields.push_back(name);
+        out.fields.push_back(ordinal);
+    }
+    for (const auto& field : cls.fields) {
+        auto f = k->fields.find(field->name);
+        if (f == k->fields.end()) continue;
+        ReflectedMember m;
+        m.name = field->name;
+        m.annotations = f->second->header != nullptr ? &f->second->header->annotations : &field->annotations;
+        m.type = runtime(c.fieldType(f->second));
+        m.flags = (!field->isVal || field->setter != nullptr ? 1 : 0) | (field->getter != nullptr && field->init == nullptr ? 2 : 0);
+        out.fields.push_back(std::move(m));
+    }
+    for (const auto& method : cls.methods) {
+        if (method->isStatic) continue;
+        auto f = c.funcOf.find(method.get());
+        if (f == c.funcOf.end()) continue;
+        if (method->accessor == FunctionDecl::Accessor::Get) {
+            // `get name()`: a property, which may be set where a setter is written too.
+            ReflectedMember m;
+            m.name = method->name;
+            m.annotations = &method->annotations;
+            m.type = runtime(c.resultOf(f->second));
+            m.flags = 2;
+            for (const auto& other : cls.methods)
+                if (!other->isStatic && other->accessor == FunctionDecl::Accessor::Set && other->name == method->name) m.flags |= 1;
+            out.fields.push_back(std::move(m));
+            continue;
+        }
+        if (method->accessor != FunctionDecl::Accessor::None) continue;
+        ReflectedMember m;
+        m.name = method->name;
+        m.annotations = &method->annotations;
+        m.fn = method.get();
+        function(f->second, m);
+        if (method->name == "init") {
+            if (!k->isAbstract && !k->isInterface && !k->isObject && !k->isEnum) out.constructors.push_back(std::move(m));
+            continue;
+        }
+        m.type = runtime(c.resultOf(f->second));
+        out.methods.push_back(std::move(m));
+    }
+    if (k->inits.empty() && !k->isAbstract && !k->isInterface && !k->isObject && !k->isEnum) {
+        // The init the class is given: its header's parameters, or none.
+        ReflectedMember m;
+        m.name = "init";
+        function(c.headerFunc(k), m);
+        for (const HeaderParam& p : cls.header) m.paramAnnotations.push_back(&p.annotations);
+        out.constructors.push_back(std::move(m));
+    }
+    if (k->isEnumClass)
+        for (ClassInfo* kind : c.kindsOf(k)) {
+            RuntimeType r;
+            if (kind->isObject && kind->global && kind->unit != nullptr && kind->decl != nullptr) {
+                // An object's class, kept out of sight under a name of its own.
+                r.kind = RuntimeType::Class;
+                r.global = "(object " + kind->name + ")";
+                r.ns = kind->unit->ns;
+                if (kind->decl->visibility == GlobalName::Private) r.privateFile = kind->unit->fileKey;
+            } else {
+                r = runtimeTypeOf(c.classType(kind));
+            }
+            if (r.kind != RuntimeType::Unknown) out.kinds.push_back(std::move(r));
+        }
+    return true;
+}
+
 bool Checker::selfCall(const CallExpr& call, bool& overridden) const {
     auto found = impl_->selfCalls.find(&call);
     if (found == impl_->selfCalls.end()) return false;
@@ -7958,6 +8227,26 @@ bool Checker::externalResult(const Node& call, RuntimeType& out, std::string& na
 bool Checker::addsNewValue(const Node& call) const { return impl_->newValueAdds.count(&call) != 0; }
 
 bool Checker::isValuePlace(const Expr& e) const { return impl_->valuePlaces.count(&e) != 0; }
+
+int Checker::namedClassOf(const ClassOfExpr& e, RuntimeType& out) const {
+    auto found = impl_->namedClasses.find(&e);
+    if (found == impl_->namedClasses.end()) return 0;
+    const Type& t = found->second;
+    if (t.kind == Type::List || t.kind == Type::Set || t.kind == Type::Map) {
+        // `List#`: a list of anything.
+        Type any = Type::of(Type::Any);
+        any.nullable = true;
+        Type whole = t;
+        for (Type& arg : whole.args)
+            if (arg.unknown()) arg = any;
+        out = runtimeTypeOf(whole);
+    } else {
+        out = runtimeTypeOf(t);
+    }
+    out.nullable = false;
+    if (out.kind != RuntimeType::Unknown) return 1;
+    return t.kind == Type::Class && t.cls != nullptr && !t.cls->global ? 2 : 0;
+}
 
 bool Checker::readsInPlace(const IndexExpr& index) const { return impl_->readsInPlace(index); }
 bool Checker::readsFieldInPlace(const Node& read) const { return impl_->readsFieldInPlace(read); }

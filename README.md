@@ -48,6 +48,8 @@ astra build <file> [-o <out.astc>]    compile a source file to a bytecode file
 astra build <file> --exe [-o <app.exe>] [--windowed] [--icon <file.ico>]
                                       compile it into a program of its own
 astra check <file>                    check a source file's types, running nothing
+astra test [<file or folder>...]      run the tests (@Test) of the files, or of the files in
+                                      the folders that have some (the current one if none)
 astra dis <file>                      list the bytecode of a source or bytecode file
 ```
 
@@ -1462,7 +1464,7 @@ An enum is a type with a fixed set of values, its entries:
 enum Way { up, down, left, right }
 
 Way.left.name            // "left"
-Way.className            // "Way": any class tells its own name this way
+Way#.name                // "Way": `#` gives a class (see Reflection)
 Way.left.ordinal         // 2: its place in the list
 Way.entries              // [up, down, left, right]
 ```
@@ -1684,6 +1686,92 @@ ends: `File(p).reader().use { it.readText() }` (D113). It is for an `AutoCloseab
 standard library's streams and sockets are; a class of someone else's that has a `close()` is
 fitted to it with `extend`. Like the other functions taking a lambda, it is copied in where it
 is called.
+
+### Reflection
+
+`#` after a name or a value gives a class, a `Class` (D48): `Image#` is the class named Image,
+`x#` the class of the object x, `Box<int>#` the class with type arguments, and `int#` and
+`[1, 2]#` the built-in types. It binds as tightly as a dot, so `user.address#` and `items[0]#`
+mean what they look like, and a list of classes reads `[Circle#, Square#]`.
+
+```astra
+class Person(val name : string, var age : int) {
+  fun greet(other : string) : string => "hello $other"
+}
+
+val p = Person("Ann", 17)
+p# == Person#                       // true
+Person#.fields                      // [name : string, age : int]
+Person#.field("age")!!.set(p, 18)   // p.age is 18
+Person#.method("greet")!!.call(p, "Bob")   // "hello Bob"
+Person#.constructors[0].call("Cy", 40)     // a new Person
+```
+
+A class has `name`, `superclass`, `interfaces` (those an `extend` fitted it to included),
+`typeArguments`, `kinds` (an enum class's, D39), `fields`, `methods`, `constructors`,
+`annotations`, and `field(name)`, `method(name)` and `annotation<T>()` to find one; and
+`isInstance(x)`. Its members are those it inherits too, those of the classes above first. A
+field has `name`, `type`, `isMutable`, `get(obj)` and `set(obj, value)`; a method `name`,
+`parameters`, `result` and `call(obj, ...)`; a constructor `parameters` and `call(...)`. A
+property is a field, and reading or setting it runs its getter or setter.
+
+**Only what the code may use is listed** (D38): a class's private members are listed to its
+own code and to no other, as the access words say anywhere. **What a method called by its name
+throws arrives wrapped** in an `InvocationTargetException`, Java's name, the original in
+`cause` (D49); it is checked, so the code calling by name handles it, or says it throws it. A
+call the member cannot take (too few arguments, one of the wrong type, an object of another
+class) is an `IllegalArgumentException` of its own.
+
+**A class is found by a name only among those the program lists** (D50):
+`Class.namedFrom(json["kind"], [Circle#, Square#])` gives the one named so, or null. There is no
+lookup by a name alone, so a name read from a file can only reach what the program allowed, and
+the compiler knows every class reflection can reach: a built program keeps the description of
+a class's fields only where reflection is used, and of its methods and constructors only where
+`methods`, `method`, `constructors` or `call` is.
+
+`x.class`, `Image.class` and `Image.className` are gone, for `x#`, `Image#` and `Image#.name`;
+`class` may be a member's name (`token.class`). `type(x)` still gives the name of a value's type.
+
+### Annotations
+
+An annotation is declared like a class, with the values it holds in its header, and written
+with `@` on a class, a function, a field or a parameter (D153):
+
+```astra
+annotation JsonField(val name : string = "", val optional : bool = false)
+
+class User(@JsonField("user_id") val id : int, val name : string)
+
+for (f in User#.fields) {
+  val json = f.annotation<JsonField>()
+  print(json?.name ?: f.name)       // user_id, then name
+}
+```
+
+What it is given is checked as a call to it is, and has to be known when compiling: numbers,
+text, a class (`Box#`), an enum's entry, another annotation, or a list of those. Annotations are
+data: they compare and print by their values (`JsonField(name="user_id", optional=false)`), and
+nothing is made from them but what reflection reads. Kotlin's annotations for the JVM are errors
+that say what Astra writes in their place: `@Synchronized` a `Lock`, `@JvmStatic` the
+`static { }` block, `@Throws` `throws`, `@Volatile` and `@Suppress` nothing.
+
+### Testing
+
+`astra test` runs the functions written `@Test` (D153), each of which passes unless it throws:
+
+```astra
+@Test fun adds() { assertEquals(4, 2 + 2) }
+@Test @Timeout(500) fun quick() { ... }                   // fails, stopped, after half a second
+@Test fun writes(@TempDir dir : File) { File(dir, "a.txt").writeText("hi") }
+```
+
+Around each test run the functions written `@BeforeTest` and `@AfterTest`, and around all of a
+file's tests those written `@BeforeAll` and `@AfterAll`. A test may be a method of a class, made
+anew for each of its tests. The checks are Kotlin's: `assertEquals`, `assertNotEquals`,
+`assertTrue`, `assertFalse`, `assertNull`, `assertNotNull`, `assertSame`, `assertContains`,
+`assertFails`, `assertFailsWith<T>` and `fail`, each throwing an `AssertionError`. Each file is
+run as a program of its own; `astra test` says which tests failed, with what they threw and
+where, and exits with 1 if any did.
 
 ### Modules
 
@@ -2789,6 +2877,10 @@ and looks for the icon in the result.
 
 `// expect error output:` is for a program that finishes normally having reported an error
 (one that ended a thread, say).
+
+`tests\check\*.astra` are checked with `astra check`, a `// check:` comment on each line that
+must be reported; `tests\shell\*.shell` are typed into the shell; and `tests\testing\*.astra`
+are run with `astra test`, their `// expect:` lines what it prints.
 
 The tests of fonts and text use fonts every Windows since 10 has, and test what must hold
 whatever the version of a font: that drawing lands where measuring says, not particular

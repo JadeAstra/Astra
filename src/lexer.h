@@ -22,6 +22,7 @@ enum class TokenType {
     QuestionDot, Elvis, BangBang,   // ?. ?: !!
     NotIs, NotIn,                   // !is !in
     At,                             // @ (return@label, label@ { })
+    Hash,                           // # (Image#, x#: a class, D48)
     Arrow, ThinArrow, DotDot, DotDotLt,   // => -> .. ..<
     Amp, Pipe, Caret, Tilde, AmpEq, PipeEq, CaretEq,   // & | ^ ~ &= |= ^=
     Shl, Shr, ShlEq, ShrEq,   // << >> <<= >>=

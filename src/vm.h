@@ -180,7 +180,6 @@ struct Names {
     ObjString* end;
     ObjString* step;
     ObjString* name;
-    ObjString* className;
     ObjString* ordinal;
     ObjString* entries;
     ObjString* entryName;    // an entry's own name, kept apart from a `name` property that replaces it
@@ -415,6 +414,37 @@ public:
     // ---- Types when the program runs (M6.6 part 1) ----
     // The one object for a type: `id` a TypeId (0 any), for a class `cls`, with its arguments.
     ObjTypeInfo* typeOf(uint8_t id, bool nullable, ObjClass* cls, const std::vector<ObjTypeInfo*>& args);
+    // The type of what a value is, as `x#` gives its class (D48): an object's class with the
+    // type arguments it was made with, a list's type, `int` for an int. Null has none.
+    ObjTypeInfo* typeOfValue(const Value& v);
+
+    // ---- Reflection (D38): see reflect.cpp ----
+    // What the description of `cls` gives (Op::ClassMeta), for its type `own` (the class with
+    // its type arguments, or null for none): `which` 0 its fields, 1 its methods; null where it
+    // has none. Made once for each type.
+    Value classDescription(ObjClass* cls, const ObjTypeInfo* own, int which);
+    // Whether the code of `proto` may not use the member `name` of an object of `cls`, or may
+    // not assign to it; with no code, what only some code may use.
+    bool memberDenied(const ObjClass* cls, const ObjString* name, const FunctionProto* proto, bool write) const;
+    // A member read, set or found by its name, whoever may use it: as reflection does once it
+    // has listed it to the code asking.
+    Value memberGet(Value obj, ObjString* name);
+    void memberSet(Value obj, ObjString* name, Value value);
+    // Calls `callee` with type arguments, as a generic function or class is called.
+    Value callWithTypes(Value callee, const std::vector<ObjTypeInfo*>& typeArgs, int argc, const Value* args);
+
+    // ---- astra test (D153) ----
+    Value globalAt(int slot) const {
+        return slot >= 0 && static_cast<size_t>(slot) < globals_.size() ? globals_[static_cast<size_t>(slot)] : Value::null();
+    }
+    // A test's time limit, `millis` long, passed: the next safe point throws an AssertionError
+    // saying so. Called from another thread; clearTimeLimit() forgets one not yet acted on.
+    void timeLimitPassed(int64_t millis) {
+        timeLimitMillis_ = millis;
+        timeLimitPassed_ = true;
+        attention_ = true;
+    }
+    void clearTimeLimit() { timeLimitPassed_ = false; }
     // A type as the program writes it: `List<Point?>`.
     std::string typeInfoText(const ObjTypeInfo* type) const;
     // Whether every value of `a` is one of `b`. A list or map read through a type is read as
@@ -833,6 +863,8 @@ private:
     }
     friend struct ParallelPool;
     std::atomic<bool> stopRequested_{false};
+    std::atomic<bool> timeLimitPassed_{false};
+    std::atomic<int64_t> timeLimitMillis_{0};
 
     // Worker threads for work that blocks (see blocking()).
     struct Workers;

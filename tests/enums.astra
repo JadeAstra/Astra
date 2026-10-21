@@ -116,13 +116,13 @@ enum SortKey {
     fun first() => SortKey.name
   }
 }
-print(SortKey.className, SortKey.name, SortKey.name.name, SortKey.name.ordinal, SortKey.ordinal.ordinal)   // expect: SortKey name name 0 2
+print(SortKey#.name, SortKey.name, SortKey.name.name, SortKey.name.ordinal, SortKey.ordinal.ordinal)   // expect: SortKey name name 0 2
 print(SortKey.size.label(), SortKey.name.label(), SortKey.first() === SortKey.name, SortKey.entries)   // expect: by size by name true [name, size, ordinal]
 var key : SortKey = size
 key = name
-print(key, key == SortKey.name, Way.className, Planet.className, Planet.EARTH.name)   // expect: name true Way Planet EARTH
+print(key, key == SortKey.name, Way#.name, Planet#.name, Planet.EARTH.name)   // expect: name true Way Planet EARTH
 class Plain
-print(Plain.className, type(Plain()), Plain().let { type(it) })   // expect: Plain Plain Plain
+print(Plain#.name, type(Plain()), Plain().let { type(it) })   // expect: Plain Plain Plain
 try { print(Plain.name) } catch (e) { print(e.message) }   // expect: undefined static member 'name' on class Plain
 
 // An enum may put its own `entries`, `name` or `ordinal` in place of the given one by saying

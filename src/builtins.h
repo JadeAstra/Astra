@@ -63,4 +63,7 @@ bool defaultLess(VM& vm, const Value& a, const Value& b);
 // The part of the standard library added for the Kotlin names: stdlib.cpp.
 void registerStdlib(VM& vm);
 
+// Reflection, what Class and the rest read of the classes (D38): reflect.cpp.
+void registerReflection(VM& vm);
+
 }  // namespace astra

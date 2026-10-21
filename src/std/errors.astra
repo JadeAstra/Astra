@@ -65,3 +65,6 @@ class IOException(message : string? = null, cause : Throwable? = null) : Excepti
 class TimeoutException(message : string? = "the time ran out") : Exception(message)
 // What a task threw, given by what waited for its result: `cause` is that.
 class ExecutionException(cause : Throwable? = null) : Exception(cause?.message, cause)
+// What a method, a constructor, or a property's getter or setter called by its name threw
+// (D49), as Java's: `cause` is that. A failure that came through reflection says so.
+class InvocationTargetException(cause : Throwable? = null) : Exception(cause?.toString(), cause)

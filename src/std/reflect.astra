@@ -1,0 +1,203 @@
+// ---- Reflection (D38, D48 to D50) ----
+// `Image#` is the class named Image and `x#` the class of the object x: a Class. It tells the
+// class's name, what it extends and implements and the type arguments it was given, and lists
+// its fields, methods and constructors, as far as the code where the `#` is written may use
+// them (D38): what a class keeps private is listed only to that class's own code. A member
+// listed is read, set or called by its name, through what lists it.
+//
+// What a method or constructor called this way throws arrives wrapped in a checked
+// InvocationTargetException, the original in `cause` (D49). A call the member cannot take, as
+// one with too few arguments or of the wrong types, or on an object of another class, is an
+// IllegalArgumentException of its own.
+
+external fun __typeName(type : Type) : string
+external fun __typeSuper(type : Type) : Type?
+external fun __typeInterfaces(type : Type) : List<Type>
+external fun __typeArguments(type : Type) : List<Type>
+external fun __typeHas(type : Type, value : any?) : bool
+external fun __typeFields(type : Type, asker : any?) : List<List<any?>>
+external fun __typeMethods(type : Type, asker : any?) : List<List<any?>>
+external fun __typeConstructors(type : Type) : List<List<any?>>
+external fun __typeAnnotations(type : Type) : List<any>
+external fun __typeKinds(type : Type) : List<Type>
+external fun __typeConstruct(type : Type, args : List<any?>) : any
+external fun __memberGet(obj : any, name : string) : any?
+external fun __memberSet(obj : any, name : string, value : any?)
+external fun __memberCall(obj : any, name : string, args : List<any?>) : any?
+
+// What `Image#` and `x#` compile to: the type, and the function they are written in, whose
+// rights to the members the class keeps.
+fun __classOf(type : Type, asker : any) : Class => Class(type, asker)
+
+class Class(val type : Type, private val asker : any? = null) {
+  // The class's name, or a built-in type's: "Circle", "int", "List".
+  val name : string
+    get() => __typeName(type)
+
+  // The class it extends, with the type arguments it gives it; null where it extends none.
+  val superclass : Class?
+    get() {
+      val above = __typeSuper(type)
+      return above == null ? null : Class(above, asker)
+    }
+
+  // Every interface it implements: those of the classes above it, those the interfaces
+  // extend, and those an extend fitted it to (D33).
+  val interfaces : List<Class>
+    get() => __typeInterfaces(type).map { Class(it, asker) }
+
+  // What it was given: `[int]` for the class of a Box<int>; none for `Box#`.
+  val typeArguments : List<Type>
+    get() => __typeArguments(type)
+
+  // The kinds of an enum class (D39), in the order they are written: none for any other.
+  val kinds : List<Class>
+    get() => __typeKinds(type).map { Class(it, asker) }
+
+  // Its fields and properties, those of the classes above it first: each one the code that
+  // wrote the `#` may use.
+  val fields : List<Field>
+    get() => __typeFields(type, asker).map { Field(this, it) }
+
+  // Its methods, those it inherits included, the same way.
+  val methods : List<Method>
+    get() => __typeMethods(type, asker).map { Method(this, it) }
+
+  // Its constructors: none for an interface, an abstract class, an object or an enum.
+  val constructors : List<Constructor>
+    get() => __typeConstructors(type).map { Constructor(this, it) }
+
+  // The annotations written on it (D153).
+  val annotations : List<any>
+    get() => __typeAnnotations(type)
+  fun <A> annotation() : A? => __typeAnnotations(type).firstOrNull { it is A } as A?
+
+  // The field, or the method, of that name; null where there is none the code may use. Of a
+  // method with several forms, the first.
+  fun field(name : string) : Field? {
+    val entry = __typeFields(type, asker).firstOrNull { it[0] == name }
+    return entry == null ? null : Field(this, entry)
+  }
+  fun method(name : string) : Method? {
+    val entry = __typeMethods(type, asker).firstOrNull { it[0] == name }
+    return entry == null ? null : Method(this, entry)
+  }
+
+  // Whether a value is an object of the class, or of a class below it.
+  fun isInstance(value : any?) : bool => __typeHas(type, value)
+
+  op ==(other : any?) : bool => other is Class and other.type == type
+  fun hashCode() : int => __hashCode(type)
+  fun toString() : string => "$type"
+
+  static {
+    // The class among `classes` whose name is `name`, or null (D50): a name read from a file
+    // finds only a class the program lists, as `Class.namedFrom(kind, [Circle#, Square#])`.
+    fun namedFrom(name : string, classes : List<Class>) : Class? => classes.firstOrNull { it.name == name }
+  }
+}
+
+// A field or a property of a class.
+class Field(val owner : Class, entry : List<any?>) {
+  val name : string = entry[0] as string
+  // What it holds: `any?` where its type cannot be named as the program runs.
+  val type : Type = entry[1] as Type
+  private val flags : int = entry[2] as int
+  val annotations : List<any> = entry[3] as List<any>
+
+  // Whether `set` may change it: a var, or a property with a setter, that the code may assign to.
+  val isMutable : bool
+    get() => (flags & 1) != 0
+
+  // Its value in `obj`, an object of the class. A property's getter runs.
+  fun get(obj : any) : any? throws InvocationTargetException {
+    require(owner.isInstance(obj)) { "$obj is not an object of ${owner.name}" }
+    if ((flags & 2) == 0) { return __memberGet(obj, name) }
+    try {
+      return __memberGet(obj, name)
+    } catch (e) {
+      throw InvocationTargetException(e)
+    }
+  }
+
+  // Gives it a new value in `obj`, which has to fit its type. A property's setter runs.
+  fun set(obj : any, value : any?) throws InvocationTargetException {
+    require(owner.isInstance(obj)) { "$obj is not an object of ${owner.name}" }
+    require(isMutable) { "${owner.name}.$name cannot be set here" }
+    require(__typeHas(type, value)) { "${owner.name}.$name holds $type, which $value is not" }
+    try {
+      __memberSet(obj, name, value)
+    } catch (e) {
+      throw InvocationTargetException(e)
+    }
+  }
+
+  fun <A> annotation() : A? => annotations.firstOrNull { it is A } as A?
+  fun toString() : string => "$name : $type"
+}
+
+// A parameter of a method or a constructor.
+class Parameter(entry : List<any?>) {
+  val name : string = entry[0] as string
+  val type : Type = entry[1] as Type
+  // Whether a call may leave it out, for its default.
+  val isOptional : bool = entry[2] as bool
+  val annotations : List<any> = entry[3] as List<any>
+
+  fun <A> annotation() : A? => annotations.firstOrNull { it is A } as A?
+  fun toString() : string => "$name : $type"
+}
+
+// What a call by name checks of its arguments before it is made (D49).
+fun __checkArguments(what : string, parameters : List<Parameter>, args : List<any?>) {
+  val required = parameters.count { !it.isOptional }
+  require(args.size >= required and args.size <= parameters.size) {
+    "$what takes " + (required == parameters.size ? "${parameters.size}" : "$required to ${parameters.size}") + " arguments, not ${args.size}"
+  }
+  for (i in args.indices) {
+    require(__typeHas(parameters[i].type, args[i])) { "$what: ${parameters[i].name} is ${parameters[i].type}, which ${args[i]} is not" }
+  }
+}
+
+// A method of a class.
+class Method(val owner : Class, entry : List<any?>) {
+  val name : string = entry[0] as string
+  private val key : string = entry[1] as string
+  val parameters : List<Parameter> = (entry[2] as List<List<any?>>).map { Parameter(it) }
+  // What it gives; null where it gives nothing.
+  val result : Type? = entry[3] as Type?
+  val annotations : List<any> = entry[4] as List<any>
+
+  // Runs it on `obj`, an object of the class, with `args`.
+  fun call(obj : any, vararg args : any?) : any? throws InvocationTargetException {
+    require(owner.isInstance(obj)) { "$obj is not an object of ${owner.name}" }
+    __checkArguments("${owner.name}.$name", parameters, args)
+    try {
+      return __memberCall(obj, key, args)
+    } catch (e) {
+      throw InvocationTargetException(e)
+    }
+  }
+
+  fun <A> annotation() : A? => annotations.firstOrNull { it is A } as A?
+  fun toString() : string => "$name(" + parameters.join(", ") + ")" + (result == null ? "" : " : $result")
+}
+
+// A constructor of a class.
+class Constructor(val owner : Class, entry : List<any?>) {
+  val parameters : List<Parameter> = (entry[0] as List<List<any?>>).map { Parameter(it) }
+  val annotations : List<any> = entry[1] as List<any>
+
+  // A new object of the class, with its type arguments, made from `args`.
+  fun call(vararg args : any?) : any throws InvocationTargetException {
+    __checkArguments(owner.name, parameters, args)
+    try {
+      return __typeConstruct(owner.type, args)
+    } catch (e) {
+      throw InvocationTargetException(e)
+    }
+  }
+
+  fun <A> annotation() : A? => annotations.firstOrNull { it is A } as A?
+  fun toString() : string => owner.name + "(" + parameters.join(", ") + ")"
+}

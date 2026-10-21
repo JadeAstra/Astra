@@ -201,3 +201,37 @@ can change, and an `==` without a `hashCode`.
 - **The VM's errors have Java's classes**: an index out of range is an
   `IndexOutOfBoundsException`, `!!` on null a `NullPointerException`, and so on; code that caught
   `Error` for them catches those, or a bare `catch`.
+
+## Reflection, annotations and tests (M6.6 part 8, group 6)
+
+### What to write instead
+
+| Kotlin | Astra | |
+| --- | --- | --- |
+| `x::class`, `Box::class` | `x#`, `Box#` | a `Class`; `Box<int>#` with type arguments (D48) |
+| `x::class.simpleName` | `x#.name` | `className` is gone too |
+| `Box::class.memberProperties` | `Box#.fields` | a property is a field; `get(obj)`, `set(obj, v)` |
+| `Box::class.memberFunctions` | `Box#.methods` | `call(obj, ...)` |
+| `Box::class.constructors` | `Box#.constructors` | `call(...)` |
+| `Box::class.supertypes` | `Box#.superclass`, `Box#.interfaces` | |
+| `Shape::class.sealedSubclasses` | `Shape#.kinds` | of an enum class (D39) |
+| `Class.forName(name)` | `Class.namedFrom(name, [A#, B#])` | among the classes the program lists (D50) |
+| `prop.findAnnotation<Json>()` | `field.annotation<Json>()` | also on a class, a method, a parameter |
+| `annotation class Json(val name: String)` | `annotation Json(val name : string)` | no `class` (D153) |
+| `@Volatile`, `@Suppress(...)`, `@JvmField`, `@JvmName(...)` | delete it | an error saying so |
+| `@Synchronized fun f()` | `fun f() = lock.withLock { ... }` | |
+| `@JvmStatic` in a companion | the member in `static { }` | |
+| `kotlin.test`: `@Test`, `assertEquals` | the same, run by `astra test` | `@BeforeTest`, `@AfterTest`, `@BeforeAll`, `@AfterAll`, `@Timeout`, `@TempDir` |
+
+### What compiles but means something else
+
+- **A call by name wraps what it throws** in an `InvocationTargetException`, which is checked:
+  `m.call(obj)` needs a `try` or a `throws InvocationTargetException`, as Java's
+  `Method.invoke` does, and so do a field's `get` and `set`, which may run a getter or setter.
+  An Error (a stack overflow, an `AssertionError`) is not wrapped.
+- **Only what the code may use is listed**: a class's private fields are not among its
+  `fields` except in its own code, where Kotlin's reflection lists them all.
+- **A field's type is a `Type`, a class is a `Class`**: `field.type == int#.type`, not
+  `== Int::class`.
+- **`astra test` runs a file as a program first**: what its top level does runs before the
+  tests.

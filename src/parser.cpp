@@ -161,22 +161,101 @@ const Token& Parser::expectName(const char* what) {
     return expect(TokenType::Identifier, what);
 }
 
-// `@Volatile` in front of a declaration is accepted and means nothing: with one thread
-// running Astra code at a time, a variable is always seen whole by the others. No other
-// annotation is part of the language, and one that would mean something is not passed over.
-void Parser::skipAnnotations() {
-    while (check(TokenType::At) && peekNext().type == TokenType::Identifier) {
-        if (peekNext().text != "Volatile")
-            throw error(peek(), "annotations are not part of Astra: '@" + peekNext().text +
-                                    "' has to be written out as code. Only @Volatile is accepted, and means nothing");
-        advance();
-        advance();
+// What Astra writes in place of one of Kotlin's annotations for the JVM; "" for any other.
+std::string Parser::jvmAnnotation(const std::string& name) {
+    if (name == "Volatile")
+        return "@Volatile is for the JVM: one thread runs Astra code at a time, so a variable is always seen whole; delete it (D153)";
+    if (name == "Synchronized") return "@Synchronized is for the JVM: guard what it guards with a Lock, lock.withLock { ... } (D153)";
+    if (name == "JvmStatic") return "@JvmStatic is for the JVM: a static member is written in the class's static { } block (D67, D153)";
+    if (name == "Throws") return "@Throws is written throws after the result type: fun load() : string throws IOException (D54, D153)";
+    if (name == "Suppress" || name == "SuppressWarnings")
+        return "@" + name + " silences Kotlin's warnings, and Astra's compiler has none to silence: delete it (D153)";
+    static const char* const jvm[] = {"JvmField", "JvmName", "JvmOverloads", "JvmInline", "JvmDefault", "JvmSuppressWildcards",
+                                      "JvmWildcard", "JvmRecord", "JvmMultifileClass", "JvmSynthetic", "PublishedApi", "Strictfp",
+                                      "Transient", "JvmSerializableLambda"};
+    for (const char* word : jvm)
+        if (name == word) return "@" + name + " is for the JVM, and means nothing in Astra: delete it (D153)";
+    return "";
+}
+
+bool Parser::annotationNext() const { return check(TokenType::At) && peekNext().type == TokenType::Identifier; }
+
+// `@Name`, `@ui.Name` and `@Name(args)` in front of a declaration or a parameter (D153): each an
+// object of the annotation's class, made as a call to it makes one.
+Annotations Parser::annotations() {
+    Annotations written;
+    while (annotationNext()) {
+        const Token& at = advance();
+        const Token& first = advance();
+        if (std::string advice = jvmAnnotation(first.text); !advice.empty()) throw error(at, advice);
+        if (check(TokenType::Colon) && adjacentToPrevious())
+            throw error(at, "@" + first.text + ": is Kotlin's way of saying where an annotation goes; in Astra it goes on the declaration it is written in front of (D153)");
+        Annotation a;
+        a.line = at.line;
+        a.col = at.col;
+        a.name = first.text;
+        auto name = node<NameExpr>(first);
+        name->name = first.text;
+        ExprPtr callee = std::move(name);
+        while (check(TokenType::Dot) && adjacentToPrevious() && peekNext().type == TokenType::Identifier) {
+            advance();
+            const Token& part = advance();
+            auto member = node<MemberExpr>(part);
+            member->name = part.text;
+            member->object = std::move(callee);
+            callee = std::move(member);
+            a.name += "." + part.text;
+        }
+        auto call = node<CallExpr>(first);
+        call->callee = std::move(callee);
+        if (check(TokenType::LParen) && !peek().newlineBefore) {
+            advance();
+            HeaderGuard inside(*this, false);
+            while (!check(TokenType::RParen)) {
+                if (isName(peek()) && peekNext().type == TokenType::Eq) {
+                    const Token& argName = advance();
+                    advance();
+                    for (const std::string& earlier : call->names)
+                        if (earlier == argName.text) throw error(argName, "argument '" + argName.text + "' is given more than once");
+                    call->names.push_back(argName.text);
+                    call->namedCount++;
+                } else {
+                    if (call->namedCount > 0) throw error(peek(), "positional arguments must come before named ones");
+                    call->names.emplace_back();
+                }
+                call->spread.push_back(0);
+                call->args.push_back(expression());
+                if (!match(TokenType::Comma)) break;
+            }
+            expect(TokenType::RParen, "')' after the annotation's arguments");
+            inside.restore();
+        }
+        a.call = std::move(call);
+        written.push_back(std::move(a));
     }
+    return written;
+}
+
+// Puts what was written in front of a declaration on it: a class, a function, or a field.
+void Parser::attachAnnotations(Stmt& declared, Annotations written, const Token& at) {
+    Annotations* into = nullptr;
+    if (declared.kind == StmtKind::Class) into = &static_cast<ClassStmt&>(declared).annotations;
+    else if (declared.kind == StmtKind::Function) into = &static_cast<FunctionStmt&>(declared).fn->annotations;
+    else if (declared.kind == StmtKind::Var)
+        throw error(at, "an annotation on a variable is never read: it goes on a class, a function, a field or a parameter (D153)");
+    if (into == nullptr) throw error(at, "an annotation goes in front of a class, a function, a field or a parameter (D153)");
+    for (Annotation& a : written) into->push_back(std::move(a));
 }
 
 StmtPtr Parser::declaration() {
     DepthGuard guard(*this);
-    skipAnnotations();
+    if (annotationNext()) {
+        const Token& at = peek();
+        Annotations written = annotations();
+        StmtPtr declared = declaration();
+        attachAnnotations(*declared, std::move(written), at);
+        return declared;
+    }
     switch (peek().type) {
         case TokenType::Identifier: {
             // `let x = 1` would otherwise fail with a puzzling message about a missing line break.
@@ -212,6 +291,24 @@ StmtPtr Parser::declaration() {
                     expect(TokenType::RBrace, "'}' to end the extend");
                 }
                 return s;
+            }
+            // `annotation JsonField(val name : string = "")` (D153): a class holding the values
+            // written in its header, made where it is written on a declaration.
+            if (word.text == "annotation" && after.type == TokenType::Class && !after.newlineBefore)
+                throw error(word, "an annotation is declared annotation Name(val value : T), with no 'class' (D153)");
+            if (word.text == "annotation" && after.type == TokenType::Identifier && !after.newlineBefore) {
+                StmtPtr declared = classDeclaration(false);
+                auto& cls = static_cast<ClassStmt&>(*declared);
+                cls.isAnnotation = true;
+                cls.isData = true;  // compared and printed by its values, as Kotlin's annotations are
+                if (cls.hasSuper || !cls.methods.empty() || cls.fields.size() != cls.headerFieldCount || !cls.initBlocks.empty() ||
+                    !cls.nested.empty() || !cls.staticFields.empty() || !cls.typeParams.empty())
+                    throw error(word, "an annotation holds the values written in its header and nothing else: annotation " + cls.name +
+                                          "(val value : T) (D153)");
+                for (const HeaderParam& p : cls.header)
+                    if (!p.isField || !static_cast<const VarStmt&>(*cls.fields[&p - cls.header.data()]).isVal)
+                        throw CompileError(file_, p.line, p.col, "an annotation's values are vals, which never change: val " + p.name + " (D153)", false);
+                return declared;
             }
             // `type Grid = List<List<int>>` (D41): only special here, so `type` stays a name elsewhere.
             if (word.text == "type" && after.type == TokenType::Identifier && !after.newlineBefore && p_ + 2 < toks_.size() &&
@@ -713,7 +810,9 @@ bool Parser::typeArgumentsBeforeCall(std::vector<TypeAnnotation>& into) {
         advance();
         std::vector<TypeAnnotation> args = typeArgumentsRest();
         // A lambda after them only outside the head of an if or while, where `a < b {` is a comparison.
-        if (!pendingTypeClose_ && (check(TokenType::LParen) || (check(TokenType::LBrace) && !headerExpr_)) && !peek().newlineBefore) {
+        // `Box<int>#`: the class with its type arguments (D48).
+        if (!pendingTypeClose_ && (check(TokenType::LParen) || check(TokenType::Hash) || (check(TokenType::LBrace) && !headerExpr_)) &&
+            !peek().newlineBefore) {
             into = std::move(args);
             return true;
         }
@@ -865,7 +964,7 @@ StmtPtr Parser::classDeclaration(bool isEnum, bool isInterface, const Token* ano
         while (!check(TokenType::RParen)) {
             // Kotlin's modifiers in front of a header field: `override` and the access words are
             // noted, `public` accepted, `open`, `final` and `sealed` refused.
-            skipAnnotations();
+            Annotations written = annotations();
             bool overrides = false;
             uint8_t access = 0;
             while (check(TokenType::Identifier) &&
@@ -889,6 +988,7 @@ StmtPtr Parser::classDeclaration(bool isEnum, bool isInterface, const Token* ano
             param.col = paramName.col;
             param.name = paramName.text;
             param.isField = isField;
+            param.annotations = std::move(written);
             param.type = optionalType();
             for (const HeaderParam& earlier : s->header)
                 if (earlier.name == param.name) throw error(paramName, "duplicate name '" + param.name + "' in the class header");
@@ -1147,10 +1247,27 @@ void Parser::fieldAccessors(VarStmt& field) {
     }
 }
 
+// One declaration in a class body, with the annotations written in front of it (D153).
+void Parser::classMember(ClassStmt& s, bool inStatic) {
+    if (!annotationNext()) {
+        classMemberBody(s, inStatic);
+        return;
+    }
+    const Token& at = peek();
+    Annotations written = annotations();
+    const size_t fields = s.fields.size(), methods = s.methods.size(), nested = s.nested.size();
+    classMemberBody(s, inStatic);
+    Annotations* into = s.nested.size() > nested ? &s.nested.back()->annotations
+                        : s.methods.size() > methods ? &s.methods.back()->annotations
+                        : s.fields.size() > fields   ? &s.fields.back()->annotations
+                                                     : nullptr;
+    if (into == nullptr) throw error(at, "an annotation goes in front of a class, a function, a field or a parameter (D153)");
+    for (Annotation& a : written) into->push_back(std::move(a));
+}
+
 // One declaration in a class body. `inStatic` is set inside a `static { ... }` block, where
 // every declaration is a static member.
-void Parser::classMember(ClassStmt& s, bool inStatic) {
-    skipAnnotations();
+void Parser::classMemberBody(ClassStmt& s, bool inStatic) {
     if (word("companion") && nextWord("object"))
         throw error(peek(), "Kotlin's companion object is written static { } in Astra, holding the same members (D67)");
     if (!inStatic && word("static") && peekNext().type == TokenType::LBrace) {
@@ -1462,6 +1579,8 @@ std::unique_ptr<FunctionDecl> Parser::functionRest(std::string name, const Token
 
     expect(TokenType::LParen, "'(' before the parameter list");
     while (!check(TokenType::RParen)) {
+        Annotations written = annotations();  // (D153)
+        if (!written.empty()) decl->paramAnnotations.resize(decl->params.size() + 1);
         // `vararg items` takes any number of arguments, as a list.
         const bool vararg = check(TokenType::Identifier) && peek().text == "vararg" && peekNext().type == TokenType::Identifier;
         if (vararg) {
@@ -1477,6 +1596,7 @@ std::unique_ptr<FunctionDecl> Parser::functionRest(std::string name, const Token
         if (std::find(decl->params.begin(), decl->params.end(), param.text) != decl->params.end())
             throw error(param, "duplicate parameter '" + param.text + "'");
         decl->params.push_back(param.text);
+        if (!written.empty()) decl->paramAnnotations.back() = std::move(written);
         Node position;
         position.line = param.line;
         position.col = param.col;
@@ -2113,6 +2233,22 @@ ExprPtr Parser::postfix() {
             }
         }
         const Token& t = peek();
+        if (t.type == TokenType::Colon && peekNext().type == TokenType::Colon && p_ + 1 < toks_.size() &&
+            toks_[p_ + 1].line == t.line && toks_[p_ + 1].col == t.col + 1) {
+            // Kotlin's `Box::class` and `::name`.
+            const bool isClass = p_ + 2 < toks_.size() && toks_[p_ + 2].type == TokenType::Class;
+            throw error(t, isClass ? "Kotlin's X::class is written X# in Astra, and x::class x# (D48)"
+                                   : "Astra has no '::': a class is written Name# (D48), and a function is passed as a lambda, { f(it) }");
+        }
+        if (t.type == TokenType::Hash && !t.newlineBefore) {
+            // `Image#`, `x#`, `items[0]#`: a class (D48), binding as tightly as a member.
+            advance();
+            auto of = node<ClassOfExpr>(t);
+            of->value = std::move(e);
+            of->typeArgs = std::move(typeArgs);
+            e = std::move(of);
+            continue;
+        }
         if (t.type == TokenType::LParen && !t.newlineBefore) {
             advance();
             auto call = node<CallExpr>(t);

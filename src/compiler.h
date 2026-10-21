@@ -118,6 +118,11 @@ public:
     // Compiles a file and everything it imports. Returns the entry module index.
     int compileFile(const std::string& path);
 
+    // For `astra test` (D153): a compiled file's statements, and the global a name at its top
+    // level is kept in; null and -1 where there is none.
+    const std::vector<StmtPtr>* statementsOf(const std::string& path) const;
+    int globalOf(const std::string& path, const std::string& name);
+
     // The standard library compiled, as its image to be attached to astra.exe (D145, point 3);
     // empty if it cannot be made.
     std::string preludeImage();

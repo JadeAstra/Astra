@@ -164,6 +164,18 @@ foreach ($test in Get-ChildItem (Join-Path $PSScriptRoot 'check\*.astra') | Sort
     }
 }
 
+# `astra test` (D153) on each tests\testing\*.astra: its `// expect:` lines are what it prints
+# after the line naming the file, and it fails where one of them says FAIL.
+foreach ($test in Get-ChildItem (Join-Path $PSScriptRoot 'testing\*.astra') | Sort-Object Name) {
+    $expected = @(Select-String -Path $test.FullName -Pattern '// expect: ?(.*)$' -Encoding UTF8 |
+        ForEach-Object { $_.Matches[0].Groups[1].Value })
+    $run = Invoke-Astra @('test', $test.FullName)
+    $run.Lines = @($run.Lines | Select-Object -Skip 1)
+    $exitCode = if (@($expected | Where-Object { $_ -match '^\s*FAIL' }).Count -gt 0) { 1 } else { 0 }
+    $result = Compare-Run $run $expected '' $exitCode
+    if ($null -eq $result) { $passed++ } else { $failures += "$($test.Name) [astra test]`n    $result" }
+}
+
 # The standard library, Jade and the examples pass the checker as they are (M6.5): `astra check
 # --std` checks the standard library's bodies too, which are otherwise put back unchecked.
 $checked = @((Join-Path $PSScriptRoot 'basics.astra') + '|--std')

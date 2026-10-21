@@ -72,7 +72,6 @@ VM::VM(bool worker) : output(&std::cout), input(&std::cin), rng(std::random_devi
     names.end = intern("end");
     names.step = intern("step");
     names.name = intern("name");
-    names.className = intern("className");
     names.ordinal = intern("ordinal");
     names.entries = intern("entries");
     names.enumEntries = intern("(entries)");
@@ -155,6 +154,93 @@ ObjTypeInfo* VM::typeOf(uint8_t id, bool nullable, ObjClass* cls, const std::vec
     type->core = 0;  // every core's to read
     types_.emplace(std::move(key), type);
     return type;
+}
+
+ObjTypeInfo* VM::typeOfValue(const Value& v) {
+    if (ObjClass* cls = classOf(v)) {
+        if (v.isObjType(ObjType::Instance))
+            if (const ObjTypeInfo* own = asInstance(v)->type()) return const_cast<ObjTypeInfo*>(own);
+        return typeOf(kTypeInstance, false, cls, {});
+    }
+    auto plain = [&](uint8_t id) { return typeOf(id, false, nullptr, {}); };
+    switch (v.kind) {
+        case ValueKind::Null: throw runtimeError(Thrown::NullPointerException, "null is of no class");
+        case ValueKind::Bool: return plain(kTypeBool);
+        case ValueKind::Int: return plain(kTypeInt);
+        case ValueKind::Char: return plain(kTypeChar);
+        case ValueKind::Byte: return plain(kTypeByte);
+        case ValueKind::FromEnd: return plain(kTypeIndex);
+        case ValueKind::Float: return plain(kTypeFloat);
+        case ValueKind::Obj: break;
+        default: return plain(0);
+    }
+    ObjTypeInfo* const any = typeOf(0, true, nullptr, {});
+    switch (v.as.obj->type) {
+        case ObjType::String: return plain(kTypeString);
+        case ObjType::List: return asList(v)->type != nullptr ? asList(v)->type : typeOf(kTypeList, false, nullptr, {any});
+        case ObjType::Map: return asMap(v)->type != nullptr ? asMap(v)->type : typeOf(kTypeMap, false, nullptr, {any, any});
+        case ObjType::Set: return asSet(v)->type != nullptr ? asSet(v)->type : typeOf(kTypeSet, false, nullptr, {any});
+        case ObjType::Range: return plain(kTypeRange);
+        case ObjType::Bytes: return plain(kTypeBytes);
+        case ObjType::Closure:
+        case ObjType::Native:
+        case ObjType::BoundMethod:
+        case ObjType::BoundNative: return plain(kTypeFunction);
+        case ObjType::TypeInfo: return plain(kTypeType);
+        case ObjType::Class: return typeOf(kTypeInstance, false, static_cast<ObjClass*>(v.as.obj), {});
+        default: return plain(0);
+    }
+}
+
+Value VM::classDescription(ObjClass* cls, const ObjTypeInfo* own, int which) {
+    VM& root = root_ != nullptr ? *root_ : *this;  // what every core has made, kept once
+    ObjClosure* meta = nullptr;
+    {
+        std::lock_guard<std::mutex> hold(root.internMutex_);
+        auto found = cls->described[which].find(own);
+        if (found != cls->described[which].end()) return found->second;
+        if (cls->metaProto[which] == nullptr) return Value::null();
+        meta = cls->meta[which];
+    }
+    // Made outside the lock, which making a type takes, as is the function; two cores may make
+    // them at once, and the first kept is kept.
+    if (meta == nullptr) {
+        meta = alloc<ObjClosure>(cls->metaProto[which], 0);
+        std::lock_guard<std::mutex> hold(root.internMutex_);
+        if (cls->meta[which] == nullptr) cls->meta[which] = meta;
+        meta = cls->meta[which];
+    }
+    const Value made = callWithTypes(Value::object(meta), own != nullptr ? own->args : std::vector<ObjTypeInfo*>{}, 0, nullptr);
+    std::lock_guard<std::mutex> hold(root.internMutex_);
+    return cls->described[which].emplace(own, made).first->second;
+}
+
+// A property's getter and setter run, as `obj.name` and `obj.name = value` run them.
+Value VM::memberGet(Value obj, ObjString* name) {
+    if (const ObjClass* cls = classOf(obj); cls != nullptr && cls->hasAccessors)
+        if (const Value* getter = cls->getters.find(name)) return callWithReceiver(obj, asClosure(*getter));
+    return getProperty(obj, name);
+}
+
+void VM::memberSet(Value obj, ObjString* name, Value value) {
+    if (const ObjClass* cls = classOf(obj); cls != nullptr && cls->hasAccessors) {
+        if (const Value* setter = cls->setters.find(name)) {
+            const Value bound = Value::object(alloc<ObjBoundMethod>(obj, asClosure(*setter)));
+            TempRoot keep(*this, bound);
+            call(bound, 1, &value);
+            return;
+        }
+    }
+    setProperty(obj, name, value);
+}
+
+Value VM::callWithTypes(Value callee, const std::vector<ObjTypeInfo*>& typeArgs, int argc, const Value* args) {
+    struct Clear {
+        const ObjTypeInfo*& pending;
+        ~Clear() { pending = nullptr; }  // not taken by a callee that has none
+    } clear{pendingTypeArgs_};
+    pendingTypeArgs_ = typeArgs.empty() ? nullptr : typeOf(kTypeArguments, false, nullptr, typeArgs);
+    return call(callee, argc, args);
 }
 
 std::string VM::typeInfoText(const ObjTypeInfo* type) const {
@@ -786,17 +872,23 @@ void VM::joinProtected(ObjClass* subclass) {
 // Whether the code of `proto` may not use the member `name` of `target` (an object, or a
 // class for its static members), or may not assign to it. This is only asked for a name that
 // some class restricts (see CHECK_ACCESS).
+bool VM::memberDenied(const ObjClass* cls, const ObjString* name, const FunctionProto* proto, bool write) const {
+    // Code written in the object's own class may use all that the class has, or all but what a
+    // class above keeps private: then a name that is private nowhere is its to use.
+    if ((cls->accessBits >> (name->hash & 63) & 1) == 0) return false;
+    if (proto != nullptr && (cls->accessAllOwn || (cls->accessSharedOwn && (name->restricted & 4) == 0)) && writtenIn(proto, cls)) return false;
+    const Value* mark = cls->accessMarks.find(name);
+    if (mark == nullptr) return false;
+    if (proto == nullptr) return halfCount(halfOf(*mark, false)) != 0 || (write && halfCount(halfOf(*mark, true)) != 0);
+    return halfDenies(cls, halfOf(*mark, false), proto) || (write && halfDenies(cls, halfOf(*mark, true), proto));
+}
+
 bool VM::accessDenied(Value target, const ObjString* name, const FunctionProto* proto, bool write) const {
     if (!target.isObj() && !target.isSmall() && !target.isRef()) return false;
     const ObjClass* cls;
     const Table* marks;
     if (!target.isObj() || target.as.obj->type == ObjType::Instance || target.as.obj->type == ObjType::Value) {
-        cls = classOf(target);
-        marks = &cls->accessMarks;
-        // Code written in the object's own class may use all that the class has, or all but
-        // what a class above keeps private: then a name that is private nowhere is its to use.
-        if ((cls->accessBits >> (name->hash & 63) & 1) == 0) return false;
-        if ((cls->accessAllOwn || (cls->accessSharedOwn && (name->restricted & 4) == 0)) && writtenIn(proto, cls)) return false;
+        return memberDenied(classOf(target), name, proto, write);
     } else if (target.as.obj->type == ObjType::Class) {
         cls = asClass(target);
         marks = &cls->staticAccessMarks;
@@ -2072,7 +2164,6 @@ Value VM::getProperty(Value obj, ObjString* name) {
                         throw runtimeError(Thrown::IllegalStateException, "static property '" + name->utf8() + "' of " + k->name->utf8() +
                                            " cannot be read: it has no getter");
                 }
-                if (name == names.className) return Value::object(cls->name);  // `name` is left free for a member
                 throw runtimeError(Thrown::UnsupportedOperationException, "undefined static member '" + name->utf8() + "' on class " + cls->name->utf8());
             }
             case ObjType::String:
@@ -4785,6 +4876,8 @@ void VM::run(int baseFrame) {
                     case Op::InstanceTypeArg:
                     case Op::SupertypeMaker:
                     case Op::CheckResult:
+                    case Op::ClassOf:
+                    case Op::ClassMeta:
                         ip = typeInstruction(static_cast<Op>(ip[-1]), ip, frame);
                         break;
 
@@ -6137,7 +6230,7 @@ void VM::run(int baseFrame) {
                         ObjString* name = asString(consts[READ_U16()]);
                         if (!sp_[-1].isObjType(ObjType::Class)) throw runtimeError(Thrown::InternalError, "invalid class declaration");
                         asClass(sp_[-1])->isData = true;
-                        asClass(sp_[-1])->components.push_back(name);
+                        if (name->length > 0) asClass(sp_[-1])->components.push_back(name);  // "": a data class of no values
                         break;
                     }
                     case Op::Extend: {
@@ -7076,6 +7169,31 @@ const uint8_t* VM::typeInstruction(Op op, const uint8_t* ip, CallFrame* frame) {
             sp_--;
             break;
         }
+        case Op::ClassOf: {
+            const int how = *ip++;
+            Value& top = sp_[-1];
+            ObjTypeInfo* type = nullptr;
+            if (how == 0) {
+                if (!top.isObjType(ObjType::TypeInfo)) throw runtimeError(Thrown::InternalError, "invalid type");
+                type = static_cast<ObjTypeInfo*>(top.as.obj);
+            } else {
+                frame->ip = ip;
+                type = typeOfValue(top);
+            }
+            top = Value::object(type);
+            *sp_++ = Value::object(frame->closure);
+            break;
+        }
+        case Op::ClassMeta: {
+            const FunctionProto* proto = frame->closure->proto->protos[operandU16(ip)];
+            ip += 2;
+            const int which = *ip++;
+            if (!sp_[-1].isObjType(ObjType::Class) || which > 1) throw runtimeError(Thrown::InternalError, "invalid class declaration");
+            ObjClass* cls = asClass(sp_[-1]);
+            cls->metaProto[which] = proto;
+            cls->meta[which] = nullptr;
+            break;
+        }
         case Op::SupertypeMaker: {
             if (!sp_[-2].isObjType(ObjType::Class) || !sp_[-1].isObjType(ObjType::Closure)) throw runtimeError(Thrown::InternalError, "invalid class declaration");
             asClass(sp_[-2])->supertypeMakers.push_back(asClosure(sp_[-1]));
@@ -7517,6 +7635,10 @@ void VM::blacken(Obj* obj) {
             markObject(cls->super);
             markObject(cls->init);
             for (ObjClosure* maker : cls->supertypeMakers) markObject(maker);
+            markObject(cls->meta[0]);
+            markObject(cls->meta[1]);
+            for (const auto& described : cls->described)
+                for (const auto& [type, made] : described) markValue(made);
             markTable(cls->methods);
             markTable(cls->statics);
             markTable(cls->getters);
