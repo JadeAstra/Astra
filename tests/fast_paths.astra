@@ -81,14 +81,14 @@ fun bounds(n : any) : string {
   return s
 }
 print(bounds(3))   // expect: 012
-try { bounds(2.5) } catch (e : Error) { print(e.message) }   // expect: cannot cast a value of type float to int
+try { bounds(2.5) } catch (e : Exception) { print(e.message) }   // expect: cannot cast a value of type float to int
 fun stepped(by : int) : int {
   var n = 0
   for i in 0..10 step by { n += 1 }
   return n
 }
 print(stepped(5))   // expect: 3
-try { stepped(0) } catch (e : Error) { print(e.message) }   // expect: the step of a range must be a positive int
+try { stepped(0) } catch (e : Exception) { print(e.message) }   // expect: the step of a range must be a positive int
 
 // Two locals in one instruction, of every kind, and when they are not numbers.
 fun mix(a : Number, b : Number) : string => "${a + b} ${a - b} ${a * b} ${a < b} ${a <= b} ${a > b} ${a >= b} ${a == b}"
@@ -106,4 +106,4 @@ fun halves(a : float, b : float) : float => a / b
 print(halves(7.0, 2.0))   // expect: 3.5
 fun intHalves(a : int, b : int) : int => a / b
 print(intHalves(7, 2))    // expect: 3
-try { intHalves(1, 0) } catch (e : Error) { print(e.message) }   // expect: division by zero
+try { intHalves(1, 0) } catch (e : Exception) { print(e.message) }   // expect: division by zero

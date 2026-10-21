@@ -280,7 +280,7 @@ holds is used through a cast (`x as Box`) or a test (`if (x is Box) { x.open() }
 Types are checked when the program is compiled, and a program the checker finds a mistake
 in does not run: each mistake is listed, as a compile error is. `astra check` lists them
 without running anything. A cast is checked as the program runs, and a wrong one raises a
-catchable `Error`.
+catchable `ClassCastException`.
 
 Type names: `int`, `float`, `Number`, `string`, `char`, `byte`, `bool`, `List`, `Map`, `Set`,
 `Range`, `Index`, `Function`, `Bytes`, `FrozenList`, `FrozenMap`, `FrozenSet`, `any`, or the name
@@ -485,7 +485,7 @@ to the right-hand side for `false` as well.
 
 ```astra
 val user = find(id) ?: return           // leave the function
-val port = config["port"] ?: throw Error("no port configured")
+val port = config["port"] ?: throw IllegalStateException("no port configured")
 for line in lines {
   val entry = parse(line) ?: continue   // on to the next line
   ...
@@ -978,11 +978,11 @@ Every field is declared, in the header or the body (R24). A class has exactly th
 and its superclasses declare, and assigning to any other name is an error, reported when the
 program is compiled (`Account has no field 'balanse'; fields must be declared in the class
 with val or var`), which catches misspellings; a class that declares none has none.
-Subclasses add fields by declaring them. The built-in `Error` class declares `message`, so an
-error class that carries more data declares it:
+Subclasses add fields by declaring them. `Throwable` declares `message` and `cause`, so an
+exception class that carries more data declares it:
 
 ```astra
-class HttpError : Error {
+class HttpError : Exception {
   val status : int
   fun init(status : int, message : string) {
     super.init(message)
@@ -1601,9 +1601,7 @@ itself implements the interface instead.
 ### Errors
 
 ```astra
-class NotFound : Error {
-  fun init(what : string) { super.init(what + " not found") }
-}
+class NotFound(what : string) : Exception(what + " not found")
 
 try {
   throw NotFound("key")
@@ -1612,32 +1610,80 @@ try {
 }
 ```
 
-Any value can be thrown. Runtime errors (division by zero, undefined variables, a stack
-overflow, ...) are `Error` instances and can be caught the same way. So is running out of memory:
-a list, a string or a buffer larger than the system can give throws an `OutOfMemoryError`
-(a subclass of `Error`), and the program can catch it and go on. Sizes have no limit of their
-own below that. An uncaught error
-prints a stack trace and exits with code 70.
+Only a `Throwable` is thrown, in Java's tree, which Kotlin code uses (D35). It has a `message`,
+which may be null, and the `cause` it came from, if any.
 
-A `catch` can be for one class of error, and several can follow a `try`; an error that none
-of them is for carries on outwards. A `finally` block runs however the `try` is left: at its
-end, by an error, or by `return`, `break` or `continue`.
+- **`Error`** is what the VM cannot go on from: `StackOverflowError`, `OutOfMemoryError` (a
+  list, a string or a buffer larger than the system can give; the program can catch it and go
+  on), `AssertionError` from `assert`, `NotImplementedError` from `TODO()`.
+- **`Exception`** is everything else. `RuntimeException` and the classes under it are mistakes
+  in the program: `ArithmeticException` (division by zero, an int that does not fit),
+  `IndexOutOfBoundsException`, `NullPointerException` (`!!` on null), `ClassCastException`,
+  `IllegalArgumentException` (`require`), `NumberFormatException`, `IllegalStateException`
+  (`check`, `error()`), `UnsupportedOperationException`, `NoSuchElementException`,
+  `ConcurrentModificationException`, and `InterruptedException` and `CancellationException`, so
+  that waiting needs no `try`. The program's own errors usually extend one of these.
+- **Every other `Exception`** is checked: `IOException`, `TimeoutException`,
+  `ExecutionException`, and a program's own class extending `Exception`.
+
+The VM's own errors are of these classes; an uncaught one prints its class, its message and a
+stack trace, and the program exits with code 70.
+
+A `catch` can be for one class, and several can follow a `try`, tried in order; what none of
+them takes carries on outwards, and one that an earlier clause already takes is an error. A
+bare `catch (e)` takes every `Exception`, and not an `Error`, which is caught only where it is
+named, `catch (e : Error)` or `catch (e : Throwable)` (D151). A `finally` block runs however the
+`try` is left: at its end, by an error, or by `return`, `break` or `continue`.
 
 ```astra
-fun load(path : string) : Config {
+fun load(path : string) : Config? {
   val file = open(path)
   try {
     return parse(file)
   } catch (e : NotFound) {
     return null
-  } catch (e) {                 // any other error; has to be the last catch
+  } catch (e) {                 // any other Exception
     log("cannot read $path: $e")
-    throw e
+    throw e                     // what parse could throw, of the Exceptions: no more
   } finally {
     file.close()                // runs in every case, after the value to return is worked out
   }
 }
 ```
+
+**Checked exceptions are worked out by the compiler** (D35). Nothing is written inside a
+program: the compiler follows each checked exception from where it is thrown, through every
+call, to where it is caught. It is an error only where one reaches something that cannot pass
+it on:
+
+- a lambda kept to be called later (a stored callback, a thread's or a task's body, a field of a
+  function type): it may throw only what its type says, so it catches what it can meet;
+- a method taking the place of another, or a class fitting an interface: it throws no more
+  than the one it replaces says (D51, D53);
+- a static or lazy starting value, and a function used as a value, which throws what it writes;
+- a library's public function, which says what it throws.
+
+A function that calls a lambda it was given throws what that lambda throws, so
+`paths.map { readText(it) }` needs nothing, and its caller handles the `IOException`. A `throw e`
+of a catch clause's variable throws again only what the `try` could throw, of that class. At
+the top of a script an uncaught exception is reported when it happens.
+
+`throws`, after the result type, says what a function may throw, with `|` between several
+(D54). It is required on a library's public functions and on a method with no body; anywhere
+else it is a check, an error if the body can throw anything else, and room for overrides to
+throw what it names. A function type says it the same way:
+
+```astra
+fun fetch(url : string) : Bytes throws IOException | TimeoutException { ... }
+interface Loader { fun load(name : string) : string throws IOException }
+val onSave : () -> unit throws IOException = { file.writeText(text) }
+```
+
+**`use { }`** runs its block on something to close, and closes it afterwards, however the block
+ends: `File(p).reader().use { it.readText() }` (D113). It is for an `AutoCloseable`, which the
+standard library's streams and sockets are; a class of someone else's that has a `close()` is
+fitted to it with `extend`. Like the other functions taking a lambda, it is copied in where it
+is called.
 
 ### Modules
 
@@ -1677,7 +1723,7 @@ constants and enum entries are in camelCase: `openWindow`, `windowOpener`, `Colo
 set of basic ones, which are lowercase: `bool`, `char`, `byte`, `int`, `float`, the storage widths,
 `string`, `any`, `nothing` and `unit`. The language does not
 enforce this; it is how everything that comes with it is named.
-- Built-in names (`print`, `Error`, the types) are in reach everywhere.
+- Built-in names (`print`, `Exception`, the types) are in reach everywhere.
 
 Three words say who may see a top-level declaration:
 
@@ -1992,7 +2038,8 @@ of the library is built into the runtime and the rest is written in Astra itself
 `Bytes(size | list)`, `with(object, lambda)`, `repeat(times) { index -> }`, `flush()`
 
 **Checks:** `require(condition) { message }`, `check(condition) { message }`,
-`requireNotNull(value)`, `checkNotNull(value)` and `error(message)` throw an `Error`. The
+`requireNotNull(value)`, `checkNotNull(value)` and `error(message)` throw an
+`IllegalArgumentException` (`require`, `requireNotNull`) or an `IllegalStateException`. The
 message is a lambda, so it is only worked out when the check fails, and may be left out.
 
 **Math:** `pi`, `e`, `sqrt`, `abs`, `floor`, `ceil`, `round`, `trunc`, `sign`, `min`, `max`,

@@ -8,7 +8,7 @@ val log = []
 class Panel(val name : string) {
   var gap : int = 4
     set(value) {
-      if value < 0 { throw Error("gap cannot be negative") }
+      if value < 0 { throw Exception("gap cannot be negative") }
       field = value
       log.add("$name gap=$value")
     }

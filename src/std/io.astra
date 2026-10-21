@@ -10,11 +10,8 @@
 // The work is done by the built-in __io (io.cpp). What it hands out to stand for an open
 // file, process or socket is a handle of the C++'s own, an `any` to Astra.
 
-// Thrown when reading, writing, connecting or starting a program goes wrong.
-class IOException(message : string) : Error(message)
-
 // Something to read from: a file, what a process writes, a socket. Text is UTF-8.
-class InputStream {
+class InputStream : AutoCloseable {
   private val handle : any
 
   fun init(handle : any) {
@@ -22,18 +19,18 @@ class InputStream {
   }
 
   // Up to `count` bytes as soon as there are any; null at the end.
-  fun read(count : int = 65536) : Bytes? => __io.read(handle, count)
+  fun read(count : int = 65536) : Bytes? throws IOException => __io.read(handle, count)
 
   // Everything up to the end, as bytes or as text.
-  fun readBytes() : Bytes => __io.readAll(handle)
-  fun readAllBytes() : Bytes => __io.readAll(handle)
-  fun readText() : string => readBytes().decodeToString()
+  fun readBytes() : Bytes throws IOException => __io.readAll(handle)
+  fun readAllBytes() : Bytes throws IOException => __io.readAll(handle)
+  fun readText() : string throws IOException => readBytes().decodeToString()
 
   // The next line without its line end; null at the end.
-  fun readLine() : string? => __io.readLine(handle)
+  fun readLine() : string? throws IOException => __io.readLine(handle)
 
   // The lines that are left.
-  fun readLines() : open List<string> {
+  fun readLines() : open List<string> throws IOException {
     val lines : open List<string> = []
     while (true) {
       val line : string? = __io.readLine(handle)
@@ -43,9 +40,9 @@ class InputStream {
     return lines
   }
 
-  fun lines() : open List<string> => readLines()
+  fun lines() : open List<string> throws IOException => readLines()
 
-  fun forEachLine(action : (string) -> unit) {
+  fun forEachLine(action : (string) -> unit) throws IOException {
     while (true) {
       val line : string? = __io.readLine(handle)
       if (line == null) { break }
@@ -54,7 +51,7 @@ class InputStream {
   }
 
   // Runs the block on the lines and closes the stream afterwards.
-  fun <R> useLines(block : (List<string>) -> R) : R {
+  fun <R> useLines(block : (List<string>) -> R) : R throws IOException {
     try {
       return block(readLines())
     } finally {
@@ -62,21 +59,12 @@ class InputStream {
     }
   }
 
-  fun close() {
+  override fun close() {
     __io.close(handle)
   }
 
   val isOpen : bool
     get() => __io.isOpen(handle)
-
-  // Runs the block on this stream and closes it afterwards, whatever happens.
-  fun <R> use(block : (InputStream) -> R) : R {
-    try {
-      return block(this)
-    } finally {
-      close()
-    }
-  }
 
   // Kotlin wraps a stream to read text from it; here the stream reads text itself.
   fun bufferedReader(charset : any? = null) : InputStream => this
@@ -86,7 +74,7 @@ class InputStream {
 
 // Something to write to: a file, what a process reads, a socket. A write returns when the
 // system has taken all of it, so flush() has nothing left to do.
-class OutputStream {
+class OutputStream : AutoCloseable {
   private val handle : any
 
   fun init(handle : any) {
@@ -94,23 +82,23 @@ class OutputStream {
   }
 
   // Text, or bytes. Anything else is written as print would show it.
-  fun write(data : any?) {
+  fun write(data : any?) throws IOException {
     __io.write(handle, data)
   }
 
-  fun print(value : any?) {
+  fun print(value : any?) throws IOException {
     __io.write(handle, "$value")
   }
 
-  fun println(value : any? = "") {
+  fun println(value : any? = "") throws IOException {
     __io.write(handle, "$value\n")
   }
 
-  fun newLine() {
+  fun newLine() throws IOException {
     __io.write(handle, "\n")
   }
 
-  fun append(value : any?) : OutputStream {
+  fun append(value : any?) : OutputStream throws IOException {
     __io.write(handle, "$value")
     return this
   }
@@ -118,20 +106,12 @@ class OutputStream {
   fun flush() {
   }
 
-  fun close() {
+  override fun close() {
     __io.close(handle)
   }
 
   val isOpen : bool
     get() => __io.isOpen(handle)
-
-  fun <R> use(block : (OutputStream) -> R) : R {
-    try {
-      return block(this)
-    } finally {
-      close()
-    }
-  }
 
   fun bufferedWriter(charset : any? = null) : OutputStream => this
   fun writer(charset : any? = null) : OutputStream => this
@@ -170,7 +150,7 @@ class Process {
   // The exit code of a program that has ended.
   fun exitValue() : int {
     val code : int? = __io.processWait(handle, 0)
-    if (code == null) { throw Error("the process has not ended yet") }
+    if (code == null) { throw IllegalStateException("the process has not ended yet") }
     return code
   }
 
@@ -261,8 +241,8 @@ class ProcessBuilder {
     return this
   }
 
-  fun start() : Process {
-    if (parts.isEmpty()) { throw Error("ProcessBuilder has no program to start") }
+  fun start() : Process throws IOException {
+    if (parts.isEmpty()) { throw IllegalStateException("ProcessBuilder has no program to start") }
     return Process(__io.spawn(parts, folder, input, output, error, variables))
   }
 }
@@ -275,19 +255,19 @@ class ProcessBuilder {
 //   socket.outputStream.write("GET / HTTP/1.0\r\n\r\n")
 //   print(socket.inputStream.readLine())
 //   socket.close()
-class Socket {
+class Socket : AutoCloseable {
   private var handle : any? = null
   private var input : InputStream? = null
   private var output : OutputStream? = null
   private var readLimit = 0
 
   // Socket(host, port) connects at once; Socket() waits for connect().
-  fun init(host : string? = null, port : int = 0) {
+  fun init(host : string? = null, port : int = 0) throws IOException {
     if (host != null) { connect(host, port) }
   }
 
   // With a time limit in milliseconds, gives up when it runs out.
-  fun connect(host : string, port : int, timeout : int? = null) : Socket {
+  fun connect(host : string, port : int, timeout : int? = null) : Socket throws IOException {
     if (handle != null) { throw IOException("the socket is already connected") }
     adopt(__io.connect(host, port, timeout))
     return this
@@ -304,7 +284,7 @@ class Socket {
 
   private fun connected() : any {
     val held = handle
-    if (held == null) { throw IOException("the socket is not connected") }
+    if (held == null) { throw IllegalStateException("the socket is not connected") }
     return held
   }
 
@@ -335,20 +315,12 @@ class Socket {
     }
 
   // Says that nothing more will be written: the other side reads the end.
-  fun shutdownOutput() {
+  fun shutdownOutput() throws IOException {
     __io.shutdownOutput(connected())
   }
 
-  fun close() {
+  override fun close() {
     if (handle != null) { __io.close(handle) }
-  }
-
-  fun <R> use(block : (Socket) -> R) : R {
-    try {
-      return block(this)
-    } finally {
-      close()
-    }
   }
 }
 
@@ -362,10 +334,10 @@ class Socket {
 //
 // Port 0 lets the system pick a free one (see localPort). With no address it takes
 // connections from anywhere; "127.0.0.1" keeps it to programs on this machine.
-class ServerSocket {
+class ServerSocket : AutoCloseable {
   private val handle : any
 
-  fun init(port : int = 0, backlog : int = 50, bindAddress : string? = null) {
+  fun init(port : int = 0, backlog : int = 50, bindAddress : string? = null) throws IOException {
     this.handle = __io.listen(port, bindAddress, backlog)
   }
 
@@ -375,18 +347,10 @@ class ServerSocket {
     get() => !__io.isOpen(handle)
 
   // Waits for a connection and gives it.
-  fun accept() : Socket => Socket().adopt(__io.accept(handle))
+  fun accept() : Socket throws IOException => Socket().adopt(__io.accept(handle))
 
   // Stops listening. A thread waiting in accept() gets an IOException.
-  fun close() {
+  override fun close() {
     __io.close(handle)
-  }
-
-  fun <R> use(block : (ServerSocket) -> R) : R {
-    try {
-      return block(this)
-    } finally {
-      close()
-    }
   }
 }

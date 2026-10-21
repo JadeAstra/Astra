@@ -21,6 +21,7 @@
 #include <cctype>
 #include <limits>
 #include <functional>
+#include <deque>
 #include <map>
 #include <set>
 #include <sstream>
@@ -40,6 +41,8 @@ namespace {
 struct ClassInfo;
 
 // ---- Types ----
+
+struct FuncInfo;
 
 struct Type {
     enum Kind : uint8_t {
@@ -77,6 +80,8 @@ struct Type {
     bool knownParams = false;          // Function: whether the parameters are known
     int required = -1;                 // Function: how many of them a call must give, those after having defaults; -1 all
     bool suspend = false;              // Function: `suspend () -> unit`, a function that may wait (R1)
+    std::vector<Type> throws;          // Function: the checked exceptions it may throw, as written (D52)
+    FuncInfo* fnRef = nullptr;         // Function: the function this value is, where it is known (D35)
     std::string name;                  // TypeParam: its name
     std::shared_ptr<Type> bound;       // TypeParam: its bound, when one is written
 
@@ -275,6 +280,9 @@ struct Local {
     // A lambda's parameter: a place, where a list of values hands the lambda its own item
     // (M6.6 part 4, value-lists.html section 8).
     bool lambdaParam = false;
+    // A catch clause's variable: `throw e` gives again what the try could throw (D35).
+    void* catchOf = nullptr;
+    int catchClause = -1;
     // The variable of a for loop over a list: whose uses decide whether it may be the item
     // itself (M6.6 part 4).
     const ForInStmt* loopOf = nullptr;
@@ -309,6 +317,8 @@ struct FnCtx {
     const FunctionDecl* placeDecl = nullptr;
     bool suspendLambda = false;
     NoWait noWait = CanWait;
+    // Where what is thrown or called here is noted (D35): the function's own scope, or a try's.
+    void* throwScope = nullptr;
 };
 
 const char* article(const std::string& word) {
@@ -425,6 +435,7 @@ struct Checker::Impl {
                     s = t.receiver ? argText(*t.receiver) + ".(" : "(";
                     for (size_t i = 0; i < t.args.size(); i++) s += (i ? ", " : "") + argText(t.args[i]);
                     s += ") -> " + (t.result ? argText(*t.result) : std::string("*"));
+                    for (size_t i = 0; i < t.throws.size(); i++) s += (i ? " | " : " throws ") + argText(t.throws[i]);
                     if (t.suspend) s = "suspend " + s;
                     if (t.nullable) s = "(" + s + ")";
                 }
@@ -623,6 +634,17 @@ struct Checker::Impl {
     }
 
     // Whether a value of type `from` can go where `to` is asked for.
+    // Whether every class of `inner` is one of `outer`'s, or below one (D52).
+    bool throwsWithin(const std::vector<Type>& inner, const std::vector<Type>& outer) {
+        for (const Type& t : inner) {
+            if (t.kind != Type::Class || t.cls == nullptr) continue;
+            bool covered = false;
+            for (const Type& o : outer) covered = covered || (o.kind == Type::Class && o.cls != nullptr && isSubclass(t.cls, o.cls));
+            if (!covered) return false;
+        }
+        return true;
+    }
+
     bool fits(const Type& from, const Type& to) {
         if (from.unknown() || to.unknown()) return true;
         if (from.kind == Type::TypeParam || to.kind == Type::TypeParam) {
@@ -687,6 +709,8 @@ struct Checker::Impl {
                 if (to.args.size() < least || to.args.size() > from.args.size()) return false;
                 for (size_t i = 0; i < to.args.size(); i++)
                     if (!fits(to.args[i], from.args[i])) return false;
+                // What it may throw, the type it goes to may (D52).
+                if (!throwsWithin(from.throws, to.throws)) return false;
                 if (to.result && from.result && to.result->kind != Type::Unit) return fits(*from.result, *to.result);
                 return true;
             }
@@ -1089,6 +1113,7 @@ struct Checker::Impl {
                         addExtension(u, extensions[fs.receiverType.typeParam ? std::string("<T>") : fs.receiver][fs.fn->name], f);
                     } else {
                         declared(u, stmt->visibility, fs.fn->name).funcs.push_back(f);
+                        if (stmt->visibility == 0) topLevelPublic.insert(fs.fn.get());
                     }
                     break;
                 }
@@ -1247,6 +1272,7 @@ struct Checker::Impl {
             t.result = std::make_shared<Type>(resolve(a.result[0], u));
             if (!a.receiver.empty()) t.receiver = std::make_shared<Type>(resolve(a.receiver[0], u));
             t.suspend = a.isSuspend;
+            for (const TypeAnnotation& thrown : a.throwsTypes) t.throws.push_back(resolve(thrown, u));
         } else if (a.typeParam) {
             t = typeParamType(a.name);
         } else if (a.name == "|") {
@@ -2415,21 +2441,31 @@ struct Checker::Impl {
             case StmtKind::Break:
             case StmtKind::Continue:
                 break;
-            case StmtKind::Throw:
-                expr(*static_cast<const ThrowStmt&>(s).value);
+            case StmtKind::Throw: {
+                // Only a Throwable is thrown (D35).
+                const auto& th = static_cast<const ThrowStmt&>(s);
+                const Type thrown = expr(*th.value);
+                if (const Type root = stdClassType("Throwable"); thrown.known() && root.known() && !fits(thrown, root))
+                    report(*th.value, "only a Throwable can be thrown, not " + describe(thrown) +
+                                          ": throw IllegalStateException(\"...\") or a class of your own extending Exception (D35)");
+                noteThrow(*th.value, thrown);
                 break;
+            }
             case StmtKind::Try: {
                 const auto& t = static_cast<const TryStmt&>(s);
+                TryThrows tryThrows(*this, t);
                 blockMaybeCut(t.body->statements);
-                for (const CatchClause& c : t.catches) {
+                for (size_t i = 0; i < t.catches.size(); i++) {
+                    const CatchClause& c = t.catches[i];
                     push();
-                    if (c.hasVariable) {
-                        Type caught = c.type.present() ? resolve(c.type, *unit) : unknownType();
-                        declareLocal(c.variable, caught, true);
-                    }
+                    const Type caught = catchType(c);
+                    catchOrder(t, i, caught);
+                    tryThrows.clause(i, caught);
+                    if (c.hasVariable) tryThrows.declare(c.variable, caught, i);
                     for (const StmtPtr& st : c.body->statements) stmt(*st);
                     pop();
                 }
+                tryThrows.finally();
                 if (t.finalizer) block(t.finalizer->statements);
                 break;
             }
@@ -2657,6 +2693,39 @@ struct Checker::Impl {
         for (size_t i = 0; i + 1 < at; i++) itUsers[i]->innerUses.push_back(&n);
     }
 
+    // A class of the standard library's, by name, as a type: Throwable and the rest (D35).
+    Type stdClassType(const std::string& name) {
+        for (const auto& u : units) {
+            if (!u->prelude) continue;
+            if (const GlobalSym* g = findGlobal(*u, name); g != nullptr && g->cls != nullptr) return classType(g->cls);
+        }
+        return unknownType();
+    }
+
+    // A clause whose class an earlier clause of the same try already takes can never run.
+    void catchOrder(const TryStmt& t, size_t index, const Type& caught) {
+        if (silent != 0 || caught.kind != Type::Class) return;
+        for (size_t i = 0; i < index; i++) {
+            const Type before = catchType(t.catches[i]);
+            if (before.kind == Type::Class && fits(caught, before)) {
+                report(t.catches[index].type.present() ? static_cast<const Node&>(t.catches[index].type) : static_cast<const Node&>(*t.catches[index].body),
+                       "the catch before this one takes every " + (before.cls != nullptr ? before.cls->name : describe(before)) + ", so this one can never run");
+                return;
+            }
+        }
+    }
+
+    // What a catch clause catches: the class it names, a Throwable; with none, every Exception (D151).
+    std::unordered_set<const CatchClause*> catchReported;
+    Type catchType(const CatchClause& c) {
+        if (!c.type.present()) return stdClassType("Exception");
+        const Type named = resolve(c.type, *unit);
+        const Type root = stdClassType("Throwable");
+        if (named.known() && root.known() && !fits(named, root) && catchReported.insert(&c).second)
+            report(c.type, "a catch names a class of Throwable, as in catch (e : IOException), not " + describe(named) + " (D35)");
+        return named;
+    }
+
     // A lambda kept in a variable or field with no type written runs on no object: its bare names
     // are looked for as anywhere else, where one passed where the checker cannot tell may run on
     // an object.
@@ -2676,6 +2745,7 @@ struct Checker::Impl {
         c.isLambda = d.isLambda;
         c.placeDecl = &d;
         c.suspendLambda = typed && expected->suspend;
+        if (silent == 0) c.throwScope = newThrowRoot(&d, ThrowRoot::Lambda, d);
         std::vector<Type> returns;
         c.returns = &returns;
         if (!d.isLambda && d.returnType.present()) {
@@ -2738,6 +2808,11 @@ struct Checker::Impl {
         if (silent == 0 && d.isLambda) {
             if (c.hasReceiver && !c.receiverUnknown) onObject.insert(&d);
             else onObject.erase(&d);
+        }
+        if (silent == 0) {
+            LambdaThrows& kept = lambdaThrows[&d];
+            kept.unit = unit;
+            kept.as = typed ? *expected : Type::of(Type::Function);
         }
         for (const StmtPtr& s : d.body) stmt(*s);
         pop();
@@ -3206,6 +3281,7 @@ struct Checker::Impl {
         for (const Type& p : f->params) fn.args.push_back(subst(p, env));
         fn.required = static_cast<int>(f->params.size());
         fn.result = std::make_shared<Type>(subst(resultOf(f), env));
+        fn.throws = writtenThrowsTypes(f);  // what the interface's method writes (D53)
         return true;
     }
 
@@ -3585,13 +3661,19 @@ struct Checker::Impl {
         }
         if (s.kind == StmtKind::Try) {
             const auto& t = static_cast<const TryStmt&>(s);
+            TryThrows tryThrows(*this, t);
             Type value = statementValueOf(*t.body);
-            for (const CatchClause& c : t.catches) {
+            for (size_t i = 0; i < t.catches.size(); i++) {
+                const CatchClause& c = t.catches[i];
                 push();
-                if (c.hasVariable) declareLocal(c.variable, c.type.present() ? resolve(c.type, *unit) : unknownType(), true);
+                const Type caught = catchType(c);
+                catchOrder(t, i, caught);
+                tryThrows.clause(i, caught);
+                if (c.hasVariable) tryThrows.declare(c.variable, caught, i);
                 value = common(value, statementValueOf(*c.body));
                 pop();
             }
+            tryThrows.finally();
             if (t.finalizer) block(t.finalizer->statements);
             return value;
         }
@@ -3788,7 +3870,10 @@ struct Checker::Impl {
                     if (ClassInfo* t = insideObject(ctx->cls, fieldType(m.field))) fieldCandidates[&n] = IndexCandidate{effectKey(), t};
                     return subst(fieldType(noteConst(n, m.field)), m.env);
                 }
-                if (m.getter) return subst(resultOf(m.getter), m.env);
+                if (m.getter) {
+                    noteCallThrows(m.getter, nullptr, noArgs(), nullptr, n);
+                    return subst(resultOf(m.getter), m.env);
+                }
             }
             for (ClassInfo* c = ctx->cls; c != nullptr; c = c->outer) {
                 auto s = c->statics.find(n.name);
@@ -3800,7 +3885,10 @@ struct Checker::Impl {
         if (const GlobalSym* g = findGlobal(*unit, n.name)) {
             if (g->var != nullptr) return fieldType(noteConst(n, g->var));
             if (g->cls != nullptr) return g->cls->isObject ? classType(g->cls) : unknownType();
-            if (g->funcs.size() == 1) return functionValue(g->funcs[0]);
+            if (g->funcs.size() == 1) {
+                noteFunctionValue(g->funcs[0], n);
+                return functionValue(g->funcs[0]);
+            }
         }
         return unknownType();
     }
@@ -3857,6 +3945,8 @@ struct Checker::Impl {
         for (size_t i = 0; i < f->params.size(); i++)
             if (i >= f->hasDefault.size() || !f->hasDefault[i]) t.required = static_cast<int>(i) + 1;
         t.result = std::make_shared<Type>(f->typeParams.empty() ? resultOf(f) : unknownType());
+        t.fnRef = f;
+        t.throws = writtenThrowsTypes(f);
         t.suspend = f->decl != nullptr && f->decl->isSuspend;
         return t;
     }
@@ -4862,6 +4952,7 @@ struct Checker::Impl {
                 if (named) noteConst(at, m.field);
                 result = subst(fieldType(m.field), m.env);
             } else if (m.getter) {
+                noteCallThrows(m.getter, nullptr, noArgs(), nullptr, at);
                 result = subst(resultOf(m.getter), m.env);
             } else if (m.setter) {
                 resolveFunc(m.setter);
@@ -5060,6 +5151,7 @@ struct Checker::Impl {
         Binding b = bind(f, args, at, what);
         if (f->decl != nullptr && f->decl->isSuspend) noteWait(at, f->name);
         if (f->decl != nullptr && f->decl->isInline && silent == 0) noteInlineCall(f, b, at);
+        noteCallThrows(f, nullptr, args, &b, at);
         // Named arguments and a lambda after the call, given to a C++ function, are put where the
         // form chosen has them; a parameter between them that is not given gets a null, which
         // the C++ takes as not given (`names.join(", ") { }`, `items.add(item = x)`).
@@ -5241,6 +5333,7 @@ struct Checker::Impl {
             if (k->inits.empty() && !k->decl->hasHeader && k->decl->supertypes.empty() && !args.exprs.empty())
                 report(at, what + " takes no arguments");
         }
+        noteCallThrows(nullptr, k, args, nullptr, at);
         Type t = classType(k);
         for (const std::string& p : k->typeParams) t.args.push_back(env.count(p) ? env[p] : unknownType());
         if (!k->typeParams.empty() && k->decl != nullptr && !k->isInterface) noteTypeArguments(k->typeParams, env, at);
@@ -5319,6 +5412,516 @@ struct Checker::Impl {
         }
         return false;
     }
+
+    // ---- Checked exceptions (D35, D51 to D54) ----
+    //
+    // While bodies are checked, each function, lambda, class's construction and other body
+    // gets a scope noting what is thrown in it (`throw` of a checked exception), what it calls
+    // (with, for each parameter of a function type, what is given: a lambda, a parameter of the
+    // caller, or a function value of a type that says what it throws), and its try statements,
+    // each with scopes of its own. After the whole program, what may leave each is worked out
+    // until nothing changes; a parameter only called stands for whatever is given for it, as
+    // Swift's rethrows. Then the places that cannot pass something on are told.
+    struct ThrowScope;
+    struct TryRecord {
+        ThrowScope* body = nullptr;
+        std::vector<std::pair<std::vector<ClassInfo*>, ThrowScope*>> clauses;  // what each catches, its body
+        ThrowScope* finallyScope = nullptr;
+    };
+    struct ArgSource {
+        const FunctionDecl* lambda = nullptr;           // a lambda written there
+        std::pair<FuncInfo*, int> param{nullptr, -1};   // a parameter of the caller, passed on
+        std::vector<ClassInfo*> classes;                // a value of a type that says what it throws
+    };
+    struct CallRecord {
+        FuncInfo* callee = nullptr;
+        ClassInfo* constructs = nullptr;
+        std::vector<ArgSource> params;  // one per parameter of the callee
+        const Node* at = nullptr;
+    };
+    struct ThrowScope {
+        std::vector<ClassInfo*> direct;
+        std::vector<std::pair<FuncInfo*, int>> paramCalls;
+        std::vector<CallRecord> calls;
+        std::vector<TryRecord*> tries;
+        std::vector<std::pair<TryRecord*, size_t>> rethrows;
+        const Node* firstAt = nullptr;
+    };
+    struct ThrowRoot {
+        enum Kind { Function, Lambda, Build, Sink, Script } kind = Function;
+        ThrowScope* scope = nullptr;
+        Unit* unit = nullptr;
+        const Node* at = nullptr;
+        FuncInfo* fn = nullptr;
+    };
+    struct ThrowSet {
+        std::vector<ClassInfo*> classes;
+        std::vector<std::pair<FuncInfo*, int>> params;
+        bool operator==(const ThrowSet& o) const { return classes == o.classes && params == o.params; }
+    };
+    struct LambdaThrows {
+        Unit* unit = nullptr;
+        Type as;  // the function type it was checked as, where it is kept
+    };
+    std::deque<ThrowScope> throwScopes;
+    std::deque<TryRecord> tryRecords;
+    std::unordered_map<const void*, ThrowRoot> throwRoots;  // by a FunctionDecl, a ClassInfo, or a FnCtx's sink
+    std::unordered_map<const FunctionDecl*, LambdaThrows> lambdaThrows;
+    std::vector<std::tuple<FuncInfo*, const Node*, Unit*>> functionValues;  // and the file using it
+    std::unordered_map<const void*, ThrowSet> thrownBy;
+    std::unordered_map<const TryRecord*, ThrowSet> tryBodies;
+    std::deque<std::unique_ptr<int>> sinkKeys;
+
+    static const std::vector<ExprPtr>& noExprs() {
+        static const std::vector<ExprPtr> none;
+        return none;
+    }
+    static Args noArgs() { return Args{noExprs(), noNames(), false, false}; }
+
+    ThrowScope* newScope() {
+        throwScopes.emplace_back();
+        return &throwScopes.back();
+    }
+    ThrowScope* newThrowRoot(const void* key, ThrowRoot::Kind kind, const Node& at, FuncInfo* fn = nullptr) {
+        ThrowRoot& r = throwRoots[key];
+        r.kind = kind;
+        r.scope = newScope();
+        r.unit = unit;
+        r.at = &at;
+        r.fn = fn;
+        return r.scope;
+    }
+
+    // Where what is thrown or called in the code being checked is noted; none while checking
+    // silently. Made when first needed: a function's, a class's construction (its fields'
+    // values and init blocks), a static or lazy starting value's, or the top level's.
+    ThrowScope* throwHere(const Node& at) {
+        if (ctx == nullptr || silent != 0) return nullptr;
+        if (ctx->throwScope != nullptr) return static_cast<ThrowScope*>(ctx->throwScope);
+        if (ctx->isLambda) return nullptr;
+        ThrowScope* scope = nullptr;
+        if (ctx->topLevel) {
+            scope = newThrowRoot(unit, ThrowRoot::Script, at);
+        } else if (ctx->fn != nullptr && ctx->fn->decl != nullptr) {
+            scope = newThrowRoot(ctx->fn->decl, ThrowRoot::Function, *ctx->fn->decl, ctx->fn);
+        } else if (ctx->cls != nullptr && !ctx->isStatic && ctx->noWait == ObjectMade) {
+            auto found = throwRoots.find(ctx->cls);
+            scope = found != throwRoots.end() ? found->second.scope : newThrowRoot(ctx->cls, ThrowRoot::Build, at);
+        } else {
+            sinkKeys.push_back(std::make_unique<int>(0));
+            scope = newThrowRoot(sinkKeys.back().get(), ThrowRoot::Sink, at);
+        }
+        ctx->throwScope = scope;
+        if (scope->firstAt == nullptr) scope->firstAt = &at;
+        return scope;
+    }
+
+    ClassInfo* stdClass(const char* name) {
+        const Type t = stdClassType(name);
+        return t.kind == Type::Class ? t.cls : nullptr;
+    }
+    ClassInfo* errorClass = nullptr;
+    ClassInfo* runtimeClass = nullptr;
+    ClassInfo* throwableClass = nullptr;
+    // Checked: an Exception that is not a RuntimeException, or a Throwable of a class of its own.
+    bool isChecked(ClassInfo* k) {
+        if (throwableClass == nullptr) {
+            errorClass = stdClass("Error");
+            runtimeClass = stdClass("RuntimeException");
+            throwableClass = stdClass("Throwable");
+        }
+        ClassInfo* const error = errorClass;
+        ClassInfo* const runtime = runtimeClass;
+        ClassInfo* const throwable = throwableClass;
+        if (k == nullptr || throwable == nullptr || !isSubclass(k, throwable)) return false;
+        return !(error != nullptr && isSubclass(k, error)) && !(runtime != nullptr && isSubclass(k, runtime));
+    }
+
+    void noteThrow(const Expr& value, const Type& thrown) {
+        ThrowScope* scope = throwHere(value);
+        if (scope == nullptr) return;
+        if (value.kind == ExprKind::Name) {
+            // `throw e` of a catch clause's variable: what the try's body could throw, of that class.
+            if (Local* l = findLocal(static_cast<const NameExpr&>(value).name); l != nullptr && l->catchOf != nullptr) {
+                scope->rethrows.emplace_back(static_cast<TryRecord*>(l->catchOf), static_cast<size_t>(l->catchClause));
+                return;
+            }
+        }
+        if (thrown.kind == Type::Class && isChecked(thrown.cls)) scope->direct.push_back(thrown.cls);
+    }
+
+    void noteParamCall(FuncInfo* f, int index, const Node& at) {
+        ThrowScope* scope = throwHere(at);
+        if (scope != nullptr && index >= 0) scope->paramCalls.emplace_back(f, index);
+    }
+
+    void noteValueCallThrows(const Type& t, const CallExpr& c) {
+        ThrowScope* scope = throwHere(c);
+        if (scope == nullptr || t.kind != Type::Function) return;
+        if (t.fnRef != nullptr) {
+            // A function by its name, kept in a variable: a call of that function.
+            CallRecord r;
+            r.callee = t.fnRef;
+            r.at = &c;
+            scope->calls.push_back(std::move(r));
+            return;
+        }
+        for (const Type& x : t.throws)
+            if (x.kind == Type::Class && isChecked(x.cls)) scope->direct.push_back(x.cls);
+    }
+
+    void noteCallThrows(FuncInfo* f, ClassInfo* constructs, const Args& args, const Binding* b, const Node& at) {
+        ThrowScope* scope = throwHere(at);
+        if (scope == nullptr) return;
+        CallRecord r;
+        r.callee = f;
+        r.constructs = constructs;
+        r.at = &at;
+        if (f != nullptr && b != nullptr) {
+            r.params.resize(f->params.size());
+            for (size_t i = 0; i < args.exprs.size() && i < b->paramOf.size(); i++) {
+                const int p = b->paramOf[i];
+                if (p < 0 || static_cast<size_t>(p) >= f->params.size() || f->params[static_cast<size_t>(p)].kind != Type::Function) continue;
+                const Expr& arg = *args.exprs[i];
+                ArgSource& src = r.params[static_cast<size_t>(p)];
+                if (arg.kind == ExprKind::Function) {
+                    src.lambda = static_cast<const FunctionExpr&>(arg).fn.get();
+                    continue;
+                }
+                if (arg.kind == ExprKind::Name)
+                    if (Local* l = findLocal(static_cast<const NameExpr&>(arg).name); l != nullptr && l->paramOf != nullptr) {
+                        src.param = {l->paramOf, l->paramIndex};
+                        continue;
+                    }
+                silent++;
+                const Type given = expr(arg);
+                silent--;
+                if (given.kind == Type::Function) {
+                    if (given.fnRef != nullptr) {
+                        // A function by its name: what it may throw, worked out with the rest.
+                        CallRecord inner;
+                        inner.callee = given.fnRef;
+                        inner.at = &arg;
+                        scope->calls.push_back(std::move(inner));
+                    }
+                    for (const Type& x : given.throws)
+                        if (x.kind == Type::Class && isChecked(x.cls)) src.classes.push_back(x.cls);
+                }
+            }
+        }
+        scope->calls.push_back(std::move(r));
+    }
+
+    // The standard library's own objects of the C++ that read, write and connect: what of them
+    // throws an IOException (io.cpp, stdlib.cpp).
+    void noteNativeThrows(const MemberExpr& m, const CallExpr& c) {
+        if (m.object->kind != ExprKind::Name) return;
+        const std::string& object = static_cast<const NameExpr&>(*m.object).name;
+        static const std::unordered_set<std::string> file = {"read", "readBytes", "write", "append", "writeBytes", "appendBytes", "copy"};
+        static const std::unordered_set<std::string> io = {"open", "read", "readAll", "readLine", "write", "spawn", "connect", "listen", "accept", "shutdownOutput"};
+        if (!((object == "__file" && file.count(m.name) != 0) || (object == "__io" && io.count(m.name) != 0))) return;
+        if (findLocal(object) != nullptr) return;
+        ThrowScope* scope = throwHere(c);
+        if (ClassInfo* k = stdClass("IOException"); scope != nullptr && k != nullptr) scope->direct.push_back(k);
+    }
+
+    void noteFunctionValue(FuncInfo* f, const Node& at) {
+        if (silent == 0) functionValues.emplace_back(f, &at, unit);
+    }
+
+    // A try's scopes, set in turn as its body, each clause and its finally block are checked.
+    struct TryThrows {
+        Impl& c;
+        FnCtx* where;
+        void* outer;
+        TryRecord* record = nullptr;
+        TryThrows(Impl& checker, const TryStmt& t) : c(checker), where(checker.ctx), outer(nullptr) {
+            ThrowScope* around = c.throwHere(t);
+            if (around == nullptr) return;
+            outer = around;
+            c.tryRecords.emplace_back();
+            record = &c.tryRecords.back();
+            record->body = c.newScope();
+            around->tries.push_back(record);
+            where->throwScope = record->body;
+        }
+        void clause(size_t, const Type& caught) {
+            if (record == nullptr) return;
+            std::vector<ClassInfo*> classes;
+            if (caught.kind == Type::Class && caught.cls != nullptr) classes.push_back(caught.cls);
+            record->clauses.emplace_back(classes, c.newScope());
+            where->throwScope = record->clauses.back().second;
+        }
+        void declare(const std::string& name, const Type& caught, size_t index) {
+            c.declareLocal(name, caught, true);
+            if (record == nullptr) return;
+            Local& l = c.scopes.back()[name];
+            l.catchOf = record;
+            l.catchClause = static_cast<int>(index);
+        }
+        void finally() {
+            if (record == nullptr) return;
+            record->finallyScope = c.newScope();
+            where->throwScope = record->finallyScope;
+        }
+        ~TryThrows() {
+            if (record != nullptr) where->throwScope = outer;
+        }
+    };
+
+    // What a function writes after `throws`.
+    std::vector<Type> writtenThrowsTypes(FuncInfo* f) {
+        std::vector<Type> types;
+        if (f == nullptr || f->decl == nullptr || f->unit == nullptr) return types;
+        for (const TypeAnnotation& a : f->decl->throwsTypes) types.push_back(resolve(a, *f->unit));
+        return types;
+    }
+    std::vector<ClassInfo*> writtenThrows(FuncInfo* f) {
+        std::vector<ClassInfo*> list;
+        for (const Type& t : writtenThrowsTypes(f))
+            if (t.kind == Type::Class && t.cls != nullptr) list.push_back(t.cls);
+        return list;
+    }
+
+    static void addClass(ThrowSet& s, ClassInfo* k) {
+        if (std::find(s.classes.begin(), s.classes.end(), k) == s.classes.end()) s.classes.push_back(k);
+    }
+    static void addParam(ThrowSet& s, std::pair<FuncInfo*, int> p) {
+        if (std::find(s.params.begin(), s.params.end(), p) == s.params.end()) s.params.push_back(p);
+    }
+    static void addAll(ThrowSet& into, const ThrowSet& from) {
+        for (ClassInfo* k : from.classes) addClass(into, k);
+        for (const auto& p : from.params) addParam(into, p);
+    }
+
+    // What callers of a function handle: what it writes, if it writes anything or has no body;
+    // otherwise what its body throws. Either way, what is given for a parameter it only calls.
+    ThrowSet allowance(FuncInfo* f) {
+        ThrowSet s;
+        if (f == nullptr || f->decl == nullptr) return s;
+        const bool written = !f->decl->throwsTypes.empty() || f->isExternal || f->decl->isAbstract || f->unit == nullptr ||
+                             f->unit->skipBodies;
+        if (written) {
+            for (ClassInfo* k : writtenThrows(f)) addClass(s, k);
+            // A kept file's function writes nothing: what its facts say it throws (D145).
+            if (f->decl->throwsTypes.empty() && f->unit != nullptr && f->unit->skipBodies)
+                for (ClassInfo* k : keptThrown(f)) addClass(s, k);
+            resolveFunc(f);
+            for (size_t i = 0; i < f->params.size(); i++)
+                if (f->params[i].kind == Type::Function && inPlace(f, static_cast<int>(i))) addParam(s, {f, static_cast<int>(i)});
+            return s;
+        }
+        auto found = thrownBy.find(f->decl);
+        if (found != thrownBy.end()) s = found->second;
+        return s;
+    }
+
+    ThrowSet constructionThrows(ClassInfo* k, int depth = 0) {
+        ThrowSet s;
+        if (k == nullptr || depth > 64) return s;
+        if (auto found = thrownBy.find(k); found != thrownBy.end()) addAll(s, found->second);
+        return s;
+    }
+
+    ThrowSet evalCall(const CallRecord& r) {
+        ThrowSet set;
+        if (r.constructs != nullptr) addAll(set, constructionThrows(r.constructs));
+        if (r.callee == nullptr) return set;
+        const ThrowSet a = allowance(r.callee);
+        for (ClassInfo* k : a.classes) addClass(set, k);
+        for (const auto& mark : a.params) {
+            if (mark.first != r.callee) {
+                addParam(set, mark);
+                continue;
+            }
+            if (mark.second < 0 || static_cast<size_t>(mark.second) >= r.params.size()) continue;
+            const ArgSource& src = r.params[static_cast<size_t>(mark.second)];
+            if (src.lambda != nullptr) {
+                if (auto found = thrownBy.find(src.lambda); found != thrownBy.end()) addAll(set, found->second);
+            } else if (src.param.first != nullptr) {
+                addParam(set, src.param);
+            }
+            for (ClassInfo* k : src.classes) addClass(set, k);
+        }
+        return set;
+    }
+
+    bool catches(const std::vector<ClassInfo*>& caught, ClassInfo* k) {
+        for (ClassInfo* c : caught)
+            if (isSubclass(k, c)) return true;
+        return false;
+    }
+    // A clause that catches every Exception catches whatever a lambda given may throw.
+    bool catchesAllChecked(const TryRecord& t) {
+        ClassInfo* exception = stdClass("Exception");
+        for (const auto& [caught, scope] : t.clauses)
+            for (ClassInfo* c : caught)
+                if (exception != nullptr && isSubclass(exception, c)) return true;
+        return false;
+    }
+
+    ThrowSet evalScope(const ThrowScope* s, int depth = 0) {
+        ThrowSet set;
+        if (s == nullptr || depth > 200) return set;
+        for (ClassInfo* k : s->direct) addClass(set, k);
+        for (const auto& p : s->paramCalls) addParam(set, p);
+        for (const CallRecord& r : s->calls) addAll(set, evalCall(r));
+        for (const TryRecord* t : s->tries) {
+            const ThrowSet body = evalScope(t->body, depth + 1);
+            tryBodies[t] = body;
+            for (ClassInfo* k : body.classes) {
+                bool caught = false;
+                for (const auto& [classes, scope] : t->clauses) caught = caught || catches(classes, k);
+                if (!caught) addClass(set, k);
+            }
+            if (!catchesAllChecked(*t))
+                for (const auto& p : body.params) addParam(set, p);
+            for (const auto& [classes, scope] : t->clauses) addAll(set, evalScope(scope, depth + 1));
+            addAll(set, evalScope(t->finallyScope, depth + 1));
+        }
+        for (const auto& [t, index] : s->rethrows) {
+            // `throw e`: of what the try's body may throw, what this clause took (D35).
+            const ThrowSet& body = tryBodies[t];
+            const std::vector<ClassInfo*>& took = t->clauses[index].first;
+            for (ClassInfo* k : body.classes) {
+                if (catches(took, k)) addClass(set, k);
+                for (ClassInfo* c : took)
+                    if (c != k && isSubclass(c, k) && isChecked(c)) addClass(set, c);
+            }
+            bool all = false;
+            ClassInfo* exception = stdClass("Exception");
+            for (ClassInfo* c : took) all = all || (exception != nullptr && isSubclass(exception, c));
+            if (all)
+                for (const auto& p : body.params) addParam(set, p);
+        }
+        return set;
+    }
+
+    static std::string classList(const std::vector<ClassInfo*>& classes) {
+        std::string s;
+        for (size_t i = 0; i < classes.size(); i++) s += (i ? " | " : "") + classes[i]->name;
+        return s;
+    }
+    std::vector<ClassInfo*> beyond(const std::vector<ClassInfo*>& thrown, const std::vector<ClassInfo*>& allowed) {
+        std::vector<ClassInfo*> list;
+        for (ClassInfo* k : thrown)
+            if (!catches(allowed, k)) list.push_back(k);
+        return list;
+    }
+
+    std::unordered_set<Unit*> judging;  // the files checked this time, whose places are told
+
+    // After the whole program: what may leave each body, then each place that cannot pass it on.
+    void judgeThrows() {
+        if (stdClass("Exception") == nullptr) return;
+        for (int round = 0; round < 64; round++) {
+            bool changed = false;
+            for (const auto& [key, root] : throwRoots) {
+                ThrowSet now = evalScope(root.scope);
+                ThrowSet& was = thrownBy[key];
+                if (!(now == was)) {
+                    ThrowSet merged = was;
+                    addAll(merged, now);
+                    if (!(merged == was)) changed = true;
+                    was = merged;
+                }
+            }
+            if (!changed) break;
+        }
+        Unit* saved = unit;
+        // A lambda given where it is only called passes on what it throws; any other is kept,
+        // to be called where nothing catches what it throws but what its type says (D30, D52).
+        std::unordered_set<const FunctionDecl*> passedOn;
+        for (const auto& [key, root] : throwRoots) {
+            std::vector<const ThrowScope*> stack{root.scope};
+            while (!stack.empty()) {
+                const ThrowScope* s = stack.back();
+                stack.pop_back();
+                if (s == nullptr) continue;
+                for (const CallRecord& r : s->calls)
+                    for (size_t p = 0; p < r.params.size(); p++)
+                        if (r.params[p].lambda != nullptr && r.callee != nullptr && inPlace(r.callee, static_cast<int>(p)))
+                            passedOn.insert(r.params[p].lambda);
+                for (const TryRecord* t : s->tries) {
+                    stack.push_back(t->body);
+                    for (const auto& [classes, scope] : t->clauses) stack.push_back(scope);
+                    stack.push_back(t->finallyScope);
+                }
+            }
+        }
+        for (const auto& [lambda, kept] : lambdaThrows) {
+            if (passedOn.count(lambda) != 0 || judging.count(kept.unit) == 0) continue;
+            auto found = thrownBy.find(lambda);
+            if (found == thrownBy.end() || found->second.classes.empty()) continue;
+            std::vector<ClassInfo*> allowed;
+            for (const Type& t : kept.as.throws)
+                if (t.kind == Type::Class && t.cls != nullptr) allowed.push_back(t.cls);
+            const std::vector<ClassInfo*> extra = beyond(found->second.classes, allowed);
+            if (extra.empty()) continue;
+            unit = kept.unit;
+            report(*lambda, "this lambda may throw " + classList(extra) + ", which nothing can catch where it is called: it is kept " +
+                                "as " + describe(kept.as) + ", which throws " + (allowed.empty() ? std::string("nothing checked") : classList(allowed)) +
+                                "; catch it inside the lambda (D35)");
+        }
+        for (const auto& [key, root] : throwRoots) {
+            const ThrowSet& set = thrownBy[key];
+            unit = root.unit;
+            if (judging.count(root.unit) == 0) continue;
+            if (root.kind == ThrowRoot::Sink && !set.classes.empty())
+                report(*root.scope->firstAt, "this starting value may throw " + classList(set.classes) +
+                                                 ", which nothing can catch where it is worked out: catch it here (D35)");
+            if (root.kind != ThrowRoot::Function || root.fn == nullptr || root.fn->decl == nullptr) continue;
+            FuncInfo* f = root.fn;
+            const FunctionDecl& d = *f->decl;
+            if (!d.throwsTypes.empty()) {
+                // throws written: a promise the body keeps (D54).
+                const std::vector<ClassInfo*> extra = beyond(set.classes, writtenThrows(f));
+                if (!extra.empty())
+                    report(d, "'" + d.name + "' may throw " + classList(extra) + ", which its throws does not name: catch it, or add it (D54)");
+            } else if (!set.classes.empty() && libraryPublic(f)) {
+                report(d, "'" + d.name + "' may throw " + classList(set.classes) + ": a library's public function says so, " +
+                              "throws " + classList(set.classes) + " (D35)");
+            }
+        }
+        // An override throws no more than what it takes the place of may (D53).
+        for (const auto& [decl, f] : funcOf) {
+            if (f->owner == nullptr || f->isStatic || f->decl == nullptr) continue;
+            const std::vector<FuncInfo*>& takingPlace = overridersOf(f);
+            if (takingPlace.empty()) continue;
+            const ThrowSet above = allowance(f);
+            for (FuncInfo* g : takingPlace) {
+                if (g->decl == nullptr || g->unit == nullptr || judging.count(g->unit) == 0) continue;
+                const std::vector<ClassInfo*> extra = beyond(allowance(g).classes, above.classes);
+                if (extra.empty()) continue;
+                unit = g->unit;
+                report(*g->decl, "'" + g->name + "' may throw " + classList(extra) + ", which " + f->owner->name + "." + f->name +
+                                     " it takes the place of cannot: callers through " + f->owner->name + " would not catch it; " +
+                                     "catch it here, or write throws " + classList(extra) + " on " + f->owner->name + "." + f->name + " (D53)");
+            }
+        }
+        // A function as a value throws what it writes (D52).
+        for (const auto& [f, at, user] : functionValues) {
+            if (judging.count(user) == 0) continue;
+            const std::vector<ClassInfo*> extra = beyond(allowance(f).classes, writtenThrows(f));
+            if (extra.empty()) continue;
+            unit = user;
+            report(*at, "'" + f->name + "' may throw " + classList(extra) + ", and as a value a function throws only what it writes: " +
+                            "write throws " + classList(extra) + " on it, or call it in a lambda (D52)");
+        }
+        unit = saved;
+    }
+
+    // A library's public function: what a program using the library sees (D35).
+    bool libraryPublic(FuncInfo* f) {
+        if (f->unit == nullptr || f->unit->ns == nullptr || f->decl == nullptr) return false;
+        if (!f->unit->prelude && f->unit->ns->library == "<program>") return false;
+        if (f->decl->access == kAccessWordPrivate || f->decl->access == kAccessWordInternal) return false;
+        if (f->decl->isLambda || f->decl->name.empty() || f->decl->name[0] == '_') return false;
+        if (f->stmt != nullptr && f->stmt->visibility != 0) return false;
+        if (f->owner != nullptr && f->owner->decl != nullptr && f->owner->decl->visibility != 0) return false;
+        return topLevelPublic.count(f->decl) != 0 || f->owner != nullptr || f->isExtension;
+    }
+    std::unordered_set<const FunctionDecl*> topLevelPublic;
 
     // ---- Inline functions (D59) ----
 
@@ -5977,6 +6580,7 @@ struct Checker::Impl {
             const std::string& n = static_cast<const NameExpr&>(*c.callee).name;
             if (Local* l = findLocal(n)) {
                 noteUse(*l, ParamUse::Called);
+                if (l->paramOf != nullptr) noteParamCall(l->paramOf, l->paramIndex, c);
                 // What a function given as an argument does, its caller accounts for.
                 if (l->paramOf != nullptr) effects[effectKeyHere()].callsParams = true;
                 else effects[effectKeyHere()].any = true;
@@ -6060,6 +6664,7 @@ struct Checker::Impl {
         }
         if (c.callee->kind == ExprKind::Member) {
             const auto& m = static_cast<const MemberExpr&>(*c.callee);
+            noteNativeThrows(m, c);
             if (m.object->kind == ExprKind::Name) {
                 const std::string& base = static_cast<const NameExpr&>(*m.object).name;
                 if (findLocal(base) == nullptr && !nameIsMember(base)) {
@@ -6197,6 +6802,7 @@ struct Checker::Impl {
 
     Type callValue(const Type& t, const CallExpr& c, const std::string& name) {
         if (!std::exchange(callingKnown, false)) effects[effectKeyHere()].any = true;  // what it runs is not known
+        noteValueCallThrows(t, c);
         if (t.unknown() || t.kind == Type::Class || t.kind == Type::TypeParam) {
             for (const ExprPtr& a : c.args) expr(*a);
             return unknownType();
@@ -6274,7 +6880,10 @@ struct Checker::Impl {
         ctx = nullptr;
         judgeWaits();
         judgeKeys();
+        judging.clear();
+        for (size_t i = first; i < units.size(); i++) judging.insert(units[i].get());
         judgeInline();
+        judgeThrows();
     }
 
     // A file's top level, in order, then its functions, classes and extensions.
@@ -6334,7 +6943,53 @@ struct Checker::Impl {
             });
         }
         auto found = keptInPlace.find(f->decl);
-        return found != keptInPlace.end() && static_cast<size_t>(param) < found->second.size() && found->second[static_cast<size_t>(param)] == '1';
+        if (found == keptInPlace.end()) return false;
+        const size_t end = found->second.find('!');
+        const std::string marks = found->second.substr(0, end);
+        return static_cast<size_t>(param) < marks.size() && marks[static_cast<size_t>(param)] == '1';
+    }
+
+    // What a function of a file whose bodies were not checked may throw, as its kept facts
+    // say: after a '!', each class as its file and name (D35).
+    std::vector<ClassInfo*> keptThrown(FuncInfo* f) {
+        std::vector<ClassInfo*> list;
+        keptFact(f, 0);  // reads the file's facts, if not yet
+        auto found = keptInPlace.find(f->decl);
+        if (found == keptInPlace.end()) return list;
+        const size_t bang = found->second.find('!');
+        if (bang == std::string::npos) return list;
+        std::istringstream items(found->second.substr(bang + 1));
+        for (std::string item; std::getline(items, item, ';');)
+            if (ClassInfo* k = classByKey(item)) list.push_back(k);
+        return list;
+    }
+    static std::string classKey(const ClassInfo* k) { return (k->unit != nullptr ? k->unit->fileKey : std::string()) + "\t" + k->name; }
+    ClassInfo* classByKey(const std::string& key) {
+        const size_t tab = key.find('\t');
+        if (tab == std::string::npos) return nullptr;
+        Unit* u = unitByKey(key.substr(0, tab));
+        if (u == nullptr) return nullptr;
+        std::istringstream parts(key.substr(tab + 1));
+        ClassInfo* k = nullptr;
+        for (std::string part; std::getline(parts, part, '.');) {
+            if (k == nullptr) {
+                const GlobalSym* g = findGlobal(*u, part);
+                k = g != nullptr ? g->cls : nullptr;
+            } else {
+                auto inner = k->nested.find(part);
+                k = inner != k->nested.end() ? inner->second : nullptr;
+            }
+            if (k == nullptr) return nullptr;
+        }
+        return k;
+    }
+    // A function's line of facts: its parameters run in place, then what it may throw.
+    std::string throwsFact(FuncInfo* f) {
+        auto found = thrownBy.find(f->decl);
+        if (found == thrownBy.end() || found->second.classes.empty()) return {};
+        std::string s = "!";
+        for (ClassInfo* k : found->second.classes) s += classKey(k) + ";";
+        return s;
     }
 
     std::string inPlaceFactsOf(const std::string& fileKey) {
@@ -6349,6 +7004,7 @@ struct Checker::Impl {
                 resolveFunc(f);
                 for (size_t p = 0; p < f->params.size(); p++)
                     line += f->params[p].kind != Type::Function ? '.' : inPlace(f, static_cast<int>(p)) ? '1' : '0';
+                line += throwsFact(f);
             }
             facts += line + "\n";
         });
@@ -7116,6 +7772,7 @@ std::string Checker::summaryFacts(const std::string& fileKey) {
         facts += "|";
         for (size_t p = 0; p < f->params.size(); p++)
             facts += f->params[p].kind != Type::Function ? '.' : c.inPlace(f, static_cast<int>(p)) ? '1' : '0';
+        facts += c.throwsFact(f);
         facts += "\n";
     });
     return facts;

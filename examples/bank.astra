@@ -6,7 +6,7 @@ enum Kind { paidIn, paidOut }
 data Entry(val kind : Kind, val amount : Number)
 
 class InsufficientFunds(val needed : Number, val available : Number)
-    : Error("need $needed but only $available available") {
+    : Exception("need $needed but only $available available") {
   val shortfall = needed - available
 }
 
@@ -14,7 +14,7 @@ class Account(val owner : string, var balance : Number = 0) {
   val history = []
 
   fun deposit(amount : Number) : Account {
-    if amount <= 0 { throw Error("a deposit has to be more than nothing") }
+    if amount <= 0 { throw Exception("a deposit has to be more than nothing") }
     balance += amount
     history.add(Entry(paidIn, amount))         // the parameter is a Kind, so the bare name will do
     return this
@@ -42,7 +42,7 @@ object Bank {
     return account
   }
 
-  fun find(owner : string) : Account => accounts[owner] ?: throw Error("there is no account for $owner")
+  fun find(owner : string) : Account => accounts[owner] ?: throw Exception("there is no account for $owner")
 
   fun transfer(from : string, to : string, amount : Number) {
     val source = find(from)

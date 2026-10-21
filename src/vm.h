@@ -156,6 +156,7 @@ struct Names {
     ObjString* init;
     ObjString* toString;
     ObjString* message;
+    ObjString* cause;
     ObjString* length;
     ObjString* size;
     ObjString* indices;
@@ -208,6 +209,15 @@ struct Names {
 };
 
 enum class BuiltinType { String, List, Map, Range, Bytes, Number, Char, Byte, Index, Set, Count_ };
+
+// The classes of what the VM throws (D35), Java's, declared in src/std/errors.astra; and
+// Throwable, the root, which is all that `throw` takes.
+enum class Thrown : uint8_t {
+    RuntimeException, ArithmeticException, IndexOutOfBoundsException, NullPointerException, ClassCastException,
+    IllegalArgumentException, NumberFormatException, IllegalStateException, UnsupportedOperationException,
+    NoSuchElementException, ConcurrentModificationException, AssertionError, StackOverflowError, OutOfMemoryError,
+    InternalError, IOException, Throwable, Count_
+};
 
 class VM : public KeyMethods {
 public:
@@ -492,7 +502,8 @@ public:
 
     // ---- Helpers for native code ----
 
-    AstraThrow runtimeError(const std::string& message);
+    AstraThrow runtimeError(const std::string& message);  // a RuntimeException
+    AstraThrow runtimeError(Thrown kind, const std::string& message);
     // An error of a class the standard library declares (IOException, say), by its name.
     AstraThrow errorOf(const char* className, const std::string& message);
     // The globals the VM itself finds by name: kept in a built program whether or not its code
@@ -841,6 +852,7 @@ private:
     std::unordered_map<std::string, Value> builtins_;
     std::unordered_map<const ObjString*, NativeMethod> methods_[static_cast<int>(BuiltinType::Count_)];
     ObjClass* errorClass_ = nullptr;
+    ObjClass* thrownClasses_[static_cast<size_t>(Thrown::Count_)] = {};
     ObjClass* mapEntryClass_ = nullptr;  // MapEntry, from the standard library: what a map's entries are
     ObjString* opNames_[static_cast<int>(Op::Count_)] = {};
 

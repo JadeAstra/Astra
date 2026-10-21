@@ -81,18 +81,18 @@ State& state() {
 }
 
 Renderer& need(VM& vm) {
-    if (!vm.onLoopThread()) throw vm.runtimeError("windows and drawing belong to the main thread; hand the work to it with EventLoop.post");
+    if (!vm.onLoopThread()) throw vm.runtimeError(Thrown::IllegalStateException, "windows and drawing belong to the main thread; hand the work to it with EventLoop.post");
     if (state().renderer == nullptr) {
         std::string error;
         state().renderer = Renderer::get(error);
-        if (state().renderer == nullptr) throw vm.runtimeError("no windows or drawing here: " + error);
+        if (state().renderer == nullptr) throw vm.runtimeError(Thrown::IllegalStateException, "no windows or drawing here: " + error);
     }
     return *state().renderer;
 }
 
 Window& windowOf(VM& vm, Value v) {
     auto found = state().windows.find(vm.toInt32(v, "window"));
-    if (found == state().windows.end()) throw vm.runtimeError("the window has been closed");
+    if (found == state().windows.end()) throw vm.runtimeError(Thrown::IllegalStateException, "the window has been closed");
     return found->second;
 }
 
@@ -110,7 +110,7 @@ int surfaceOf(VM& vm, Value v) {
 
 jade::Surface& surfaceNeeded(VM& vm, Renderer& r, Value v) {
     jade::Surface* s = r.surface(surfaceOf(vm, v));
-    if (s == nullptr) throw vm.runtimeError("the picture has been disposed of");
+    if (s == nullptr) throw vm.runtimeError(Thrown::IllegalStateException, "the picture has been disposed of");
     return *s;
 }
 
@@ -330,7 +330,7 @@ RawEvent syntheticEvent(VM& vm, Window& window, const std::string& kind, Value* 
         if (args[6].isObjType(ObjType::List))
             for (const Value& path : vm.listCopy(asList(args[6]))) e.files.push_back(vm.toStr(path, "file path"));
     } else {
-        throw vm.runtimeError("no such event: " + kind);
+        throw vm.runtimeError(Thrown::IllegalStateException, "no such event: " + kind);
     }
     e.modifiers = vm.toInt32(args[3], "modifiers");
     return e;
@@ -421,9 +421,9 @@ void registerJade(VM& vm) {
         const int id = state().nextWindow++;
         Window window;
         window.native = r.platform().createWindow(settings, owner, error);
-        if (window.native == nullptr) throw vm.runtimeError("the window cannot be made: " + error);
+        if (window.native == nullptr) throw vm.runtimeError(Thrown::IllegalStateException, "the window cannot be made: " + error);
         window.surface = r.createSurface(std::max(window.native->width(), 1), std::max(window.native->height(), 1));
-        if (window.surface == 0) throw vm.runtimeError("the window is too large to draw");
+        if (window.surface == 0) throw vm.runtimeError(Thrown::IllegalStateException, "the window is too large to draw");
         window.native->onEvent = [id](const RawEvent& event) { deliver(id, event); };
         window.native->onExpose = [id] {
             auto found = state().windows.find(id);
@@ -528,7 +528,7 @@ void registerJade(VM& vm) {
     // windowIcon(window, pixels, width, height): red, green, blue, alpha, four bytes a pixel.
     def("windowIcon", 4, 4, [](VM& vm, int, Value* args) -> Value {
         Window& window = windowOf(vm, args[0]);
-        if (!args[1].isObjType(ObjType::Bytes)) throw vm.runtimeError("an icon's pixels are bytes");
+        if (!args[1].isObjType(ObjType::Bytes)) throw vm.runtimeError(Thrown::ClassCastException, "an icon's pixels are bytes");
         window.native->setIcon(asBytes(args[1])->data, vm.toInt32(args[2], "width"), vm.toInt32(args[3], "height"));
         return Value::null();
     });
@@ -584,10 +584,10 @@ void registerJade(VM& vm) {
         const int64_t w = vm.toInt(args[0], "width"), h = vm.toInt(args[1], "height");
         const int64_t most = r.maxSurfaceSize();
         if (w < 1 || h < 1 || w > most || h > most)
-            throw vm.runtimeError("a picture on the graphics card is from 1 to " + std::to_string(most) + " pixels each way, not " + std::to_string(w) +
+            throw vm.runtimeError(Thrown::IllegalArgumentException, "a picture on the graphics card is from 1 to " + std::to_string(most) + " pixels each way, not " + std::to_string(w) +
                                   " by " + std::to_string(h));
         const int id = r.createSurface(static_cast<int>(w), static_cast<int>(h));
-        if (id == 0) throw vm.runtimeError("the graphics card cannot hold a picture of " + std::to_string(w) + " by " + std::to_string(h));
+        if (id == 0) throw vm.runtimeError(Thrown::IllegalStateException, "the graphics card cannot hold a picture of " + std::to_string(w) + " by " + std::to_string(h));
         // What it takes on the card counts towards the next collection, which is what lets
         // go of the surfaces a program has stopped using.
         vm.account(static_cast<size_t>(w) * static_cast<size_t>(h) * 4);
@@ -614,7 +614,7 @@ void registerJade(VM& vm) {
         Renderer& r = need(vm);
         jade::Surface& s = surfaceNeeded(vm, r, args[0]);
         if (!args[1].isObjType(ObjType::Bytes) || asBytes(args[1])->data.size() != static_cast<size_t>(s.width) * static_cast<size_t>(s.height) * 4)
-            throw vm.runtimeError("the pixels do not fit the picture");
+            throw vm.runtimeError(Thrown::IllegalArgumentException, "the pixels do not fit the picture");
         r.upload(surfaceOf(vm, args[0]), asBytes(args[1])->data.data());
         return Value::null();
     });
@@ -714,7 +714,7 @@ void registerJade(VM& vm) {
     // polygon(xs, ys, count, fill, closed): filled, or its outline, or (not closed) a line through the points.
     def("polygon", 5, 5, [](VM& vm, int, Value* args) -> Value {
         Renderer& r = need(vm);
-        if (!args[0].isObjType(ObjType::List) || !args[1].isObjType(ObjType::List)) throw vm.runtimeError("a polygon's points are two lists of numbers");
+        if (!args[0].isObjType(ObjType::List) || !args[1].isObjType(ObjType::List)) throw vm.runtimeError(Thrown::IllegalArgumentException, "a polygon's points are two lists of numbers");
         const std::vector<Value> xs = vm.listCopy(asList(args[0]));
         const std::vector<Value> ys = vm.listCopy(asList(args[1]));
         const size_t count = static_cast<size_t>(std::clamp<int64_t>(vm.toInt(args[2], "number of points"), 0, static_cast<int64_t>(std::min(xs.size(), ys.size()))));
@@ -747,7 +747,7 @@ void registerJade(VM& vm) {
     // text(string, x, y): at x with its baseline at y, in the font and colour set. Its width in device pixels.
     def("text", 3, 3, [](VM& vm, int, Value* args) -> Value {
         Renderer& r = need(vm);
-        if (state().font == nullptr) throw vm.runtimeError("no font has been set");
+        if (state().font == nullptr) throw vm.runtimeError(Thrown::NoSuchElementException, "no font has been set");
         return Value::integer(r.text(*state().font, vm.toStr(args[0], "text"), dx(num(vm, args[1])), dy(num(vm, args[2])), state().color));
     });
     // blit(surface, x, y, alpha): another surface as it is, pixel for pixel, its corner at (x, y).

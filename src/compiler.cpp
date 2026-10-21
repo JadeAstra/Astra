@@ -35,17 +35,8 @@ extern const size_t kStdFileCount;
 namespace {
 
 // Compiled into every program as module 0. Runtime errors are instances of Error.
-const char* const kPrelude = R"(class Error {
-  var message : string
-  fun init(message : string) {
-    this.message = message
-  }
-  fun toString() : string {
-    return type(this) + ": " + this.message
-  }
-}
-
-)";
+// What comes before the standard library's files. Its classes of errors are its own (errors.astra).
+const char* const kPrelude = "";
 
 enum class FunctionKind { Script, Function, Method, Initializer, StaticMethod, Setter };
 
@@ -3577,13 +3568,18 @@ private:
             if (clause.type.present()) {
                 TypeSpec type = resolveType(clause.type);
                 if (type.id() != kTypeInstance)
-                    throw error(clause.type, "a catch names a class of error, as in 'catch (e : NotFound)'");
+                    throw error(clause.type, "a catch names a class of Throwable, as in 'catch (e : IOException)' (D35)");
                 emit(Op::GetLocal, slotOf(thrown));
                 emitTypeName(type.className, clause.type);
                 emit(Op::Is);
                 toNext = emitJump(Op::JumpIfFalse);
             } else {
-                catchesAll = true;
+                // A bare catch is for every Exception, and not an Error, which is caught only
+                // where it is named (D151).
+                emit(Op::GetLocal, slotOf(thrown));
+                emitTypeName("Exception", s);
+                emit(Op::Is);
+                toNext = emitJump(Op::JumpIfFalse);
             }
 
             beginScope();

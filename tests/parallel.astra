@@ -60,7 +60,7 @@ data Pair2(val n : int)
 val plains = List(500) { Plain(it) }
 val pairs = List(500) { Pair2(it % 7) }
 print(plains.parallelStream().map { plains.indexOf(it) }.toList() == (0..<500).toList(), plains.parallelStream().all { it in plains })   // expect: true true
-print(availableProcessors() > 1 ? (runCatching { pairs.parallelStream().map { pairs.indexOf(it) }.toList() }.exceptionOrNull() as Error?)?.message
+print(availableProcessors() > 1 ? (runCatching { pairs.parallelStream().map { pairs.indexOf(it) }.toList() }.exceptionOrNull() as Exception?)?.message
                                 : "this Pair2 is another core's item in this parallel section: a core looks only into its own items and into what is shared")
 // expect: this Pair2 is another core's item in this parallel section: a core looks only into its own items and into what is shared
 // The library's own functions run inside a section as anywhere, on what the core may read.
@@ -131,7 +131,7 @@ refused { Thread.sleep(1) }
 // expect: thread.sleep() cannot be used in a parallel section: nothing waits there, and what the whole program has one of is left alone
 refused { synchronized(it) { it.x } }
 // expect: thread.enter() cannot be used in a parallel section: nothing waits there, and what the whole program has one of is left alone
-refused { File("x").readText() }
+refused { try { File("x").readText() } catch (e : IOException) { } }
 // expect: File.read() cannot be used in a parallel section: nothing waits there, and what the whole program has one of is left alone
 refused { numbers.parallelStream().forEach { 1 } }
 // expect: parallel.run() cannot be used in a parallel section: nothing waits there, and what the whole program has one of is left alone
@@ -139,7 +139,7 @@ refused { startCoroutine { 1 } }
 // expect: flow.start() cannot be used in a parallel section: nothing waits there, and what the whole program has one of is left alone
 
 // An error in the lambda comes out of the call, and the next section runs as usual.
-try { numbers.parallelStream().map { if (it == 500) { throw Error("item 500 failed") }; it }.toList() } catch (e) { print(e.message) }   // expect: item 500 failed
+try { numbers.parallelStream().map { if (it == 500) { throw RuntimeException("item 500 failed") }; it }.toList() } catch (e) { print(e.message) }   // expect: item 500 failed
 print(numbers.parallelStream().map { it + 1 }.sumOf { it })  // expect: 501500
 print(places(plain) == places(shared))                       // expect: true
 
@@ -155,7 +155,7 @@ try {
   buffer.parallelChunks { positions -> buffer[(positions.last + 1) % 10000] = 1 }
   print(availableProcessors() == 1 ? "outside this core's part" : "not refused")
 } catch (e) {
-  print(e.message.contains("is outside this core's part of the buffer") ? "outside this core's part" : e.message)
+  print(e.message!!.contains("is outside this core's part of the buffer") ? "outside this core's part" : e.message)
 }
 // expect: outside this core's part
 try { buffer.parallelChunks { buffer.fill(0) } } catch (e) { print(e.message) }

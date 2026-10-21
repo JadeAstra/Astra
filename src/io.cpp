@@ -313,7 +313,7 @@ void openRedirect(VM& vm, const std::string& mode, bool childReads, DWORD standa
         if (out.child.h == INVALID_HANDLE_VALUE)
             throw ioError(vm, "cannot open '" + mode.substr(append ? 2 : 1) + "' for the process: " + systemMessage(GetLastError()));
     } else {
-        throw vm.runtimeError("a process's stream goes to pipe, inherit, discard, merge or a file, not '" + mode + "'");
+        throw vm.runtimeError(Thrown::IllegalArgumentException, "a process's stream goes to pipe, inherit, discard, merge or a file, not '" + mode + "'");
     }
 }
 
@@ -391,7 +391,7 @@ void registerIo(VM& vm) {
     def("read", 2, 2, [](VM& vm, int, Value* args) -> Value {
         auto s = streamOf(vm, args[0]);
         const int64_t wanted = vm.toInt(args[1], "number of bytes");
-        if (wanted < 1) throw vm.runtimeError("read() takes how many bytes to read at most, which is at least 1");
+        if (wanted < 1) throw vm.runtimeError(Thrown::IllegalArgumentException, "read() takes how many bytes to read at most, which is at least 1");
         const size_t max = static_cast<size_t>(std::min<int64_t>(wanted, 1 << 30));
         auto out = std::make_shared<Outcome>();
         return vm.blocking(
@@ -502,7 +502,7 @@ void registerIo(VM& vm) {
     // [process, its input, its output, its error output], the last three null unless "pipe".
     def("spawn", 6, 6, [](VM& vm, int, Value* args) -> Value {
         if (!args[0].isObjType(ObjType::List) || asList(args[0])->size() == 0)
-            throw vm.runtimeError("a process is started from a list: the program, then its arguments");
+            throw vm.runtimeError(Thrown::IllegalArgumentException, "a process is started from a list: the program, then its arguments");
         std::wstring commandLine;
         const std::vector<Value> parts = vm.listCopy(asList(args[0]));
         for (Value part : parts) appendArgument(commandLine, widen(vm.stringify(part)));

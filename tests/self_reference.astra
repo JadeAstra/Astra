@@ -4,7 +4,7 @@
 val unknown = { value -> value }
 
 fun attempt(f : Function) {
-  try { return f() } catch (e) { return e.message }
+  try { return f() } catch (e) { return "${e.message}" }
 }
 
 // a lambda that calls itself

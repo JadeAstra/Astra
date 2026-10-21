@@ -10,7 +10,7 @@ print(greet(mark = ".", name = "Bo"))            // expect: Hello, Bo.
 val unknown = { value -> value }
 
 fun attempt(f : () -> any?) {
-  try { return f() } catch (e) { return e.message }
+  try { return f() } catch (e) { return "${e.message}" }
 }
 print(attempt(fun() => unknown(greet)()))                 // expect: greet() expects 1 to 3 argument(s) but got 0
 print(attempt(fun() => unknown(greet)("a", "b", "c", "d")))   // expect: greet() expects 1 to 3 argument(s) but got 4

@@ -32,7 +32,7 @@ fun keep(n : int, out : List<() -> int>) : List<() -> int> {
 print(keep(3, []).map { it() })                    // expect: [3, 2, 1]
 
 fun fails(n : int) : int {
-  if (n == 0) { throw Error("bottom") }
+  if (n == 0) { throw Exception("bottom") }
   return fails(n - 1)
 }
 try { fails(10) } catch (e) { print(e.message) }   // expect: bottom

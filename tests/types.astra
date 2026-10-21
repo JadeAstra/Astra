@@ -26,7 +26,7 @@ print(limit, ratio, label, flag, items, table, span, action(1), amount, anything
 
 // a typed var keeps its type for life; an untyped one takes anything
 fun attempt(f : Function) {
-  try { f(); return "ok" } catch (e) { return e.message }
+  try { f(); return "ok" } catch (e) { return "${e.message}" }
 }
 print(attempt(fun() { counter = unknown("text") }))     // expect: ok
 print(attempt(fun() { ratio = unknown(1) }))   // expect: cannot assign a value of type int to 'ratio', which is declared as float

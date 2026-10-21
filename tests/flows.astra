@@ -69,18 +69,18 @@ exclaim.startCoroutine(Continuation { result -> outcome = result })
 print(outcome)                                               // expect: null
 EventLoop.run()
 print(outcome, outcome!!.isSuccess, outcome!!.getOrNull(), outcome!!.exceptionOrNull())   // expect: Success(X!) true X! null
-val failing : suspend () -> unit = { answerTo("y"); throw Error("went wrong") }
+val failing : suspend () -> unit = { answerTo("y"); throw RuntimeException("went wrong") }
 failing.startCoroutine(Continuation(EmptyCoroutineContext) { outcome = it })
 EventLoop.run()
-print(outcome!!.isFailure, (outcome!!.exceptionOrNull() as Error).message, outcome!!.getOrNull(), outcome!!.getOrDefault(0), outcome!!.getOrElse { "else: " + (it as Error).message })   // expect: true went wrong null 0 else: went wrong
+print(outcome!!.isFailure, (outcome!!.exceptionOrNull() as Exception).message, outcome!!.getOrNull(), outcome!!.getOrDefault(0), outcome!!.getOrElse { "else: " + (it as Exception).message })   // expect: true went wrong null 0 else: went wrong
 try { outcome!!.getOrThrow() } catch (e) { print("rethrown:", e.message) }   // expect: rethrown: went wrong
-print(runCatching { 6 * 7 }, runCatching { throw Error("no") }.isFailure, Result.success(1).onSuccess { log.add("ok") }.getOrThrow(), log.last())   // expect: Success(42) true 1 ok
+print(runCatching { 6 * 7 }, runCatching { throw RuntimeException("no") }.isFailure, Result.success(1).onSuccess { log.add("ok") }.getOrThrow(), log.last())   // expect: Success(42) true 1 ok
 
 // A wait can be answered with an error, which the flow can catch.
 log.clear()
 startCoroutine {
   try {
-    suspendCoroutine { c -> EventLoop.post { c.resumeWithException(Error("refused")) } }
+    suspendCoroutine { c -> EventLoop.post { c.resumeWithException(Exception("refused")) } }
   } catch (e) {
     log.add("caught " + e.message)
   }
@@ -95,11 +95,11 @@ var reached : string? = null
 var held : Continuation? = null
 startCoroutine {
   suspendCoroutine { c -> held = c }
-  throw Error("after the answer")
+  throw RuntimeException("after the answer")
 }
 try { held!!.resume(1) } catch (e) { reached = e.message }
 print(reached)                                               // expect: after the answer
-try { startCoroutine { throw Error("at once") } } catch (e) { print(e.message) }   // expect: at once
+try { startCoroutine { throw RuntimeException("at once") } } catch (e) { print(e.message) }   // expect: at once
 
 // A continuation is resumed once.
 startCoroutine { suspendCoroutine { c -> held = c } }
@@ -147,7 +147,7 @@ log.clear()
 startCoroutine {
   val future = Future.supplyAsync { Thread.sleep(10); "worked on " + (EventLoop.isLoopThread ? "the loop" : "a thread") }
   log.add(future.await() + ", back on the loop: ${EventLoop.isLoopThread}")
-  log.add((runCatching { Future.supplyAsync { throw Error("failed there") }.await() }.exceptionOrNull() as Error).message)
+  log.add((runCatching { Future.supplyAsync { throw RuntimeException("failed there") }.await() }.exceptionOrNull() as Exception).message)
 }
 log.add("meanwhile")
 EventLoop.run()
@@ -185,8 +185,10 @@ startCoroutine {
 
 // ---- Snips' Flows.kt, as it ports ----
 
+// A continuation is kept, to be called where nothing can catch a checked exception (D35): what
+// failed is passed on unchecked, with it as the cause.
 fun flow(block : suspend () -> unit) {
-  block.startCoroutine(Continuation(EmptyCoroutineContext) { r -> r.exceptionOrNull()?.let { throw it } })
+  block.startCoroutine(Continuation(EmptyCoroutineContext) { r -> r.exceptionOrNull()?.let { throw IllegalStateException(it.message, it) } })
 }
 
 fun flowNow(block : suspend () -> any?) : any? {

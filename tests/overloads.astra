@@ -48,7 +48,7 @@ fun greet(name : string, loud : bool = false) => loud ? "HI " + name : "hello " 
 print(greet("a"), greet("b", true))              // expect: hi a HI b
 
 fun attempt(f : Function) {
-  try { return f() } catch (e) { return e.message }
+  try { return f() } catch (e) { return "${e.message}" }
 }
 
 // What no form takes, and what two fit as well, are errors.

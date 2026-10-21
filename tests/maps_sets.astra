@@ -3,7 +3,7 @@
 // whole entry (D140). Sets are built in.
 
 fun attempt(f : () -> any?) : string {
-  try { return "${f()}" } catch (e) { return e.message }
+  try { return "${f()}" } catch (e) { return "${e.message}" }
 }
 
 val ages = {"ann": 31, "bob": 25}

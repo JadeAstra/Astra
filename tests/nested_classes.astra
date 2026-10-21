@@ -57,7 +57,7 @@ val printer = Printer()
 printer.handle(click)
 print(printer is Event.Handler, printer.seen)   // expect: true ["click/bubble"]
 
-class Failure : Error {
+class Failure : Exception {
   class Missing : Failure { fun init(what : string) { super.init(what + " is missing") } }
   class Denied : Failure { fun init() { super.init("denied") } }
   fun init(message : string) { super.init(message) }

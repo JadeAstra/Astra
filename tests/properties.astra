@@ -20,7 +20,7 @@ print((t.fahrenheit = 212), t.celsius)           // expect: 212 100
 val unknown = { value -> value }
 
 fun attempt(f : () -> any?) {
-  try { return f() } catch (e) { return e.message }
+  try { return f() } catch (e) { return "${e.message}" }
 }
 
 // a property with only a getter cannot be assigned, and its types are checked like a function's
@@ -36,7 +36,7 @@ class Account {
   var balance : Number
     get() => this.stored
     set(amount : Number) {
-      if amount < 0 { throw Error("balance cannot be negative") }
+      if amount < 0 { throw Exception("balance cannot be negative") }
       if amount == this.stored { return }
       this.history.add(amount)
       this.stored = amount
@@ -143,8 +143,8 @@ print(c.describe(), "${c.diameter}", [Circle(1), Circle(3)].map(fun(x) => x.diam
 // errors inside a getter or setter show up where the property is used
 class Fragile {
   var value
-    get() { throw Error("cannot read") }
-    set(v) { throw Error("cannot write $v") }
+    get() { throw Exception("cannot read") }
+    set(v) { throw Exception("cannot write $v") }
 }
 print(attempt(fun() => Fragile().value))         // expect: cannot read
 print(attempt(fun() { Fragile().value = 7 }))    // expect: cannot write 7

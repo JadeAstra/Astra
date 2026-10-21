@@ -174,3 +174,30 @@ can change, and an `==` without a `hashCode`.
   error asking for a name.
 - **`to`, `downTo` and `step` are infix functions**, with infix precedence: `a downTo b step c`
   is `(a downTo b) step c`, below arithmetic and above comparisons, as in Kotlin.
+
+## Errors (M6.6 part 8, group 5)
+
+### What to write instead
+
+| Kotlin | Astra | |
+| --- | --- | --- |
+| `throw Exception("...")` meaning a mistake | `throw IllegalStateException("...")` or another `RuntimeException` | a plain `Exception` is checked (D35) |
+| `catch (e: Exception)` | `catch (e)` or the same | a bare catch takes every Exception, no Error (D151) |
+| `catch (e: Throwable)` | the same | the only way to catch an Error besides naming it |
+| `@Throws(IOException::class)` | `throws IOException` after the result type | required on a library's public functions (D54) |
+| `inputStream.use { ... }` | the same | for an `AutoCloseable`; `extend` fits another class to it (D113) |
+| `e.message` as a `String` | `e.message` as a `string?` | as in Kotlin, it may be null |
+
+### What compiles but means something else
+
+- **Checked exceptions are checked.** Code that does I/O in a callback (`button.onClick = {
+  file.writeText(...) }`), a thread, a task or a timer catches the `IOException` inside it; the
+  compiler names the place. What only calls its lambda (`forEach`, `map`, `use`, `synchronized`)
+  passes it on.
+- **An override throws no more than what it replaces.** An interface whose implementations read
+  files says so: `fun load() : string throws IOException`.
+- **A bare `catch` lets an Error through**: a stack overflow, running out of memory, `assert`
+  failing. Name it to catch it.
+- **The VM's errors have Java's classes**: an index out of range is an
+  `IndexOutOfBoundsException`, `!!` on null a `NullPointerException`, and so on; code that caught
+  `Error` for them catches those, or a bare `catch`.

@@ -60,7 +60,7 @@ startCoroutine {
   class Point(val x : int, val y : int)
   try { echo.post(Point(1, 2)) } catch (e) { print(e.message) }
   // expect: a message to or from a worker can hold numbers, strings, booleans, null, bytes, and lists and maps of those, not a value of type Point: the two share no objects
-  try { echo.post([{ 1 }]) } catch (e) { print(e.message.endsWith("not a value of type Function: the two share no objects")) }   // expect: true
+  try { echo.post([{ 1 }]) } catch (e) { print(e.message!!.endsWith("not a value of type Function: the two share no objects")) }   // expect: true
 
   // A worker has an event loop, threads and flows of its own.
   echo.post("inside")
@@ -80,7 +80,7 @@ startCoroutine {
 
   // An error that nothing catches ends the worker and is told to the program.
   pool[0].post("fail")
-  print(failureOf(pool[0]).lines().first())                  // expect: Error: the worker was asked to fail
+  print(failureOf(pool[0]).lines().first())                  // expect: RuntimeException: the worker was asked to fail
   endOf(pool[0])
   print(pool[0].isAlive, pool[1].isAlive)                    // expect: false true
 

@@ -50,7 +50,7 @@ lock.unlock()
 try { lock.unlock() } catch (e) { print(e.message) }         // expect: unlock: this thread does not hold the lock; it is held inside synchronized(lock) { ... }
 try { synchronized(5) { 1 } } catch (e) { print(e.message) } // expect: a lock is an object, not a value of type int
 // An error inside lets the lock go.
-try { synchronized(lock) { throw Error("inside") } } catch (e) { print(e.message, lock.isHeldByCurrentThread) }   // expect: inside false
+try { synchronized(lock) { throw RuntimeException("inside") } } catch (e) { print(e.message, lock.isHeldByCurrentThread) }   // expect: inside false
 // While one thread holds a lock, another cannot take it.
 lock.lock()
 var couldTake : bool? = null
@@ -140,8 +140,8 @@ print(slow.isAlive, slow.isDaemon)                           // expect: true tru
 val pool = Executors.newFixedThreadPool(3)
 val results = (1..6).map { n -> pool.submit { Thread.sleep(2); n * 10 } }
 print(results.map { it.get() }, results.all { it.isDone })   // expect: [10, 20, 30, 40, 50, 60] true
-val failing = pool.submit { throw Error("task failed") }
-try { failing.get() } catch (e : ExecutionException) { print(e.message, e.cause is Error, failing.isCompletedExceptionally) }   // expect: task failed true true
+val failing = pool.submit { throw RuntimeException("task failed") }
+try { failing.get() } catch (e : ExecutionException) { print(e.message, e.cause is Exception, failing.isCompletedExceptionally) }   // expect: task failed true true
 val stuck = pool.submit { Thread.sleep(60000); "never" }
 try { stuck.get(20, TimeUnit.milliseconds) } catch (e : TimeoutException) { print(e.message, stuck.isDone) }   // expect: the time ran out false
 print(stuck.cancel(true), stuck.isCancelled, stuck.cancel(true))   // expect: true true false
@@ -171,7 +171,7 @@ val completing = thread { Thread.sleep(5); answer.complete(42) }
 val got = answer.get()
 completing.join()                     // the listener is told on that thread, just after
 print(got, told, answer.complete(43), answer.getNow(0), Future().getNow("nothing yet"))   // expect: 42 42 false 42 nothing yet
-print(Future.supplyAsync { 6 * 7 }.get(), (runCatching { Future.supplyAsync { throw Error("no") }.get() }.exceptionOrNull() as Error).message)   // expect: 42 no
+print(Future.supplyAsync { 6 * 7 }.get(), (runCatching { Future.supplyAsync { throw RuntimeException("no") }.get() }.exceptionOrNull() as Exception).message)   // expect: 42 no
 
 // An error that nothing catches ends its thread, not the program; and a daemon thread still
 // running at the end does not keep the program alive.

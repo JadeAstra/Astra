@@ -5,22 +5,22 @@
 // -- Parts of the text --
 
 fun string.take(count : int) : string {
-  if (count < 0) { throw Error("take($count): the count cannot be negative") }
+  if (count < 0) { throw IllegalArgumentException("take($count): the count cannot be negative") }
   return count >= this.size ? this : this[0..<count]
 }
 
 fun string.takeLast(count : int) : string {
-  if (count < 0) { throw Error("takeLast($count): the count cannot be negative") }
+  if (count < 0) { throw IllegalArgumentException("takeLast($count): the count cannot be negative") }
   return count >= this.size ? this : this[this.size - count..]
 }
 
 fun string.drop(count : int) : string {
-  if (count < 0) { throw Error("drop($count): the count cannot be negative") }
+  if (count < 0) { throw IllegalArgumentException("drop($count): the count cannot be negative") }
   return count >= this.size ? "" : this[count..]
 }
 
 fun string.dropLast(count : int) : string {
-  if (count < 0) { throw Error("dropLast($count): the count cannot be negative") }
+  if (count < 0) { throw IllegalArgumentException("dropLast($count): the count cannot be negative") }
   return count >= this.size ? "" : this[0..<this.size - count]
 }
 
@@ -74,7 +74,7 @@ fun string.removeSurrounding(prefix : string, suffix : string = prefix) : string
 
 // The text in pieces of `size` characters; the last may be shorter.
 fun string.chunked(size : int) : open List<string> {
-  if (size < 1) { throw Error("chunked($size): the size has to be at least 1") }
+  if (size < 1) { throw IllegalArgumentException("chunked($size): the size has to be at least 1") }
   val out : open List<string> = []
   var start = 0
   while (start < this.size) {
@@ -101,7 +101,7 @@ fun string.commonPrefixWith(other : string) : string {
 // -- Characters --
 
 fun string.first() : char {
-  if (this.size == 0) { throw Error("first() of an empty string") }
+  if (this.size == 0) { throw NoSuchElementException("first() of an empty string") }
   return this[0]
 }
 
@@ -109,11 +109,11 @@ fun string.first(predicate : (char) -> bool) : char {
   for character in this {
     if (predicate(character)) { return character }
   }
-  throw Error("first(): no character of the string meets the condition")
+  throw NoSuchElementException("first(): no character of the string meets the condition")
 }
 
 fun string.last() : char {
-  if (this.size == 0) { throw Error("last() of an empty string") }
+  if (this.size == 0) { throw NoSuchElementException("last() of an empty string") }
   return this[this.size - 1]
 }
 
@@ -123,7 +123,7 @@ fun string.last(predicate : (char) -> bool) : char {
     if (predicate(this[index])) { return this[index] }
     index -= 1
   }
-  throw Error("last(): no character of the string meets the condition")
+  throw NoSuchElementException("last(): no character of the string meets the condition")
 }
 
 fun string.firstOrNull() : char? => this.size == 0 ? null : this[0]
@@ -148,7 +148,7 @@ fun string.lastOrNull(predicate : (char) -> bool) : char? {
 
 fun string.get(index : int) : char {
   if (index < 0 or index >= this.size) {
-    throw Error("get: index $index is out of range (length ${this.size})")
+    throw IndexOutOfBoundsException("get: index $index is out of range (length ${this.size})")
   }
   return this[index]
 }

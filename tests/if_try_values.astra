@@ -37,14 +37,14 @@ fun guarded(text : string) {
 }
 print(parse("42"), parse("x"), guarded("4"), guarded("y"), log)   // expect: 42 -1 18 10 ["checked 4", "bad y", "checked y"]
 
-class Missing : Error { fun init() { super.init("missing") } }
+class Missing : Exception { fun init() { super.init("missing") } }
 fun lookup(table : Map<string, int>, key : string) => try {
   table[key] ?: throw Missing()
 } catch (e : Missing) {
   "default"
 }
 print(lookup({"a": 1}, "a"), lookup({:}, "b"))   // expect: 1 default
-try { print(try { throw "inner" } finally { log.add("finally") }) } catch (e) { print("caught", e, log.size) }   // expect: caught inner 4
+try { print(try { throw Exception("inner") } finally { log.add("finally") }) } catch (e) { print("caught", e, log.size) }   // expect: caught Exception: inner 4
 
 // As the last thing in a lambda, in a when branch, and with jumps inside.
 val grades = [95, 72, 40].map { if it >= 90 { "A" } else if it >= 60 { "C" } else { "F" } }
@@ -81,6 +81,6 @@ print(hits)                                 // expect: 111
 // Many times over.
 var total = 0
 for i in 1..30000 {
-  total += if i % 2 == 0 { 1 } else { try { if i % 3 == 0 { throw "odd" }; 2 } catch (e) { 3 } }
+  total += if i % 2 == 0 { 1 } else { try { if i % 3 == 0 { throw Exception("odd") }; 2 } catch (e) { 3 } }
 }
 print(total)                                // expect: 50000

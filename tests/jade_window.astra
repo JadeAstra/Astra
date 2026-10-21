@@ -3,7 +3,7 @@
 import Jade.*
 
 fun attempt(block : () -> any?) {
-  try { block(); return "no error" } catch (e) { return e.message }
+  try { block(); return "no error" } catch (e) { return "${e.message}" }
 }
 
 // A value whose type the checker does not see, for testing the checks made when running.
@@ -102,7 +102,7 @@ window.sendCloseRequest()
 print(asked, window.isOpen)   // expect: 1 true
 
 // -- An error in a handler is not lost: it comes out where the event was sent --
-window.onInput = { event -> throw Error("the handler failed on " + (event as RawInput.Text).text) }
+window.onInput = { event -> throw IllegalStateException("the handler failed on " + (event as RawInput.Text).text) }
 print(attempt { window.send(RawInput.Text("this")) })   // expect: the handler failed on this
 window.onInput = null
 print(attempt { window.send("not an event") })           // expect: not an event a window can be sent: not an event

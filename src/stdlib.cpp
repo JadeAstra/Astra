@@ -67,7 +67,7 @@ int compareValues(VM& vm, Value a, Value b) {
     if (a.isByte()) a = Value::integer(a.as.i);
     if (b.isByte()) b = Value::integer(b.as.i);
     if (a.isNumber() && b.isNumber()) return compareNumbers(a, b);
-    throw vm.runtimeError("cannot compare " + vm.typeName(a) + " and " + vm.typeName(b));
+    throw vm.runtimeError(Thrown::ClassCastException, "cannot compare " + vm.typeName(a) + " and " + vm.typeName(b));
 }
 
 // An int to a power of 0 or more, an error where it does not fit in an int (D27).
@@ -77,7 +77,7 @@ int64_t integerPower(VM& vm, int64_t base, int64_t exponent) {
     for (int64_t e = exponent; e != 0; e >>= 1) {
         if (e & 1) {
             if (bOverflowed || mulOverflows(result, b, result))
-                throw vm.runtimeError(std::to_string(base) + " to the power " + std::to_string(exponent) + " does not fit in an int");
+                throw vm.runtimeError(Thrown::ArithmeticException, std::to_string(base) + " to the power " + std::to_string(exponent) + " does not fit in an int");
         }
         if (e > 1 && !bOverflowed) bOverflowed = mulOverflows(b, b, b);
     }
@@ -95,14 +95,14 @@ bool parseWhole(std::string_view s, int radix, int64_t& out) {
 
 // An int's 64 bits, for the unsigned helpers (D44).
 uint64_t wholeOnly(VM& vm, Value v, const char* what) {
-    if (!v.isInt()) throw vm.runtimeError(std::string(what) + " is for ints, not " + vm.typeName(v));
+    if (!v.isInt()) throw vm.runtimeError(Thrown::ClassCastException, std::string(what) + " is for ints, not " + vm.typeName(v));
     return static_cast<uint64_t>(v.as.i);
 }
 
 int radixOf(VM& vm, int argc, const Value* args, int i) {
     if (!given(argc, args, i)) return 10;
     const int64_t radix = vm.toInt(args[i], "radix");
-    if (radix < 2 || radix > 36) throw vm.runtimeError("a radix is from 2 to 36, not " + std::to_string(radix));
+    if (radix < 2 || radix > 36) throw vm.runtimeError(Thrown::IllegalArgumentException, "a radix is from 2 to 36, not " + std::to_string(radix));
     return static_cast<int>(radix);
 }
 
@@ -225,13 +225,13 @@ std::string formatText(VM& vm, const std::string& pattern, int argc, const Value
             precision = 0;
             while (digit(at) && precision < 100000) precision = precision * 10 + (pattern[at++] - '0');
         }
-        if (at >= size) throw vm.runtimeError("format: the pattern ends in the middle of a '%' item");
+        if (at >= size) throw vm.runtimeError(Thrown::IllegalArgumentException, "format: the pattern ends in the middle of a '%' item");
         const char conversion = pattern[at];
         i = at;
 
         if (index < 0) index = next++;
         if (index >= argc)
-            throw vm.runtimeError("format: the pattern asks for more values than the " + std::to_string(argc) + " given");
+            throw vm.runtimeError(Thrown::IllegalArgumentException, "format: the pattern asks for more values than the " + std::to_string(argc) + " given");
         const Value value = args[index];
 
         std::string sign, body;
@@ -239,7 +239,7 @@ std::string formatText(VM& vm, const std::string& pattern, int argc, const Value
         switch (conversion) {
             case 'd': {
                 if (!value.isNumber() || (value.isFloat() && value.as.d != std::floor(value.as.d)))
-                    throw vm.runtimeError("format: %d takes a whole number, not " + vm.stringify(value) +
+                    throw vm.runtimeError(Thrown::IllegalArgumentException, "format: %d takes a whole number, not " + vm.stringify(value) +
                                           "; %f and %s take any number");
                 const int64_t n = value.isInt() ? value.as.i : floatToInt(vm, value.as.d);
                 const uint64_t magnitude = n < 0 ? uint64_t{0} - static_cast<uint64_t>(n) : static_cast<uint64_t>(n);
@@ -252,7 +252,7 @@ std::string formatText(VM& vm, const std::string& pattern, int argc, const Value
             case 'x':
             case 'X':
             case 'o': {
-                if (!value.isInt()) throw vm.runtimeError(std::string("format: %") + conversion + " takes a whole number, not " + vm.stringify(value));
+                if (!value.isInt()) throw vm.runtimeError(Thrown::IllegalArgumentException, std::string("format: %") + conversion + " takes a whole number, not " + vm.stringify(value));
                 char buffer[32];
                 auto result = std::to_chars(buffer, buffer + sizeof(buffer), static_cast<uint64_t>(value.as.i), conversion == 'o' ? 8 : 16);
                 body.assign(buffer, result.ptr);
@@ -266,7 +266,7 @@ std::string formatText(VM& vm, const std::string& pattern, int argc, const Value
             case 'E':
             case 'g':
             case 'G': {
-                if (!value.isNumber()) throw vm.runtimeError(std::string("format: %") + conversion + " takes a number, not " + vm.stringify(value));
+                if (!value.isNumber()) throw vm.runtimeError(Thrown::IllegalArgumentException, std::string("format: %") + conversion + " takes a number, not " + vm.stringify(value));
                 const double d = value.toDouble();
                 sign = std::signbit(d) && !std::isnan(d) ? "-" : plus ? "+" : space ? " " : "";
                 if (std::isnan(d) || std::isinf(d)) {
@@ -297,19 +297,19 @@ std::string formatText(VM& vm, const std::string& pattern, int argc, const Value
                 if (value.isChar()) {
                     appendUtf8(body, static_cast<uint32_t>(value.as.i));
                 } else if (value.isInt()) {
-                    if (value.as.i < 0 || value.as.i > 0x10FFFF) throw vm.runtimeError("format: %c takes a character or its code, not " + vm.stringify(value));
+                    if (value.as.i < 0 || value.as.i > 0x10FFFF) throw vm.runtimeError(Thrown::IllegalArgumentException, "format: %c takes a character or its code, not " + vm.stringify(value));
                     appendUtf8(body, static_cast<uint32_t>(value.as.i));
                 } else if (value.isString()) {
                     body = asString(value)->utf8();
                 } else {
-                    throw vm.runtimeError("format: %c takes a character or its code, not " + vm.stringify(value));
+                    throw vm.runtimeError(Thrown::IllegalArgumentException, "format: %c takes a character or its code, not " + vm.stringify(value));
                 }
                 break;
             case 'b':
                 body = value.truthy() ? "true" : "false";
                 break;
             default:
-                throw vm.runtimeError(std::string("format: '%") + conversion + "' is not a kind of item; use d, x, f, e, g, s, c or b, and %% for a percent sign");
+                throw vm.runtimeError(Thrown::IllegalArgumentException, std::string("format: '%") + conversion + "' is not a kind of item; use d, x, f, e, g, s, c or b, and %% for a percent sign");
         }
 
         const size_t length = sign.size() + countCharacters(body);
@@ -482,7 +482,7 @@ void registerStringMethods(VM& vm) {
         const int64_t length = vm.toInt(args[0], "padded length");
         if (given(argc, args, 1)) charAsText(vm, args[1]);  // padStart(5, ' ') (D25)
         const std::string with = given(argc, args, 1) ? vm.toStr(args[1], "padding character") : std::string(" ");
-        if (countCharacters(with) != 1) throw vm.runtimeError("padding is done with a single character, not " + vm.stringify(args[1]));
+        if (countCharacters(with) != 1) throw vm.runtimeError(Thrown::IllegalArgumentException, "padding is done with a single character, not " + vm.stringify(args[1]));
         if (length <= static_cast<int64_t>(text->length)) return self;
         // As large as memory allows: the room is asked for at once, so a size too large fails at once.
         const uint64_t missing = static_cast<uint64_t>(length) - text->length;
@@ -516,7 +516,7 @@ void registerStringMethods(VM& vm) {
     vm.defineMethod(T, "toInt", 0, 1, [](VM& vm, Value self, int argc, Value* args) -> Value {
         int64_t n;
         if (!parseWhole(asString(self)->utf8(), radixOf(vm, argc, args, 0), n))
-            throw vm.runtimeError(vm.stringify(self).insert(0, "\"") + "\" is not a whole number");
+            throw vm.runtimeError(Thrown::NumberFormatException, vm.stringify(self).insert(0, "\"") + "\" is not a whole number");
         return Value::integer(n);
     });
     vm.defineMethod(T, "toIntOrNull", 0, 1, [](VM& vm, Value self, int argc, Value* args) -> Value {
@@ -530,12 +530,12 @@ void registerStringMethods(VM& vm) {
         uint64_t n = 0;
         auto result = std::from_chars(text.data(), text.data() + text.size(), n, radixOf(vm, argc, args, 0));
         if (text.empty() || result.ec != std::errc() || result.ptr != text.data() + text.size())
-            throw vm.runtimeError(vm.stringify(self).insert(0, "\"") + "\" is not a whole number from 0 to 18446744073709551615");
+            throw vm.runtimeError(Thrown::NumberFormatException, vm.stringify(self).insert(0, "\"") + "\" is not a whole number from 0 to 18446744073709551615");
         return Value::integer(static_cast<int64_t>(n));
     });
     vm.defineMethod(T, "toFloat", 0, 0, [](VM& vm, Value self, int, Value*) -> Value {
         double d;
-        if (!parseFloat(asString(self)->utf8(), d)) throw vm.runtimeError(vm.stringify(self).insert(0, "\"") + "\" is not a number");
+        if (!parseFloat(asString(self)->utf8(), d)) throw vm.runtimeError(Thrown::NumberFormatException, vm.stringify(self).insert(0, "\"") + "\" is not a number");
         return Value::number(d);
     });
     vm.defineMethod(T, "toFloatOrNull", 0, 0, [](VM&, Value self, int, Value*) -> Value {
@@ -570,14 +570,14 @@ void registerNumberMethods(VM& vm) {
         Value low = args[0], high = argc > 1 ? args[1] : Value::null();
         if (argc == 1 && low.isObjType(ObjType::Range)) {
             const ObjRange* range = asRange(low);
-            if (range->count() == 0) throw vm.runtimeError("coerceIn: the range is empty");
+            if (range->count() == 0) throw vm.runtimeError(Thrown::IllegalArgumentException, "coerceIn: the range is empty");
             const int64_t first = range->start, last = range->start + (range->count() - 1) * range->step;
             low = Value::integer(std::min(first, last));
             high = Value::integer(std::max(first, last));
         }
-        if (!low.isNumber() || !high.isNumber()) throw vm.runtimeError("coerceIn takes a minimum and a maximum, or a range");
+        if (!low.isNumber() || !high.isNumber()) throw vm.runtimeError(Thrown::IllegalArgumentException, "coerceIn takes a minimum and a maximum, or a range");
         if (compareNumbers(low, high) > 0)
-            throw vm.runtimeError("coerceIn: the maximum " + vm.stringify(high) + " is less than the minimum " + vm.stringify(low));
+            throw vm.runtimeError(Thrown::IllegalArgumentException, "coerceIn: the maximum " + vm.stringify(high) + " is less than the minimum " + vm.stringify(low));
         if (compareNumbers(self, low) < 0) return low;
         if (compareNumbers(self, high) > 0) return high;
         return self;
@@ -595,7 +595,7 @@ void registerNumberMethods(VM& vm) {
     // To the nearest whole number; a half goes up, as in Kotlin.
     auto round = [](VM& vm, Value self, int, Value*) -> Value {
         if (self.isInt()) return self;
-        if (std::isnan(self.as.d)) throw vm.runtimeError("cannot round NaN to a whole number");
+        if (std::isnan(self.as.d)) throw vm.runtimeError(Thrown::ArithmeticException, "cannot round NaN to a whole number");
         return Value::integer(floatToInt(vm, std::floor(self.as.d + 0.5)));
     };
     vm.defineMethod(T, "roundToInt", 0, 0, round);
@@ -613,7 +613,7 @@ void registerNumberMethods(VM& vm) {
     vm.defineMethod(T, "toByte", 0, 0, [](VM& vm, Value self, int, Value*) -> Value {
         const int64_t n = static_cast<int64_t>(wholeOnly(vm, self, "toByte"));
         if (n < 0 || n > 255)
-            throw vm.runtimeError(std::to_string(n) + " does not fit in a byte, which holds 0 to 255; toByteWrapped() keeps the low 8 bits");
+            throw vm.runtimeError(Thrown::IllegalArgumentException, std::to_string(n) + " does not fit in a byte, which holds 0 to 255; toByteWrapped() keeps the low 8 bits");
         return Value::byte(static_cast<uint8_t>(n));
     });
     vm.defineMethod(T, "toByteWrapped", 0, 0, [](VM& vm, Value self, int, Value*) -> Value {
@@ -661,12 +661,12 @@ void registerNumberMethods(VM& vm) {
     });
     vm.defineMethod(T, "divideUnsigned", 1, 1, [](VM& vm, Value self, int, Value* args) -> Value {
         const uint64_t a = wholeOnly(vm, self, "divideUnsigned"), b = wholeOnly(vm, args[0], "divideUnsigned");
-        if (b == 0) throw vm.runtimeError("division by zero");
+        if (b == 0) throw vm.runtimeError(Thrown::ArithmeticException, "division by zero");
         return Value::integer(static_cast<int64_t>(a / b));
     });
     vm.defineMethod(T, "remainderUnsigned", 1, 1, [](VM& vm, Value self, int, Value* args) -> Value {
         const uint64_t a = wholeOnly(vm, self, "remainderUnsigned"), b = wholeOnly(vm, args[0], "remainderUnsigned");
-        if (b == 0) throw vm.runtimeError("division by zero");
+        if (b == 0) throw vm.runtimeError(Thrown::ArithmeticException, "division by zero");
         return Value::integer(static_cast<int64_t>(a % b));
     });
 
@@ -674,7 +674,7 @@ void registerNumberMethods(VM& vm) {
     vm.defineMethod(T, "toString", 0, 1, [](VM& vm, Value self, int argc, Value* args) -> Value {
         if (!given(argc, args, 0)) return vm.str(vm.stringify(self));
         const int radix = radixOf(vm, argc, args, 0);
-        if (!self.isInt()) throw vm.runtimeError("toString(radix) is for whole numbers, not " + vm.stringify(self));
+        if (!self.isInt()) throw vm.runtimeError(Thrown::ClassCastException, "toString(radix) is for whole numbers, not " + vm.stringify(self));
         const uint64_t magnitude = self.as.i < 0 ? uint64_t{0} - static_cast<uint64_t>(self.as.i) : static_cast<uint64_t>(self.as.i);
         char buffer[72];
         auto result = std::to_chars(buffer, buffer + sizeof(buffer), magnitude, radix);
@@ -690,7 +690,7 @@ void registerNumberMethods(VM& vm) {
     vm.defineMethod(T, "mod", 1, 1, [](VM& vm, Value self, int, Value* args) -> Value {
         if (self.isInt() && args[0].isInt()) {
             const int64_t divisor = args[0].as.i;
-            if (divisor == 0) throw vm.runtimeError("division by zero");
+            if (divisor == 0) throw vm.runtimeError(Thrown::ArithmeticException, "division by zero");
             if (divisor == -1) return Value::integer(0);
             const int64_t remainder = self.as.i % divisor;
             return Value::integer(remainder != 0 && ((remainder < 0) != (divisor < 0)) ? remainder + divisor : remainder);
@@ -750,7 +750,7 @@ void registerCharMethods(VM& vm) {
         const int radix = radixOf(vm, argc, args, 0);
         const int64_t c = self.as.i;
         const int64_t digit = c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'z' ? c - 'a' + 10 : c >= 'A' && c <= 'Z' ? c - 'A' + 10 : 99;
-        if (digit >= radix) throw vm.runtimeError(quoteCharacter(static_cast<uint32_t>(c)) + " is not a digit" + (radix == 10 ? std::string() : " in base " + std::to_string(radix)));
+        if (digit >= radix) throw vm.runtimeError(Thrown::NumberFormatException, quoteCharacter(static_cast<uint32_t>(c)) + " is not a digit" + (radix == 10 ? std::string() : " in base " + std::to_string(radix)));
         return Value::integer(digit);
     });
 }
@@ -782,7 +782,7 @@ void registerRangeWords(VM& vm) {
     vm.defineMethod(BuiltinType::Range, "step", 1, 1, [](VM& vm, Value self, int, Value* args) -> Value {
         const ObjRange* range = asRange(self);
         const int64_t by = vm.toInt(args[0], "step");
-        if (by <= 0) throw vm.runtimeError("the step of a range must be a positive int");
+        if (by <= 0) throw vm.runtimeError(Thrown::IllegalArgumentException, "the step of a range must be a positive int");
         return Value::object(vm.alloc<ObjRange>(range->start, range->end, range->step < 0 ? -by : by, range->inclusive));
     });
 }
@@ -810,7 +810,7 @@ bool exactIndex(Value index, size_t size, size_t& out) {
 }
 
 AstraThrow outOfRange(VM& vm, const char* what, Value index, size_t size) {
-    return vm.runtimeError(std::string(what) + ": index " + vm.stringify(index) + " is out of range (size " + std::to_string(size) + ")");
+    return vm.runtimeError(Thrown::IndexOutOfBoundsException, std::string(what) + ": index " + vm.stringify(index) + " is out of range (size " + std::to_string(size) + ")");
 }
 
 // Sorts positions [lo, hi) by `less`, stably: merge sort, so that what `less` does cannot
@@ -851,7 +851,7 @@ Value sortByKey(VM& vm, Value self, Value selector, bool descending) {
         TempRoot keepItem(vm, item);
         keys.push_back(vm.call(selector, 1, &item));
     }
-    if (list->size() != n) throw vm.runtimeError("the list was changed while it was sorted");
+    if (list->size() != n) throw vm.runtimeError(Thrown::ConcurrentModificationException, "the list was changed while it was sorted");
     std::vector<size_t> order(n), scratch(n);
     for (size_t i = 0; i < n; i++) order[i] = i;
     bool ints = true;
@@ -887,7 +887,7 @@ void registerListMethods(VM& vm) {
             const Value made = vm.call(transform, 1, &item);
             vm.pendingDestination_ = Value::null();
             TempRoot keepMade(vm, made);
-            if (i >= list->size()) throw vm.runtimeError("the list was made shorter while its items were replaced");
+            if (i >= list->size()) throw vm.runtimeError(Thrown::ConcurrentModificationException, "the list was made shorter while its items were replaced");
             vm.listSet(list, i, made);
         }
         return Value::null();
@@ -959,7 +959,7 @@ void registerListMethods(VM& vm) {
         ObjList* list = asList(self);
         if (list->size() == 0) {
             if (orNull) return Value::null();
-            throw vm.runtimeError(std::string(name) + "() from an empty list");
+            throw vm.runtimeError(Thrown::NoSuchElementException, std::string(name) + "() from an empty list");
         }
         const size_t at = first ? 0 : list->size() - 1;
         const Value removed = vm.listGet(list, at);
@@ -1094,7 +1094,7 @@ void registerSetMethods(VM& vm) {
     });
     auto end = [](VM& vm, Value self, bool last) -> Value {
         const std::vector<Value> items = vm.setItems(asSet(self));
-        if (items.empty()) throw vm.runtimeError(std::string(last ? "last()" : "first()") + " of an empty set");
+        if (items.empty()) throw vm.runtimeError(Thrown::NoSuchElementException, std::string(last ? "last()" : "first()") + " of an empty set");
         return last ? items.back() : items.front();
     };
     static const auto endOf = end;
@@ -1133,7 +1133,7 @@ void registerMapMethods(VM& vm) {
     // The value under a key that has to be there.
     vm.defineMethod(T, "getValue", 1, 1, [](VM& vm, Value self, int, Value* args) -> Value {
         const Value* found = asMap(self)->map.find(args[0]);
-        if (found == nullptr) throw vm.runtimeError("getValue: the map has no key " + vm.stringify(args[0]));
+        if (found == nullptr) throw vm.runtimeError(Thrown::NoSuchElementException, "getValue: the map has no key " + vm.stringify(args[0]));
         return *found;
     });
     vm.defineMethod(T, "getOrDefault", 2, 2, [](VM&, Value self, int, Value* args) -> Value {
@@ -1162,12 +1162,12 @@ void registerRangeMethods(VM& vm) {
 
     vm.defineMethod(T, "first", 0, 0, [](VM& vm, Value self, int, Value*) -> Value {
         const ObjRange* range = asRange(self);
-        if (range->count() == 0) throw vm.runtimeError("first() of an empty range");
+        if (range->count() == 0) throw vm.runtimeError(Thrown::NoSuchElementException, "first() of an empty range");
         return Value::integer(range->start);
     });
     vm.defineMethod(T, "last", 0, 0, [](VM& vm, Value self, int, Value*) -> Value {
         const ObjRange* range = asRange(self);
-        if (range->count() == 0) throw vm.runtimeError("last() of an empty range");
+        if (range->count() == 0) throw vm.runtimeError(Thrown::NoSuchElementException, "last() of an empty range");
         return Value::integer(range->start + (range->count() - 1) * range->step);
     });
     vm.defineMethod(T, "isEmpty", 0, 0, [](VM&, Value self, int, Value*) -> Value {
@@ -1269,7 +1269,7 @@ Value writeFile(VM& vm, Value path, Value content, bool bytesOnly, bool append) 
     if (content.isObjType(ObjType::Bytes)) {
         job->data.assign(asBytes(content)->data.begin(), asBytes(content)->data.end());
     } else if (bytesOnly) {
-        throw vm.runtimeError("writeBytes takes bytes, not a value of type " + vm.typeName(content) + (content.isString() ? "; text is written with writeText" : ""));
+        throw vm.runtimeError(Thrown::ClassCastException, "writeBytes takes bytes, not a value of type " + vm.typeName(content) + (content.isString() ? "; text is written with writeText" : ""));
     } else {
         job->data = vm.stringify(content);
     }
@@ -1349,7 +1349,7 @@ void registerFiles(VM& vm) {
         const bool copied = fs::copy_file(toPath(from), toPath(to),
                                           args[2].truthy() ? fs::copy_options::overwrite_existing : fs::copy_options::none, ec);
         if (ec || !copied)
-            throw vm.runtimeError("cannot copy '" + from + "' to '" + to + "'" + (ec ? ": " + ec.message() : ": it is already there"));
+            throw vm.runtimeError(Thrown::IOException, "cannot copy '" + from + "' to '" + to + "'" + (ec ? ": " + ec.message() : ": it is already there"));
         return Value::null();
     });
     // The names in a folder, in order, or null if it is not a folder.

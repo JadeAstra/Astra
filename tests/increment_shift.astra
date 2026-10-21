@@ -97,7 +97,7 @@ print(total)                                     // expect: 12
 val unknown = { value -> value }
 
 fun attempt(f : () -> any?) {
-  try { return f() } catch (e) { return e.message }
+  try { return f() } catch (e) { return "${e.message}" }
 }
 
 // typed variables keep their type; something that cannot be added to says so

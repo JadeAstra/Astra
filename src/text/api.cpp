@@ -64,7 +64,7 @@ std::shared_ptr<Face> faceOf(VM& vm, Value v) {
     const int64_t number = vm.toInt(v, "typeface");
     Handles& h = handles();
     std::lock_guard<std::mutex> hold(h.mutex);
-    if (number < 0 || static_cast<size_t>(number) >= h.faces.size()) throw vm.runtimeError("not a typeface");
+    if (number < 0 || static_cast<size_t>(number) >= h.faces.size()) throw vm.runtimeError(Thrown::IllegalStateException, "not a typeface");
     return h.faces[static_cast<size_t>(number)];
 }
 
@@ -72,7 +72,7 @@ std::shared_ptr<Font> fontOf(VM& vm, Value v) {
     const int64_t number = vm.toInt(v, "font");
     Handles& h = handles();
     std::lock_guard<std::mutex> hold(h.mutex);
-    if (number < 0 || static_cast<size_t>(number) >= h.fonts.size()) throw vm.runtimeError("not a font");
+    if (number < 0 || static_cast<size_t>(number) >= h.fonts.size()) throw vm.runtimeError(Thrown::IllegalStateException, "not a font");
     return h.fonts[static_cast<size_t>(number)];
 }
 
@@ -81,11 +81,11 @@ uint32_t characterOf(VM& vm, Value v) {
     if (v.isChar()) return static_cast<uint32_t>(v.as.i);
     if (v.isInt()) {
         const int64_t cp = v.as.i;
-        if (cp < 0 || cp > 0x10FFFF) throw vm.runtimeError("not a character: " + std::to_string(cp));
+        if (cp < 0 || cp > 0x10FFFF) throw vm.runtimeError(Thrown::IllegalArgumentException, "not a character: " + std::to_string(cp));
         return static_cast<uint32_t>(cp);
     }
     const std::string& s = vm.toStr(v, "character");
-    if (s.empty()) throw vm.runtimeError("a character is wanted, and the string is empty");
+    if (s.empty()) throw vm.runtimeError(Thrown::NoSuchElementException, "a character is wanted, and the string is empty");
     size_t at = 0;
     return text::nextCodepoint(s, at);
 }
@@ -98,11 +98,11 @@ uint32_t colorOf(VM& vm, Value v) {
 
 // A picture's pixels: the bytes value, checked against the size it is said to have.
 std::vector<uint8_t>& pixelsOf(VM& vm, Value* args, int& width, int& height) {
-    if (!args[0].isObjType(ObjType::Bytes)) throw vm.runtimeError("a picture's pixels are bytes");
+    if (!args[0].isObjType(ObjType::Bytes)) throw vm.runtimeError(Thrown::ClassCastException, "a picture's pixels are bytes");
     const int64_t w = vm.toInt(args[1], "width"), h = vm.toInt(args[2], "height");
     std::vector<uint8_t>& data = asBytes(args[0])->data;
     if (w < 0 || h < 0 || w > 32768 || h > 32768 || static_cast<uint64_t>(w) * static_cast<uint64_t>(h) * 4 != data.size())
-        throw vm.runtimeError("the picture's pixels do not fit its size");
+        throw vm.runtimeError(Thrown::IllegalArgumentException, "the picture's pixels do not fit its size");
     width = static_cast<int>(w);
     height = static_cast<int>(h);
     return data;
@@ -176,7 +176,7 @@ void registerText(VM& vm) {
     });
 
     def("fromBytes", 2, 2, [](VM& vm, int, Value* args) -> Value {
-        if (!args[0].isObjType(ObjType::Bytes)) throw vm.runtimeError("a font is read from bytes, not " + vm.stringify(args[0]));
+        if (!args[0].isObjType(ObjType::Bytes)) throw vm.runtimeError(Thrown::ClassCastException, "a font is read from bytes, not " + vm.stringify(args[0]));
         std::string error;
         auto face = Face::fromBytes(asBytes(args[0])->data, clampInt(vm.toInt(args[1], "index")), "<bytes>", error);
         if (face == nullptr) throw vm.errorOf("IOException", error);
@@ -304,8 +304,8 @@ void registerText(VM& vm) {
         text::FontRequest request;
         request.size = static_cast<float>(vm.toNumber(args[1], "font size"));
         request.scale = static_cast<float>(vm.toNumber(args[2], "scale"));
-        if (!(request.size > 0)) throw vm.runtimeError("a font's size is more than 0");
-        if (!(request.scale > 0)) throw vm.runtimeError("a scale is more than 0");
+        if (!(request.size > 0)) throw vm.runtimeError(Thrown::IllegalArgumentException, "a font's size is more than 0");
+        if (!(request.scale > 0)) throw vm.runtimeError(Thrown::IllegalArgumentException, "a scale is more than 0");
         match.weight = clampInt(vm.toInt(args[3], "weight"));
         match.fakeBold = args[4].truthy();
         match.fakeItalic = args[5].truthy();
@@ -313,7 +313,7 @@ void registerText(VM& vm) {
         request.italic = match.face->italic() || match.fakeItalic;
         request.hinting = args[6].truthy();
         auto font = Font::of(match, request);
-        if (font == nullptr) throw vm.runtimeError("the font cannot be made");
+        if (font == nullptr) throw vm.runtimeError(Thrown::IllegalStateException, "the font cannot be made");
         return Value::integer(numberOf(font));
     });
 
@@ -453,7 +453,7 @@ void registerText(VM& vm) {
     def("encodePng", 3, 3, [](VM& vm, int, Value* args) -> Value {
         int width, height;
         const std::vector<uint8_t>& pixels = pixelsOf(vm, args, width, height);
-        if (width == 0 || height == 0) throw vm.runtimeError("a picture with no pixels cannot be written as PNG");
+        if (width == 0 || height == 0) throw vm.runtimeError(Thrown::IllegalArgumentException, "a picture with no pixels cannot be written as PNG");
         ObjBytes* made = vm.alloc<ObjBytes>();
         made->data = image::encodePng(pixels.data(), width, height);
         vm.account(made->data.size());
@@ -462,7 +462,7 @@ void registerText(VM& vm) {
 
     // decodePng(bytes): [width, height, pixels].
     def("decodePng", 1, 1, [](VM& vm, int, Value* args) -> Value {
-        if (!args[0].isObjType(ObjType::Bytes)) throw vm.runtimeError("a PNG picture is read from bytes, not " + vm.stringify(args[0]));
+        if (!args[0].isObjType(ObjType::Bytes)) throw vm.runtimeError(Thrown::ClassCastException, "a PNG picture is read from bytes, not " + vm.stringify(args[0]));
         const std::vector<uint8_t>& data = asBytes(args[0])->data;
         ObjBytes* made = vm.alloc<ObjBytes>();
         TempRoot keep(vm, Value::object(made));

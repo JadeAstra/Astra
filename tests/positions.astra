@@ -1,7 +1,7 @@
 // Counting from the end with ^k (D146), and slices: a range in an index (D147).
 
 fun attempt(f : () -> any?) : string {
-  try { return "${f()}" } catch (e) { return e.message }
+  try { return "${f()}" } catch (e) { return "${e.message}" }
 }
 
 val items = [10, 20, 30, 40]

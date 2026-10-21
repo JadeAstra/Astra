@@ -32,13 +32,13 @@ print(stream.readLine(), stream.read(2), stream.isOpen)      // expect: one Byte
 print(stream.readText() == "o\nthree", stream.readLine(), stream.read())   // expect: true null null
 stream.close()
 print(stream.isOpen)                                         // expect: false
-try { stream.readLine() } catch (e : IOException) { print(e.message, e is Error) }   // expect: the stream is closed true
+try { stream.readLine() } catch (e : IOException) { print(e.message, e is Exception) }   // expect: the stream is closed true
 file.outputStream(append = true).use { it.newLine(); it.append("four").append(4) }
 print(file.bufferedReader().use { it.readLines() }, file.inputStream().use { it.readBytes().size })   // expect: ["one", "two", "three", "four4"] 19
 val seen = []
 file.reader().use { it.forEachLine { line -> seen.add(line.size) } }
 print(seen, file.inputStream().useLines { it.size }, file.delete())   // expect: [3, 3, 5, 5] 4 true
-try { File("no-such-folder/x.txt").inputStream() } catch (e : IOException) { print(e.message.startsWith("cannot read file 'no-such-folder/x.txt'")) }   // expect: true
+try { File("no-such-folder/x.txt").inputStream() } catch (e : IOException) { print(e.message!!.startsWith("cannot read file 'no-such-folder/x.txt'")) }   // expect: true
 try { File("no-such-file.txt").readText() } catch (e : IOException) { print(e.message) }   // expect: cannot read file 'no-such-file.txt'
 
 // ---- A process, read to its end ----
@@ -64,7 +64,7 @@ ProcessBuilder("cmd", "/c", "echo kept").redirectOutput(saved).start().waitFor()
 val finder = ProcessBuilder("cmd", "/c", "findstr k").redirectInput(saved).start()
 print(saved.readText().trim(), finder.inputStream!!.readText().trim(), finder.waitFor())   // expect: kept kept 0
 print(saved.delete())                                        // expect: true
-try { ProcessBuilder("no-such-program-xyz").start() } catch (e : IOException) { print(e.message.startsWith("cannot start 'no-such-program-xyz'")) }   // expect: true
+try { ProcessBuilder("no-such-program-xyz").start() } catch (e : IOException) { print(e.message!!.startsWith("cannot start 'no-such-program-xyz'")) }   // expect: true
 
 // ---- A conversation over a process's pipes ----
 val echo = ProcessBuilder(Process.currentCommand() + ["echo"]).start()
@@ -88,20 +88,25 @@ print(endless.waitFor(5, TimeUnit.seconds), endless.isAlive)   // expect: true f
 // ---- Sockets ----
 val server = ServerSocket(0, bindAddress = "127.0.0.1")
 val port = server.localPort
+// A thread's body is kept, to run where nothing can catch an IOException: it catches its own (D35).
 val serving = thread(name = "server") {
-  // Each connection gets its lines back, numbered, until it says "bye".
-  for n in 1..2 {
-    val client = server.accept()
-    var count = 0
-    while (true) {
-      val line = client.inputStream.readLine()
-      if (line == null or line == "bye") { break }
-      count += 1
-      client.outputStream.println("$n.$count $line")
+  try {
+    // Each connection gets its lines back, numbered, until it says "bye".
+    for n in 1..2 {
+      val client = server.accept()
+      var count = 0
+      while (true) {
+        val line = client.inputStream.readLine()
+        if (line == null or line == "bye") { break }
+        count += 1
+        client.outputStream.println("$n.$count $line")
+      }
+      client.close()
     }
-    client.close()
+    server.close()
+  } catch (e : IOException) {
+    print("the server failed:", e.message)
   }
-  server.close()
 }
 print(port > 0, server.isClosed)                             // expect: true false
 val first = Socket("127.0.0.1", port)
@@ -119,8 +124,8 @@ print(second.getInputStream().readLine())                    // expect: 2.1 gamm
 second.close()
 serving.join()
 print(server.isClosed)                                       // expect: true
-try { Socket("127.0.0.1", port) } catch (e : IOException) { print(e.message.startsWith("cannot connect to 127.0.0.1:")) }   // expect: true
-try { Socket().inputStream } catch (e : IOException) { print(e.message) }   // expect: the socket is not connected
+try { Socket("127.0.0.1", port) } catch (e : IOException) { print(e.message!!.startsWith("cannot connect to 127.0.0.1:")) }   // expect: true
+try { Socket().inputStream } catch (e : IllegalStateException) { print(e.message) }   // expect: the socket is not connected
 // Closing a socket that a thread is waiting on gets the thread out.
 val idle = ServerSocket(0, bindAddress = "127.0.0.1")
 var acceptError : string? = null
@@ -143,13 +148,17 @@ silent.close()
 var ticks = 0
 val ticker = EventLoop.every(5) { ticks += 1 }
 startCoroutine {
-  val slow = ProcessBuilder(Process.currentCommand() + ["slow"]).start()
-  val before = ticks
-  val lines = [slow.inputStream!!.readLine(), slow.inputStream!!.readLine(), slow.inputStream!!.readLine()]
-  print(lines, "the loop went on:", ticks - before > 3, "exit code", slow.waitFor())
-  val note = File("io-streams-flow.txt")
-  note.writeText("written and read in a flow")
-  print(note.readText(), note.delete())
+  try {
+    val slow = ProcessBuilder(Process.currentCommand() + ["slow"]).start()
+    val before = ticks
+    val lines = [slow.inputStream!!.readLine(), slow.inputStream!!.readLine(), slow.inputStream!!.readLine()]
+    print(lines, "the loop went on:", ticks - before > 3, "exit code", slow.waitFor())
+    val note = File("io-streams-flow.txt")
+    note.writeText("written and read in a flow")
+    print(note.readText(), note.delete())
+  } catch (e : IOException) {
+    print("failed:", e.message)
+  }
   ticker.cancel()
 }
 print("the script has ended")

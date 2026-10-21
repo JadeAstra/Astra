@@ -46,11 +46,11 @@ print(root.listFiles()!!.map { it.name }, root.listFiles()!![1] == b, f.list(), 
 // Copying, renaming, deleting.
 val copy = f.copyTo(File(sub, "copy.txt"))
 print(copy.readText() == f.readText(), copy.name, copy.parentFile == sub)   // expect: true copy.txt true
-try { f.copyTo(copy) } catch (e) { print(e.message.startsWith("cannot copy")) }   // expect: true
+try { f.copyTo(copy) } catch (e) { print(e.message!!.startsWith("cannot copy")) }   // expect: true
 b.writeText("short")
 print(b.copyTo(copy, overwrite = true).readText(), b.renameTo(File(root, "moved.bin")), b.exists(), File(root, "moved.bin").exists())   // expect: short true false true
 print(File(root, "sub").delete(), copy.delete(), copy.delete(), copy.exists(), sub.delete(), File(root, "sub").delete())   // expect: false true false false true true
-try { File(root, "missing.txt").readText() } catch (e) { print(e.message.startsWith("cannot read file"), e is Error) }   // expect: true true
+try { File(root, "missing.txt").readText() } catch (e) { print(e.message!!.startsWith("cannot read file"), e is Exception) }   // expect: true true
 
 // By path, without a File.
 val path = root.path + "/direct.txt"

@@ -16,7 +16,7 @@ print(s.name, s.grade, s is Student, type(s))    // expect: Ann 10 true Student
 val unknown = { value -> value }
 
 fun attempt(f : () -> any?) {
-  try { return f() } catch (e) { return e.message }
+  try { return f() } catch (e) { return "${e.message}" }
 }
 
 // header fields are ordinary declared fields: typed, val or var, and nothing undeclared

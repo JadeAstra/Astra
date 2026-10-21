@@ -71,7 +71,7 @@ fun nameOf(node : Node?) {
   val found = node ?: return "nobody"
   return found.name
 }
-fun required(node : Node?) => node ?: throw Error("nothing there")
+fun required(node : Node?) => node ?: throw Exception("nothing there")
 print(nameOf(a), nameOf(null), required(a).name)   // expect: a nobody a
 try { required(null) } catch (e) { print(e.message) }   // expect: nothing there
 

@@ -1,7 +1,7 @@
 // lateinit (D36), lazy val and lazy var (D37), and a named object made when first used (D66).
 
 fun attempt(f : () -> any?) : string {
-  try { return "${f()}" } catch (e) { return e.message }
+  try { return "${f()}" } catch (e) { return "${e.message}" }
 }
 
 // lateinit: given its value after the object is made; read before that, an error.
@@ -56,7 +56,7 @@ class Flaky {
   lazy val value = tryIt()
   fun tryIt() : int {
     tries += 1
-    if (tries < 2) { throw Error("not yet") }
+    if (tries < 2) { throw Exception("not yet") }
     return 42
   }
 }

@@ -4,18 +4,6 @@
 // bodies, so anything longer than that which must not be interrupted takes a lock.
 // The names are Java's and Kotlin's. The work is done by the built-in __thread (threads.cpp).
 
-// Thrown in a thread that was interrupted while it waited (in sleep, join, wait or a queue).
-class InterruptedException(message : string = "the thread was interrupted") : Error(message)
-
-// Thrown by a wait that has a time limit, when the time runs out.
-class TimeoutException(message : string = "the time ran out") : Error(message)
-
-// Thrown by get() on a future that was cancelled.
-class CancellationException(message : string = "the task was cancelled") : Error(message)
-
-// Thrown by get() on a future whose task failed; `cause` is what the task threw.
-class ExecutionException(val cause : any?) : Error(cause is Error ? cause.message : "$cause")
-
 // What a time limit is counted in. A limit is a number and one of these; with no unit it is
 // milliseconds: future.get(2, TimeUnit.seconds)
 object TimeUnit {
@@ -88,7 +76,7 @@ class Thread {
   }
 
   fun start() : Thread {
-    if (id != 0) { throw Error("thread '$name' has already been started") }
+    if (id != 0) { throw IllegalStateException("thread '$name' has already been started") }
     val self = this
     id = __thread.start({ self.run() }, this, name, isDaemon)
     return this
@@ -298,7 +286,7 @@ class BlockingQueue<T> {
   }
 
   fun add(item : T) : bool {
-    if (!offer(item)) { throw Error("the queue is full") }
+    if (!offer(item)) { throw IllegalStateException("the queue is full") }
     return true
   }
 
@@ -405,7 +393,7 @@ class Future<T> {
   private val lock = Lock()
   private var state = 0       // 0 not done, 1 has a value, 2 failed, 3 cancelled
   private var held : any? = null
-  private val listeners : open List<(T?, any?) -> unit> = []
+  private val listeners : open List<(T?, Throwable?) -> unit> = []
   var runner : Thread? = null  // the thread working on it, which cancel(true) interrupts
 
   val isDone : bool
@@ -416,7 +404,7 @@ class Future<T> {
     get() => state >= 2
 
   private fun finish(newState : int, value : any?) : bool {
-    var waiting : open List<(T?, any?) -> unit> = []
+    var waiting : open List<(T?, Throwable?) -> unit> = []
     __thread.enter(lock)
     try {
       if (state != 0) { return false }
@@ -432,11 +420,11 @@ class Future<T> {
     return true
   }
 
-  private fun failure() : any? => state == 3 ? CancellationException() : held
+  private fun failure() : Throwable => state == 3 ? CancellationException() : held as Throwable
 
   // Each gives true if this is what finished it, false if it was finished already.
   fun complete(value : T) : bool => finish(1, value)
-  fun completeExceptionally(error : any?) : bool => finish(2, error)
+  fun completeExceptionally(error : Throwable) : bool => finish(2, error)
 
   // With true, the thread working on the task is interrupted as well.
   fun cancel(mayInterruptIfRunning : bool = false) : bool {
@@ -448,7 +436,7 @@ class Future<T> {
 
   // Waits for the result and gives it. Throws ExecutionException if the task failed,
   // CancellationException if it was cancelled, and TimeoutException if a time limit ran out.
-  fun get() : T {
+  fun get() : T throws ExecutionException {
     __thread.enter(lock)
     try {
       while (state == 0) { lock.wait() }
@@ -458,7 +446,7 @@ class Future<T> {
     return outcome()
   }
 
-  fun get(timeout : Number, unit : Number? = null) : T {
+  fun get(timeout : Number, unit : Number? = null) : T throws ExecutionException | TimeoutException {
     val limit = clock() + (TimeUnit.toMillis(timeout, unit) as Number) / 1000.0
     __thread.enter(lock)
     try {
@@ -474,7 +462,7 @@ class Future<T> {
   }
 
   private fun outcome() : T {
-    if (state == 2) { throw ExecutionException(held) }
+    if (state == 2) { throw ExecutionException(held as Throwable) }
     if (state == 3) { throw CancellationException() }
     return held as T
   }
@@ -484,7 +472,7 @@ class Future<T> {
 
   // Calls action(value, error) when the future is done, with one of the two null: at once if
   // it already is, and otherwise on the thread that finishes it.
-  fun whenComplete(action : (T?, any?) -> unit) : Future<T> {
+  fun whenComplete(action : (T?, Throwable?) -> unit) : Future<T> {
     var done = false
     __thread.enter(lock)
     try {
@@ -513,7 +501,7 @@ class Future<T> {
       } as T
     }
     if (state == 1) { return held as T }
-    throw failure()
+    __rethrow(failure())  // as the task threw it, checked where it was
   }
 
   static {
@@ -572,7 +560,7 @@ class Executor {
     val future = Future<T>()
     __thread.enter(lock)
     try {
-      if (stopped) { throw Error("the executor has been shut down") }
+      if (stopped) { throw IllegalStateException("the executor has been shut down") }
       queue.put([task, future])
       // One more thread, if every one there is busy and more are allowed.
       val most = limit

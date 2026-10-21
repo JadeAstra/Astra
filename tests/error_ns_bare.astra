@@ -2,4 +2,4 @@
 import NsShapes
 print(NsShapes.PI_ISH)                 // expect: 3
 print(PI_ISH)
-// expect runtime error: Uncaught Error: undefined variable 'PI_ISH'
+// expect runtime error: Uncaught IllegalStateException: undefined variable 'PI_ISH'

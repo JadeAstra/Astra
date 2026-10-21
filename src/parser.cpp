@@ -546,6 +546,7 @@ TypeAnnotation Parser::typeExpression() {
         functionRest();
         if (match(TokenType::ThinArrow)) {
             type.result.push_back(typeExpression());
+            throwsClause(type.throwsTypes);
             type.params = std::move(inside);
             type.name = "Function";
         } else if (inside.size() == 1 && !named) {
@@ -584,6 +585,7 @@ TypeAnnotation Parser::typeExpression() {
             TypeAnnotation receiver = type;
             receiver.result.clear();
             type.result.push_back(typeExpression());
+            throwsClause(type.throwsTypes);
             type.params = std::move(inside);
             type.receiver.push_back(std::move(receiver));
             type.args.clear();
@@ -1491,6 +1493,7 @@ std::unique_ptr<FunctionDecl> Parser::functionRest(std::string name, const Token
     expect(TokenType::RParen, "')' after the parameter list");
     if (decl->params.size() > 255) throw error(start, "a function cannot have more than 255 parameters");
     decl->returnType = optionalType();
+    throwsClause(decl->throwsTypes);
 
     decl->bodyFrom = p_;
     if (match(TokenType::Arrow)) {
@@ -1652,11 +1655,9 @@ StmtPtr Parser::statement() {
             if (!finallyNext() && !check(TokenType::Catch))
                 throw error(peek(), "expected 'catch' or 'finally' after the try block, found " + describe(peek()));
             // Several catches may follow, each for errors of one class: catch (e : NotFound) { }.
-            // One without a class catches everything, so it has to be the last.
+            // One without a class takes every Exception (D151); the checker says which can never run.
             while (check(TokenType::Catch)) {
-                const Token& kw = advance();
-                if (!s->catches.empty() && !s->catches.back().type.present())
-                    throw error(kw, "the catch before this one catches every error, so this one can never run");
+                advance();
                 CatchClause clause;
                 if (match(TokenType::LParen)) {
                     clause.variable = expect(TokenType::Identifier, "an exception variable name").text;
@@ -1925,6 +1926,19 @@ ExprPtr Parser::infixCall() {
         call->isInfix = true;
         left = std::move(call);
     }
+}
+
+// `throws IOException | TimeoutException`, after a function's result type or a function type's
+// (D52, D54): the classes, with '|' between them.
+void Parser::throwsClause(std::vector<TypeAnnotation>& into) {
+    if (!word("throws") || peek().newlineBefore) return;
+    advance();
+    const bool saved = inUnion_;
+    inUnion_ = true;  // a '|' here is the next class, not a union
+    do {
+        into.push_back(typeExpression());
+    } while (match(TokenType::Pipe));
+    inUnion_ = saved;
 }
 
 // Kotlin's rules for an infix function: one parameter, with no default, and not vararg.

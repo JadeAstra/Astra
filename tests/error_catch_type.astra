@@ -1,0 +1,3 @@
+// A catch names a class of Throwable (D35).
+try { print(1) } catch (e : string) { }
+// expect compile error: a catch names a class of Throwable, as in catch (e : IOException), not a string (D35)

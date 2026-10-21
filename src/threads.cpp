@@ -283,7 +283,7 @@ bool VM::joinThread(int64_t id, int64_t timeoutMs) {
     for (;;) {
         ThreadState* target = findThread(id);
         if (target == nullptr) return true;
-        if (target == me) throw runtimeError("a thread cannot wait for itself to finish");
+        if (target == me) throw runtimeError(Thrown::IllegalStateException, "a thread cannot wait for itself to finish");
         if (deadline.passed()) return false;
         target->joiners.push_back(me);
         park(deadline.left());
@@ -305,7 +305,7 @@ void VM::interruptThread(int64_t id) {
 VM::Monitor& VM::heldMonitor(Value lock, const char* what) {
     auto found = lock.isObj() ? monitors_.find(lock.as.obj) : monitors_.end();
     if (found == monitors_.end() || found->second.owner != thread_)
-        throw runtimeError(std::string(what) + ": this thread does not hold the lock; it is held inside synchronized(lock) { ... }");
+        throw runtimeError(Thrown::IllegalStateException, std::string(what) + ": this thread does not hold the lock; it is held inside synchronized(lock) { ... }");
     return found->second;
 }
 
@@ -315,7 +315,7 @@ bool VM::monitorHeld(Value lock) const {
 }
 
 bool VM::monitorTryEnter(Value lock) {
-    if (!lock.isObj()) throw runtimeError("a lock is an object, not a value of type " + typeName(lock));
+    if (!lock.isObj()) throw runtimeError(Thrown::ClassCastException, "a lock is an object, not a value of type " + typeName(lock));
     Monitor& monitor = monitors_[lock.as.obj];
     if (monitor.owner == thread_) {
         monitor.count++;
@@ -445,7 +445,7 @@ void VM::cancelTimer(int64_t id) {
 }
 
 void VM::runEventLoop(bool wait, int64_t budgetMs) {
-    if (thread_ != &mainThread_) throw runtimeError("the event loop runs on the main thread only");
+    if (thread_ != &mainThread_) throw runtimeError(Thrown::IllegalStateException, "the event loop runs on the main thread only");
     // Without waiting, and with a budget: what is ready is run until the time is up, and one
     // thing at least. A timer whose task takes longer than its period is always due, so
     // "until nothing is due" alone would never come back.
@@ -583,7 +583,7 @@ struct VM::Workers {
 };
 
 Value VM::blocking(std::function<void()> work, std::function<Value(VM&)> finish) {
-    if (inParallelSection()) throw runtimeError("a parallel section does not wait: reading, writing and other waiting is done outside it");
+    if (inParallelSection()) throw runtimeError(Thrown::IllegalStateException, "a parallel section does not wait: reading, writing and other waiting is done outside it");
     if (canSuspend() && onLoopThread()) {
         // In a flow on the loop thread: a worker does the waiting, and the flow is set aside
         // until the loop hears that the work is done.
@@ -625,9 +625,9 @@ void VM::suspendFiber() {
 }
 
 void VM::runFiber(ObjFiber* fiber, bool ok, Value value) {
-    if (fiber->state == FiberState::Running) throw runtimeError("the flow is already running");
-    if (fiber->state == FiberState::Done) throw runtimeError("the flow has already finished");
-    if (thread_->nesting >= kMaxFlowNesting) throw runtimeError("too many flows are running inside one another");
+    if (fiber->state == FiberState::Running) throw runtimeError(Thrown::IllegalStateException, "the flow is already running");
+    if (fiber->state == FiberState::Done) throw runtimeError(Thrown::IllegalStateException, "the flow has already finished");
+    if (thread_->nesting >= kMaxFlowNesting) throw runtimeError(Thrown::IllegalStateException, "too many flows are running inside one another");
     TempRoot keepFiber(*this, Value::object(fiber));
     TempRoot keepValue(*this, value);
 
@@ -697,7 +697,7 @@ int64_t timeLimit(VM& vm, int argc, const Value* args, int i) {
 }
 
 ObjFiber* fiberArgument(VM& vm, Value v) {
-    if (!v.isObjType(ObjType::Fiber)) throw vm.runtimeError("expected a flow, got a value of type " + vm.typeName(v));
+    if (!v.isObjType(ObjType::Fiber)) throw vm.runtimeError(Thrown::ClassCastException, "expected a flow, got a value of type " + vm.typeName(v));
     return asFiber(v);
 }
 
@@ -842,7 +842,7 @@ void registerThreads(VM& vm) {
     // meant for an earlier wait.
     define(vm, flow, "prepare", 0, 0, [](VM& vm, int, Value*) -> Value {
         ObjFiber* fiber = vm.currentFiber();
-        if (fiber == nullptr) throw vm.runtimeError("not in a flow");
+        if (fiber == nullptr) throw vm.runtimeError(Thrown::IllegalStateException, "not in a flow");
         fiber->hasEarly = false;
         fiber->early = Value::null();
         return Value::integer(++fiber->waitToken);
@@ -850,7 +850,7 @@ void registerThreads(VM& vm) {
     // Waits for the answer to that wait: the value given, or the error raised here.
     define(vm, flow, "wait", 1, 1, [](VM& vm, int, Value* args) -> Value {
         ObjFiber* fiber = vm.currentFiber();
-        if (fiber == nullptr || args[0].as.i != fiber->waitToken) throw vm.runtimeError("not in the flow that is to wait");
+        if (fiber == nullptr || args[0].as.i != fiber->waitToken) throw vm.runtimeError(Thrown::IllegalStateException, "not in the flow that is to wait");
         if (fiber->hasEarly) {
             // It was answered before it got here, so there is nothing to wait for.
             fiber->hasEarly = false;
@@ -862,7 +862,7 @@ void registerThreads(VM& vm) {
             throw thrown;
         }
         if (!vm.canSuspend())
-            throw vm.runtimeError("the flow cannot be set aside here: it is inside a built-in function that is calling back into the "
+            throw vm.runtimeError(Thrown::IllegalStateException, "the flow cannot be set aside here: it is inside a built-in function that is calling back into the "
                                   "program (a sort, or a property being read); wait outside it");
         fiber->waitingAt = fiber->waitToken;
         vm.suspendFiber();
@@ -872,7 +872,7 @@ void registerThreads(VM& vm) {
         ObjFiber* fiber = fiberArgument(vm, args[0]);
         const int64_t token = vm.toInt(args[1], "wait");
         // Waits are numbered as the flow comes to them, and answered in that order.
-        if (token <= fiber->resumedToken) throw vm.runtimeError("this continuation has already been resumed");
+        if (token <= fiber->resumedToken) throw vm.runtimeError(Thrown::IllegalStateException, "this continuation has already been resumed");
         // An answer to a wait the flow gave up (an error took it elsewhere, or it has ended)
         // has nowhere to go.
         if (token != fiber->waitToken || fiber->state == FiberState::Done) return Value::null();

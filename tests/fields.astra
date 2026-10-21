@@ -25,7 +25,7 @@ print(c.history, other.history)         // expect: [1, 2] [1]
 val unknown = { value -> value }
 
 fun attempt(f : () -> any?) {
-  try { return f() } catch (e) { return e.message }
+  try { return f() } catch (e) { return "${e.message}" }
 }
 
 // typed fields are checked on every assignment, from inside or outside the class
@@ -203,14 +203,14 @@ val bag = Bag()
 print(attempt(fun() { unknown(bag).anything = 1 }))   // expect: Bag has no field 'anything'; fields must be declared in the class with val or var
 
 // Error declares `message`, so error classes declare their extra fields too
-class HttpError : Error {
+class HttpError : Exception {
   val status : int
   fun init(status : int, message : string) {
     super.init(message)
     this.status = status
   }
 }
-class Careless : Error {
+class Careless : Exception {
   fun init() {
     super.init("careless")
     unknown(this).code = 7

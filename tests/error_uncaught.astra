@@ -1,8 +1,8 @@
 fun fail(n : int) {
-  if n == 0 { throw Error("boom") }
+  if n == 0 { throw Exception("boom") }
   return fail(n - 1)
 }
 print("before")                         // expect: before
 fail(2)
 print("never printed")
-// expect runtime error: Uncaught Error: boom
+// expect runtime error: Uncaught Exception: boom

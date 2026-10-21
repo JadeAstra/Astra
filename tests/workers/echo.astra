@@ -22,7 +22,7 @@ Worker.parent!!.onMessage = { message ->
     Worker.parent!!.post("closing after $count messages")
     Worker.parent!!.close()
   } else if (message == "fail") {
-    throw Error("the worker was asked to fail")
+    throw RuntimeException("the worker was asked to fail")
   } else if (message == "spin") {
     Worker.parent!!.post("spinning")
     while (true) { count += 1 }

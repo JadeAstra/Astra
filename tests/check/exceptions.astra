@@ -1,0 +1,53 @@
+// Checked exceptions (D35, D51 to D54): worked out over the program, and an error only where one
+// reaches what cannot pass it on.
+
+fun load(path : string) : string {
+  if (path.isEmpty()) { throw IOException("no path") }
+  return path
+}
+fun keep(action : () -> unit) { val kept = action }
+fun run(action : () -> unit) { action() }
+
+fun uses() {
+  run { load("a") }                       // passed on: run only calls its lambda
+  keep { load("b") }                      // check: this lambda may throw IOException, which nothing can catch where it is called: it is kept as a () -> unit, which throws nothing checked; catch it inside the lambda (D35)
+  keep { try { load("c") } catch (e : IOException) { } }
+  val stored : () -> string = { load("d") }   // check: this lambda may throw IOException, which nothing can catch where it is called: it is kept as a () -> string, which throws nothing checked; catch it inside the lambda (D35)
+  val allowed : () -> string throws IOException = { load("e") }
+  val narrow : () -> string = allowed     // check: 'narrow' is a () -> string; it cannot start as a () -> string throws IOException
+  print(stored, narrow)
+}
+
+// throws written is a promise the body keeps (D54).
+fun promised(path : string) : string throws TimeoutException => load(path)   // check: 'promised' may throw IOException, which its throws does not name: catch it, or add it (D54)
+
+// An override, or a class fitting an interface, throws no more than the original may (D51, D53).
+interface Source { fun read() : string }
+class Disk : Source {
+  override fun read() : string => load("disk")   // check: 'read' may throw IOException, which Source.read it takes the place of cannot: callers through Source would not catch it; catch it here, or write throws IOException on Source.read (D53)
+}
+class Base { fun fetch() : string => "base" }
+class Remote : Base() {
+  override fun fetch() : string => load("remote")   // check: 'fetch' may throw IOException, which Base.fetch it takes the place of cannot: callers through Base would not catch it; catch it here, or write throws IOException on Base.fetch (D53)
+}
+
+// A function as a value throws what it writes (D52).
+val asValue = load                         // check: 'load' may throw IOException, and as a value a function throws only what it writes: write throws IOException on it, or call it in a lambda (D52)
+
+// A starting value worked out where nothing can catch (D35).
+class Settings {
+  static {
+    val home : string = load("home")       // check: this starting value may throw IOException, which nothing can catch where it is worked out: catch it here (D35)
+  }
+}
+
+// Only a Throwable is thrown and caught; a later clause can be taken by an earlier one.
+fun mistakes(flag : bool) {
+  if (flag) { throw "text" }               // check: only a Throwable can be thrown, not a string: throw IllegalStateException("...") or a class of your own extending Exception (D35)
+  try {
+    print(2)
+  } catch (e) {
+  } catch (e : IOException) {              // check: the catch before this one takes every Exception, so this one can never run
+  } catch (e : Error) {
+  }
+}

@@ -158,7 +158,7 @@ class Deque<T> {
   }
 
   fun removeFirst() : T {
-    if (items.size == head) { throw Error("removeFirst() from an empty deque") }
+    if (items.size == head) { throw NoSuchElementException("removeFirst() from an empty deque") }
     val item = items[head]
     items[head] = null
     head += 1
@@ -167,7 +167,7 @@ class Deque<T> {
   }
 
   fun removeLast() : T {
-    if (items.size == head) { throw Error("removeLast() from an empty deque") }
+    if (items.size == head) { throw NoSuchElementException("removeLast() from an empty deque") }
     val item = items.removeLast()
     tidy()
     return item as T
@@ -188,12 +188,12 @@ class Deque<T> {
   }
 
   fun first() : T {
-    if (items.size == head) { throw Error("first() of an empty deque") }
+    if (items.size == head) { throw NoSuchElementException("first() of an empty deque") }
     return items[head] as T
   }
 
   fun last() : T {
-    if (items.size == head) { throw Error("last() of an empty deque") }
+    if (items.size == head) { throw NoSuchElementException("last() of an empty deque") }
     return items[items.size - 1] as T
   }
 
@@ -203,7 +203,7 @@ class Deque<T> {
   // deque[0] is the front.
   fun get(index : int) : T {
     if (index < 0 or index >= items.size - head) {
-      throw Error("get: index $index is out of range (size ${items.size - head})")
+      throw IndexOutOfBoundsException("get: index $index is out of range (size ${items.size - head})")
     }
     return items[head + index] as T
   }
@@ -212,7 +212,7 @@ class Deque<T> {
 
   fun set(index : int, item : T) {
     if (index < 0 or index >= items.size - head) {
-      throw Error("set: index $index is out of range (size ${items.size - head})")
+      throw IndexOutOfBoundsException("set: index $index is out of range (size ${items.size - head})")
     }
     items[head + index] = item
   }

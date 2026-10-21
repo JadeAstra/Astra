@@ -630,6 +630,7 @@ int disassembleFile(const std::string& path) {
     if (int failed = loadProgram(path, vm, session, program, sessionOwner, programOwner)) return failed;
 
     disassemble(*program, std::cout);
+    finishKeeping();  // the cache, if it is being written, before the program ends
     return 0;
 }
 

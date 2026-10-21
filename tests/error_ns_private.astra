@@ -2,4 +2,4 @@
 import NsShapes.*
 print(shapeSecret())                    // expect: shape's own, not for others
 print(hidden())
-// expect runtime error: Uncaught Error: undefined variable 'hidden'
+// expect runtime error: Uncaught IllegalStateException: undefined variable 'hidden'

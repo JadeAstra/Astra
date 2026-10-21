@@ -52,7 +52,7 @@ check(true) { "never worked out" }
 try { require(1 > 2) } catch (e) { print(e.message) }        // expect: Failed requirement.
 try { require(1 > 2) { "one is not more than two" } } catch (e) { print(e.message) }   // expect: one is not more than two
 try { check(false) } catch (e) { print(e.message) }          // expect: Check failed.
-try { error("gave up") } catch (e) { print(e.message, e is Error) }   // expect: gave up true
+try { error("gave up") } catch (e) { print(e.message, e is Exception) }   // expect: gave up true
 print(requireNotNull(5), checkNotNull("x"))                  // expect: 5 x
 try { requireNotNull(null) { "nothing there" } } catch (e) { print(e.message) }   // expect: nothing there
 

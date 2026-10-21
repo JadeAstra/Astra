@@ -111,6 +111,7 @@ private:
     ExprPtr comparison();
     ExprPtr elvis();
     ExprPtr infixCall();
+    void throwsClause(std::vector<TypeAnnotation>& into);
     void checkInfix(const FunctionDecl& fn, bool member, const Token& at);
     ExprPtr range();
     ExprPtr bitOr();

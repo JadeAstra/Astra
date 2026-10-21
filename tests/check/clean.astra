@@ -73,4 +73,4 @@ var sum = 0
 nums.forEach { sum += it }
 print(sum, nums[0] + 1, nums.size)
 
-fun later() : nothing => throw Error("never")
+fun later() : nothing => throw Exception("never")

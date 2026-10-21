@@ -10,7 +10,7 @@ print(add(2, 3), half(5), greet("Astra", null), greet("Astra", "!"))   // expect
 val unknown = { value -> value }
 
 fun attempt(f : () -> any?) {
-  try { return f() } catch (e) { return e.message }
+  try { return f() } catch (e) { return "${e.message}" }
 }
 print(attempt(fun() => add(1, unknown("2"))))      // expect: argument 'b' of add() must be int, got string
 print(attempt(fun() => add(unknown(1.5), 2)))      // expect: argument 'a' of add() must be int, got float

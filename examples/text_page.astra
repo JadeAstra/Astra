@@ -33,7 +33,7 @@ fun line(text : string, font : TextFont, color : int = ink, note : string? = nul
   var sum = 0
   for (c in text) { sum += font.charWidth(c) }
   if (drawn != measured or sum != measured or offsets.last() != measured) {
-    throw Error("measured $measured, drew $drawn, characters add up to $sum: $text")
+    throw Exception("measured $measured, drew $drawn, characters add up to $sum: $text")
   }
   checked += 1
   val below = y + font.descent + px(1)

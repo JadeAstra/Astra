@@ -90,7 +90,7 @@ class Surface {
   val handle : any  // the native layer's name for it
 
   fun init(width : int, height : int, scale : Number = 1) {
-    if (width < 1 or height < 1) { throw Error("a Surface is at least 1 unit each way, not $width by $height") }
+    if (width < 1 or height < 1) { throw IllegalArgumentException("a Surface is at least 1 unit each way, not $width by $height") }
     this.width = width
     this.height = height
     this.scale = scale
@@ -119,12 +119,12 @@ class Surface {
   // Replaces what it holds with a Picture of the same number of pixels.
   fun upload(picture : Picture) {
     if (picture.width != deviceWidth or picture.height != deviceHeight) {
-      throw Error("a picture of ${picture.width} by ${picture.height} does not fit a surface of $deviceWidth by $deviceHeight pixels")
+      throw IllegalArgumentException("a picture of ${picture.width} by ${picture.height} does not fit a surface of $deviceWidth by $deviceHeight pixels")
     }
     __jade.surfaceUpload(handle, picture.pixels)
   }
 
-  fun save(path : any) {
+  fun save(path : any) throws IOException {
     toPicture().save(path)
   }
 
@@ -511,7 +511,7 @@ class NativeWindow {
       is RawInput.Hover -> {
         if (event.inside) { inside = true; input(event) } else { __jade.windowSend(id, "pointerLeave", 0, 0, 0, 0, 0.0, 0.0, null) }
       }
-      else -> { throw Error("not an event a window can be sent: $event") }
+      else -> { throw IllegalArgumentException("not an event a window can be sent: $event") }
     }
   }
   // The same for what is not a RawInput.

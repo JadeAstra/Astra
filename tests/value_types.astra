@@ -61,7 +61,7 @@ value Square(val side : float) : Shape {
 }
 val shape : Shape = Square(2.0)
 print(shape.area(), shape is Square, shape, Square(1.5).perimeter)   // expect: 4.0 true Square(side=2.0) 6.0
-try { Square(-1.0) } catch (e : Error) { print(e.message) }   // expect: Failed requirement.
+try { Square(-1.0) } catch (e : Exception) { print(e.message) }   // expect: Failed requirement.
 
 // A value that may hold another of its own type, where that may be null: in a box of its own.
 value Chain(val n : int, val next : Chain?)

@@ -2,7 +2,7 @@
 // chars and strings combine (D25); n.char and c.code (D142).
 
 fun attempt(f : () -> any) : string {
-  try { return "${f()}" } catch (e) { return e.message }
+  try { return "${f()}" } catch (e) { return "${e.message}" }
 }
 
 // Single quotes are for one character, its escapes included.

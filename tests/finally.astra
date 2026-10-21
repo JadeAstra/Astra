@@ -4,13 +4,13 @@ val log = []
 
 // Leaving normally, and leaving by an error that is caught.
 try { log.add("body") } finally { log.add("finally") }
-try { throw "boom" } catch (e) { log.add("caught " + e) } finally { log.add("finally") }
-print(log)                                  // expect: ["body", "finally", "caught boom", "finally"]
+try { throw Exception("boom") } catch (e) { log.add("caught " + e) } finally { log.add("finally") }
+print(log)                                  // expect: ["body", "finally", "caught Exception: boom", "finally"]
 
 // An error nobody here catches: the block runs and the error carries on.
 fun failing() {
   try {
-    throw Error("lost")
+    throw Exception("lost")
   } finally {
     log.add("cleanup")
   }
@@ -34,7 +34,7 @@ fun override() {
   try { return "from try" } finally { return "from finally" }
 }
 fun swallow() {
-  try { throw "error" } finally { return "the error is gone" }
+  try { throw Exception("error") } finally { return "the error is gone" }
 }
 print(override(), swallow())                // expect: from finally the error is gone
 
@@ -68,7 +68,7 @@ print(nested(), order)                      // expect: value ["inner", "outer"]
 
 fun nestedError() {
   try {
-    try { throw "deep" } finally { order.add("inner again") }
+    try { throw Exception("deep") } finally { order.add("inner again") }
   } catch (e) {
     order.add("caught " + e)
   } finally {
@@ -76,19 +76,19 @@ fun nestedError() {
   }
 }
 nestedError()
-print(order[2..])                       // expect: ["inner again", "caught deep", "outer again"]
+print(order[2..])                       // expect: ["inner again", "caught Exception: deep", "outer again"]
 
 // An error thrown by the catch still runs the finally.
 fun catchThrows() {
-  try { throw "first" } catch (e) { throw "second" } finally { order.add("ran") }
+  try { throw Exception("first") } catch (e) { throw Exception("second") } finally { order.add("ran") }
 }
-try { catchThrows() } catch (e) { print(e, order[order.size - 1]) }   // expect: second ran
+try { catchThrows() } catch (e) { print(e, order[order.size - 1]) }   // expect: Exception: second ran
 
 // An error thrown by the finally block itself is the one that gets out.
 fun finallyThrows() {
-  try { return 1 } finally { throw "from finally" }
+  try { return 1 } finally { throw Exception("from finally") }
 }
-try { finallyThrows() } catch (e) { print(e) }   // expect: from finally
+try { finallyThrows() } catch (e) { print(e) }   // expect: Exception: from finally
 
 // The block has its own variables, and sees those around it.
 fun scoped() {
@@ -106,10 +106,10 @@ fun scoped() {
 print(scoped())                             // expect: try finally outer
 
 // Catches for particular classes of error.
-class NotFound : Error {
+class NotFound : Exception {
   fun init(what : string) { super.init(what + " not found") }
 }
-class Denied : Error {
+class Denied : Exception {
   fun init() { super.init("denied") }
 }
 fun attempt(action : () -> unit) {
@@ -126,8 +126,8 @@ fun attempt(action : () -> unit) {
     log.add("attempted")
   }
 }
-print(attempt(fun() { }), attempt(fun() { throw NotFound("key") }), attempt(fun() { throw Denied() }), attempt(fun() { throw 42 }))
-// expect: ok missing: key not found refused other: 42
+print(attempt(fun() { }), attempt(fun() { throw NotFound("key") }), attempt(fun() { throw Denied() }), attempt(fun() { throw Exception("42") }))
+// expect: ok missing: key not found refused other: Exception: 42
 
 // With no catch for it, an error passes through.
 fun onlyNotFound(action : () -> unit) {

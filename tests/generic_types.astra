@@ -15,7 +15,7 @@ print(shapes is List<Shape>, shapes is List<Circle>, shapes is List<string>)   /
 val scores : any = {"a": 1, "b": 2}
 print(scores is Map<string, int>, scores is Map<string, string>)   // expect: true false
 print((things as List<int>).size, (things as? List<string>) == null)   // expect: 3 true
-try { val bad = things as List<string> } catch (e : Error) { print(e.message) }   // expect: cannot cast a value of type List<int> to List<string>
+try { val bad = things as List<string> } catch (e : Exception) { print(e.message) }   // expect: cannot cast a value of type List<int> to List<string>
 
 // A generic function is given its type arguments, written or worked out.
 fun <T> isA(x : any) : bool => x is T
@@ -41,7 +41,7 @@ print(outer<float>(1.5), outer<float>(1))   // expect: true false
 fun <T> wrapped(x : any) : List<T> => listOfOne(x as T)
 val strings : any = wrapped<string>("q")
 print(strings is List<string>, strings is List<int>)   // expect: true false
-try { wrapped<int>("q") } catch (e : Error) { print(e.message) }   // expect: cannot cast a value of type string to int
+try { wrapped<int>("q") } catch (e : Exception) { print(e.message) }   // expect: cannot cast a value of type string to int
 
 // A lambda reads those of the call it was made in.
 fun <T> tester() : (any) -> bool => { x : any -> x is T }
@@ -60,7 +60,7 @@ print(box.holds(1), box.holds("s"), box.later()(2), box.later()("t"), words.hold
 // expect: true false true false true false
 val boxed : any = box
 print(boxed is Box<int>, boxed is Box<string>, boxed is Box<Number>, boxed is Box)   // expect: true false true true
-try { val wrong = boxed as Box<string> } catch (e : Error) { print(e.message) }   // expect: cannot cast a value of type Box<int> to Box<string>
+try { val wrong = boxed as Box<string> } catch (e : Exception) { print(e.message) }   // expect: cannot cast a value of type Box<int> to Box<string>
 
 // An object of a subclass is seen as the generic class it extends.
 class Base<T>(val item : T) {

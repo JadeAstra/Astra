@@ -30,23 +30,28 @@ var ticks = 0
 val ticker = EventLoop.every(50) { ticks += 1 }
 
 // ---- The other program, read in a flow ----
+// A flow runs later, where nothing can catch what goes wrong in it: it catches its own.
 startCoroutine {
   val started = clock()
-  val worker = ProcessBuilder(Process.currentCommand() + ["work"]).start()
-  print("started process", worker.pid())
+  try {
+    val worker = ProcessBuilder(Process.currentCommand() + ["work"]).start()
+    print("started process", worker.pid())
 
-  // readLine() sets this flow aside until a line arrives. The loop and the thread go on.
-  while (true) {
-    val line = worker.inputStream!!.readLine()
-    if (line == null) { break }
-    val soFar = synchronized(lock) { checks }
-    print("  %-12s (%d ticks, %d checks so far)".format(line, ticks, soFar))
+    // readLine() sets this flow aside until a line arrives. The loop and the thread go on.
+    while (true) {
+      val line = worker.inputStream!!.readLine()
+      if (line == null) { break }
+      val soFar = synchronized(lock) { checks }
+      print("  %-12s (%d ticks, %d checks so far)".format(line, ticks, soFar))
+    }
+
+    val code = worker.waitFor()
+    print("it ended with exit code $code after %.1f seconds".format(clock() - started))
+  } catch (e : IOException) {
+    print("the other program could not be run: ${e.message}")
   }
-
-  val code = worker.waitFor()
   working = false
   ticker.cancel()
-  print("it ended with exit code $code after %.1f seconds".format(clock() - started))
   print("meanwhile the loop ticked $ticks times and the thread checked $checks times")
 }
 

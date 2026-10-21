@@ -1087,7 +1087,7 @@ void disassembleFunction(const FunctionProto& f, const Program& program, std::os
             case Op::GetGlobal:
             case Op::SetGlobal:
             case Op::DefineGlobal:
-                out << " " << a << "  ; " << program.globalNames[a];
+                out << " " << a << "  ; " << (static_cast<size_t>(a) < program.globalNames.size() ? program.globalNames[a] : std::string("?"));
                 break;
             case Op::GetProp:
             case Op::SetProp:
@@ -1186,7 +1186,7 @@ void disassembleFunction(const FunctionProto& f, const Program& program, std::os
                 if (b & kFieldRequired) out << " (set by init)";
                 break;
             case Op::DefineTypedGlobal:
-                out << " " << a << "  ; " << program.globalNames[a] << " : " << typeText(static_cast<uint8_t>(b), "<class>");
+                out << " " << a << "  ; " << (static_cast<size_t>(a) < program.globalNames.size() ? program.globalNames[a] : std::string("?")) << " : " << typeText(static_cast<uint8_t>(b), "<class>");
                 break;
             default:
                 if (info.operand != Operand::None) out << " " << a;

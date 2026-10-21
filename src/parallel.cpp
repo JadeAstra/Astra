@@ -152,6 +152,7 @@ void VM::refreshFromRoot() {
     globalTypes_ = root_->globalTypes_;
     loaded_ = root_->loaded_;
     errorClass_ = root_->errorClass_;
+    for (size_t k = 0; k < static_cast<size_t>(Thrown::Count_); k++) thrownClasses_[k] = root_->thrownClasses_[k];
     mapEntryClass_ = root_->mapEntryClass_;
     hasExtensions_ = root_->hasExtensions_;
     if (extensionEpoch_ != root_->extensionEpoch_) {
@@ -230,11 +231,11 @@ void VM::runParallelShare(ParallelJob& job, size_t index) {
         share.failed = true;
         job.cancelled = true;
     } catch (const AstraExit&) {
-        share.error = runtimeError("exit() was called in a parallel section");
+        share.error = runtimeError(Thrown::IllegalStateException, "exit() was called in a parallel section");
         share.failed = true;
         job.cancelled = true;
     } catch (const FiberSuspend&) {
-        share.error = runtimeError("a parallel section does not wait");
+        share.error = runtimeError(Thrown::IllegalStateException, "a parallel section does not wait");
         share.failed = true;
         job.cancelled = true;
     }
@@ -284,7 +285,7 @@ int VM::parallelCores() {
 }
 
 Value VM::runParallel(Value source, Value function, bool keep, bool replace) {
-    if (replace && !source.isObjType(ObjType::List)) throw runtimeError("replaceAll is for a list, not a value of type " + typeName(source));
+    if (replace && !source.isObjType(ObjType::List)) throw runtimeError(Thrown::ClassCastException, "replaceAll is for a list, not a value of type " + typeName(source));
     // A list of values (M6.6 part 4): each core is given its own part of the list, and the items
     // where they are. A list that may hold null is gone through as any other.
     ObjList* values = source.isObjType(ObjType::List) && asList(source)->store() == ListStore::Items && !asList(source)->pack->nullable
@@ -322,7 +323,7 @@ Value VM::runParallel(Value source, Value function, bool keep, bool replace) {
                 if (!items[i].isObj() || !ownable(items[i].as.obj)) continue;
                 Obj* obj = items[i].as.obj;
                 if (obj->core != 0)
-                    throw runtimeError("the same " + typeName(items[i]) + " is in the stream more than once (it is item " + std::to_string(i) +
+                    throw runtimeError(Thrown::IllegalStateException, "the same " + typeName(items[i]) + " is in the stream more than once (it is item " + std::to_string(i) +
                                        " as well): each core has to have its items to itself");
                 obj->core = static_cast<uint8_t>(k + 1);
                 dealt.objects.push_back(obj);
@@ -336,7 +337,7 @@ Value VM::runParallel(Value source, Value function, bool keep, bool replace) {
         if (share.failed) throw share.error;
     if (replace && values == nullptr) {
         ObjList* list = asList(source);
-        if (list->size() != count) throw runtimeError("the list was changed while its items were replaced");
+        if (list->size() != count) throw runtimeError(Thrown::ConcurrentModificationException, "the list was changed while its items were replaced");
         size_t i = 0;
         for (const ParallelJob::Share& share : job.shares)
             for (const Value& made : share.results) listSet(list, i++, made);
@@ -350,7 +351,7 @@ Value VM::runParallel(Value source, Value function, bool keep, bool replace) {
 }
 
 void VM::runParallelChunks(Value buffer, Value function) {
-    if (!buffer.isObjType(ObjType::Bytes)) throw runtimeError("parallelChunks is for bytes, not a value of type " + typeName(buffer));
+    if (!buffer.isObjType(ObjType::Bytes)) throw runtimeError(Thrown::ClassCastException, "parallelChunks is for bytes, not a value of type " + typeName(buffer));
     const size_t size = asBytes(buffer)->data.size();
     if (size == 0) return;
 
@@ -372,34 +373,34 @@ void VM::runParallelChunks(Value buffer, Value function) {
 // ---- What a core is told when it oversteps ----
 
 AstraThrow VM::wholeBand() const {
-    return const_cast<VM*>(this)->runtimeError("this List is the one the section is over and is read here an item at a time: a core looks only "
+    return const_cast<VM*>(this)->runtimeError(Thrown::IllegalStateException, "this List is the one the section is over and is read here an item at a time: a core looks only "
                                                "into its own items, " + std::to_string(bandFrom_) + " to " + std::to_string(bandTo_ - 1));
 }
 
 AstraThrow VM::outsideBand(size_t i) const {
     if (bandObject_->type == ObjType::List)
-        return const_cast<VM*>(this)->runtimeError("item " + std::to_string(i) + " is another core's in this parallel section: a core looks only into its "
+        return const_cast<VM*>(this)->runtimeError(Thrown::IllegalStateException, "item " + std::to_string(i) + " is another core's in this parallel section: a core looks only into its "
                                                    "own items, " + std::to_string(bandFrom_) + " to " + std::to_string(bandTo_ - 1));
     return notOwned("position " + std::to_string(i) + " is outside this core's part of the buffer, which is " + std::to_string(bandFrom_) + " to " +
                     std::to_string(bandTo_ - 1));
 }
 
 AstraThrow VM::notOwned(const std::string& what) const {
-    return const_cast<VM*>(this)->runtimeError("a parallel section changes only the item it was given and what it makes itself: " + what);
+    return const_cast<VM*>(this)->runtimeError(Thrown::IllegalStateException, "a parallel section changes only the item it was given and what it makes itself: " + what);
 }
 
 AstraThrow VM::notOwned(const Obj* obj) const {
     if (obj->frozen != 0) {
         const char* const kind = obj->type == ObjType::List ? "list" : obj->type == ObjType::Map ? "map" : obj->type == ObjType::Set ? "set" : "value";
         const char* const copy = obj->type == ObjType::List ? "toOpenList()" : obj->type == ObjType::Map ? "toOpenMap()" : "toOpenSet()";
-        return const_cast<VM*>(this)->runtimeError(std::string("a frozen ") + kind + " cannot be changed: " + copy + " makes a copy that can be");
+        return const_cast<VM*>(this)->runtimeError(Thrown::UnsupportedOperationException, std::string("a frozen ") + kind + " cannot be changed: " + copy + " makes a copy that can be");
     }
     if (obj->core != 0) return otherCores(obj);
     return notOwned(describe(*this, obj) + " is shared with the other cores, so here it can be read and not changed");
 }
 
 AstraThrow VM::otherCores(const Obj* obj) const {
-    return const_cast<VM*>(this)->runtimeError(describe(*this, obj) + " is another core's item in this parallel section: a core looks only into its own items " +
+    return const_cast<VM*>(this)->runtimeError(Thrown::IllegalStateException, describe(*this, obj) + " is another core's item in this parallel section: a core looks only into its own items " +
                                                "and into what is shared");
 }
 

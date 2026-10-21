@@ -5,7 +5,7 @@
 val big = int.maxValue
 val small = int.minValue
 fun attempt(f : () -> any) : string {
-  try { return "${f()}" } catch (e) { return e.message }
+  try { return "${f()}" } catch (e) { return "${e.message}" }
 }
 
 // ---- Overflow is an error; &+, &- and &* wrap around ----

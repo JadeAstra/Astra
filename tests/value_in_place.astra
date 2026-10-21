@@ -30,7 +30,7 @@ print(balls[0], balls[2])   // expect: Ball(x=4.0, dx=1.5, r=1.0) Ball(x=0.0, dx
 class Maker<T>(val make : () -> T) {
   fun made(fail : bool) : T {
     val v = make()
-    if (fail) { throw Error("no") }
+    if (fail) { throw Exception("no") }
     return v
   }
 }
@@ -91,7 +91,7 @@ fun failure(action : () -> unit) : string {
   try {
     action()
   } catch (e) {
-    return e.message.substringBefore(",")
+    return e.message!!.substringBefore(",")
   }
   return "no error"
 }

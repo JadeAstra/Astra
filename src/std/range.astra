@@ -105,7 +105,7 @@ fun Range.toOpenList() : open List<int> => this.toList()
 fun Range.toSet() : open Set<int> => Set(this)
 
 fun Range.random() : int {
-  if (this.size == 0) { throw Error("random() of an empty range") }
+  if (this.size == 0) { throw NoSuchElementException("random() of an empty range") }
   return this.start + Math.randomInt(0, this.size - 1) * this.step
 }
 

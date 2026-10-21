@@ -28,7 +28,7 @@ inline fun <T> List<T>.find(predicate : (T) -> bool) : T? {
 
 // reduce(operation) starts from the first item; reduce(operation, initial) from `initial`.
 inline fun <T> List<T>.reduce(operation : (T, T) -> T) : T {
-  if (this.size == 0) { throw Error("reduce() of an empty list needs a starting value") }
+  if (this.size == 0) { throw UnsupportedOperationException("reduce() of an empty list needs a starting value") }
   var result = this[0]
   for index in 1..<this.size { result = operation(result, this[index]) }
   return result
@@ -43,7 +43,7 @@ inline fun <T, R> List<T>.reduce(operation : (R, T) -> R, initial : R) : R {
 // -- The item at one end, or with a condition the nearest to that end that meets it --
 
 fun <T> List<T>.first() : T {
-  if (this.size == 0) { throw Error("first() of an empty list") }
+  if (this.size == 0) { throw NoSuchElementException("first() of an empty list") }
   return this[0]
 }
 
@@ -51,7 +51,7 @@ inline fun <T> List<T>.first(predicate : (T) -> bool) : T {
   for item in this {
     if (predicate(item)) { return item }
   }
-  throw Error("first(): no item of the list meets the condition")
+  throw NoSuchElementException("first(): no item of the list meets the condition")
 }
 
 fun <T> List<T>.firstOrNull() : T? => this.size == 0 ? null : this[0]
@@ -64,7 +64,7 @@ inline fun <T> List<T>.firstOrNull(predicate : (T) -> bool) : T? {
 }
 
 fun <T> List<T>.last() : T {
-  if (this.size == 0) { throw Error("last() of an empty list") }
+  if (this.size == 0) { throw NoSuchElementException("last() of an empty list") }
   return this[this.size - 1]
 }
 
@@ -74,7 +74,7 @@ inline fun <T> List<T>.last(predicate : (T) -> bool) : T {
     if (predicate(this[index])) { return this[index] }
     index -= 1
   }
-  throw Error("last(): no item of the list meets the condition")
+  throw NoSuchElementException("last(): no item of the list meets the condition")
 }
 
 fun <T> List<T>.lastOrNull() : T? => this.size == 0 ? null : this[this.size - 1]
@@ -180,7 +180,7 @@ inline fun <T> List<T>.findLast(predicate : (T) -> bool) : T? => this.lastOrNull
 
 // The only item, or the only one that meets the condition.
 fun <T> List<T>.single() : T {
-  if (this.size != 1) { throw Error("single(): expected one item but found ${this.size}") }
+  if (this.size != 1) { throw IllegalArgumentException("single(): expected one item but found ${this.size}") }
   return this[0]
 }
 
@@ -275,22 +275,22 @@ inline fun <T> List<T>.partition(predicate : (T) -> bool) : Pair<List<T>, List<T
 }
 
 fun <T> List<T>.take(count : int) : open List<T> {
-  if (count < 0) { throw Error("take($count): the count cannot be negative") }
+  if (count < 0) { throw IllegalArgumentException("take($count): the count cannot be negative") }
   return this[0..<Math.min(count, this.size)]
 }
 
 fun <T> List<T>.takeLast(count : int) : open List<T> {
-  if (count < 0) { throw Error("takeLast($count): the count cannot be negative") }
+  if (count < 0) { throw IllegalArgumentException("takeLast($count): the count cannot be negative") }
   return count >= this.size ? this.toList() : this[this.size - count..]
 }
 
 fun <T> List<T>.drop(count : int) : open List<T> {
-  if (count < 0) { throw Error("drop($count): the count cannot be negative") }
+  if (count < 0) { throw IllegalArgumentException("drop($count): the count cannot be negative") }
   return count >= this.size ? [] : this[count..]
 }
 
 fun <T> List<T>.dropLast(count : int) : open List<T> {
-  if (count < 0) { throw Error("dropLast($count): the count cannot be negative") }
+  if (count < 0) { throw IllegalArgumentException("dropLast($count): the count cannot be negative") }
   return count >= this.size ? [] : this[0..<this.size - count]
 }
 
@@ -311,7 +311,7 @@ inline fun <T> List<T>.dropWhile(predicate : (T) -> bool) : open List<T> {
 
 // The list cut into lists of `size` items; the last may be shorter.
 fun <T> List<T>.chunked(size : int) : open List<List<T>> {
-  if (size < 1) { throw Error("chunked($size): the size has to be at least 1") }
+  if (size < 1) { throw IllegalArgumentException("chunked($size): the size has to be at least 1") }
   val out : open List<List<T>> = []
   var start = 0
   while (start < this.size) {
@@ -323,7 +323,7 @@ fun <T> List<T>.chunked(size : int) : open List<List<T>> {
 
 // Every run of `size` items in a row, moving along by `step`.
 fun <T> List<T>.windowed(size : int, step : int = 1, partialWindows : bool = false) : open List<List<T>> {
-  if (size < 1 or step < 1) { throw Error("windowed: the size and the step have to be at least 1") }
+  if (size < 1 or step < 1) { throw IllegalStateException("windowed: the size and the step have to be at least 1") }
   val out : open List<List<T>> = []
   var start = 0
   while (start < this.size) {
@@ -457,7 +457,7 @@ fun <T> List<T>.shuffled() : open List<T> {
 }
 
 fun <T> List<T>.random() : T {
-  if (this.size == 0) { throw Error("random() of an empty list") }
+  if (this.size == 0) { throw NoSuchElementException("random() of an empty list") }
   return this[Math.randomInt(0, this.size - 1)]
 }
 
@@ -503,12 +503,12 @@ fun <T> List<T>.minOrNull() : T? {
 }
 
 fun <T> List<T>.max() : T {
-  if (this.size == 0) { throw Error("max() of an empty list") }
+  if (this.size == 0) { throw NoSuchElementException("max() of an empty list") }
   return this.maxOrNull() as T
 }
 
 fun <T> List<T>.min() : T {
-  if (this.size == 0) { throw Error("min() of an empty list") }
+  if (this.size == 0) { throw NoSuchElementException("min() of an empty list") }
   return this.minOrNull() as T
 }
 
@@ -542,12 +542,12 @@ inline fun <T> List<T>.minByOrNull(selector : (T) -> any?) : T? {
 }
 
 inline fun <T> List<T>.maxBy(selector : (T) -> any?) : T {
-  if (this.size == 0) { throw Error("maxBy() of an empty list") }
+  if (this.size == 0) { throw NoSuchElementException("maxBy() of an empty list") }
   return this.maxByOrNull(selector) as T
 }
 
 inline fun <T> List<T>.minBy(selector : (T) -> any?) : T {
-  if (this.size == 0) { throw Error("minBy() of an empty list") }
+  if (this.size == 0) { throw NoSuchElementException("minBy() of an empty list") }
   return this.minByOrNull(selector) as T
 }
 
@@ -573,12 +573,12 @@ inline fun <T, R> List<T>.minOfOrNull(selector : (T) -> R) : R? {
 }
 
 inline fun <T, R> List<T>.maxOf(selector : (T) -> R) : R {
-  if (this.size == 0) { throw Error("maxOf() of an empty list") }
+  if (this.size == 0) { throw NoSuchElementException("maxOf() of an empty list") }
   return this.maxOfOrNull(selector) as R
 }
 
 inline fun <T, R> List<T>.minOf(selector : (T) -> R) : R {
-  if (this.size == 0) { throw Error("minOf() of an empty list") }
+  if (this.size == 0) { throw NoSuchElementException("minOf() of an empty list") }
   return this.minOfOrNull(selector) as R
 }
 

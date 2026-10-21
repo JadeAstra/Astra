@@ -391,7 +391,7 @@ class BufferedImage {
   private var cardNewer = false
 
   fun init(width : int, height : int, type : int = 2, picture : Picture? = null) {
-    if (width < 1 or height < 1) { throw Error("a BufferedImage is at least 1 pixel each way, not $width by $height") }
+    if (width < 1 or height < 1) { throw IllegalArgumentException("a BufferedImage is at least 1 pixel each way, not $width by $height") }
     this.width = width
     this.height = height
     this.type = type
@@ -405,11 +405,11 @@ class BufferedImage {
   fun getType() : int => type
 
   fun getRGB(x : int, y : int) : int {
-    if (x < 0 or y < 0 or x >= width or y >= height) { throw Error("pixel ($x, $y) is outside the picture, which is $width by $height") }
+    if (x < 0 or y < 0 or x >= width or y >= height) { throw IndexOutOfBoundsException("pixel ($x, $y) is outside the picture, which is $width by $height") }
     return memory().get(x, y)
   }
   fun setRGB(x : int, y : int, color : int) {
-    if (x < 0 or y < 0 or x >= width or y >= height) { throw Error("pixel ($x, $y) is outside the picture, which is $width by $height") }
+    if (x < 0 or y < 0 or x >= width or y >= height) { throw IndexOutOfBoundsException("pixel ($x, $y) is outside the picture, which is $width by $height") }
     memory().set(x, y, type == 1 ? color | 0xFF000000 : color)
     memoryNewer = true
   }
@@ -425,7 +425,7 @@ class BufferedImage {
   // pixels to the unit: what a window's picture is on a dense screen.
   fun canvasAt(width : int, height : int, scale : Number) => onCard().canvasAt(width, height, scale, this)
 
-  fun save(path : any) {
+  fun save(path : any) throws IOException {
     memory().save(path)
   }
 

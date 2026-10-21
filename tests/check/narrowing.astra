@@ -30,7 +30,7 @@ fun sixth(maybe : Box?) : int {
   return box.item
 }
 fun seventh(maybe : Box?) : int {
-  if (maybe == null) { throw Error("none") }
+  if (maybe == null) { throw Exception("none") }
   return maybe.item
 }
 fun eighth(maybe : Box?) : int {

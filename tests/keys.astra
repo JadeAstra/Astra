@@ -2,7 +2,7 @@
 // are keys only frozen; frozen() makes a copy nobody may change.
 
 fun attempt(f : () -> any?) : string {
-  try { return "${f()}" } catch (e) { return e.message }
+  try { return "${f()}" } catch (e) { return "${e.message}" }
 }
 // A value whose type the checker does not see, for the checks made when running.
 fun hidden(value : any?) : any? => value

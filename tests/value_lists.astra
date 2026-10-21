@@ -80,7 +80,7 @@ print(a == b, byPoints[b], [1, 2] == [1.0, 2.0])   // expect: true found true
 
 // What a list cannot hold is an error where it is put in.
 val anything = (ints as any) as open List<any>
-try { anything.add("five") } catch (e : Error) { print(e.message) }   // expect: cannot put a value of type string in a List<int>, which keeps only what it was made to hold
+try { anything.add("five") } catch (e : Exception) { print(e.message) }   // expect: cannot put a value of type string in a List<int>, which keeps only what it was made to hold
 
 // A value type with fields of its body is made as usual, then added.
 value Doubled(val x : int) {

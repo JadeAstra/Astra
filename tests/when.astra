@@ -203,7 +203,7 @@ print(lookup({"a": 1}, "a"), lookup({:}, "b"), lookup({:}, "missing"))   // expe
 val log = []
 fun guarded(n : int) => 100 + when (n) {
   1 -> {
-    try { throw "one" } catch (e) { log.add("caught " + e) } finally { log.add("finally") }
+    try { throw Exception("one") } catch (e) { log.add("caught " + e) } finally { log.add("finally") }
     10
   }
   else -> {
@@ -212,7 +212,7 @@ fun guarded(n : int) => 100 + when (n) {
     result
   }
 }
-print(guarded(1), guarded(2), log)          // expect: 110 120 ["caught one", "finally", "done"]
+print(guarded(1), guarded(2), log)          // expect: 110 120 ["caught Exception: one", "finally", "done"]
 
 // As statements, with assignments and ++ in the branches.
 var hits = 0

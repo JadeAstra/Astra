@@ -1,0 +1,67 @@
+// ---- What can be thrown (D35) ----
+// Java's tree, which Kotlin code uses. Only a Throwable is thrown. It has a message, which may
+// be null, and the Throwable that caused it, if any.
+//
+//   Error: what the VM cannot go on from. A bare `catch (e)` does not catch one; it is caught
+//     only where it is named, `catch (e : Error)` or `catch (e : Throwable)` (D151).
+//   Exception: everything else, which a bare `catch (e)` catches.
+//     RuntimeException and the classes under it: mistakes in the program. Unchecked.
+//     Every other Exception (IOException, TimeoutException, ExecutionException, a program's
+//     own): checked. The compiler works out where one can go, and asks for it to be caught
+//     where nothing can pass it on (D35).
+
+class Throwable(val message : string? = null, val cause : Throwable? = null) {
+  override fun toString() : string => message == null ? type(this) : type(this) + ": " + message
+}
+
+class Error(message : string? = null, cause : Throwable? = null) : Throwable(message, cause)
+class Exception(message : string? = null, cause : Throwable? = null) : Throwable(message, cause)
+class RuntimeException(message : string? = null, cause : Throwable? = null) : Exception(message, cause)
+
+// -- Errors: the VM is in trouble --
+
+class OutOfMemoryError(message : string? = "out of memory") : Error(message)
+class StackOverflowError(message : string? = "stack overflow") : Error(message)
+// Something wrong with the program as compiled, as against the program's own code.
+class InternalError(message : string? = null) : Error(message)
+// assert(...) that does not hold.
+class AssertionError(message : string? = "assertion failed") : Error(message)
+// TODO(): what is not written yet.
+class NotImplementedError(message : string? = "an operation is not implemented") : Error(message)
+
+// -- Mistakes in the program: unchecked --
+
+// Division by zero, or an int whose answer does not fit (D27).
+class ArithmeticException(message : string? = null, cause : Throwable? = null) : RuntimeException(message, cause)
+// A position that is not in a list, a string or bytes.
+class IndexOutOfBoundsException(message : string? = null, cause : Throwable? = null) : RuntimeException(message, cause)
+// `!!` on null, or null used where a value is needed.
+class NullPointerException(message : string? = null, cause : Throwable? = null) : RuntimeException(message, cause)
+// A value of one type where another is needed: `as`, or a typed place given the wrong value.
+class ClassCastException(message : string? = null, cause : Throwable? = null) : RuntimeException(message, cause)
+// An argument a function cannot take; require() that does not hold.
+class IllegalArgumentException(message : string? = null, cause : Throwable? = null) : RuntimeException(message, cause)
+// Text that is not the number asked of it.
+class NumberFormatException(message : string? = null, cause : Throwable? = null) : IllegalArgumentException(message, cause)
+// Something done at a time it cannot be; check() and error().
+class IllegalStateException(message : string? = null, cause : Throwable? = null) : RuntimeException(message, cause)
+// Something a value does not do: changing what is frozen, a member it has not.
+class UnsupportedOperationException(message : string? = null, cause : Throwable? = null) : RuntimeException(message, cause)
+// The first of nothing, a key that is not there.
+class NoSuchElementException(message : string? = null, cause : Throwable? = null) : RuntimeException(message, cause)
+// A list changed while it was gone through.
+class ConcurrentModificationException(message : string? = null, cause : Throwable? = null) : RuntimeException(message, cause)
+// A wait that was interrupted (sleep, join, wait or a queue): unchecked, so that waiting needs
+// no try (D35).
+class InterruptedException(message : string? = "the thread was interrupted") : RuntimeException(message)
+// A task that was cancelled, thrown by what waits for it: unchecked.
+class CancellationException(message : string? = "the task was cancelled") : IllegalStateException(message)
+
+// -- Checked --
+
+// Reading, writing, connecting or starting a program went wrong.
+class IOException(message : string? = null, cause : Throwable? = null) : Exception(message, cause)
+// A wait with a time limit ran out of time.
+class TimeoutException(message : string? = "the time ran out") : Exception(message)
+// What a task threw, given by what waited for its result: `cause` is that.
+class ExecutionException(cause : Throwable? = null) : Exception(cause?.message, cause)

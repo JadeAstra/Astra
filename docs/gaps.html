@@ -83,8 +83,8 @@ td.when { min-width: 9em; }
 <nav>
 <h2>Contents</h2>
 <ul>
-<li><a href="#choices">Choices to confirm</a> (nineteen from the first half; seven from part 8, group 1; twelve from group 2; eleven from group 3; eleven from group 4)</li>
-<li><a href="#gaps">Gaps left</a> (forty)</li>
+<li><a href="#choices">Choices to confirm</a> (nineteen from the first half; seven from part 8, group 1; twelve from group 2; eleven from group 3; eleven from group 4; eleven from group 5)</li>
+<li><a href="#gaps">Gaps left</a> (forty-five)</li>
 </ul>
 </nav>
 
@@ -514,6 +514,72 @@ td.when { min-width: 9em; }
 <div class="verdict"><span class="label">Your choice</span><span class="blank"></span></div>
 </section>
 
+<section class="decision" id="p8-vm-classes">
+<h3><span class="code">8.5a</span>The classes of the VM&#39;s own errors (part 8, group 5)</h3>
+<p>D35 names the tree, not every mistake&#39;s place in it. As built: division by zero and an int that does not fit an <code>ArithmeticException</code>; a position out of range an <code>IndexOutOfBoundsException</code>; <code>!!</code> on null a <code>NullPointerException</code>; a value of the wrong type a <code>ClassCastException</code>; a bad argument an <code>IllegalArgumentException</code>, text that is not a number a <code>NumberFormatException</code>; the first of nothing a <code>NoSuchElementException</code>; a list changed while sorted a <code>ConcurrentModificationException</code>; a member a value has not, an operator it does not take, or a change to what is frozen an <code>UnsupportedOperationException</code>; a stack overflow a <code>StackOverflowError</code>; bytecode that cannot run an <code>InternalError</code>; the rest (a variable used before it has a value, a member the code may not use, something done on the wrong thread) an <code>IllegalStateException</code>. The messages are as before.</p>
+<div class="verdict"><span class="label">Your choice</span><span class="blank"></span></div>
+</section>
+
+<section class="decision" id="p8-throwable-shape">
+<h3><span class="code">8.5b</span>What a Throwable holds (part 8, group 5)</h3>
+<p>As Kotlin: <code>message</code>, a <code>string?</code>, and <code>cause</code>, a <code>Throwable?</code>, each class taking both. So <code>e.message</code> may be null to the checker, and the tests that called a method on it say <code>!!</code>. <code>toString()</code> is the class&#39;s name and the message. The classes are in the standard library (<code>errors.astra</code>), not the compiler.</p>
+<div class="verdict"><span class="label">Your choice</span><span class="blank"></span></div>
+</section>
+
+<section class="decision" id="p8-unchecked-waits">
+<h3><span class="code">8.5c</span>Where InterruptedException and CancellationException stand (part 8, group 5)</h3>
+<p>D35 makes both unchecked. As built, <code>InterruptedException</code> extends <code>RuntimeException</code> (in Java it is checked) and <code>CancellationException</code> extends <code>IllegalStateException</code>, as in Kotlin.</p>
+<div class="verdict"><span class="label">Your choice</span><span class="blank"></span></div>
+</section>
+
+<section class="decision" id="p8-assert-error">
+<h3><span class="code">8.5d</span>What assert and TODO throw (part 8, group 5)</h3>
+<p>Kotlin&#39;s: <code>assert</code> an <code>AssertionError</code> and <code>TODO()</code> a <code>NotImplementedError</code>, both Errors, so a bare catch lets them through, as D151 has it for what stops the program. <code>TODO()</code> is new.</p>
+<div class="verdict"><span class="label">Your choice</span><span class="blank"></span></div>
+</section>
+
+<section class="decision" id="p8-kept">
+<h3><span class="code">8.5e</span>What counts as kept, where a checked exception cannot go (part 8, group 5)</h3>
+<p>D35 and D52: every lambda but one written as the argument of a parameter the function only calls (or passes on to one that does): one in a variable or field, given to a function that keeps it, or run on a thread, a task or a timer. A function used as a value by its name throws only what it writes, even where the variable is then only called; writing <code>throws</code> on it, or calling it in a lambda, is the way. A static or lazy starting value catches what it can meet.</p>
+<div class="verdict"><span class="label">Your choice</span><span class="blank"></span></div>
+</section>
+
+<section class="decision" id="p8-library">
+<h3><span class="code">8.5f</span>Which functions are a library&#39;s public ones (part 8, group 5)</h3>
+<p>D35 and D54 require <code>throws</code> there. As built: the standard library&#39;s, and those of a folder imported as a library (Jade), not marked <code>private</code> or <code>internal</code> and not starting with an underscore, in a class that is not private. A program&#39;s own folders write nothing. The C++ functions behind files, streams and sockets are known to throw IOException from a table in the checker, as they have no declarations; the standard library&#39;s functions over them say <code>throws IOException</code>.</p>
+<div class="verdict"><span class="label">Your choice</span><span class="blank"></span></div>
+</section>
+
+<section class="decision" id="p8-rethrow">
+<h3><span class="code">8.5g</span><code>throw e</code> in a catch clause (part 8, group 5)</h3>
+<p>Java 7&#39;s rule: rethrowing a catch clause&#39;s variable throws again only what the try&#39;s body could throw, of the class the clause takes, so <code>catch (e) { log(e); throw e }</code> does not make a function throw every Exception. A variable assigned anything else throws its type.</p>
+<div class="verdict"><span class="label">Your choice</span><span class="blank"></span></div>
+</section>
+
+<section class="decision" id="p8-std-throws">
+<h3><span class="code">8.5h</span>What the standard library says it throws (part 8, group 5)</h3>
+<p><code>throws IOException</code> on every function reading, writing, connecting or starting a program (files, streams, sockets, processes, <code>Picture.load</code> and <code>save</code>, Jade&#39;s <code>save</code>); <code>Future.get</code> throws <code>ExecutionException</code>, and with a time limit <code>TimeoutException</code>, as Java&#39;s. <code>await</code>, <code>getOrThrow</code> and <code>suspendCoroutine</code> throw again what was caught where it was thrown, unchecked (a hidden <code>__rethrow</code>), as Kotlin&#39;s do. A socket used before it is connected throws an <code>IllegalStateException</code>, not an IOException.</p>
+<div class="verdict"><span class="label">Your choice</span><span class="blank"></span></div>
+</section>
+
+<section class="decision" id="p8-use">
+<h3><span class="code">8.5i</span>What use { } takes (part 8, group 5)</h3>
+<p>D113 says anything with a <code>close()</code>. As built, an <code>AutoCloseable</code>, Kotlin&#39;s interface, which the streams and sockets implement in place of the <code>use</code> each had; a class of someone else&#39;s is fitted to it with <code>extend</code> (D33). It is an inline function of the standard library. An error from <code>close()</code> after one from the block is not kept beside it, as Java&#39;s suppressed exceptions are.</p>
+<div class="verdict"><span class="label">Your choice</span><span class="blank"></span></div>
+</section>
+
+<section class="decision" id="p8-catch-order">
+<h3><span class="code">8.5j</span>Catch clauses in order (part 8, group 5)</h3>
+<p>A clause whose class an earlier clause of the same try takes is an error, as in Java; a bare catch is no longer last of necessity, since a clause naming an Error or Throwable may follow it. <code>runCatching</code> catches what a bare catch does: every Exception.</p>
+<div class="verdict"><span class="label">Your choice</span><span class="blank"></span></div>
+</section>
+
+<section class="decision" id="p8-throws-written">
+<h3><span class="code">8.5k</span>Where throws is written (part 8, group 5)</h3>
+<p>After the result type, or after the parameters where there is none: <code>fun load() : string throws IOException</code>, <code>fun save() throws IOException { }</code>; on a function type after its result, <code>() -&gt; unit throws IOException</code>; several with <code>|</code>. Not on a property&#39;s getter or setter (Kotlin has none either; gap).</p>
+<div class="verdict"><span class="label">Your choice</span><span class="blank"></span></div>
+</section>
+
 <h2 id="gaps">Gaps left</h2>
 <p class="note">Each is known, and the code around it is tested; none gives a wrong result. Most make something slower or leave a feature for a later part.</p>
 
@@ -559,6 +625,11 @@ td.when { min-width: 9em; }
 <tr><td class="part">8.4</td><td>Inside code copied in from an inline function, a value is never read where it is: a list of value types gives copies there (D59).</td><td class="when">With the next measurements</td></tr>
 <tr><td class="part">8.4</td><td>The function an inline function is copied into is given the inline function&#39;s rights for all of its code, not only the copied part (D59, 8.4g).</td><td class="when">Your choice on 8.4g</td></tr>
 <tr><td class="part">8.4</td><td>Where the checker cannot tell the type of a block run on an object, <code>this</code> in it is the method&#39;s object, as before (D58).</td><td class="when">Not placed yet</td></tr>
+<tr><td class="part">8.5</td><td>A getter or setter cannot write <code>throws</code>, and a setter&#39;s exceptions are not followed to the assignment; a getter&#39;s are (D35).</td><td class="when">Not placed yet</td></tr>
+<tr><td class="part">8.5</td><td>An <code>extend</code>&#39;s bridging getters are not checked against what the interface&#39;s members may throw (D53).</td><td class="when">Not placed yet</td></tr>
+<tr><td class="part">8.5</td><td>The C++ functions that throw IOException are known by a table in the checker, not by declarations of their own (8.5f).</td><td class="when">Group 8, files</td></tr>
+<tr><td class="part">8.5</td><td>An error from <code>close()</code> after one from the block of <code>use { }</code> replaces it, where Java keeps it as suppressed (8.5i).</td><td class="when">Not placed yet</td></tr>
+<tr><td class="part">8.5</td><td>Working out what is thrown costs about half a millisecond more at every start, and checking Jade whole 25% more (13.5 ms against 10.8).</td><td class="when">With the next measurements</td></tr>
 <tr><td class="part">All</td><td>Under MSVC, code placement alone moves the <code>fields</code> benchmark by 10 to 20% with the same loop. Not a gap in Astra, but a caution in reading timings: compare against a baseline built the same way, and count instructions, before calling a change slower.</td><td class="when">D160: the Clang build's dispatch, M6.7</td></tr>
 </tbody>
 </table></div>

@@ -1,11 +1,11 @@
 // An error that nothing catches ends the thread it happened on, with a report, and the rest
 // of the program goes on.
-// expect error output: Uncaught Error: worker gave up
+// expect error output: Uncaught RuntimeException: worker gave up
 
-val worker = thread(name = "unlucky") { throw Error("worker gave up") }
+val worker = thread(name = "unlucky") { throw RuntimeException("worker gave up") }
 worker.join()
 print("the thread has ended:", !worker.isAlive)              // expect: the thread has ended: true
 
 // The report says which thread.
-// (It reads: Uncaught Error: worker gave up / at <lambda> ... / in thread unlucky)
+// (It reads: Uncaught RuntimeException: worker gave up / at <lambda> ... / in thread unlucky)
 print("and the program goes on")                             // expect: and the program goes on

@@ -24,35 +24,50 @@ value MapEntry<K, V>(val key : K, val value : V) {
 // An item with its position: what withIndex() gives.
 value IndexedValue<T>(val index : int, val value : T)
 
-// Thrown when the system cannot give the program the memory it asks for: a list, a string or
-// a buffer too large. Like any error, it can be caught.
-class OutOfMemoryError(message : string = "out of memory") : Error(message)
-
 // ---- Checks ----
 
 // Each throws an Error unless the condition holds. The message is a function, so that it is
 // only worked out when it is needed: require(n > 0) { "n is $n" }
 fun require(condition : bool, lazyMessage : (() -> any?)? = null) {
-  if (!condition) { throw Error(lazyMessage == null ? "Failed requirement." : "${lazyMessage()}") }
+  if (!condition) { throw IllegalArgumentException(lazyMessage == null ? "Failed requirement." : "${lazyMessage()}") }
 }
 
 fun check(condition : bool, lazyMessage : (() -> any?)? = null) {
-  if (!condition) { throw Error(lazyMessage == null ? "Check failed." : "${lazyMessage()}") }
+  if (!condition) { throw IllegalStateException(lazyMessage == null ? "Check failed." : "${lazyMessage()}") }
 }
 
 fun <T> requireNotNull(value : T?, lazyMessage : (() -> any?)? = null) : T {
-  if (value == null) { throw Error(lazyMessage == null ? "Required value was null." : "${lazyMessage()}") }
+  if (value == null) { throw IllegalArgumentException(lazyMessage == null ? "Required value was null." : "${lazyMessage()}") }
   return value
 }
 
 fun <T> checkNotNull(value : T?, lazyMessage : (() -> any?)? = null) : T {
-  if (value == null) { throw Error(lazyMessage == null ? "Required value was null." : "${lazyMessage()}") }
+  if (value == null) { throw IllegalStateException(lazyMessage == null ? "Required value was null." : "${lazyMessage()}") }
   return value
 }
 
 fun error(message : any?) : nothing {
-  throw Error("$message")
+  throw IllegalStateException("$message")
 }
+
+// Something to close when it is done with (D113): a stream, a socket. A class of someone
+// else's that has a close() is fitted to it with extend (D33).
+interface AutoCloseable {
+  fun close()
+}
+
+// Runs the block on this and closes it afterwards, however the block ends: at its end, by a
+// return, or by an exception (D113). Copied in where it is called (D59).
+inline fun <T : AutoCloseable, R> T.use(block : (T) -> R) : R {
+  try {
+    return block(this)
+  } finally {
+    this.close()
+  }
+}
+
+// Throws a NotImplementedError: for what is not written yet, as Kotlin's TODO().
+fun TODO(reason : string = "") : nothing => throw NotImplementedError(reason.isEmpty() ? "an operation is not implemented" : "an operation is not implemented: $reason")
 
 // `a to b` is Pair(a, b) (D72).
 inline infix fun <A, B> A.to(that : B) : Pair<A, B> => Pair(this, that)

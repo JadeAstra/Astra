@@ -59,6 +59,9 @@ struct TypeAnnotation : Node {
     std::vector<TypeAnnotation> result;    // one when it is a function type, otherwise empty
     std::vector<TypeAnnotation> receiver;  // one for `Grid.() -> unit`, otherwise empty
     bool isSuspend = false;                // `suspend () -> unit`: of a function that may wait
+    // A function type's `throws IOException | TimeoutException`: the checked exceptions a
+    // function of it may throw (D52). None written, none.
+    std::vector<TypeAnnotation> throwsTypes;
 
     // The name is a type parameter of the class or function around it (`T` in `class Box<T>`):
     // any value fits it when the program runs.
@@ -111,6 +114,11 @@ struct FunctionDecl : Node {
     // Written `mutating`, in a value type (M6.6 part 4): it may give the value's var fields new
     // values, and is called on a place, which holds the result.
     bool isMutating = false;
+
+    // `throws IOException | TimeoutException` written after the result type (D54): the checked
+    // exceptions it may throw, which callers handle. Required on a library's public functions
+    // and where there is no body; anywhere else a check.
+    std::vector<TypeAnnotation> throwsTypes;
 
     // Written `infix` (D72): a member or an extension of one parameter, called `a name b`.
     bool isInfix = false;

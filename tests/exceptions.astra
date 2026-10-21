@@ -1,0 +1,63 @@
+// What can be thrown (D35): Java's tree. The VM's own errors are of its classes, a bare catch
+// takes every Exception and no Error (D151), and use { } closes what it is given (D113).
+
+fun kind(block : () -> unit) : string {
+  try {
+    block()
+    return "nothing"
+  } catch (e : Throwable) {
+    return type(e)
+  }
+}
+val unknown = { value -> value }
+val items = [1, 2]
+print(kind { items[5] }, kind { 1 / unknown(0) })                 // expect: IndexOutOfBoundsException ArithmeticException
+val missing : int? = unknown(null)
+print(kind { missing!! }, kind { unknown("a") as int })           // expect: NullPointerException ClassCastException
+print(kind { "abc".toInt() }, kind { listOf<int>().first() })     // expect: NumberFormatException NoSuchElementException
+print(kind { require(false) }, kind { check(false) }, kind { error("no") })   // expect: IllegalArgumentException IllegalStateException IllegalStateException
+print(kind { items.frozen().toOpenList(); (items.frozen() as any as open List<int>).add(3) })   // expect: UnsupportedOperationException
+print(kind { int.maxValue + unknown(1) }, kind { assert(false) }, kind { TODO("later") })   // expect: ArithmeticException AssertionError NotImplementedError
+
+// The tree.
+val e = IOException("disk")
+print(e is Exception, e is RuntimeException, IllegalStateException() is RuntimeException, StackOverflowError() is Exception)   // expect: true false true false
+print(e, Exception(), IOException("outer", e).cause)              // expect: IOException: disk Exception IOException: disk
+
+// A bare catch takes every Exception, and not an Error, which is caught where it is named.
+fun deep(n : int) : int => 1 + deep(n + 1)
+try {
+  try { deep(0) } catch (e) { print("not here") }
+} catch (e : StackOverflowError) {
+  print("an Error passes a bare catch:", e.message)                // expect: an Error passes a bare catch: stack overflow
+}
+
+// Clauses are tried in order; the first whose class fits takes it.
+fun which(t : Throwable) : string {
+  try {
+    throw t
+  } catch (e : IOException) {
+    return "io"
+  } catch (e : IllegalArgumentException) {
+    return "argument"
+  } catch (e) {
+    return "other " + type(e)
+  } catch (e : Error) {
+    return "error"
+  }
+}
+print(which(IOException()), which(NumberFormatException()), which(IllegalStateException()), which(InternalError()))   // expect: io argument other IllegalStateException error
+
+// use { } closes the resource however its block ends.
+class Res(val name : string) : AutoCloseable {
+  override fun close() { print("closed", name) }
+}
+fun firstLetter(name : string) : string {
+  Res(name).use { r -> return r.name[0..<1] }
+}
+print(firstLetter("alpha"))                                       // expect: closed alpha
+// expect: a
+print(Res("beta").use { it.name.upper() })                        // expect: closed beta
+// expect: BETA
+try { Res("gamma").use { throw IllegalStateException("broke") } } catch (e) { print(e.message) }   // expect: closed gamma
+// expect: broke

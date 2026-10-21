@@ -65,19 +65,20 @@ class Result<T> {
 
   static {
     fun <T> success(value : T) : Result<T> => Result<T>(true, value)
-    fun <T> failure(error : any?) : Result<T> => Result<T>(false, error)
+    fun <T> failure(error : Throwable) : Result<T> => Result<T>(false, error)
   }
   val isSuccess : bool
     get() => ok
   val isFailure : bool
     get() => !ok
   fun getOrNull() : T? => ok ? held as T : null
-  fun exceptionOrNull() : any? => ok ? null : held
+  fun exceptionOrNull() : Throwable? => ok ? null : held as Throwable
   fun getOrDefault(defaultValue : T) : T => ok ? held as T : defaultValue
-  fun getOrElse(onFailure : (any?) -> T) : T => ok ? held as T : onFailure(held)
+  fun getOrElse(onFailure : (Throwable) -> T) : T => ok ? held as T : onFailure(held as Throwable)
 
   fun getOrThrow() : T {
-    if (!ok) { throw held }
+    // What it holds was caught where it was thrown; given again, it is not checked a second time.
+    if (!ok) { __rethrow(held as Throwable) }
     return held as T
   }
 
@@ -86,8 +87,8 @@ class Result<T> {
     return this
   }
 
-  fun onFailure(action : (any?) -> unit) : Result<T> {
-    if (!ok) { action(held) }
+  fun onFailure(action : (Throwable) -> unit) : Result<T> {
+    if (!ok) { action(held as Throwable) }
     return this
   }
 
@@ -126,7 +127,7 @@ class Continuation {
     handler(Result.success<any?>(value))
   }
 
-  fun resumeWithException(error : any?) {
+  fun resumeWithException(error : Throwable) {
     handler(Result.failure<any?>(error))
   }
 }
@@ -162,12 +163,13 @@ suspend fun suspendCoroutine(block : (Continuation) -> unit) : any? {
   val flow = __flow.current()
   if (flow == null) {
     if (__loop.isLoopThread()) {
-      throw Error("suspendCoroutine was called outside a flow on the main thread, which would stop the event loop that " +
+      throw IllegalStateException("suspendCoroutine was called outside a flow on the main thread, which would stop the event loop that " +
                   "is to bring the answer; start a flow with startCoroutine { ... }")
     }
     val answer = Future<Result<any?>>()
     block(Continuation { result -> answer.complete(result) })
-    return answer.get().getOrThrow()
+    val outcome : Result<any?> = try { answer.get() } catch (e : ExecutionException) { __rethrow(e.cause!!) }
+    return outcome.getOrThrow()
   }
   val wait = __flow.prepare()
   block(Continuation { result ->

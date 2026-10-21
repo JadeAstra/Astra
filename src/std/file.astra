@@ -20,9 +20,9 @@ class File {
 
   static {
     // By path, without making a File: File.read("a.txt")
-    fun read(path : string) : string => __file.read(path)
-    fun write(path : string, text : string) { __file.write(path, text) }
-    fun append(path : string, text : string) { __file.append(path, text) }
+    fun read(path : string) : string throws IOException => __file.read(path)
+    fun write(path : string, text : string) throws IOException { __file.write(path, text) }
+    fun append(path : string, text : string) throws IOException { __file.append(path, text) }
     fun exists(path : string) : bool => __file.exists(path)
     val separator : string = __file.separator
   }
@@ -91,10 +91,10 @@ class File {
   // -- Reading and writing --
   // Text is UTF-8. Each call reads or writes the whole file.
 
-  fun readText() : string => __file.read(this.path)
+  fun readText() : string throws IOException => __file.read(this.path)
 
   // The lines of the file, without their line ends.
-  fun readLines() : open List<string> {
+  fun readLines() : open List<string> throws IOException {
     val text : string = __file.read(this.path)
     val lines = text.lines()
     // A file that ends in a line end has no empty last line.
@@ -102,29 +102,29 @@ class File {
     return lines
   }
 
-  fun forEachLine(action : (string) -> unit) {
+  fun forEachLine(action : (string) -> unit) throws IOException {
     for line in readLines() { action(line) }
   }
 
-  fun readBytes() : Bytes => __file.readBytes(this.path)
+  fun readBytes() : Bytes throws IOException => __file.readBytes(this.path)
 
   // A piece at a time: a stream to read the file from, and one to write it to. Close each
   // when it is done with, or let use { } do it: file.inputStream().use { it.readLine() }
-  fun inputStream() : InputStream => InputStream(__io.open(this.path, "r"))
-  fun outputStream(append : bool = false) : OutputStream => OutputStream(__io.open(this.path, append ? "a" : "w"))
-  fun bufferedReader(charset : any? = null) : InputStream => inputStream()
-  fun reader(charset : any? = null) : InputStream => inputStream()
-  fun bufferedWriter(charset : any? = null) : OutputStream => outputStream()
-  fun writer(charset : any? = null) : OutputStream => outputStream()
-  fun printWriter(charset : any? = null) : OutputStream => outputStream()
+  fun inputStream() : InputStream throws IOException => InputStream(__io.open(this.path, "r"))
+  fun outputStream(append : bool = false) : OutputStream throws IOException => OutputStream(__io.open(this.path, append ? "a" : "w"))
+  fun bufferedReader(charset : any? = null) : InputStream throws IOException => inputStream()
+  fun reader(charset : any? = null) : InputStream throws IOException => inputStream()
+  fun bufferedWriter(charset : any? = null) : OutputStream throws IOException => outputStream()
+  fun writer(charset : any? = null) : OutputStream throws IOException => outputStream()
+  fun printWriter(charset : any? = null) : OutputStream throws IOException => outputStream()
 
   // Runs the block on the file's lines.
-  fun <R> useLines(block : (List<string>) -> R) : R => block(readLines())
+  fun <R> useLines(block : (List<string>) -> R) : R throws IOException => block(readLines())
 
-  fun writeText(text : string) { __file.write(this.path, text) }
-  fun appendText(text : string) { __file.append(this.path, text) }
-  fun writeBytes(data : Bytes) { __file.writeBytes(this.path, data) }
-  fun appendBytes(data : Bytes) { __file.appendBytes(this.path, data) }
+  fun writeText(text : string) throws IOException { __file.write(this.path, text) }
+  fun appendText(text : string) throws IOException { __file.append(this.path, text) }
+  fun writeBytes(data : Bytes) throws IOException { __file.writeBytes(this.path, data) }
+  fun appendBytes(data : Bytes) throws IOException { __file.appendBytes(this.path, data) }
 
   // -- Changing what is on disk --
 
@@ -137,7 +137,7 @@ class File {
 
   // Gives the File it was copied to. It is an error if that is there already, unless
   // `overwrite` is true.
-  fun copyTo(target : any, overwrite : bool = false) : File {
+  fun copyTo(target : any, overwrite : bool = false) : File throws IOException {
     val to = target is File ? target : File(target)
     __file.copy(this.path, to.path, overwrite)
     return to

@@ -244,7 +244,7 @@ print(drawn.getRGB(3, 3) == 0xFF0000FF, drawn.getRGB(9, 9) == 0xFFFF0000, drawn.
 val sub = drawn.getSubimage(2, 2, 4, 4)
 print(sub, sub.getRGB(1, 1) == 0xFF0000FF, sub.getRGB(0, 0) == 0xFFFFFF00, BufferedImage.fromPicture(drawn.toPicture()).getRGB(9, 9) == 0xFFFF0000)   // expect: BufferedImage(4 x 4) true true true
 fun attempt(block : () -> any?) {
-  try { block(); return "no error" } catch (e) { return e.message }
+  try { block(); return "no error" } catch (e) { return "${e.message}" }
 }
 print(attempt { drawn.getRGB(10, 0) })       // expect: pixel (10, 0) is outside the picture, which is 10 by 10
 print(attempt { BufferedImage(0, 5) })       // expect: a BufferedImage is at least 1 pixel each way, not 0 by 5

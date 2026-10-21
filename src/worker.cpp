@@ -46,7 +46,7 @@ void putSize(std::string& out, size_t size) {
 }
 
 void encode(VM& vm, Value v, std::string& out, int depth) {
-    if (depth > 64) throw vm.runtimeError("a message is nested too deeply (or holds itself)");
+    if (depth > 64) throw vm.runtimeError(Thrown::IllegalArgumentException, "a message is nested too deeply (or holds itself)");
     if (v.isSmall() || v.isRef()) v = vm.boxed(v);  // a value of a value type, as a box (M6.6 part 5)
     switch (v.kind) {
         case ValueKind::Null: out += kNull; return;
@@ -94,7 +94,7 @@ void encode(VM& vm, Value v, std::string& out, int depth) {
             encode(vm, entry.value, out, depth + 1);
         }
     } else {
-        throw vm.runtimeError("a message to or from a worker can hold numbers, strings, booleans, null, bytes, and lists and maps of those, not a value of type " +
+        throw vm.runtimeError(Thrown::IllegalArgumentException, "a message to or from a worker can hold numbers, strings, booleans, null, bytes, and lists and maps of those, not a value of type " +
                               vm.typeName(v) + ": the two share no objects");
     }
 }
@@ -283,9 +283,9 @@ void registerWorkers(VM& vm) {
         const std::string spec = args[0].isString() ? asString(args[0])->utf8() : std::string();
         const size_t second = spec.size() > 1 && spec[0] == '\x01' ? spec.find('\x01', 1) : std::string::npos;
         if (second == std::string::npos)
-            throw vm.runtimeError("a worker's script is named by a string written in the call itself, as in Worker(\"physics.astra\"), "
+            throw vm.runtimeError(Thrown::IllegalArgumentException, "a worker's script is named by a string written in the call itself, as in Worker(\"physics.astra\"), "
                                   "so that the script is built into the program");
-        if (!vm.programImage) throw vm.runtimeError("workers cannot be started here");
+        if (!vm.programImage) throw vm.runtimeError(Thrown::IllegalStateException, "workers cannot be started here");
 
         auto link = std::make_shared<WorkerLink>();
         link->parent = &vm;
@@ -342,7 +342,7 @@ void registerWorkers(VM& vm) {
 
     def("send", 1, 1, [](VM& vm, int, Value* args) -> Value {
         std::shared_ptr<WorkerLink> link = vm.workerLink;
-        if (link == nullptr) throw vm.runtimeError("this program is not a worker: it has no parent to send to");
+        if (link == nullptr) throw vm.runtimeError(Thrown::IllegalStateException, "this program is not a worker: it has no parent to send to");
         std::string data;
         encode(vm, args[0], data, 0);
         std::lock_guard<std::mutex> hold(link->mutex);

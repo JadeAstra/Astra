@@ -16,7 +16,7 @@ interface Shape {
 abstract class Tool { abstract fun use() }
 
 fun attempt(make : () -> any?) {
-  try { make() } catch (e) { return e.message }
+  try { make() } catch (e) { return "${e.message}" }
   return "ok"
 }
 

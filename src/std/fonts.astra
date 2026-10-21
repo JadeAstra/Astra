@@ -154,7 +154,7 @@ class TextFont {
       fakeItalic = italic and !family.isItalic
     } else {
       val found = __text.find("$family", wanted, italic) ?: __text.find("SansSerif", wanted, italic)
-      if (found == null) { throw Error("no fonts are installed") }
+      if (found == null) { throw IllegalStateException("no fonts are installed") }
       this.typeface = Typeface(found[0])
       set = found[1]
       fakeBold = found[2]
@@ -220,7 +220,7 @@ class Picture {
     const clear = 0
     fun rgb(red : int, green : int, blue : int, alpha : int = 255) : int => (alpha << 24) | (red << 16) | (green << 8) | blue
     // Reads a PNG file, or the bytes of one.
-    fun load(source : any) : Picture {
+    fun load(source : any) : Picture throws IOException {
       val data = source is Bytes ? source : (source is File ? source : File(source)).readBytes()
       val read = __text.decodePng(data)
       return Picture(read[0], read[1], 0, read[2])
@@ -228,11 +228,11 @@ class Picture {
   }
   // A picture of one colour: clear, unless another is given.
   fun init(width : int, height : int, color : int = 0, pixels : Bytes? = null) {
-    if (width < 0 or height < 0 or width > 32768 or height > 32768) { throw Error("a picture is from 0 to 32768 pixels each way, not $width by $height") }
+    if (width < 0 or height < 0 or width > 32768 or height > 32768) { throw IllegalArgumentException("a picture is from 0 to 32768 pixels each way, not $width by $height") }
     this.width = width
     this.height = height
     if (pixels != null) {
-      if (pixels.size != width * height * 4) { throw Error("the pixels do not fit a picture of $width by $height") }
+      if (pixels.size != width * height * 4) { throw IllegalArgumentException("the pixels do not fit a picture of $width by $height") }
       this.pixels = pixels
     } else {
       this.pixels = Bytes(width * height * 4)
@@ -241,7 +241,7 @@ class Picture {
   }
 
   // Writes the picture as a PNG file. Nothing is lost: loading it gives the same pixels.
-  fun save(path : any) {
+  fun save(path : any) throws IOException {
     (path is File ? path : File(path)).writeBytes(__text.encodePng(pixels, width, height))
   }
 

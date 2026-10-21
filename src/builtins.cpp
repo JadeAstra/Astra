@@ -100,7 +100,7 @@ bool parseFloat(std::string_view s, double& out) {
 
 int64_t floatToInt(VM& vm, double d) {
     if (!(d >= -9223372036854775808.0 && d < 9223372036854775808.0))
-        throw vm.runtimeError("number " + formatFloat(d) + " does not fit in an int");
+        throw vm.runtimeError(Thrown::ArithmeticException, "number " + formatFloat(d) + " does not fit in an int");
     return static_cast<int64_t>(d);
 }
 
@@ -135,7 +135,7 @@ bool defaultLess(VM& vm, const Value& a, const Value& b) {
     if ((a.isByte() || a.isInt()) && (b.isByte() || b.isInt())) return a.as.i < b.as.i;
     if ((a.isByte() || a.isNumber()) && (b.isByte() || b.isNumber()))
         return (a.isFloat() ? a.as.d : static_cast<double>(a.as.i)) < (b.isFloat() ? b.as.d : static_cast<double>(b.as.i));
-    throw vm.runtimeError("cannot compare " + vm.typeName(a) + " and " + vm.typeName(b) + " while sorting");
+    throw vm.runtimeError(Thrown::ClassCastException, "cannot compare " + vm.typeName(a) + " and " + vm.typeName(b) + " while sorting");
 }
 
 // Stable merge sort of items[lo, hi). Hand-written because the comparator is user code:
@@ -162,7 +162,7 @@ int64_t integerPower(VM& vm, int64_t base, int64_t exponent) {
     for (int64_t e = exponent; e != 0; e >>= 1) {
         if (e & 1) {
             if (bOverflowed || mulOverflows(result, b, result))
-                throw vm.runtimeError(std::to_string(base) + " to the power " + std::to_string(exponent) + " does not fit in an int");
+                throw vm.runtimeError(Thrown::ArithmeticException, std::to_string(base) + " to the power " + std::to_string(exponent) + " does not fit in an int");
         }
         if (e > 1 && !bOverflowed) bOverflowed = mulOverflows(b, b, b);
     }
@@ -178,7 +178,7 @@ void registerGlobals(VM& vm) {
     // declaration in src/std/builtins.astra. The standard library calls it as it loads; the
     // type is "" for a function.
     vm.defineNative("__nameParams", 3, 3, [](VM& vm, int, Value* args) -> Value {
-        if (!args[0].isString() || !args[1].isString() || !args[2].isObjType(ObjType::List)) throw vm.runtimeError("__nameParams: bad arguments");
+        if (!args[0].isString() || !args[1].isString() || !args[2].isObjType(ObjType::List)) throw vm.runtimeError(Thrown::InternalError, "__nameParams: bad arguments");
         std::vector<std::string> params;
         for (const Value& p : vm.listCopy(asList(args[2])))
             if (p.isString()) params.push_back(asString(p)->utf8());
@@ -253,13 +253,21 @@ void registerGlobals(VM& vm) {
             end = vm.toInt(args[1], "range end");
             if (argc == 3) step = vm.toInt(args[2], "range step");
         }
-        if (step == 0) throw vm.runtimeError("range step cannot be zero");
+        if (step == 0) throw vm.runtimeError(Thrown::IllegalArgumentException, "range step cannot be zero");
         return Value::object(vm.alloc<ObjRange>(start, end, step, false));
+    });
+
+    // Throws what it is given as it is: the standard library's, for a failure caught where it was
+    // thrown and given again later, whose class the compiler cannot know (D35).
+    vm.defineNative("__rethrow", 1, 1, [](VM&, int, Value* args) -> Value {
+        AstraThrow thrown;
+        thrown.value = args[0];
+        throw thrown;
     });
 
     vm.defineNative("assert", 1, 2, [](VM& vm, int argc, Value* args) -> Value {
         if (args[0].truthy()) return Value::null();
-        throw vm.runtimeError(argc > 1 ? vm.stringify(args[1]) : "assertion failed");
+        throw vm.runtimeError(Thrown::AssertionError, argc > 1 ? vm.stringify(args[1]) : "assertion failed");
     });
 
     vm.defineNative("args", 0, 0, [](VM& vm, int, Value*) -> Value {
@@ -375,7 +383,7 @@ void registerMath(VM& vm) {
     def("randomInt", 2, 2, [](VM& vm, int, Value* args) -> Value {
         int64_t lo = vm.toInt(args[0], "Math.randomInt() lower bound");
         int64_t hi = vm.toInt(args[1], "Math.randomInt() upper bound");
-        if (lo > hi) throw vm.runtimeError("Math.randomInt() lower bound is greater than the upper bound");
+        if (lo > hi) throw vm.runtimeError(Thrown::IllegalArgumentException, "Math.randomInt() lower bound is greater than the upper bound");
         return Value::integer(std::uniform_int_distribution<int64_t>(lo, hi)(vm.rng));
     });
 
@@ -497,7 +505,7 @@ void registerStringMethods(VM& vm) {
     vm.defineMethod(T, "repeat", 1, 1, [](VM& vm, Value self, int, Value* args) -> Value {
         const std::string& s = asString(self)->utf8();
         int64_t times = vm.toInt(args[0], "repeat count");
-        if (times < 0) throw vm.runtimeError("repeat count cannot be negative");
+        if (times < 0) throw vm.runtimeError(Thrown::IllegalArgumentException, "repeat count cannot be negative");
         // As large as memory allows; a size past what can be counted cannot be asked for at all.
         if (!s.empty() && static_cast<uint64_t>(times) > SIZE_MAX / s.size()) throw vm.outOfMemory();
         vm.checkRoomFor(static_cast<uint64_t>(times) * s.size());
@@ -615,7 +623,7 @@ void registerListMethods(VM& vm) {
             less = [&vm, comparator](const Value& a, const Value& b) {
                 Value pair[2] = {a, b};
                 Value order = vm.call(comparator, 2, pair);
-                if (!order.isNumber()) throw vm.runtimeError("sort comparator must return a number, got " + vm.typeName(order));
+                if (!order.isNumber()) throw vm.runtimeError(Thrown::ClassCastException, "sort comparator must return a number, got " + vm.typeName(order));
                 return order.toDouble() < 0;
             };
         }
@@ -624,7 +632,7 @@ void registerListMethods(VM& vm) {
         if (!list->packed()) {
             list->values() = std::move(items);
         } else {
-            if (list->size() != items.size()) throw vm.runtimeError("the list was changed while it was sorted");
+            if (list->size() != items.size()) throw vm.runtimeError(Thrown::ConcurrentModificationException, "the list was changed while it was sorted");
             for (size_t i = 0; i < items.size(); i++) vm.listSet(list, i, items[i]);
         }
         return self;
@@ -650,7 +658,7 @@ void registerMapMethods(VM& vm) {
         const Value entry = args[0];
         const bool whole = entry.isObjType(ObjType::Value) || entry.isSmall() || entry.isRef();
         if (!whole)
-            throw vm.runtimeError("map.contains(...) asks for a whole entry, (key to value); for a key write map.keys.contains(" +
+            throw vm.runtimeError(Thrown::IllegalArgumentException, "map.contains(...) asks for a whole entry, (key to value); for a key write map.keys.contains(" +
                                   vm.repr(entry) + "), or " + vm.repr(entry) + " in map.keys");
         const Value key = vm.componentOf(entry, 0);
         TempRoot keepKey(vm, key);
@@ -712,7 +720,7 @@ void registerRangeMethods(VM& vm) {
 // A byte given as one, or as an int from 0 to 255 by code that does not say its types.
 uint8_t byteArgument(VM& vm, Value v) {
     if (v.isByte()) return static_cast<uint8_t>(v.as.i);
-    if (!v.isInt() || v.as.i < 0 || v.as.i > 255) throw vm.runtimeError("a byte is a whole number from 0 to 255, not " + vm.stringify(v));
+    if (!v.isInt() || v.as.i < 0 || v.as.i > 255) throw vm.runtimeError(Thrown::IllegalArgumentException, "a byte is a whole number from 0 to 255, not " + vm.stringify(v));
     return static_cast<uint8_t>(v.as.i);
 }
 
@@ -720,7 +728,7 @@ uint8_t byteArgument(VM& vm, Value v) {
 size_t binaryAt(VM& vm, const std::vector<uint8_t>& data, Value at, size_t size) {
     const int64_t i = vm.toInt(at, "position");
     if (i < 0 || static_cast<uint64_t>(i) > data.size() || data.size() - static_cast<size_t>(i) < size)
-        throw vm.runtimeError("a " + std::to_string(size * 8) + "-bit number at " + std::to_string(i) + " runs past the end of " +
+        throw vm.runtimeError(Thrown::IndexOutOfBoundsException, "a " + std::to_string(size * 8) + "-bit number at " + std::to_string(i) + " runs past the end of " +
                               std::to_string(data.size()) + " bytes");
     return static_cast<size_t>(i);
 }
@@ -769,7 +777,7 @@ Value writeNumber(VM& vm, Value self, int argc, Value* args) {
         const int64_t low = kind == Kind::Unsigned ? 0 : Size == 2 ? -32768 : -2147483648LL;
         const int64_t high = kind == Kind::Unsigned ? (Size == 2 ? 65535 : 4294967295LL) : Size == 2 ? 32767 : 2147483647;
         if (n < low || n > high)
-            throw vm.runtimeError(std::to_string(n) + " does not fit in " + std::to_string(Size * 8) + " bits " +
+            throw vm.runtimeError(Thrown::ArithmeticException, std::to_string(n) + " does not fit in " + std::to_string(Size * 8) + " bits " +
                                   (kind == Kind::Unsigned ? "unsigned" : "signed") + ", which hold " + std::to_string(low) + " to " +
                                   std::to_string(high));
         bits = static_cast<uint64_t>(n);
@@ -784,7 +792,7 @@ void registerBytes(VM& vm) {
         ObjBytes* made = vm.alloc<ObjBytes>();
         Value from = args[0];
         if (from.isInt()) {
-            if (from.as.i < 0) throw vm.runtimeError("bytes() cannot make a negative number of bytes");
+            if (from.as.i < 0) throw vm.runtimeError(Thrown::IllegalArgumentException, "bytes() cannot make a negative number of bytes");
             vm.checkRoomFor(static_cast<uint64_t>(from.as.i));
             made->data.assign(static_cast<size_t>(from.as.i), 0);
         } else if (from.isObjType(ObjType::List)) {
@@ -792,7 +800,7 @@ void registerBytes(VM& vm) {
         } else if (from.isObjType(ObjType::Bytes)) {
             made->data = asBytes(from)->data;
         } else {
-            throw vm.runtimeError("bytes() takes a size, a list of numbers or other bytes, not a value of type " + vm.typeName(from) +
+            throw vm.runtimeError(Thrown::IllegalArgumentException, "bytes() takes a size, a list of numbers or other bytes, not a value of type " + vm.typeName(from) +
                                   (from.isString() ? "; text becomes bytes with toBytes()" : ""));
         }
         vm.account(made->data.size());
@@ -904,7 +912,7 @@ Value VM::numeric(uint8_t which, const Value* args) {
         case NumericOp::ToFloat: return Value::number(toNumber(a, "the number"));
         case NumericOp::RoundToInt:
             if (a.isInt()) return a;
-            if (std::isnan(toNumber(a, "the number"))) throw runtimeError("cannot round NaN to a whole number");
+            if (std::isnan(toNumber(a, "the number"))) throw runtimeError(Thrown::ArithmeticException, "cannot round NaN to a whole number");
             return Value::integer(floatToInt(*this, std::floor(a.as.d + 0.5)));
         case NumericOp::IsNaN: return Value::boolean(a.isFloat() && std::isnan(a.as.d));
         case NumericOp::IsInfinite: return Value::boolean(a.isFloat() && std::isinf(a.as.d));
@@ -935,7 +943,7 @@ Value VM::numeric(uint8_t which, const Value* args) {
             const double x = toNumber(a, "Math.max() argument"), y = toNumber(b, "Math.max() argument");
             return y > x ? b : a;
         }
-        default: throw runtimeError("invalid bytecode: unknown numeric operation");
+        default: throw runtimeError(Thrown::InternalError, "invalid bytecode: unknown numeric operation");
     }
 }
 
