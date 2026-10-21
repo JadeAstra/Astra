@@ -1,0 +1,6 @@
+// Durations (D90): a time says its unit.
+print(16.milliseconds, 1.5.seconds, 2.minutes, 90.seconds, 250.microseconds, 7.nanoseconds, 1.seconds / 60)   // expect: 16ms 1.5s 2m 1m 30s 250us 7ns 16.666666ms
+print(1.7.seconds, 3.days + 2.hours, -5.milliseconds, Duration.zero, 1.seconds > 999.milliseconds)   // expect: 1.7s 3d 2h -5ms 0s true
+print(1.5.seconds.inMilliseconds, 2.minutes.inSeconds, (1.seconds * 3).inWholeMilliseconds, 1.minutes / 1.seconds)   // expect: 1500.0 120.0 3000 60.0
+print([3.seconds, 1.seconds, 2.seconds].sorted(), 1.seconds == 1000.milliseconds, (2.seconds - 3.seconds).isNegative, Duration.zero.isZero)   // expect: [1s, 2s, 3s] true true true
+print(1.hours.inMinutes, 36.hours.inDays, 1.milliseconds.inMicroseconds, 1.seconds.inNanoseconds)   // expect: 60.0 1.5 1000.0 1000000000

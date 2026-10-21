@@ -15,8 +15,12 @@
 // say, gets an error the first time it runs: it never damages anything. Results come back by
 // being returned: map, filter, sumOf and the rest put them together afterwards.
 //
-// Nothing waits inside a section: no lock, no reading or writing, no setting a flow aside.
-// The section itself is an ordinary call, which returns when every core has finished.
+// Nothing waits inside a section: no lock, no reading or writing, no setting a task aside.
+// The section itself is an ordinary call, which returns when every core has finished. A
+// section may start sections of its own, and parallel({ a }, { b }) runs functions at once
+// (D96); the cores share the work out between them as they come free. What every core may
+// change is an Atomic, an `atomic var` field, a SharedMap or a SharedSet (D85, D92, D94);
+// gather gives each core a result of its own, merged at the end (D93).
 // The work is done by the built-in __parallel (parallel.cpp).
 
 class ParallelStream<T> {
@@ -76,6 +80,43 @@ class ParallelStream<T> {
   fun toSet() : open Set<T> => Set(items)
   fun sorted() : open List<T> => items.sorted()
   fun join(separator : string = ", ") : string => items.join(separator)
+
+  // What the function gives for each item, every list of them joined into one, in order.
+  fun <R> flatMap(transform : (T) -> List<R>) : ParallelStream<R> {
+    val made : List<List<R>> = __parallel.run(items, transform, true)
+    return ParallelStream(made.flatten())
+  }
+
+  // One answer from every item, as on a list: the items combined two at a time, each core's
+  // share on its own, then the cores' answers. `operation` has to give the same whichever way
+  // its operands are grouped, as + and max do.
+  fun reduce(operation : (T, T) -> T) : T {
+    if (items.isEmpty()) { throw UnsupportedOperationException("an empty stream cannot be reduced") }
+    val parts : List<List<T>> = __parallel.gather(items, {
+      val part : open List<T> = []
+      part
+    }, { part, item -> (part as open List<T>).add(item) })
+    val answers = parts.filter { it.isNotEmpty() }.parallelStream().map { it.reduce(operation) }.toList()
+    return answers.reduce(operation)
+  }
+
+  // One answer from every item, starting from `initial`, as on a list: the items in order.
+  fun <R> fold(initial : R, operation : (R, T) -> R) : R => items.fold(initial, operation)
+
+  // A result of its own for each core, made empty by `into`, every item added to one of them by
+  // `each`, and the results merged into the first by `merge` once every core is done (D93).
+  // Nothing is shared while the cores work:
+  //
+  //   val counts = words.parallelStream().gather(
+  //     into = { val counts : open Map<string, int> = {:}; counts },
+  //     each = { counts, word -> counts[word] = (counts[word] ?: 0) + 1 },
+  //     merge = { a, b -> for ((word, n) in b) { a[word] = (a[word] ?: 0) + n } })
+  fun <R> gather(into : () -> R, each : (R, T) -> unit, merge : (R, R) -> unit) : R {
+    val parts : List<R> = __parallel.gather(items, into, each)
+    val first = parts[0]
+    for (i in 1..<parts.size) { merge(first, parts[i]) }
+    return first
+  }
 }
 
 fun <T> List<T>.parallelStream() : ParallelStream<T> => ParallelStream(this)
@@ -87,6 +128,169 @@ fun Range.parallelStream() : ParallelStream<int> => ParallelStream(this.toList()
 //   pixels.parallelChunks { positions -> for i in positions { pixels[i] = shade(i) } }
 fun Bytes.parallelChunks(action : (Range) -> unit) {
   __parallel.chunks(this, action)
+}
+
+// The same for a list of numbers or of values (D96): each core writes the positions of its part.
+fun <T> open List<T>.parallelChunks(action : (Range) -> unit) {
+  __parallel.chunks(this, action)
+}
+
+// Runs the functions at once, on whatever cores are free, and gives what they return when all
+// are done, in order (D96). What a function captures every one may read and none may change; a
+// view of a list from splitAt that a function captures is that function's own to write.
+//
+//   val (left, right) = parallel({ count(a) }, { count(b) })
+fun <T> parallel(vararg work : () -> T) : List<T> => __parallel.functions(work)
+
+// The list sorted in place, its parts on every core (D96): in their natural order, as sort()
+// gives it, an object's by its compareTo.
+fun <T> open List<T>.parallelSort() {
+  if (size < 8192 or availableProcessors() == 1) {
+    sort()
+    return
+  }
+  if (!__parallel.owns(this)) { throw IllegalStateException("parallelSort changes the list, which this code may only read") }
+  __parallelSort(ListView(__viewKey, this, 0, size))
+}
+
+fun <T> __parallelSort(view : ListView<T>) {
+  if (view.size < 8192) {
+    view.sort()
+    return
+  }
+  val mid = view.size / 2
+  view.splitAt(mid) { left, right -> parallel({ __parallelSort(left) }, { __parallelSort(right) }) }
+  __parallel.viewSort(view, mid)
+}
+
+// ---- Views of a list (D96) ----
+// A stretch of a list, read and changed in place: what splitAt hands out. Two views from one
+// splitAt never overlap, so each may go to a function of its own in a parallel(...), which
+// writes through it whatever else is going on, and divide and conquer can be written in place:
+//
+//   fun increment(view : ListView<int>) {
+//     if (view.size < 1000) { for (i in view.indices) { view[i] += 1 } }
+//     else view.splitAt(view.size / 2) { left, right -> parallel({ increment(left) }, { increment(right) }) }
+//   }
+//   xs.splitAt(xs.size / 2) { left, right -> ... }
+class ListView<T> {
+  internal val list : open List<T>
+  internal val start : int
+  val size : int
+  internal var lent = false
+
+  // Made only by splitAt: two views can never overlap.
+  fun init(key : __ViewKey, list : open List<T>, start : int, size : int) {
+    this.list = list
+    this.start = start
+    this.size = size
+  }
+
+  op [](index : int) : T => __parallel.viewGet(this, index) as T
+  op []=(index : int, item : T) {
+    __parallel.viewSet(this, index, item)
+  }
+
+  val indices : Range
+    get() => 0..<size
+  fun isEmpty() : bool => size == 0
+
+  // Its first `mid` items and the rest, as two views, to the block; meanwhile this one is lent
+  // to them, and nothing is written through it.
+  fun splitAt(mid : int, block : (ListView<T>, ListView<T>) -> unit) {
+    if (mid < 0 or mid > size) { throw IndexOutOfBoundsException("a view of $size items is split at 0 to $size, not $mid") }
+    lent = true
+    try {
+      block(ListView(__viewKey, list, start, mid), ListView(__viewKey, list, start + mid, size - mid))
+    } finally {
+      lent = false
+    }
+  }
+
+  // Its items sorted in place, in their natural order.
+  fun sort() {
+    __parallel.viewSort(this, null)
+  }
+
+  fun toList() : open List<T> => List(size) { this[it] }
+  fun iterator() : List<T> => toList()
+  override fun toString() : string => "${toList()}"
+}
+
+// The key a ListView is made with, which only the standard library has.
+class __ViewKey
+val __viewKey = __ViewKey()
+
+// The list's first `mid` items and the rest, as two views that never overlap, to the block.
+fun <T> open List<T>.splitAt(mid : int, block : (ListView<T>, ListView<T>) -> unit) {
+  if (!__parallel.owns(this)) { throw IllegalStateException("splitAt hands out views to change the list through, and this code may only read it") }
+  ListView(__viewKey, this, 0, size).splitAt(mid, block)
+}
+
+// ---- Shared collections (D94) ----
+// A map and a set any core of a parallel section may change, each change done whole:
+//
+//   val seen = SharedSet<string>()
+//   pages.parallelStream().forEach { page -> for (link in page.links) { seen.add(link) } }
+//
+// Keys and values are what every core may read: values, text, frozen data, or objects not
+// changed in the section. There is no shared list: cores adding as they finish would give a
+// different order each run; map, flatMap and gather collect results in order, with nothing shared.
+
+class SharedMap<K, V> {
+  private val entries : any = __parallel.sharedMap()
+
+  op [](key : K) : V? => __parallel.sharedGet(entries, key) as V?
+  op []=(key : K, value : V) {
+    __parallel.sharedPut(entries, key, value)
+  }
+  fun get(key : K) : V? => __parallel.sharedGet(entries, key) as V?
+  // Sets the key's value, giving the one it had.
+  fun put(key : K, value : V) : V? => __parallel.sharedPut(entries, key, value) as V?
+  // Takes the key out, giving its value.
+  fun remove(key : K) : V? => __parallel.sharedRemove(entries, key) as V?
+  fun containsKey(key : K) : bool => __parallel.sharedHas(entries, key)
+  val size : int
+    get() => __parallel.sharedSize(entries)
+
+  // The key's value, made by `make` and put in if there is none: `make` may run on two cores
+  // at once for one key, and only one value is kept.
+  fun putIfAbsent(key : K, make : () -> V) : V {
+    val there = get(key)
+    if (there != null) { return there }
+    val made = make()
+    if (__parallel.sharedSwap(entries, key, null, made)) { return made }
+    return get(key)!!
+  }
+
+  // Sets the key's value to what `change` gives for the one it has (null for none), in one step:
+  // `change` may run more than once when cores contend. Gives the new value.
+  fun update(key : K, change : (V?) -> V) : V {
+    while (true) {
+      val old = get(key)
+      val made = change(old)
+      if (__parallel.sharedSwap(entries, key, old, made)) { return made }
+    }
+  }
+
+  // A copy of what it holds now, an ordinary map.
+  fun toMap() : open Map<K, V> => __parallel.sharedCopy(entries) as open Map<K, V>
+  override fun toString() : string => "${toMap()}"
+}
+
+class SharedSet<T> {
+  private val entries : any = __parallel.sharedMap()
+
+  // Adds the item: whether it was not there.
+  fun add(item : T) : bool => __parallel.sharedAdd(entries, item, true)
+  // Takes the item out: whether it was there.
+  fun remove(item : T) : bool => __parallel.sharedRemove(entries, item) != null
+  fun contains(item : T) : bool => __parallel.sharedHas(entries, item)
+  val size : int
+    get() => __parallel.sharedSize(entries)
+  // A copy of what it holds now, an ordinary set.
+  fun toSet() : open Set<T> => Set((__parallel.sharedCopy(entries) as Map<T, bool>).keys)
+  override fun toString() : string => "${toSet()}"
 }
 
 // How many cores a parallel section uses on this machine.

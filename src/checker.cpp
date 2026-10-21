@@ -291,7 +291,7 @@ struct Local {
 };
 
 // Why nothing may wait in some code, whatever the function around it says (R1).
-enum NoWait : uint8_t { CanWait, Getter, Setter, ToString, Equals, HashCode, ObjectMade, StaticValue, SortComparison, ParallelSection, LazyValue };
+enum NoWait : uint8_t { CanWait, Getter, Setter, ToString, Equals, HashCode, ObjectMade, StaticValue, SortComparison, ParallelSection, LazyValue, SequenceBlock };
 
 // One function, lambda or file top level being checked.
 struct FnCtx {
@@ -602,6 +602,45 @@ struct Checker::Impl {
             return false;
         };
         return walk(c);
+    }
+
+    // What a for over an object of a class goes through (Kotlin's protocol): an Iterator<T>
+    // gives Ts, and so does an object whose iterator() gives one; an iterator() giving a list or
+    // another built-in collection gives what that holds. A loop through an Iterator is noted for
+    // the compiler, which calls hasNext() and next() as it would any methods: a task may be set
+    // aside in them, as in a channel's.
+    std::unordered_map<const ForInStmt*, bool> protocolLoops;  // true: through the object's iterator()
+    Type iterationItem(const Type& over, const ForInStmt& loop) {
+        // An Iterator, or any object with hasNext() and next(), as Kotlin's convention has it.
+        auto itemOf = [&](const Type& t, Type& item) {
+            if (t.kind != Type::Class || t.cls == nullptr || t.nullable) return false;
+            Member has = lookupMember(t, "hasNext", true), next = lookupMember(t, "next", true);
+            if (has.methods.size() != 1 || next.methods.size() != 1) return false;
+            resolveFunc(next.methods[0]);
+            if (!next.methods[0]->params.empty()) return false;
+            item = readType(subst(resultOf(next.methods[0]), next.methodEnvs.empty() ? next.env : next.methodEnvs[0]));
+            return true;
+        };
+        Type item;
+        if (itemOf(over, item)) {
+            if (silent == 0) protocolLoops[&loop] = false;
+            return item;
+        }
+        Member m = lookupMember(withNull(over, false), "iterator", true);
+        if (m.methods.size() != 1) return unknownType();
+        resolveFunc(m.methods[0]);
+        if (!m.methods[0]->params.empty()) return unknownType();
+        const Type made = subst(resultOf(m.methods[0]), m.methodEnvs.empty() ? m.env : m.methodEnvs[0]);
+        if (itemOf(made, item)) {
+            if (silent == 0) protocolLoops[&loop] = true;
+            return item;
+        }
+        if (made.nullable) return unknownType();
+        if ((made.kind == Type::List || made.kind == Type::Set) && !made.args.empty()) return readType(made.args[0]);
+        if (made.kind == Type::Map) return mapEntryOf(made);
+        if (made.kind == Type::Range) return Type::of(Type::Int);
+        if (made.kind == Type::String) return Type::of(Type::Char);
+        return unknownType();
     }
 
     // A class type seen as one of the classes above it: `IntBox` as a `Box<int>`.
@@ -1331,6 +1370,7 @@ struct Checker::Impl {
                 for (size_t i = 0; i < k->typeParams.size(); i++)
                     t.args.push_back(i < a.args.size() ? resolve(a.args[i], u) : unknownType());
             } else {
+                if (std::string advice = removedName(n); !advice.empty()) report(a, advice);
                 return unknownType();  // a name only the VM knows
             }
         }
@@ -1984,6 +2024,44 @@ struct Checker::Impl {
         return found == gone.end() ? std::string() : found->second;
     }
 
+    // What Java's and Kotlin's names for threads and waiting are in Astra (D81 to D90, D118):
+    // each a compile error saying what to write, where nothing of the program declares the name.
+    static std::string removedName(const std::string& name) {
+        static const std::unordered_map<std::string, std::string> gone = {
+            {"Future", "a result to come is a Job<T> in Astra, from task { }, thread { } or a pool's submit { }: then { }, get(timeout = ...) (D89)"},
+            {"CompletableFuture", "a result to come is a Job<T> in Astra, made by hand as Job<T>() and given its value with complete(v) or fail(e) (D89)"},
+            {"Executor", "threads that take jobs are a ThreadPool(threads = n) in Astra, and one thread taking them in order a JobQueue(name): submit { } gives a Job (D88)"},
+            {"ExecutorService", "threads that take jobs are a ThreadPool(threads = n) in Astra, and one thread taking them in order a JobQueue(name): submit { } gives a Job (D88)"},
+            {"ScheduledExecutorService", "a ThreadPool runs timed jobs in Astra: pool.after(1.seconds) { }, pool.every(5.seconds) { } (D88)"},
+            {"Executors", "Executors.newFixedThreadPool(n) is ThreadPool(threads = n) in Astra, newSingleThreadExecutor() a JobQueue(name) (D88)"},
+            {"BlockingQueue", "a queue threads hand things over on is a Channel in Astra: Channel<T>.unbounded(), or Channel<T>(capacity = n) holding n at most (D87)"},
+            {"LinkedBlockingQueue", "a LinkedBlockingQueue is Channel<T>.unbounded() in Astra: send, receive, and a for over it (D87)"},
+            {"ArrayBlockingQueue", "an ArrayBlockingQueue is a Channel<T>(capacity = n) in Astra (D87)"},
+            {"ConcurrentLinkedQueue", "a ConcurrentLinkedQueue is a Channel<T>.unbounded() in Astra, used with trySend and tryReceive (D87)"},
+            {"CountDownLatch", "a CountDownLatch is Countdown(n) in Astra: countDown(), await(timeout = ...), count (D118)"},
+            {"AtomicInteger", "Java's atomics are one Atomic<T> in Astra: Atomic(0), with get, set, update { }, exchange, compareAndSet, and increment, decrement and add on an int (D85)"},
+            {"AtomicLong", "Java's atomics are one Atomic<T> in Astra: Atomic(0), an int being 64 bits (D85)"},
+            {"AtomicBoolean", "Java's atomics are one Atomic<T> in Astra: Atomic(false) (D85)"},
+            {"AtomicReference", "Java's atomics are one Atomic<T> in Astra: Atomic<Frame?>(null) (D85)"},
+            {"TimeUnit", "a time is a Duration in Astra: 16.milliseconds, 2.seconds, 5.minutes (D90)"},
+            {"synchronized", "synchronized(x) { } is a Lock's useKey in Astra: val lock = Lock(), then lock.useKey { ... }; data reached only with the key is a LockBox(value) (D86)"},
+            {"ReentrantLock", "a ReentrantLock is a Lock() in Astra, used with useKey { } (D86)"},
+            {"startCoroutine", "startCoroutine is task { ... } in Astra, which gives a Job of what the block returns (D81)"},
+            {"suspendCoroutine", "suspendCoroutine is suspendTask { resume -> ... } in Astra: resume(value) takes the task up again, resume.fail(e) throws e there (D81)"},
+            {"Continuation", "a Continuation is suspendTask's resume in Astra, a plain function: resume(value), resume.fail(e) (D81)"},
+            {"EmptyCoroutineContext", "a task needs no context in Astra: task { ... } (D81)"},
+        };
+        auto found = gone.find(name);
+        return found == gone.end() ? std::string() : found->second;
+    }
+    static std::string lockAdvice(const std::string& name) {
+        if (name == "lock" || name == "unlock" || name == "tryLock" || name == "withLock")
+            return "a Lock is used with useKey { }: lock.useKey { ... } takes the key, and gives it back however the block ends (D86)";
+        if (name == "wait" || name == "notify" || name == "notifyAll")
+            return "inside useKey { }, waitUntil { condition } gives the key back until the condition holds, with no notify to call (D86)";
+        return "";
+    }
+
     // Members every object has, which the VM gives without a declaration.
     static bool builtinMember(const std::string& name) {
         return name == "toString" || name == "hashCode" || name == "equals";
@@ -2401,6 +2479,7 @@ struct Checker::Impl {
                     else if (over.kind == Type::List && !over.args.empty()) item = readType(over.args[0]);
                     else if (over.kind == Type::Map) item = mapEntryOf(over);  // a map gives its entries (D64)
                     else if (over.kind == Type::Set && !over.args.empty()) item = readType(over.args[0]);
+                    else if (over.kind == Type::Class && over.cls != nullptr) item = iterationItem(over, f);
                 } else if (over.known() && over.kind != Type::Null) {
                     report(*f.iterable, "a for cannot go over " + describe(over) + ", which may be null");
                 }
@@ -3890,6 +3969,8 @@ struct Checker::Impl {
                 noteFunctionValue(g->funcs[0], n);
                 return functionValue(g->funcs[0]);
             }
+        } else if (std::string advice = removedName(n.name); !advice.empty()) {
+            report(n, advice);
         }
         return unknownType();
     }
@@ -4558,6 +4639,7 @@ struct Checker::Impl {
     }
 
     Type assign(const AssignExpr& a) {
+        atomicAssign(a);
         checkValueFieldWrite(*a.target);
         if (a.target->kind == ExprKind::Index) {
             const Type list = typeQuietly(*static_cast<const IndexExpr&>(*a.target).object);
@@ -4980,6 +5062,121 @@ struct Checker::Impl {
         return true;
     }
 
+    // ---- Atomic fields (D92) ----
+    // An `atomic var` field is changed in one step, by any core of a parallel section, through
+    // `+=`, `-=`, `= max(field, v)`, `= min(field, v)` and `field.compareAndSet(expected, v)`;
+    // each is noted for the compiler, which makes it the one operation. Plain assignment to one
+    // inside a section is an error.
+    struct AtomicOp {
+        uint8_t kind = 0;               // 0 add, 1 subtract, 2 max, 3 min, 4 compare and set
+        const Expr* object = nullptr;   // null: the object the code runs on
+        std::string field;
+        const Expr* operand = nullptr;
+        const Expr* expected = nullptr;  // compare and set
+    };
+    std::unordered_map<const Expr*, AtomicOp> atomicOps;
+
+    // The atomic field a place is, if it is one: `obj.hits`, or `hits` in the class's own code.
+    FieldInfo* atomicFieldAt(const Expr& place, const Expr*& object) {
+        object = nullptr;
+        FieldInfo* f = nullptr;
+        if (place.kind == ExprKind::Member) {
+            const auto& m = static_cast<const MemberExpr&>(place);
+            silent++;
+            const Type t = expr(*m.object);
+            silent--;
+            if (t.kind == Type::Class && t.cls != nullptr && !m.safe) f = fieldNamed(t.cls, m.name);
+            object = m.object.get();
+        } else if (place.kind == ExprKind::Name && ctx != nullptr && ctx->cls != nullptr && !ctx->isStatic &&
+                   findLocal(static_cast<const NameExpr&>(place).name) == nullptr) {
+            Member m = lookupMember(selfType(ctx->cls), static_cast<const NameExpr&>(place).name);
+            f = m.field;
+        }
+        return f != nullptr && f->decl != nullptr && f->decl->isAtomic ? f : nullptr;
+    }
+
+    // Whether the code being checked runs in a parallel section: a lambda given to one, or one
+    // inside such a lambda.
+    bool inParallelSection() const {
+        for (const FnCtx* c = ctx; c != nullptr && c->isLambda; c = c->parent) {
+            auto site = c->placeDecl != nullptr ? lambdaSites.find(c->placeDecl) : lambdaSites.end();
+            if (site != lambdaSites.end() && site->second.noWait == ParallelSection) return true;
+        }
+        return false;
+    }
+
+    // `x.hits += 1`, `best = max(best, v)`: noted as the one operation it is, where it is one.
+    void atomicAssign(const AssignExpr& a) {
+        const Expr* object = nullptr;
+        FieldInfo* f = atomicFieldAt(*a.target, object);
+        if (f == nullptr) return;
+        AtomicOp op;
+        op.object = object;
+        op.field = f->name;
+        op.operand = a.value.get();
+        if (a.op == TokenType::PlusEq || a.op == TokenType::MinusEq) {
+            op.kind = a.op == TokenType::PlusEq ? 0 : 1;
+        } else if (a.op == TokenType::Eq && a.value->kind == ExprKind::Call) {
+            const auto& c = static_cast<const CallExpr&>(*a.value);
+            std::string callee;
+            if (c.callee->kind == ExprKind::Name) callee = static_cast<const NameExpr&>(*c.callee).name;
+            else if (c.callee->kind == ExprKind::Member) callee = placeText(*c.callee);
+            const bool max = callee == "maxOf" || callee == "max" || callee == "Math.max";
+            const bool min = callee == "minOf" || callee == "min" || callee == "Math.min";
+            if (!(max || min) || c.args.size() != 2 || placeText(*c.args[0]) != placeText(*a.target)) {
+                if (inParallelSection())
+                    report(a, "'" + f->name + "' is an atomic var: in a parallel section it changes through +=, -=, = max(" + f->name + ", v), = min(" + f->name +
+                                  ", v) or " + f->name + ".compareAndSet(expected, v) (D92)");
+                return;
+            }
+            op.kind = max ? 2 : 3;
+            op.operand = c.args[1].get();
+        } else {
+            if (inParallelSection())
+                report(a, "'" + f->name + "' is an atomic var: in a parallel section it changes through +=, -=, = max(" + f->name + ", v), = min(" + f->name +
+                              ", v) or " + f->name + ".compareAndSet(expected, v) (D92)");
+            return;
+        }
+        if (silent == 0) atomicOps[&a] = op;
+    }
+
+    // `x.hits.compareAndSet(expected, v)`: true where it set the field. Unknown where the call is
+    // not one.
+    bool atomicCompareAndSet(const CallExpr& c, Type& result) {
+        if (c.callee->kind != ExprKind::Member || static_cast<const MemberExpr&>(*c.callee).name != "compareAndSet" || c.args.size() != 2) return false;
+        const Expr* object = nullptr;
+        FieldInfo* f = atomicFieldAt(*static_cast<const MemberExpr&>(*c.callee).object, object);
+        if (f == nullptr) return false;
+        const Type held = fieldType(f);
+        for (const ExprPtr& arg : c.args) {
+            const Type given = expr(*arg);
+            if (held.known() && given.known() && !fits(given, held)) report(*arg, "'" + f->name + "' holds " + describe(held) + ", not " + describe(given));
+        }
+        AtomicOp op;
+        op.kind = 4;
+        op.object = object;
+        op.field = f->name;
+        op.expected = c.args[0].get();
+        op.operand = c.args[1].get();
+        if (silent == 0) atomicOps[&c] = op;
+        result = Type::of(Type::Bool);
+        return true;
+    }
+
+    // `5.seconds`: an extension property (`val int.seconds : Duration get() => ...`), read where
+    // the type has no member of the name. Noted for the compiler, which calls its getter.
+    std::unordered_map<const Expr*, FuncInfo*> extensionGetters;
+    bool extensionProperty(const Type& plain, const std::string& name, const MemberExpr& at, Type& result) {
+        for (FuncInfo* f : findExtensions(plain, name)) {
+            if (f->stmt == nullptr || !f->stmt->isProperty) continue;
+            result = resultOf(f);
+            if (silent == 0) extensionGetters[&at] = f;
+            noteCallThrows(f, nullptr, noArgs(), nullptr, at);
+            return true;
+        }
+        return false;
+    }
+
     Type memberOf(const Type& objIn, const std::string& name, const MemberExpr& at, bool safe) {
         Type obj = objIn;
         if (!unionMember(obj, name, at)) return unknownType();
@@ -5019,12 +5216,13 @@ struct Checker::Impl {
                 if (st != k->statics.end()) result = fieldType(named ? noteConst(at, st->second) : st->second);
                 else if (k->isEnum && name == "ordinal") result = Type::of(Type::Int);
                 else if (k->isEnum && name == "name") result = Type::of(Type::String);
+                else if (extensionProperty(plain, name, at, result)) {}
                 else if (findExtensions(plain, name).empty() && reportMissing(k, name))
                     report(at, name == "length" && (k->unit != nullptr && k->unit->prelude) ? goneAdvice(name)
                                : name == "class" ? k->name + " has no member 'class'; the class of an object is written x# (D48)"
                                                  : k->name + " has no member '" + name + "'");
             }
-        } else if (!builtinProperty(obj, name, result)) {
+        } else if (!builtinProperty(obj, name, result) && !extensionProperty(plain, name, at, result)) {
             if (name == "length" && builtinDeclared(plain))
                 report(at, goneAdvice(name));
             else if ((obj.kind == Type::List || obj.kind == Type::String || obj.kind == Type::Map || obj.kind == Type::Bytes) &&
@@ -5177,7 +5375,11 @@ struct Checker::Impl {
             for (size_t p = 0; p < n; p++) {
                 if (b.given[p] || f->hasDefault[p] || static_cast<int>(p) == f->vararg) continue;
                 b.missing = true;
-                report(at, what + " needs a value for '" + f->paramNames[p] + "'");
+                if (f->owner != nullptr && f->owner->name == "Channel" && f->owner->unit != nullptr && f->owner->unit->prelude)
+                    report(at, "a channel says how much it holds: Channel<T>(capacity = n), with 0 for each send to wait for a receive, or "
+                               "Channel<T>.unbounded() (D87)");
+                else
+                    report(at, what + " needs a value for '" + f->paramNames[p] + "'");
             }
         }
         return b;
@@ -5206,7 +5408,7 @@ struct Checker::Impl {
             return finishCall(f, env, vars, at);
         }
         Binding b = bind(f, args, at, what);
-        if (f->decl != nullptr && f->decl->isSuspend) noteWait(at, f->name);
+        if (f->decl != nullptr && f->decl->isSuspend) noteWait(at, f->name, givesToSequence(f));
         if (f->decl != nullptr && f->decl->isInline && silent == 0) noteInlineCall(f, b, at);
         noteCallThrows(f, nullptr, args, &b, at);
         // Named arguments and a lambda after the call, given to a C++ function, are put where the
@@ -5262,7 +5464,12 @@ struct Checker::Impl {
             Type want = subst(wanted(i), env);
             if (!fits(types[i], want)) {
                 const std::string& param = f->paramNames[static_cast<size_t>(b.paramOf[i])];
-                report(*args.exprs[i], what + " takes " + describe(want) + " for '" + param + "', not " + describe(types[i]));
+                const Type plainWant = withNull(want, false);
+                if (plainWant.kind == Type::Class && plainWant.cls != nullptr && plainWant.cls->name == "Duration" && plainWant.cls->unit != nullptr &&
+                    plainWant.cls->unit->prelude && (types[i].kind == Type::Int || types[i].kind == Type::Float || types[i].kind == Type::Number))
+                    report(*args.exprs[i], what + " takes a Duration for '" + param + "': a time says its unit, as 16.milliseconds or 2.seconds (D90)");
+                else
+                    report(*args.exprs[i], what + " takes " + describe(want) + " for '" + param + "', not " + describe(types[i]));
             }
         }
         if (envOut != nullptr) *envOut = env;
@@ -6581,7 +6788,8 @@ struct Checker::Impl {
             if (st != k->staticMethods.end()) return callFunctions(st->second, c, k->name + "." + m.name, {}, nullptr);
             for (const ExprPtr& a : c.args) expr(*a);
             if (reportMissing(k, m.name)) {
-                const std::string advice = (k->unit != nullptr && k->unit->prelude) ? goneAdvice(m.name) : std::string();
+                std::string advice = (k->unit != nullptr && k->unit->prelude) ? goneAdvice(m.name) : std::string();
+                if (k->unit != nullptr && k->unit->prelude && k->name == "Lock") advice = lockAdvice(m.name);
                 report(m, advice.empty() ? k->name + " has no method '" + m.name + "'" : advice);
             }
             return unknownType();
@@ -6633,6 +6841,7 @@ struct Checker::Impl {
     }
 
     Type call(const CallExpr& c) {
+        if (Type changed; atomicCompareAndSet(c, changed)) return changed;
         if (c.callee->kind == ExprKind::Name) {
             const std::string& n = static_cast<const NameExpr&>(*c.callee).name;
             if (Local* l = findLocal(n)) {
@@ -6717,6 +6926,8 @@ struct Checker::Impl {
                 report(c, "ord(c) is written c.code: the number of the character c, as n.char is the character numbered n");
             else if (n == "len" || n == "str" || n == "int" || n == "float")
                 report(c, goneAdvice(n));
+            else if (std::string advice = removedName(n); !advice.empty())
+                report(c, advice);
             return unknownType();
         }
         if (c.callee->kind == ExprKind::Member) {
@@ -7633,6 +7844,7 @@ struct Checker::Impl {
         Unit* unit = nullptr;
         const Node* at = nullptr;
         std::string callee;
+        bool gives = false;             // a sequence's yield, or a suspend function of SequenceScope's
         std::vector<WaitFrame> frames;  // the code around the call, innermost first
     };
     std::vector<WaitingCall> waitingCalls;
@@ -7663,6 +7875,9 @@ struct Checker::Impl {
             case LazyValue: return "a lazy starting value must be there at once: whoever first reads it would be held up";
             case SortComparison: return "a sort's comparison must give its answer at once: the sort cannot wait in the middle";
             case ParallelSection: return "nothing waits in a parallel section: its work runs straight through on several cores";
+            case SequenceBlock:
+                return "a sequence's block waits only where it gives a value (yield, yieldAll): its values are worked out as they are asked for, "
+                       "by whoever asks";
             default: return "";
         }
     }
@@ -7678,8 +7893,10 @@ struct Checker::Impl {
                 "sort", "sortWith", "sortBy", "sortByDescending", "sortedWith", "sortedBy", "sortedByDescending",
                 "compareBy", "compareByDescending", "thenBy", "thenByDescending"};
             if (sorts.count(f->name)) site.noWait = SortComparison;
-            else if ((f->owner != nullptr && f->owner->name == "ParallelStream") || f->name == "parallelChunks")
+            else if ((f->owner != nullptr && f->owner->name == "ParallelStream") || f->name == "parallelChunks" || f->name == "parallel")
                 site.noWait = ParallelSection;
+            else if (f->name == "sequence" && f->owner == nullptr)
+                site.noWait = SequenceBlock;
         }
         lambdaSites[static_cast<const FunctionExpr&>(e).fn.get()] = site;
     }
@@ -7702,7 +7919,14 @@ struct Checker::Impl {
         paramUses[{l.paramOf, l.paramIndex}].push_back(std::move(use));
     }
 
-    void noteWait(const Node& at, const std::string& callee) {
+    // Whether a function is one a sequence's block gives its values with (D98): yield, yieldAll,
+    // or a suspend function of SequenceScope's of the program's own.
+    static bool givesToSequence(const FuncInfo* f) {
+        if (f->owner != nullptr) return f->owner->name == "SequenceScope";
+        return f->isExtension && f->receiver.kind == Type::Class && f->receiver.cls != nullptr && f->receiver.cls->name == "SequenceScope";
+    }
+
+    void noteWait(const Node& at, const std::string& callee, bool gives = false) {
         // While it waits, other code runs, which may change any list (M6.6 part 4): an item is not
         // read where it is across the wait.
         effects[effectKeyHere()].any = true;
@@ -7711,6 +7935,7 @@ struct Checker::Impl {
         w.unit = unit;
         w.at = &at;
         w.callee = callee;
+        w.gives = gives;
         for (FnCtx* x = ctx; x != nullptr; x = x->parent) {
             WaitFrame f;
             f.lambda = x->placeDecl;
@@ -7814,8 +8039,14 @@ struct Checker::Impl {
                 return;
             }
             if (f.lambda != nullptr) {
-                if (f.suspendLambda) return;
                 auto site = lambdaSites.find(f.lambda);
+                if (site != lambdaSites.end() && site->second.noWait == SequenceBlock) {
+                    if (w.gives) return;
+                    report(*w.at, mayWait + noWaitReason(SequenceBlock, std::string()) +
+                                      ". Wait before making the sequence, or make a list in a task instead: task { buildList { ... } }");
+                    return;
+                }
+                if (f.suspendLambda) return;
                 if (site != lambdaSites.end() && site->second.noWait != CanWait) {
                     report(*w.at, mayWait + noWaitReason(site->second.noWait, std::string()) + orTask("..."));
                     return;
@@ -8227,6 +8458,24 @@ bool Checker::externalResult(const Node& call, RuntimeType& out, std::string& na
 bool Checker::addsNewValue(const Node& call) const { return impl_->newValueAdds.count(&call) != 0; }
 
 bool Checker::isValuePlace(const Expr& e) const { return impl_->valuePlaces.count(&e) != 0; }
+
+bool Checker::extensionGetter(const MemberExpr& e) const { return impl_->extensionGetters.count(&e) != 0; }
+
+bool Checker::atomicField(const Expr& e, AtomicFieldOp& out) const {
+    auto found = impl_->atomicOps.find(&e);
+    if (found == impl_->atomicOps.end()) return false;
+    out.kind = found->second.kind;
+    out.object = found->second.object;
+    out.field = found->second.field;
+    out.operand = found->second.operand;
+    out.expected = found->second.expected;
+    return true;
+}
+
+int Checker::protocolLoop(const ForInStmt& loop) const {
+    auto found = impl_->protocolLoops.find(&loop);
+    return found == impl_->protocolLoops.end() ? 0 : found->second ? 2 : 1;
+}
 
 int Checker::namedClassOf(const ClassOfExpr& e, RuntimeType& out) const {
     auto found = impl_->namedClasses.find(&e);

@@ -135,6 +135,13 @@ bool defaultLess(VM& vm, const Value& a, const Value& b) {
     if ((a.isByte() || a.isInt()) && (b.isByte() || b.isInt())) return a.as.i < b.as.i;
     if ((a.isByte() || a.isNumber()) && (b.isByte() || b.isNumber()))
         return (a.isFloat() ? a.as.d : static_cast<double>(a.as.i)) < (b.isFloat() ? b.as.d : static_cast<double>(b.as.i));
+    // An object whose class says how it compares, with compareTo (Kotlin's Comparable): a Duration.
+    if (const ObjClass* cls = classOf(a); cls != nullptr && cls->methods.find(vm.names.compareTo) != nullptr) {
+        const Value method = vm.memberGet(a, vm.names.compareTo);
+        TempRoot keep(vm, method);
+        const Value order = vm.call(method, 1, &b);
+        if (order.isInt()) return order.as.i < 0;
+    }
     throw vm.runtimeError(Thrown::ClassCastException, "cannot compare " + vm.typeName(a) + " and " + vm.typeName(b) + " while sorting");
 }
 
@@ -639,7 +646,7 @@ void registerListMethods(VM& vm) {
     });
 
     // map, filter, reduce, each and find are in src/std/list.astra: a function given to a
-    // method written in Astra runs as part of the program, where a flow can be set aside.
+    // method written in Astra runs as part of the program, where a task can be set aside.
 }
 
 // ---- Map methods ----
@@ -900,8 +907,7 @@ void registerBuiltins(VM& vm) {
     vm.markMutating(BuiltinType::Bytes, {"fill", "putInt16", "putUint16", "putInt32", "putUint32", "putFloat32"});
     for (const char* global : {"__thread", "__loop", "__io", "__file", "__worker", "input", "exit"})
         vm.markNotParallel(global);
-    vm.markNotParallel("__flow", {"arity"});      // how many parameters a function has: map.forEach asks
-    vm.markNotParallel("__parallel", {"cores"});
+    vm.markNotParallel("__task", {"arity"});      // how many parameters a function has: map.forEach asks
 }
 
 // Op::Numeric (M6.6 part 6): a number's conversion or one of Math's functions, giving what the

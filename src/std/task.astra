@@ -1,0 +1,167 @@
+// ---- The event loop ----
+
+// One per program, on the main thread. It runs the jobs posted to it and the timers, one at a
+// time, after the script itself has finished, and the program ends when there is nothing left
+// for it to wait for. A window's events arrive through the same loop.
+//
+//   EventLoop.post { refresh() }                       // from any thread: run this on the main thread
+//   val tick = EventLoop.every(1.seconds) { print("tick") }
+//   EventLoop.after(5.5.seconds) { tick.cancel() }
+object EventLoop {
+  // Runs the job on the main thread, soon. Safe to call from any thread.
+  fun post(job : () -> unit) {
+    __loop.post(job)
+  }
+
+  // Runs the job once, `delay` from now, or again and again `period` apart. Each gives a Timer,
+  // whose cancel() calls it off.
+  fun after(delay : Duration, job : () -> unit) : Timer => Timer(__loop.timer(delay.inWholeMilliseconds, job))
+  fun every(period : Duration, job : () -> unit) : Timer => Timer(__loop.timer(period.inWholeMilliseconds, job, period.inWholeMilliseconds))
+
+  // Whether the code asking is running on the loop's thread.
+  val isLoopThread : bool
+    get() => __loop.isLoopThread()
+
+  // Runs the loop here until there is nothing left for it to wait for. A program need not
+  // call this: the loop runs by itself when the script ends. It is for a script that has
+  // something to do after that.
+  fun run() {
+    __loop.run()
+  }
+}
+
+class Timer(private val id : int) {
+  fun cancel() {
+    __loop.cancel(id)
+  }
+}
+
+// ---- Tasks (D81) ----
+// A task is a function that can set itself aside in the middle of a call and be taken up again
+// later, where it was, without holding a thread meanwhile (Kotlin's coroutine). Code that asks
+// one thing and then another reads top to bottom:
+//
+//   suspend fun ask(question : string) : string => suspendTask { resume -> dialog.prompt(question) { answer -> resume(answer) } }
+//
+//   task {
+//     val name = ask("Name?")
+//     val colour = ask("Favourite colour, $name?")
+//     save(name, colour)
+//   }
+//
+// task { } gives a Job of what the block returns (Kotlin's async): then { } runs with it on the
+// event loop, get() waits for it. A function that may wait says so with `suspend`, and the
+// checker holds callers to it (R1). Waiting in a task on the main thread sets the task aside
+// and lets the event loop go on; anywhere else it blocks the thread.
+
+// How something turned out: a value, or the error that was thrown instead.
+class Result<T> {
+  private val ok : bool
+  private val held : any?
+
+  fun init(ok : bool, held : any?) {
+    this.ok = ok
+    this.held = held
+  }
+
+  static {
+    fun <T> success(value : T) : Result<T> => Result<T>(true, value)
+    fun <T> failure(error : Throwable) : Result<T> => Result<T>(false, error)
+  }
+  val isSuccess : bool
+    get() => ok
+  val isFailure : bool
+    get() => !ok
+  fun getOrNull() : T? => ok ? held as T : null
+  fun exceptionOrNull() : Throwable? => ok ? null : held as Throwable
+  fun getOrDefault(defaultValue : T) : T => ok ? held as T : defaultValue
+  fun getOrElse(onFailure : (Throwable) -> T) : T => ok ? held as T : onFailure(held as Throwable)
+
+  fun getOrThrow() : T {
+    // What it holds was caught where it was thrown; given again, it is not checked a second time.
+    if (!ok) { __rethrow(held as Throwable) }
+    return held as T
+  }
+
+  fun onSuccess(action : (T) -> unit) : Result<T> {
+    if (ok) { action(held as T) }
+    return this
+  }
+
+  fun onFailure(action : (Throwable) -> unit) : Result<T> {
+    if (!ok) { action(held as Throwable) }
+    return this
+  }
+
+  override fun toString() : string => ok ? "Success($held)" : "Failure($held)"
+}
+
+// Runs the block and gives its value, or the error it threw, as a Result.
+fun <T> runCatching(block : () -> T) : Result<T> {
+  try {
+    return Result.success(block())
+  } catch (e) {
+    return Result.failure(e)
+  }
+}
+
+// Starts a task running the block, and gives a Job of what it returns, or of the Exception it
+// throws. Returns once the task has finished or has first set itself aside.
+fun <T> task(block : suspend () -> T throws Exception) : Job<T> {
+  val job = Job<T>()
+  val body : suspend () -> unit = {
+    try {
+      job.complete(block())
+    } catch (e) {
+      job.fail(e)
+    }
+  }
+  __task.start(body)
+  return job
+}
+
+// Sets the running task aside until `resume` is called, and gives what it is called with:
+//
+//   val answer = suspendTask<string> { resume -> dialog.prompt(question) { resume(it) } }
+//
+// resume.fail(e) makes it throw e instead. `resume` may be called from any thread, once, and the
+// task goes on there and then. On a thread that is not running a task, this waits on that thread.
+suspend fun <T> suspendTask(block : ((T) -> unit) -> unit) : T {
+  val running = __task.current()
+  if (running == null) {
+    if (__loop.isLoopThread()) {
+      throw IllegalStateException("suspendTask was called outside a task on the main thread, which would stop the event loop that is to " +
+                  "bring the answer; start a task with task { ... }")
+    }
+    val answer = Job<T>()
+    block({ value -> if (value is __TaskFailure) { answer.fail(value.error) } else { answer.complete(value as T) } })
+    try {
+      return answer.get()
+    } catch (e : ExecutionException) {
+      __rethrow(e.cause!!)
+    }
+  }
+  val wait = __task.prepare()
+  block({ value ->
+    if (value is __TaskFailure) { __task.resume(running, wait, false, value.error) } else { __task.resume(running, wait, true, value) }
+  })
+  return __task.wait(wait) as T
+}
+
+// What resume.fail(e) hands to a task's resume.
+class __TaskFailure(val error : Throwable)
+
+// `resume.fail(e)`: the task suspendTask set aside goes on by throwing e.
+fun Function.fail(error : Throwable) {
+  (this as (any?) -> unit)(__TaskFailure(error))
+}
+
+// Waits for the time given. In a task on the main thread the task is set aside meanwhile and
+// the event loop goes on; anywhere else the thread sleeps.
+suspend fun delay(time : Duration) {
+  if (__task.current() != null and __loop.isLoopThread()) {
+    suspendTask<any?> { resume -> __loop.timer(time.inWholeMilliseconds, { resume(null) }) }
+  } else {
+    Thread.sleep(time)
+  }
+}

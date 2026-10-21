@@ -185,7 +185,7 @@ print(Native.clipboardText)   // expect: 42
 
 // -- The clock, and what the system says of itself --
 val before = Native.nanoTime()
-Thread.sleep(20)
+Thread.sleep(20.milliseconds)
 val passed = Native.nanoTime() - before
 print(passed >= 15000000, passed < 5000000000, Native.doubleClickTime > 50, Native.doubleClickTime < 5000, Native.screenScale >= 1)   // expect: true true true true true
 
@@ -199,9 +199,10 @@ var frame = 0
 var closeSeenAt = -1
 dragged.onCloseRequest = { closeSeenAt = frame }
 var animation : Timer? = null
-animation = EventLoop.every(1) {
+animation = EventLoop.every(1.milliseconds) {
   frame += 1
-  Thread.sleep(4)                                        // longer than the period
+  val until = clock() + 0.004
+  while (clock() < until) { }                            // longer than the period
   if (frame == 3) { dragged.postForTest("moveBegan") }
   if (frame == 6) { dragged.postForTest("close") }
   if (frame == 40) {
@@ -218,7 +219,7 @@ animation = EventLoop.every(1) {
 var ticks = 0
 fun startLast() {
   var timer : Timer? = null
-  timer = EventLoop.every(5) {
+  timer = EventLoop.every(5.milliseconds) {
     ticks += 1
     if (ticks == 3) {
       timer!!.cancel()

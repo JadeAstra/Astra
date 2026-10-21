@@ -4,30 +4,30 @@
 // What a worker sends arrives on the event loop, whenever it comes. These make the test read
 // top to bottom: next(worker) is the worker's next message, waited for if it is not there yet.
 val arrived = {:}          // worker -> the messages that have come and not been looked at
-val awaited = {:}          // worker -> the continuation of a flow that is waiting for one
+val awaited = {:}          // worker -> the resume of a task that is waiting for one
 
 fun listenTo(worker : Worker) {
   arrived[worker] = Deque()
   worker.onMessage = { message ->
     val waiting = awaited.remove(worker)
-    if (waiting == null) { arrived[worker].addLast(message) } else { waiting.resume(message) }
+    if (waiting == null) { arrived[worker].addLast(message) } else { waiting(message) }
   }
   return worker
 }
 
 suspend fun next(worker : Worker) {
   if (arrived[worker].isNotEmpty()) { return arrived[worker].removeFirst() }
-  return suspendCoroutine { c -> awaited[worker] = c }
+  return suspendTask<any?> { resume -> awaited[worker] = resume }
 }
 
-suspend fun failureOf(worker : Worker) => suspendCoroutine { c -> worker.onError = { text -> c.resume(text) } } as string
+suspend fun failureOf(worker : Worker) => suspendTask<string> { resume -> worker.onError = { text -> resume(text as string) } }
 suspend fun endOf(worker : Worker) {
-  while (worker.isAlive) { delay(5) }
+  while (worker.isAlive) { delay(5.milliseconds) }
 }
 
 print(Worker.parent)                                         // expect: null
 
-startCoroutine {
+task {
   val echo = listenTo(Worker("workers/echo.astra"))
   print(echo.path, echo.isAlive, next(echo))                 // expect: workers/echo.astra true ready, in a worker: true
   // A daemon worker does not keep the program alive. This one is left running to the end.
@@ -62,9 +62,9 @@ startCoroutine {
   // expect: a message to or from a worker can hold numbers, strings, booleans, null, bytes, and lists and maps of those, not a value of type Point: the two share no objects
   try { echo.post([{ 1 }]) } catch (e) { print(e.message!!.endsWith("not a value of type Function: the two share no objects")) }   // expect: true
 
-  // A worker has an event loop, threads and flows of its own.
+  // A worker has an event loop, threads and tasks of its own.
   echo.post("inside")
-  print(next(echo))                                          // expect: a flow and a thread inside the worker: 42, on its loop: true
+  print(next(echo))                                          // expect: a task and a thread inside the worker: 42, on its loop: true
 
   // close() in the worker ends it once it has nothing left to do.
   echo.post("close")

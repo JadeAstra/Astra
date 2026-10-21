@@ -1,0 +1,6 @@
+// An atomic field is changed in one step by any core of a parallel section (D92): it is a var
+// that keeps its value, with no accessors around it.
+class Body {
+  atomic var hits = 0           // expect compile error: atomic var 'hits' keeps its value, with nothing around it
+    get() => 1
+}

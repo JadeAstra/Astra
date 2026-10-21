@@ -4,6 +4,7 @@
 #include <memory>
 #include <new>
 #include <atomic>
+#include <bitset>
 #include <cstdint>
 #include <cstring>
 #include <string>
@@ -18,7 +19,7 @@ struct FunctionProto;
 
 enum class ObjType : uint8_t {
     String, List, Map, Range, Closure, Upvalue, Native, Class, Instance, BoundMethod, BoundNative, Iterator, Bytes,
-    Fiber,  // a flow: a function that can set itself aside (ObjFiber, in vm.h)
+    Fiber,  // a task: a function that can set itself aside (ObjFiber, in vm.h)
     Resource,  // something the runtime holds for a program that is not made of values
     TypeInfo,  // a type, as the program has it when it runs (ObjTypeInfo)
     Value,     // a value of a value type, in a box (ObjValue)
@@ -40,6 +41,9 @@ struct Obj {
     // with the core. 1 when everything in it is a key that cannot change as well, 2 when it
     // holds something that can (an object of a class whose == reads a var).
     uint8_t frozen = 0;
+    // Frozen data a worker was sent (D97): kept once outside every VM's heap, read in place by
+    // each that holds it, and freed when the last lets go. No VM marks or sweeps it.
+    bool outside = false;
 
     explicit Obj(ObjType t) : type(t) {}
     virtual ~Obj() = default;
@@ -214,6 +218,9 @@ struct Value {
 // The core the running thread is, in a parallel section; 0 on any other thread. For code
 // that looks into objects without a VM at hand (the keys of a map).
 extern thread_local uint8_t currentCore;
+// What else the piece running on this thread may read: the numbers of the pieces that started
+// its section (VM::readable_). Null outside a section inside a section.
+extern thread_local const std::bitset<256>* currentReadable;
 
 // A class's own == and hashCode, which maps and sets use for its objects and values as keys
 // (D26): the VM running on this thread calls them. Each answers false where the class has
@@ -471,6 +478,7 @@ struct ObjLazy final : Obj {
     ObjClosure* init = nullptr;
     uint8_t state = 0;     // 0 not worked out, 1 being worked out, 2 known
     uintptr_t owner = 0;   // state 1: the thread working it out
+    int waiters = 0;       // state 1: the threads waiting for it, on its monitor
     Value value;           // state 2: what it gave, for a thread that waited for it
     ObjLazy() : Obj(ObjType::Lazy) {}
 };
@@ -681,7 +689,7 @@ struct ObjUpvalue final : Obj {
     Value* location;
     Value closed;
     ObjUpvalue* nextOpen = nullptr;
-    // While it is open and points into the stack of a flow: that flow, which has to outlive it.
+    // While it is open and points into the stack of a task: that task, which has to outlive it.
     Obj* owner = nullptr;
     explicit ObjUpvalue(Value* slot) : Obj(ObjType::Upvalue), location(slot) {}
 };

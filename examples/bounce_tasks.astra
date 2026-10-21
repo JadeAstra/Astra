@@ -1,21 +1,21 @@
-// Animation with flows: tens of thousands of balls bouncing around a window. Each of a few
-// flows moves its own share of the balls, waits a sixtieth of a second, and moves them again,
+// Animation with tasks: tens of thousands of balls bouncing around a window. Each of a few
+// tasks moves its own share of the balls, waits a sixtieth of a second, and moves them again,
 // for as long as the program runs. Click to add a hundred more; Space pauses.
 //
-// A flow is a function that sets itself aside while it waits and goes on later where it was
-// (Kotlin's coroutine). These flows wait with delay(), which on the main thread sets the flow
+// A task is a function that sets itself aside while it waits and goes on later where it was
+// (Kotlin's coroutine). These tasks wait with delay(), which on the main thread sets the task
 // aside and lets the event loop go on: the frame timer runs, the window takes its input, and
-// a sixtieth of a second later the flow takes up its loop again. Everything happens on the
+// a sixtieth of a second later the task takes up its loop again. Everything happens on the
 // main thread, one thing at a time, so nothing needs a lock or a volatile variable, and no
 // thread is made. Each mover reads like a loop of its own, though none of them holds a thread.
 //
-// A flow has a stack of its own, a megabyte or so, which is why there are a few flows each
-// moving a group of balls rather than a flow for every ball.
+// A task has a stack of its own, a megabyte or so, which is why there are a few tasks each
+// moving a group of balls rather than a task for every ball.
 //
 // Where `suspend` would go if Astra required it, as Kotlin does: nowhere in this file. The one
 // function here that waits is delay(), which the standard library declares `suspend fun
-// delay`; the call where the flow is set aside is marked `// suspends`, and the block given to
-// startCoroutine, which is the flow, is what Kotlin types a suspend lambda, with nothing
+// delay`; the call where the task is set aside is marked `// suspends`, and the block given to
+// task { }, which is the task's own code, is what Kotlin types a suspend lambda, with nothing
 // written. examples/dots.astra has waiting functions of its own, each written `suspend fun`.
 //
 // bounce.astra is the same thing in one loop, bounce_threads.astra with threads, and
@@ -23,7 +23,7 @@
 import Jade.*
 
 val startingBalls = 50000
-val flowCount = 4
+val taskCount = 4
 
 class Ball(var x : Number, var y : Number, var dx : Number, var dy : Number, val radius : Number, val color : Color) {
   // Moves on by `steps` sixtieths of a second, turning back at the edges.
@@ -39,29 +39,29 @@ class Ball(var x : Number, var y : Number, var dx : Number, var dy : Number, val
 
 val palette = [Color.red, Color.blue, Color.green, Color.orange, Color(160, 60, 200), Color.cyan, Color.pink]
 
-// Each flow moves the balls of one group. All of this lives on the main thread.
-val groups = List(flowCount) { [] }
+// Each task moves the balls of one group. All of this lives on the main thread.
+val groups = List(taskCount) { [] }
 var ballCount = 0
 var width : Number = 760.0
 var height : Number = 520.0
 var paused = false
-var running = true                   // the flows go round until the window is closed
+var running = true                   // the tasks go round until the window is closed
 var moves = 0                        // how many times a group has been moved, for the status line
 
 fun addBall(x : Number, y : Number) {
   val speed = 1 + Math.random() * 3
   val angle = Math.random() * 2 * Math.pi
   val ball = Ball(x, y, Math.cos(angle) * speed, Math.sin(angle) * speed, 3 + Math.randomInt(0, 4), palette[ballCount % palette.size])
-  groups[ballCount % flowCount].add(ball)
+  groups[ballCount % taskCount].add(ball)
   ballCount += 1
 }
 
-// ---- The flows that move the balls ----
+// ---- The tasks that move the balls ----
 // Each goes round up to sixty times a second. It measures how long it really was since last
-// time, so the balls keep their speed when a frame takes longer and the flow gets its turn late.
-// delay() is called like any other function; the flow is set aside inside it.
+// time, so the balls keep their speed when a frame takes longer and the task gets its turn late.
+// delay() is called like any other function; the task is set aside inside it.
 for group in groups {
-  startCoroutine {                                     // a suspend lambda: the flow's own code
+  task {                                     // a suspend lambda: the task's own code
     var last = clock()
     while (running) {
       val now = clock()
@@ -71,7 +71,7 @@ for group in groups {
         for ball in group { ball.move(width, height, elapsed) }
         moves += 1
       }
-      delay(16)                                        // suspends
+      delay(16.milliseconds)                                        // suspends
     }
   }
 }
@@ -91,7 +91,7 @@ var frames = 0
 var measuredAt = clock()
 var rates = "measuring..."
 
-// Draws the balls where the flows have put them.
+// Draws the balls where the tasks have put them.
 fun frame() {
   val canvas = window.canvas()
   val w = canvas.width
@@ -107,17 +107,17 @@ fun frame() {
     }
   }
 
-  // Once a second: how many frames were drawn, and how often each flow moved its balls.
+  // Once a second: how many frames were drawn, and how often each task moved its balls.
   frames += 1
   val now = clock()
   if now - measuredAt >= 1 {
     val seconds = now - measuredAt
-    rates = "%.0f frames and %.0f moves a second".format(frames / seconds, moves / seconds / flowCount)
+    rates = "%.0f frames and %.0f moves a second".format(frames / seconds, moves / seconds / taskCount)
     frames = 0
     moves = 0
     measuredAt = now
   }
-  val status = "$ballCount balls in $flowCount flows: $rates" + (paused ? " (paused)" : "") + ". Click for more; Space pauses."
+  val status = "$ballCount balls in $taskCount tasks: $rates" + (paused ? " (paused)" : "") + ". Click for more; Space pauses."
   canvas.color = Color(0x101418)
   canvas.fillRect(0, h, w, statusHeight)
   canvas.color = Color(0xC9D1D9)
@@ -132,10 +132,10 @@ repeat(startingBalls) { addBall(Math.random() * width, Math.random() * height) }
 window.onResize = { width, height -> frame() }
 window.show()
 // Sixty times a second, or as often as the screen shows a new picture. When the window is
-// closed the timer is called off and the flows are told to stop: a flow waiting in delay()
+// closed the timer is called off and the tasks are told to stop: a task waiting in delay()
 // waits on a timer of the event loop, which keeps the program alive like any other timer, so
-// each flow finishes its loop at its next turn, and with nothing left to wait for the program ends.
-val timer = EventLoop.every(16, frame)
+// each task finishes its loop at its next turn, and with nothing left to wait for the program ends.
+val timer = EventLoop.every(16.milliseconds, frame)
 window.onCloseRequest = {
   timer.cancel()
   running = false

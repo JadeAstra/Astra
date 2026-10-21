@@ -3,7 +3,7 @@
 //
 // Everything here that can wait (a read, a write, an accept, waiting for a process to end)
 // goes through VM::blocking. Called on a thread, it blocks that thread with the VM's lock
-// released, so the other threads go on. Called in a flow on the main thread, the flow is
+// released, so the other threads go on. Called in a task on the main thread, the task is
 // set aside while a worker thread waits, and the event loop goes on. There is one set of
 // functions for both.
 //

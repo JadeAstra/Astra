@@ -62,7 +62,7 @@ val pairs = List(500) { Pair2(it % 7) }
 print(plains.parallelStream().map { plains.indexOf(it) }.toList() == (0..<500).toList(), plains.parallelStream().all { it in plains })   // expect: true true
 print(availableProcessors() > 1 ? (runCatching { pairs.parallelStream().map { pairs.indexOf(it) }.toList() }.exceptionOrNull() as Exception?)?.message
                                 : "this Pair2 is another core's item in this parallel section: a core looks only into its own items and into what is shared")
-// expect: this Pair2 is another core's item in this parallel section: a core looks only into its own items and into what is shared
+// expect: this Pair2 is another core's item in this parallel section: a core looks only into its own items and into what is shared. To read every item, go over the positions instead: items.indices.parallelStream()
 // The library's own functions run inside a section as anywhere, on what the core may read.
 print([1, 2, 3].parallelStream().map { n -> var t = 0; prices.forEach { name, price -> t += price * n }; t }.toList())   // expect: [8, 16, 24]
 
@@ -119,7 +119,7 @@ if (availableProcessors() > 1) {
 } else {
   print("this Ball is another core's item in this parallel section: a core looks only into its own items and into what is shared")
 }
-// expect: this Ball is another core's item in this parallel section: a core looks only into its own items and into what is shared
+// expect: this Ball is another core's item in this parallel section: a core looks only into its own items and into what is shared. To read every item, go over the positions instead: items.indices.parallelStream()
 
 // The same object twice in a stream would be two cores' item at once.
 val one = Ball(0, 0, 1, 1)
@@ -127,16 +127,15 @@ try { [one, Ball(1, 1, 1, 1), one].parallelStream().forEach { it.move(9, 9, 1) }
 // expect: the same Ball is in the stream more than once (it is item 2 as well): each core has to have its items to itself
 
 // Nothing waits in a section.
-refused { Thread.sleep(1) }
-// expect: thread.sleep() cannot be used in a parallel section: nothing waits there, and what the whole program has one of is left alone
-refused { synchronized(it) { it.x } }
+val lock = Lock()
+refused { lock.useKey { it.x } }
 // expect: thread.enter() cannot be used in a parallel section: nothing waits there, and what the whole program has one of is left alone
 refused { try { File("x").readText() } catch (e : IOException) { } }
 // expect: File.read() cannot be used in a parallel section: nothing waits there, and what the whole program has one of is left alone
-refused { numbers.parallelStream().forEach { 1 } }
-// expect: parallel.run() cannot be used in a parallel section: nothing waits there, and what the whole program has one of is left alone
-refused { startCoroutine { 1 } }
-// expect: flow.start() cannot be used in a parallel section: nothing waits there, and what the whole program has one of is left alone
+// A section may start another inside it, its items dealt out from what its core has.
+print(rows.parallelStream().map { row -> row.parallelStream().map { it * 2 }.toList() }.toList()[3])   // expect: [-6, 12]
+refused { task { 1 } }
+// expect: task.start() cannot be used in a parallel section: nothing waits there, and what the whole program has one of is left alone
 
 // An error in the lambda comes out of the call, and the next section runs as usual.
 try { numbers.parallelStream().map { if (it == 500) { throw RuntimeException("item 500 failed") }; it }.toList() } catch (e) { print(e.message) }   // expect: item 500 failed
@@ -161,10 +160,10 @@ try {
 try { buffer.parallelChunks { buffer.fill(0) } } catch (e) { print(e.message) }
 // expect: a parallel section changes only the item it was given and what it makes itself: this Bytes is shared with the other cores, so here it can be read and not changed
 
-// ---- From a thread, and from a flow ----
+// ---- From a thread, and from a task ----
 var fromThread : int? = null
-thread { fromThread = numbers.parallelStream().sumOf { it } }.join()
-startCoroutine {
-  delay(1)
+thread { fromThread = numbers.parallelStream().sumOf { it } }.get()
+task {
+  delay(1.milliseconds)
   print(fromThread, numbers.parallelStream().map { it }.toList().size)   // expect: 500500 1000
 }

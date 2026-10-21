@@ -1,13 +1,13 @@
 // Three things going on at once: a program started from this one and read line by line, a
 // thread counting in the background, and the event loop ticking. Nothing waits for anything
-// else: reading the other program's output sets the flow aside, it does not stop the loop.
+// else: reading the other program's output sets the task aside, it does not stop the loop.
 //
 // Run with no argument. (With "work" the program plays the part of the one that is started.)
 
 if (args().contains("work")) {
   // The other program: five steps, a little apart.
   for step in 1..5 {
-    Thread.sleep(120)
+    Thread.sleep(120.milliseconds)
     print("step $step of 5")
     flush()                     // what is printed to another program is sent on when asked
   }
@@ -18,30 +18,30 @@ if (args().contains("work")) {
 val lock = Lock()
 var checks = 0
 var working = true
-val checker = thread(name = "checker", isDaemon = true) {
+val checker = thread(name = "checker", daemon = true) {
   while (working) {
-    synchronized(lock) { checks += 1 }       // shared with the main thread, so under a lock
-    Thread.sleep(10)
+    lock.useKey { checks += 1 }               // shared with the main thread, so with the key held
+    Thread.sleep(10.milliseconds)
   }
 }
 
 // ---- The event loop, ticking ----
 var ticks = 0
-val ticker = EventLoop.every(50) { ticks += 1 }
+val ticker = EventLoop.every(50.milliseconds) { ticks += 1 }
 
-// ---- The other program, read in a flow ----
-// A flow runs later, where nothing can catch what goes wrong in it: it catches its own.
-startCoroutine {
+// ---- The other program, read in a task ----
+// A task runs later, where nothing waits to see what goes wrong in it: it catches its own.
+task {
   val started = clock()
   try {
     val worker = ProcessBuilder(Process.currentCommand() + ["work"]).start()
     print("started process", worker.pid())
 
-    // readLine() sets this flow aside until a line arrives. The loop and the thread go on.
+    // readLine() sets this task aside until a line arrives. The loop and the thread go on.
     while (true) {
       val line = worker.inputStream!!.readLine()
       if (line == null) { break }
-      val soFar = synchronized(lock) { checks }
+      val soFar = lock.useKey { checks }
       print("  %-12s (%d ticks, %d checks so far)".format(line, ticks, soFar))
     }
 
@@ -55,4 +55,4 @@ startCoroutine {
   print("meanwhile the loop ticked $ticks times and the thread checked $checks times")
 }
 
-print("the script has reached its end; the flow, the thread and the loop carry on")
+print("the script has reached its end; the task, the thread and the loop carry on")

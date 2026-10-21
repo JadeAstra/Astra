@@ -165,7 +165,7 @@ const Token& Parser::expectName(const char* what) {
 std::string Parser::jvmAnnotation(const std::string& name) {
     if (name == "Volatile")
         return "@Volatile is for the JVM: one thread runs Astra code at a time, so a variable is always seen whole; delete it (D153)";
-    if (name == "Synchronized") return "@Synchronized is for the JVM: guard what it guards with a Lock, lock.withLock { ... } (D153)";
+    if (name == "Synchronized") return "@Synchronized is for the JVM: guard what it guards with a Lock, lock.useKey { ... } (D86, D153)";
     if (name == "JvmStatic") return "@JvmStatic is for the JVM: a static member is written in the class's static { } block (D67, D153)";
     if (name == "Throws") return "@Throws is written throws after the result type: fun load() : string throws IOException (D54, D153)";
     if (name == "Suppress" || name == "SuppressWarnings")
@@ -346,7 +346,7 @@ StmtPtr Parser::declaration() {
                                       (after.type == TokenType::Identifier &&
                                        (functionWord(after.text) || after.text == "suspend" || after.text == "private" || after.text == "external" ||
                                         after.text == "internal" || after.text == "public")));
-            // `suspend fun` marks a function that may wait, setting its flow aside (R1).
+            // `suspend fun` marks a function that may wait, setting its task aside (R1).
             const bool modifier = word.text == "private" || word.text == "internal" || word.text == "public" ||
                                   makesAbstract || forFunction ||
                                   (word.text == "suspend" && (after.type == TokenType::Fun || after.type == TokenType::Identifier));
@@ -540,10 +540,43 @@ StmtPtr Parser::declaration() {
             return statement();
         case TokenType::Val:
         case TokenType::Var:
+            if (peekNext().type == TokenType::Identifier && p_ + 3 < toks_.size() && toks_[p_ + 2].type == TokenType::Dot &&
+                isName(toks_[p_ + 3]) && !toks_[p_ + 2].newlineBefore)
+                return extensionProperty();
             return varDeclaration(false);
         default:
             return statement();
     }
+}
+
+// `val int.seconds : Duration get() => Duration(this * 1000000000)`: a property added to a type
+// from outside, as Kotlin's extension properties. It holds nothing: its getter, written after
+// it, is what it is, run on the value with `this`.
+StmtPtr Parser::extensionProperty() {
+    const Token& kw = advance();
+    if (kw.type == TokenType::Var) throw error(kw, "an extension property holds nothing to set: it is a val with a getter");
+    const Token& receiver = advance();
+    advance();  // the dot
+    const Token& name = expectName("the property's name");
+    auto s = node<FunctionStmt>(kw);
+    s->receiver = receiver.text;
+    s->receiverType.line = receiver.line;
+    s->receiverType.col = receiver.col;
+    s->receiverType.name = receiver.text;
+    s->isProperty = true;
+    VarStmt field;
+    field.line = name.line;
+    field.col = name.col;
+    field.name = name.text;
+    field.isVal = true;
+    field.type = optionalType();
+    if (!field.type.present()) throw error(name, "an extension property writes its type: val " + receiver.text + "." + name.text + " : T");
+    fieldAccessors(field);
+    if (!field.getter) throw error(name, "an extension property is its getter: val " + receiver.text + "." + name.text + " : T get() => ...");
+    s->fn = std::move(field.getter);
+    s->fn->accessor = FunctionDecl::Accessor::None;
+    s->fn->name = name.text;
+    return s;
 }
 
 // `external fun name(...) : T`, `external fun Type.name(...) : T` or `external val Type.name : T`:
@@ -610,7 +643,7 @@ TypeAnnotation Parser::typeExpression() {
     TypeAnnotation type;
     type.line = peek().line;
     type.col = peek().col;
-    // `suspend () -> unit`: a function type, said to be of a function that may set a flow aside.
+    // `suspend () -> unit`: a function type, said to be of a function that may set a task aside.
     bool suspends = false;
     const Token* suspendWord = nullptr;
     if (check(TokenType::Identifier) && peek().text == "suspend" &&
@@ -810,8 +843,10 @@ bool Parser::typeArgumentsBeforeCall(std::vector<TypeAnnotation>& into) {
         advance();
         std::vector<TypeAnnotation> args = typeArgumentsRest();
         // A lambda after them only outside the head of an if or while, where `a < b {` is a comparison.
-        // `Box<int>#`: the class with its type arguments (D48).
-        if (!pendingTypeClose_ && (check(TokenType::LParen) || check(TokenType::Hash) || (check(TokenType::LBrace) && !headerExpr_)) &&
+        // `Box<int>#`: the class with its type arguments (D48). `Channel<Job>.unbounded()`: a
+        // static function given the class's type arguments as its own.
+        const bool staticCall = check(TokenType::Dot) && p_ + 2 < toks_.size() && isName(toks_[p_ + 1]) && toks_[p_ + 2].type == TokenType::LParen;
+        if (!pendingTypeClose_ && (check(TokenType::LParen) || check(TokenType::Hash) || staticCall || (check(TokenType::LBrace) && !headerExpr_)) &&
             !peek().newlineBefore) {
             into = std::move(args);
             return true;
@@ -1293,13 +1328,14 @@ void Parser::classMemberBody(ClassStmt& s, bool inStatic) {
     bool mutates = false;
     bool lateinit = false;
     bool lazy = false;
+    bool atomic = false;
     bool infix = false, inlines = false, tail = false;
     uint8_t access = 0;
     for (; check(TokenType::Identifier) && !peekNext().newlineBefore &&
            (peek().text == "private" || peek().text == "internal" || peek().text == "public" || peek().text == "protected" ||
             peek().text == "override" || kotlinOnlyWord(peek().text) || peek().text == "abstract" ||
             peek().text == "suspend" || peek().text == "mutating" || functionWord(peek().text) ||
-            ((peek().text == "lateinit" || peek().text == "lazy") &&
+            ((peek().text == "lateinit" || peek().text == "lazy" || peek().text == "atomic") &&
              (peekNext().type == TokenType::Val || peekNext().type == TokenType::Var))) &&
            (peekNext().type == TokenType::Val || peekNext().type == TokenType::Var || peekNext().type == TokenType::Fun ||
             peekNext().type == TokenType::Class || peekNext().type == TokenType::Identifier);
@@ -1311,6 +1347,10 @@ void Parser::classMemberBody(ClassStmt& s, bool inStatic) {
         mutates = mutates || peek().text == "mutating";
         lateinit = lateinit || peek().text == "lateinit";
         lazy = lazy || peek().text == "lazy";
+        if (peek().text == "atomic") {
+            if (peekNext().type != TokenType::Var) throw error(peek(), "an atomic field is one that changes: atomic var (D92)");
+            atomic = true;
+        }
         infix = infix || peek().text == "infix";
         inlines = inlines || peek().text == "inline";
         tail = tail || peek().text == "tail";
@@ -1392,6 +1432,17 @@ void Parser::classMemberBody(ClassStmt& s, bool inStatic) {
         field->access = access;
         field->isLateinit = lateinit;
         field->isLazy = lazy;
+        field->isAtomic = atomic;
+        if (atomic) {
+            // Changed in one step by any core of a parallel section (D92).
+            if (!field->init) throw error(keyword, "atomic var '" + field->name + "' is given its starting value here");
+            // Its accessors, if any, are written under it, and read below.
+            const bool accessors = ((word("get") || word("set")) && peekNext().type == TokenType::LParen) ||
+                                   (check(TokenType::Identifier) && accessWord(peek().text) != 0 && (nextWord("get") || nextWord("set")));
+            if (field->getter || field->setter || accessors || lazy || lateinit)
+                throw error(keyword, "atomic var '" + field->name + "' keeps its value, with nothing around it");
+            if (isStatic) throw error(keyword, "atomic is for a field of an object; what every core shares at the top is an Atomic (D85)");
+        }
         if (lateinit) {
             // Given its value after the object is made, and never null (D36).
             if (field->isVal) throw error(keyword, "lateinit is for a var, given its value after the object is made: lateinit var " + field->name);
@@ -2213,10 +2264,22 @@ ExprPtr Parser::postfix() {
             if (fn.isLambda) fn.calleeLabel = name;
         }
     };
+    std::vector<TypeAnnotation> carried;  // `Channel<Job>.unbounded()`: for the call after the dot
     for (;;) {
         // `first<int>(xs)`: type arguments written before the arguments.
-        std::vector<TypeAnnotation> typeArgs;
-        if ((e->kind == ExprKind::Name || e->kind == ExprKind::Member) && typeArgumentsBeforeCall(typeArgs)) {
+        std::vector<TypeAnnotation> typeArgs = std::move(carried);
+        carried.clear();
+        if (typeArgs.empty() && (e->kind == ExprKind::Name || e->kind == ExprKind::Member) && typeArgumentsBeforeCall(typeArgs)) {
+            if (check(TokenType::Dot)) {
+                advance();
+                const Token& name = expectName("a function's name after '.'");
+                auto member = node<MemberExpr>(name);
+                member->name = name.text;
+                member->object = std::move(e);
+                e = std::move(member);
+                carried = std::move(typeArgs);
+                continue;
+            }
             if (check(TokenType::LBrace)) {
                 // `build<Grid> { ... }`: the lambda is the only argument.
                 const Token& open = advance();

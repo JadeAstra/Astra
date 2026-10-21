@@ -322,9 +322,9 @@ val animate = { time ->
 }
 Jade.onFrame(animate)
 host.frame()
-Thread.sleep(3)
+Thread.sleep(3.milliseconds)
 host.frame()
-Thread.sleep(3)
+Thread.sleep(3.milliseconds)
 host.frame()
 Jade.removeFrameHook(animate)
 print(frames, lastTime!!.frame, lastTime!!.delta > 0.002, lastTime!!.time >= lastTime!!.delta, Jade.wantsFrames)   // expect: 3 2 true true false

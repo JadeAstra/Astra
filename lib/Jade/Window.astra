@@ -313,7 +313,7 @@ class WindowHost : WindowHandle {
 
   // What the window in front owns of the toolkit's shared things.
   private fun takeGlobals() {
-    Jade.scheduler = { delayMs, task -> EventLoop.after(delayMs, task) }
+    Jade.scheduler = { delayMs, task -> EventLoop.after(delayMs.milliseconds, task) }
     Jade.onFocusRequested { comp ->
       setKeyboardFocus(true)
       ensureLayout()
@@ -397,7 +397,7 @@ class WindowHost : WindowHandle {
     if (disposed or !native.isOpen) { return }
     if (Jade.wantsFrames) {
       Jade.runFrameHooks(Native.nanoTime())
-      EventLoop.after(16) { scheduleFrame() }       // an animation: another frame after this one
+      EventLoop.after(16.milliseconds) { scheduleFrame() }   // an animation: another frame after this one
     }
     val scale = native.scale
     useScale(scale)

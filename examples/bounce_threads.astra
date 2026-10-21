@@ -34,7 +34,7 @@ var ballCount = 0
 var width : Number = 760.0
 var height : Number = 520.0
 var paused = false
-val steps = AtomicInteger()          // how many times a group has been moved, for the status line
+val steps = Atomic(0)                // how many times a group has been moved, for the status line
 
 fun addBall(x : Number, y : Number) {
   val speed = 1 + Math.random() * 3
@@ -48,7 +48,7 @@ fun addBall(x : Number, y : Number) {
 // Each goes round up to sixty times a second. It measures how long it really was since
 // last time, so the balls keep their speed when the drawing leaves the threads fewer turns.
 for group in groups {
-  thread(isDaemon = true) {
+  thread(daemon = true) {
     var last = clock()
     while (true) {
       val now = clock()
@@ -56,9 +56,9 @@ for group in groups {
       last = now
       if !paused {
         for ball in group { ball.move(width, height, elapsed) }
-        steps.incrementAndGet()
+        steps.increment()
       }
-      Thread.sleep(16)
+      Thread.sleep(16.milliseconds)
     }
   }
 }
@@ -99,7 +99,7 @@ fun frame() {
   val now = clock()
   if now - measuredAt >= 1 {
     val seconds = now - measuredAt
-    rates = "%.0f frames and %.0f moves a second".format(frames / seconds, steps.getAndSet(0) / seconds / threadCount)
+    rates = "%.0f frames and %.0f moves a second".format(frames / seconds, steps.exchange(0) / seconds / threadCount)
     frames = 0
     measuredAt = now
   }
@@ -120,7 +120,7 @@ window.onResize = { width, height -> frame() }
 window.show()
 // Sixty times a second, or as often as the screen shows a new picture. When the window
 // is closed the timer is called off, and with nothing left to wait for the program ends.
-val timer = EventLoop.every(16, frame)
+val timer = EventLoop.every(16.milliseconds, frame)
 window.onCloseRequest = {
   timer.cancel()
   window.close()

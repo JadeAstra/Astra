@@ -1,15 +1,15 @@
-// Waiting (R1): a suspend function may wait, setting its flow aside, so it is called only
+// Waiting (R1): a suspend function may wait, setting its task aside, so it is called only
 // where waiting is possible: in another suspend function, at the top level, in a lambda given
-// a suspend type (as startCoroutine and thread take), or in a lambda run there and then by a
+// a suspend type (as task and thread take), or in a lambda run there and then by a
 // function that only calls it. Nothing waits in a getter or setter, toString, ==, hashCode,
 // the making of an object, a sort's comparison or a parallel section.
 
-suspend fun fetch(key : string) : string => suspendCoroutine { c -> EventLoop.post { c.resume(key) } } as string
+suspend fun fetch(key : string) : string => suspendTask { resume -> EventLoop.post { resume(key) } }
 
 // Where it may wait.
 suspend fun load(key : string) : string => fetch(key) + "!"
 val atTop = fetch("top")
-startCoroutine { print(fetch("flow")) }
+task { print(fetch("task")) }
 thread { print(fetch("thread")) }
 
 // Lambdas run there and then wait where their caller may.
@@ -102,7 +102,7 @@ suspend fun noWaitingThere(words : List<string>) {
 
 // A suspend function goes only where waiting is expected.
 fun runsLater(action : () -> unit) { action() }
-fun wants(action : suspend () -> unit) { startCoroutine(action) }
+fun wants(action : suspend () -> unit) { task(action) }
 fun passing() {
   val waits : suspend () -> unit = { fetch("x") }
   runsLater(waits)   // check: runsLater(...) takes a () -> unit for 'action', not a suspend () -> unit

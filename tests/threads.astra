@@ -1,8 +1,8 @@
-// Threads, locks and the things built on them. Every line printed here is the same on every
-// run: the threads are waited for before their results are shown.
+// Threads, locks and what is built on them (D85 to D90, D117, D118). Every line printed here is
+// the same on every run: what the threads do is waited for before it is shown.
 
 // A thread runs a function; join waits for it.
-val log = []
+val log : open List<any?> = []
 val first = Thread({ log.add("ran on " + Thread.currentThread().name) }, "worker-1")
 print(first.name, first.isAlive, first.isDaemon)             // expect: worker-1 false false
 first.start()
@@ -10,22 +10,14 @@ first.join()
 print(log, first.isAlive)                                    // expect: ["ran on worker-1"] false
 try { first.start() } catch (e) { print(e.message) }         // expect: thread 'worker-1' has already been started
 
-// The other ways of making one.
-val second = Thread("named") { log.add(Thread.currentThread().name) }
-second.start()
-second.join()
-val third = thread(name = "helper") { log.add(Thread.currentThread().name) }
-val fourth = thread(start = false) { log.add("fourth") }
-third.join()
-print(log.drop(1), fourth.isAlive, log.size)                 // expect: ["named", "helper"] false 3
-fourth.start()
-fourth.join()
-print(log.last(), Thread.currentThread().name, Thread.currentThread() === Thread.currentThread())   // expect: fourth main true
+// thread { } starts one at once and gives a Job of what the block returns.
+val helper = thread(name = "helper") { log.add(Thread.currentThread().name); 6 * 7 }
+print(helper.get(), log.last(), Thread.currentThread().name, Thread.currentThread() === Thread.currentThread())   // expect: 42 helper main true
 
 // A class can extend Thread and say what it does itself.
-class Counter(val upTo : int) : Thread("counter") {
+class Counter(val upTo : int) : Thread(null, "counter") {
   var total = 0
-  override fun run() {
+  override suspend fun run() {
     for i in 1..upTo { total += i }
   }
 }
@@ -34,146 +26,172 @@ counting.start()
 counting.join()
 print(counting.total, counting)                              // expect: 5050 Thread(counter)
 
-// Threads share everything. Four of them adding to one number, under a lock.
+// ---- Locks (D86) ----
+// Four threads adding to one number, each holding the lock's key while it does.
 var shared = 0
 val lock = Lock()
-val adders = (1..4).map { n -> thread { for i in 1..500 { synchronized(lock) { shared += 1 } } } }
-adders.forEach { it.join() }
+val adders = (1..4).map { n -> thread { for i in 1..500 { lock.useKey { shared += 1 } } } }
+Job.all(adders).get()
 print(shared)                                                // expect: 2000
 
-// Any object is a lock, and a thread may take one it already holds.
-val anything = [1, 2]
-print(synchronized(anything) { synchronized(anything) { anything.size } }, lock.withLock { "held: ${lock.isHeldByCurrentThread}" }, lock.isHeldByCurrentThread)   // expect: 2 held: true false
-print(lock.tryLock(), lock.tryLock())                        // expect: true true
-lock.unlock()
-lock.unlock()
-try { lock.unlock() } catch (e) { print(e.message) }         // expect: unlock: this thread does not hold the lock; it is held inside synchronized(lock) { ... }
-try { synchronized(5) { 1 } } catch (e) { print(e.message) } // expect: a lock is an object, not a value of type int
-// An error inside lets the lock go.
-try { synchronized(lock) { throw RuntimeException("inside") } } catch (e) { print(e.message, lock.isHeldByCurrentThread) }   // expect: inside false
-// While one thread holds a lock, another cannot take it.
-lock.lock()
-var couldTake : bool? = null
-thread { couldTake = lock.tryLock() }.join()
-lock.unlock()
-print(couldTake)                                             // expect: false
+// A thread that has the key may take it again; useKey gives what its block gives, and the key
+// back however the block ends.
+print(lock.useKey { lock.useKey { "twice" } })               // expect: twice
+try { lock.useKey { throw IllegalStateException("inside") } } catch (e) { print(e.message) }   // expect: inside
+var couldTake = false
+thread { lock.useKey { couldTake = true } }.get()
+print(couldTake)                                             // expect: true
 
-// wait and notify: one thread waits for another to change something.
+// Data reached only with the key.
+val counts : open Map<string, int> = {:}
+val box = LockBox(counts)
+Job.all((1..3).map { n -> thread { repeat(100) { box.useKey { it["clicks"] = (it["clicks"] ?: 0) + 1 } } } }).get()
+print(box.useKey { it["clicks"] })                           // expect: 300
+
+// waitUntil gives the key back until the condition holds: Java's wait and notify, with no
+// notify to forget.
 val gate = Lock()
 var ready = false
 val waiter = thread {
-  gate.withLock {
-    while (!ready) { gate.wait() }
+  gate.useKey {
+    waitUntil { ready }
     log.add("woken")
   }
 }
-Thread.sleep(20)
-gate.withLock { ready = true; gate.notifyAll() }
-waiter.join()
-print(log.last(), gate.withLock { gate.wait(10) })           // expect: woken false
-try { gate.wait() } catch (e) { print(e.message) }           // expect: wait: this thread does not hold the lock; it is held inside synchronized(lock) { ... }
+Thread.sleep(20.milliseconds)
+gate.useKey { ready = true }
+waiter.get()
+print(log.last(), gate.useKey { waitUntil(timeout = 10.milliseconds) { false } })   // expect: woken false
+try { waitUntil { true } } catch (e) { print(e.message) }    // expect: waitUntil is for inside useKey { }: it gives that key back while it waits
 
-// Values that change in one piece.
-val hits = AtomicInteger()
-val flag = AtomicBoolean()
-val holder = AtomicReference("a")
-(1..4).map { thread { for i in 1..250 { hits.incrementAndGet() } } }.forEach { it.join() }
-print(hits.get(), hits.getAndAdd(5), hits.value, hits.compareAndSet(1005, 0), hits.compareAndSet(1005, 1), hits.decrementAndGet())   // expect: 1000 1000 1005 true false -1
-print(flag.compareAndSet(false, true), flag.get(), flag.getAndSet(false), holder.getAndSet("b"), holder.get(), AtomicLong(7).incrementAndGet())   // expect: true true true a b 8
+// ---- Atomic values (D85) ----
+val hits = Atomic(0)
+Job.all((1..4).map { thread { for i in 1..250 { hits.increment() } } }).get()
+print(hits.get(), hits.add(5), hits.decrement(), hits.compareAndSet(1004, 0), hits.compareAndSet(1004, 1), hits.get())   // expect: 1000 1005 1004 true false 0
+val flag = Atomic(false)
+val holder = Atomic<string?>("a")
+print(flag.compareAndSet(false, true), flag.get(), flag.exchange(false), holder.exchange("b"), holder.get(), holder.update { it + "c" }, hits)   // expect: true true true a b bc 0
+try { Atomic(int.maxValue).increment() } catch (e : ArithmeticException) { print(e.message) }   // expect: 9223372036854775807 + 1 does not fit in an int; update { it &+ n } wraps around (D27)
 
-// A queue to hand things over on: take waits for an item.
-val queue = BlockingQueue()
-val squares = thread {
-  for n in 1..5 { queue.put(n * n) }
-  queue.put("done")
+// ---- Channels (D87) ----
+// receive waits for an item; a for takes them until the channel is closed and empty.
+val squares = Channel<int>(capacity = 2)
+thread {
+  for n in 1..5 { squares.send(n * n) }
+  squares.close()
 }
-val taken = []
-while (true) {
-  val item = queue.take()
-  if (item == "done") { break }
-  taken.add(item)
-}
-squares.join()
-print(taken, queue.size, queue.poll(), queue.poll(20), queue.isEmpty())   // expect: [1, 4, 9, 16, 25] 0 null null true
-// With a capacity, put waits for room.
-val small = BlockingQueue(2)
-print(small.offer(1), small.offer(2), small.offer(3), small.size, small.peek())   // expect: true true false 2 1
-val filler = thread { small.put(3); small.put(4) }
-Thread.sleep(20)
-print(small.take(), small.take(), small.take(), small.take())   // expect: 1 2 3 4
-filler.join()
+val taken : open List<int> = []
+for (item in squares) { taken.add(item) }
+print(taken, squares.isClosed, squares.tryReceive())          // expect: [1, 4, 9, 16, 25] true null
+try { squares.send(1) } catch (e) { print(e.message) }       // expect: the channel is closed
+try { squares.receive() } catch (e) { print(e.message) }     // expect: the channel is closed, and empty
+// A full channel takes no more without waiting; an unbounded one takes any number.
+val small = Channel<int>(capacity = 2)
+print(small.trySend(1), small.trySend(2), small.trySend(3), small.tryReceive())   // expect: true true false 1
+val filler = thread { small.send(3); small.send(4) }
+Thread.sleep(20.milliseconds)
+print(small.receive(), small.receive(), small.receive(), small.receive(timeout = 10.milliseconds))   // expect: 2 3 4 null
+filler.get()
+val any = Channel<string>.unbounded()
+for word in ["a", "b", "c"] { any.send(word) }
+print(any.tryReceive(), any.receive(), any.receive(timeout = 1.seconds))   // expect: a b c
+// With capacity 0, each send waits for a receive to take it.
+val handoff = Channel<int>(capacity = 0)
+print(handoff.trySend(1))                                    // expect: false
+val sender = thread { handoff.send(7); "taken" }
+print(handoff.receive(), sender.get())                       // expect: 7 taken
 
-// A latch that opens when enough has happened.
-val latch = CountDownLatch(3)
-for n in 1..3 { thread { Thread.sleep(n * 5); latch.countDown() } }
-print(CountDownLatch(1).await(10), latch.await(), latch.count, latch.await(1, TimeUnit.seconds))   // expect: false true 0 true
+// ---- Countdown (D118) ----
+val done = Countdown(3)
+for n in 1..3 { thread { Thread.sleep((n * 5).milliseconds); done.countDown() } }
+print(Countdown(1).await(timeout = 10.milliseconds), done.await(), done.count, done.await(timeout = 1.seconds))   // expect: false true 0 true
 
-// Interrupting a thread that is waiting wakes it with an error; one that is working sees
-// the mark when it asks.
+// ---- Interrupting ----
+// A thread waiting is woken with an error; one that is working sees the mark when it asks.
 var caught : string? = null
 val sleeper = thread {
-  try { Thread.sleep(60000) } catch (e : InterruptedException) { caught = e.message }
+  try { Thread.sleep(1.minutes) } catch (e : InterruptedException) { caught = e.message }
 }
-Thread.sleep(20)
-sleeper.interrupt()
-sleeper.join()
-print(caught)                                                // expect: the thread was interrupted
+Thread.sleep(20.milliseconds)
+sleeper.cancel(interrupt = true)
+Thread.sleep(20.milliseconds)
+print(caught, sleeper.isCancelled)                           // expect: the thread was interrupted true
 var noticed = false
-val started = CountDownLatch(1)
-val busy = thread {
+val started = Countdown(1)
+val busyThread = Thread({
   started.countDown()
   while (!Thread.currentThread().isInterrupted) { Thread.yield() }
   noticed = Thread.interrupted()
   log.add(Thread.interrupted())
-}
+})
+busyThread.start()
 started.await()
-busy.interrupt()
-busy.join()
-print(noticed, log.last(), busy.isInterrupted)               // expect: true false false
+busyThread.interrupt()
+busyThread.join()
+print(noticed, log.last(), busyThread.isInterrupted)         // expect: true false false
 
 // join with a time limit comes back when the time is up.
-val slow = thread(isDaemon = true) { Thread.sleep(60000) }
-slow.join(20)
-print(slow.isAlive, slow.isDaemon)                           // expect: true true
+val slow = Thread({ Thread.sleep(1.minutes) })
+slow.isDaemon = true
+slow.start()
+print(slow.join(timeout = 20.milliseconds), slow.isAlive, slow.isDaemon)   // expect: false true true
 
-// An executor: threads that take tasks from a queue. A task gives a future.
-val pool = Executors.newFixedThreadPool(3)
-val results = (1..6).map { n -> pool.submit { Thread.sleep(2); n * 10 } }
-print(results.map { it.get() }, results.all { it.isDone })   // expect: [10, 20, 30, 40, 50, 60] true
-val failing = pool.submit { throw RuntimeException("task failed") }
-try { failing.get() } catch (e : ExecutionException) { print(e.message, e.cause is Exception, failing.isCompletedExceptionally) }   // expect: task failed true true
-val stuck = pool.submit { Thread.sleep(60000); "never" }
-try { stuck.get(20, TimeUnit.milliseconds) } catch (e : TimeoutException) { print(e.message, stuck.isDone) }   // expect: the time ran out false
-print(stuck.cancel(true), stuck.isCancelled, stuck.cancel(true))   // expect: true true false
-try { stuck.get() } catch (e : CancellationException) { print(e.message) }   // expect: the task was cancelled
-print(pool.submit { "still working" }.get())                 // expect: still working
-pool.shutdown()
-print(pool.isShutdown, pool.awaitTermination(5, TimeUnit.seconds), pool.isTerminated)   // expect: true true true
-try { pool.submit { 1 } } catch (e) { print(e.message) }     // expect: the executor has been shut down
+// ---- Jobs (D89) ----
+// A job a program completes itself; get waits for it, with a time limit if one is given.
+val answer = Job<int>()
+val completing = thread { Thread.sleep(5.milliseconds); answer.complete(42) }
+print(answer.get(), completing.get(), answer.complete(43), answer.getOrNull(), Job<string>().getOrNull())   // expect: 42 true false 42 null
+val failing = Job<int>()
+failing.fail(IllegalStateException("job failed"))
+try { failing.get() } catch (e : ExecutionException) { print(e.message, e.cause is IllegalStateException, failing.failed) }   // expect: job failed true true
+try { Job<int>().get(timeout = 20.milliseconds) } catch (e : TimeoutException) { print(e.message) }   // expect: the time ran out
+val stopped = Job<int>()
+print(stopped.cancel(), stopped.isCancelled, stopped.cancel(), stopped.failed)   // expect: true true false true
+try { stopped.get() } catch (e : CancellationException) { print(e.message) }   // expect: the task was cancelled
+// Job.all gives every value in order, Job.any the first to succeed.
+val parts = (1..4).map { n -> thread { Thread.sleep(((5 - n) * 3).milliseconds); n * n } }
+print(Job.all(parts).get(), Job.any([failing, parts[2]]).get(), Job.all<int>([]).get())   // expect: [1, 4, 9, 16] 9 []
+try { Job.all([parts[0], failing]).get() } catch (e : ExecutionException) { print(e.cause!!.message) }   // expect: job failed
 
-// One thread, tasks in order, made by a function of the program's own.
-val names = []
-val single = Executors.newSingleThreadExecutor { work -> Thread(work, "the-one").apply { isDaemon = true } }
-val order = []
-val jobs = (1..5).map { n -> single.submit { order.add(n); names.add(Thread.currentThread().name); n } }
-jobs.forEach { it.get() }
-print(order, names.distinct())                               // expect: [1, 2, 3, 4, 5] ["the-one"]
-single.submit { Thread.sleep(60000) }
-val waiting = single.submit { "not run" }
-Thread.sleep(20)
-print(single.shutdownNow().size, waiting.isCancelled, single.awaitTermination(5000))   // expect: 1 true true
+// ---- Thread pools (D88) ----
+val pool = ThreadPool(threads = 3, name = "workers")
+val results = (1..6).map { n -> pool.submit { Thread.sleep(2.milliseconds); n * 10 } }
+print(Job.all(results).get(), results.all { it.isDone })     // expect: [10, 20, 30, 40, 50, 60] true
+val broken = pool.submit { throw IllegalStateException("job broke") }
+try { broken.get() } catch (e : ExecutionException) { print(e.message, broken.failed) }   // expect: job broke true
+val stuck = pool.submit { Thread.sleep(1.minutes); "never" }
+try { stuck.get(timeout = 20.milliseconds) } catch (e : TimeoutException) { print(e.message, stuck.isDone) }   // expect: the time ran out false
+print(stuck.cancel(interrupt = true), stuck.isCancelled, stuck.cancel())   // expect: true true false
+// Timed jobs: once after a delay, and again and again until cancelled.
+val once = pool.after(10.milliseconds) { "later" }
+var times = 0
+val repeating = pool.every(5.milliseconds) { times += 1 }
+print(once.get(), once.isDone)                               // expect: later true
+Thread.sleep(60.milliseconds)
+repeating.cancel()
+print(times >= 3)                                            // expect: true
+pool.close()
+print(pool.isClosed)                                         // expect: true
+try { pool.submit { 1 } } catch (e) { print(e.message) }     // expect: the pool 'workers' is closed: it takes no more jobs
 
-// A future a program completes itself, and one for work on a thread of its own.
-val answer = Future()
-var told : any? = null
-answer.whenComplete { value, error -> told = value }
-val completing = thread { Thread.sleep(5); answer.complete(42) }
-val got = answer.get()
-completing.join()                     // the listener is told on that thread, just after
-print(got, told, answer.complete(43), answer.getNow(0), Future().getNow("nothing yet"))   // expect: 42 42 false 42 nothing yet
-print(Future.supplyAsync { 6 * 7 }.get(), (runCatching { Future.supplyAsync { throw RuntimeException("no") }.get() }.exceptionOrNull() as Exception).message)   // expect: 42 no
+// One thread, jobs in order.
+val queue = JobQueue("saver")
+val order : open List<int> = []
+val names : open List<string> = []
+val jobs = (1..5).map { n -> queue.submit { order.add(n); names.add(Thread.currentThread().name); n } }
+Job.all(jobs).get()
+print(order, names.distinct())                               // expect: [1, 2, 3, 4, 5] ["saver-1"]
+queue.submit { Thread.sleep(1.minutes) }
+val waiting = queue.submit { "not run" }
+Thread.sleep(20.milliseconds)
+queue.closeNow()
+print(waiting.isCancelled)                                   // expect: true
 
-// An error that nothing catches ends its thread, not the program; and a daemon thread still
-// running at the end does not keep the program alive.
-thread(isDaemon = true) { while (true) { Thread.sleep(1000) } }
+// ---- Durations (D90) ----
+print(16.milliseconds, 1.5.seconds, 90.seconds, 2.hours + 30.minutes, 250.microseconds, 1.seconds / 60)   // expect: 16ms 1.5s 1m 30s 2h 30m 250us 16.666666ms
+print(2.seconds > 1999.milliseconds, 1.5.seconds.inMilliseconds, (3.seconds * 2).inWholeMilliseconds, 1.minutes / 1.seconds, [3.seconds, 1.seconds].sorted())   // expect: true 1500.0 6000 60.0 [1s, 3s]
+
+// An error that nothing catches ends its thread, not the program, and is reported; and a daemon
+// thread still running at the end does not keep the program alive.
+thread(daemon = true) { while (true) { Thread.sleep(1.seconds) } }
 print("end of script")                                       // expect: end of script

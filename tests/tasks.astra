@@ -1,0 +1,226 @@
+// The event loop and tasks (D81, D89, D90).
+
+val log : open List<any?> = []
+
+// ---- The event loop ----
+// Posted jobs and timers run on the main thread, one at a time, after the script; run() lets a
+// script carry on after them.
+EventLoop.post { log.add("posted 1") }
+EventLoop.post { log.add("posted 2") }
+EventLoop.after(30.milliseconds) { log.add("after 30") }
+EventLoop.after(5.milliseconds) { log.add("after 5") }
+var ticks = 0
+var ticker : Timer? = null
+ticker = EventLoop.every(4.milliseconds) {
+  ticks += 1
+  if (ticks == 3) { ticker!!.cancel() }
+}
+val cancelled = EventLoop.after(1.milliseconds) { log.add("never") }
+cancelled.cancel()
+print(log, EventLoop.isLoopThread)                           // expect: [] true
+EventLoop.run()
+print(log, ticks)                                            // expect: ["posted 1", "posted 2", "after 5", "after 30"] 3
+
+// A thread hands its result to the main thread by posting.
+log.clear()
+val worker = thread(name = "worker") {
+  val onWorker = !EventLoop.isLoopThread
+  EventLoop.post { log.add("from the worker: $onWorker, on the loop: ${EventLoop.isLoopThread}") }
+}
+EventLoop.run()                                              // waits for the thread, and then for what it posted
+print(log, worker.isDone)                                    // expect: ["from the worker: true, on the loop: true"] true
+
+// ---- Tasks ----
+// A question whose answer comes later, through a callback. Here a timer stands for the user.
+val questions : open List<string> = []
+fun ask(question : string, callback : (string) -> unit) {
+  questions.add(question)
+  EventLoop.after(2.milliseconds) { callback(question.upper()) }
+}
+
+// The same question as a function that waits: it is called like any other.
+suspend fun answerTo(question : string) : string => suspendTask { resume -> ask(question) { resume(it) } }
+
+log.clear()
+val asking = task {
+  log.add("start")
+  val first = answerTo("one")
+  log.add(first)
+  val second = answerTo("two, after $first")
+  log.add(second)
+  second.size
+}
+log.add("started")                    // the task ran as far as its first question, then returned here
+print(log, questions, asking.isDone)                         // expect: ["start", "started"] ["one"] false
+EventLoop.run()
+print(log, asking.getOrNull())                               // expect: ["start", "started", "ONE", "TWO, AFTER ONE"] 14
+
+// An answer that is already there does not set the task aside at all.
+log.clear()
+task {
+  val now = suspendTask<string> { resume -> resume("at once") }
+  log.add(now)
+}
+print(log)                                                   // expect: ["at once"]
+
+// A task gives a Job of what it returns, or of what it throws: then { } and onError { } run
+// with it on the event loop.
+task { answerTo("x") + "!" }.then { log.add("then: $it") }
+task { answerTo("y"); throw IllegalStateException("went wrong") }.onError { log.add("error: " + it.message) }
+EventLoop.run()
+print(log.drop(1))                                           // expect: ["then: X!", "error: went wrong"]
+val failedAtOnce = task { throw IllegalStateException("at once") }
+print(failedAtOnce.failed, failedAtOnce.isDone)              // expect: true true
+try { failedAtOnce.get() } catch (e : ExecutionException) { print(e.cause!!.message) }   // expect: at once
+
+// Result and runCatching stay.
+print(runCatching { 6 * 7 }, runCatching { throw IllegalStateException("no") }.isFailure, Result.success(1).onSuccess { log.add("ok") }.getOrThrow(), log.last())   // expect: Success(42) true 1 ok
+val failure = runCatching<string> { throw IllegalStateException("went wrong") }
+print(failure.getOrNull(), failure.getOrDefault("0"), failure.getOrElse { "else: " + it.message })   // expect: null 0 else: went wrong
+try { failure.getOrThrow() } catch (e) { print("rethrown:", e.message) }   // expect: rethrown: went wrong
+
+// A wait can be answered with an error, which the task can catch.
+log.clear()
+task {
+  try {
+    suspendTask<string> { resume -> EventLoop.post { resume.fail(IllegalStateException("refused")) } }
+  } catch (e) {
+    log.add("caught " + e.message)
+  }
+  log.add(suspendTask<string> { resume -> EventLoop.post { resume("then went on") } })
+}
+EventLoop.run()
+print(log)                                                   // expect: ["caught refused", "then went on"]
+
+// A task set aside is taken up again once.
+var held : ((int) -> unit)? = null
+task { suspendTask<int> { resume -> held = resume } }
+held!!(1)
+try { held!!(2) } catch (e) { print(e.message) }             // expect: resume was called already: a task set aside is taken up again once
+
+// A task can be set aside inside a lambda given to a collection function, inside apply,
+// with, let and run, and several calls deep.
+class Form { var name = ""; var size = 0 }
+suspend fun deeper(p : string) : string {
+  val inner : suspend (string) -> string = { q -> answerTo(p + q) }
+  return inner("2")
+}
+// A function of the program's own that only calls its lambda runs it in place, so it may wait.
+fun eachTwice(action : (int) -> unit) {
+  action(1)
+  action(2)
+}
+log.clear()
+task {
+  val answers = ["a", "b"].map { answerTo(it) }
+  ["c"].forEach { log.add(answerTo(it)) }
+  val form = Form().apply { name = answerTo("name") }
+  with(form) { size = answerTo("12345").size }
+  val viaLet = "q".let { answerTo(it) }
+  val viaRun = form.run { answerTo(name) }
+  val nested = deeper("1")
+  val counted = (1..3).sumOf { answerTo("x").size }
+  var twice = ""
+  eachTwice { twice += answerTo("t$it") }
+  log.add([answers, form.name, form.size, viaLet, viaRun, nested, counted, {"k": 1}.map { answerTo(it.key) }, twice])
+}
+EventLoop.run()
+print(log)                                                   // expect: ["C", [["A", "B"], "NAME", 5, "Q", "NAME", "12", 3, ["K"], "T1T2"]]
+
+// delay sets a task aside for a time; other tasks and the loop go on meanwhile.
+log.clear()
+task { delay(30.milliseconds); log.add("slow") }
+task { delay(5.milliseconds); log.add("quick") }
+EventLoop.run()
+print(log)                                                   // expect: ["quick", "slow"]
+
+// A task can wait for work done on a thread without holding the main thread: get() sets it aside.
+log.clear()
+task {
+  val job = thread { Thread.sleep(10.milliseconds); "worked on " + (EventLoop.isLoopThread ? "the loop" : "a thread") }
+  log.add(job.get() + ", back on the loop: ${EventLoop.isLoopThread}")
+  try {
+    thread { throw IllegalStateException("failed there") }.get()
+  } catch (e : ExecutionException) {
+    log.add(e.cause!!.message)
+  }
+}
+log.add("meanwhile")
+EventLoop.run()
+print(log)                                                   // expect: ["meanwhile", "worked on a thread, back on the loop: true", "failed there"]
+// expect error output: IllegalStateException: failed there
+
+// What waits for a lock, a channel or a countdown sets a task aside too, while threads go on.
+log.clear()
+val items = Channel<int>(capacity = 1)
+val counted = Countdown(2)
+task {
+  for (n in items) { log.add("got $n") }
+  log.add("closed")
+  counted.await()
+  log.add("counted")
+}
+thread {
+  for (n in 1..3) { items.send(n) }
+  items.close()
+  counted.countDown()
+  counted.countDown()
+}
+log.add("loop free")
+EventLoop.run()
+print(log)                                                   // expect: ["loop free", "got 1", "got 2", "got 3", "closed", "counted"]
+
+// A task started inside another runs until it is first set aside, then the outer one goes on.
+log.clear()
+task {
+  log.add("outer 1")
+  task { log.add("inner 1"); answerTo("i"); log.add("inner 2") }
+  log.add("outer 2")
+  answerTo("o")
+  log.add("outer 3")
+}
+EventLoop.run()
+print(log)                                                   // expect: ["outer 1", "inner 1", "outer 2", "inner 2", "outer 3"]
+
+// On a thread that is not running a task, a function that waits waits on that thread.
+val onThread = thread { suspendTask<string> { resume -> EventLoop.post { resume("answered from the loop") } } }
+EventLoop.run()
+print(onThread.getOrNull())                                  // expect: answered from the loop
+
+// A task cannot be set aside from inside a built-in function that is calling back. The checker
+// refuses this where it can see it (tests/check/suspend.astra); here it cannot.
+val unknown = { value -> value }
+task {
+  try {
+    [2, 1].sort(unknown({ a, b -> answerTo("s").size }))
+  } catch (e) {
+    print(e.message)
+  }
+}
+// expect: the task cannot be set aside here: it is inside a built-in function that is calling back into the program (a sort, or a property being read); wait outside it
+
+// ---- Snips' Flows.kt, as it ports ----
+
+suspend fun await(ask : ((any) -> unit) -> unit) => suspendTask<any> { resume ->
+  var answered = false
+  ask { if (!answered) { answered = true; resume(it) } }
+}
+
+fun answering(f : (string) -> string) => { a, done -> done(f(a)) }
+
+// A dialog that answers later, and a stub that answers at once, as a test would give.
+object dialog {
+  fun prompt(title : string, done : (string) -> unit) { EventLoop.after(1.milliseconds) { done("$title?"); done("ignored") } }
+}
+suspend fun askText(title : string) => await { dialog.prompt(title, it) }
+
+log.clear()
+task {
+  val name = askText("name")
+  val colour = askText("colour for $name")
+  log.add(colour)
+}
+EventLoop.run()
+val stub = answering { title -> "stubbed $title" }
+print(log, task { await { stub("x", it) } }.getOrNull(), task { askText("later") }.getOrNull())   // expect: ["colour for name??"] stubbed x null
+EventLoop.run()

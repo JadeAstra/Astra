@@ -1,4 +1,4 @@
-// Threads, locks, the event loop and flows: everything that has more than one line of
+// Threads, locks, the event loop and tasks: everything that has more than one line of
 // execution in it.
 //
 // Threads are real operating-system threads that share one heap. Only one of them runs Astra
@@ -6,15 +6,23 @@
 // race but cannot damage the VM. A thread gives the lock up at a safe point (a call or the
 // end of a loop body) once another has waited for it, and around anything that blocks.
 //
-// A flow is a function with a stack of its own (ObjFiber), which lets it stop in the middle
+// A task is a function with a stack of its own (ObjFiber), which lets it stop in the middle
 // of a call and go on later. It needs no thread: it runs on whichever thread takes it up.
 //
-// The Astra side of all this is in src/std/thread.astra and src/std/flow.astra.
+// The Astra side of all this is in src/std/thread.astra and src/std/task.astra.
 
 #include <algorithm>
 #include <cstdlib>
 #include <new>
 #include <thread>
+
+#ifdef _WIN32
+#define NOMINMAX
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#endif
 
 #include "builtins.h"
 #include "vm.h"
@@ -25,25 +33,118 @@ using Clock = std::chrono::steady_clock;
 
 // ---- Contexts ----
 
-Context::Context(size_t stackSize, int frameLimit) : maxFrames(frameLimit) {
-    stack = static_cast<Value*>(std::malloc(stackSize * sizeof(Value)));
+namespace {
+
+// Memory reserved and committed as it is used, for a stack that grows: the address space is
+// set aside whole, so nothing in it ever moves.
+const uintptr_t kPage = 4096;
+void* reserve(size_t bytes) {
+#ifdef _WIN32
+    return VirtualAlloc(nullptr, bytes, MEM_RESERVE, PAGE_NOACCESS);
+#else
+    void* at = mmap(nullptr, bytes, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
+    return at == MAP_FAILED ? nullptr : at;
+#endif
+}
+bool commit(void* from, void* to) {
+    const uintptr_t start = reinterpret_cast<uintptr_t>(from) / kPage * kPage;
+    const uintptr_t end = (reinterpret_cast<uintptr_t>(to) + kPage - 1) / kPage * kPage;
+    if (end <= start) return true;
+#ifdef _WIN32
+    return VirtualAlloc(reinterpret_cast<void*>(start), end - start, MEM_COMMIT, PAGE_READWRITE) != nullptr;
+#else
+    return mprotect(reinterpret_cast<void*>(start), end - start, PROT_READ | PROT_WRITE) == 0;
+#endif
+}
+void unreserve(void* at, size_t bytes) {
+    if (at == nullptr) return;
+#ifdef _WIN32
+    (void)bytes;
+    VirtualFree(at, 0, MEM_RELEASE);
+#else
+    munmap(at, bytes);
+#endif
+}
+
+const size_t kFrameBytes = sizeof(CallFrame) + sizeof(const ObjTypeInfo*) + sizeof(Value);
+
+}  // namespace
+
+Context::Context(size_t stackSize, int frameLimit, bool grows) : maxFrames(frameLimit), growable(grows) {
     // Each frame's type arguments come after the frames (VM::frameTypeArgs).
     static_assert(sizeof(CallFrame) % alignof(const ObjTypeInfo*) == 0);
     // and their destinations (VM::frameDestination) after those.
-    frames = static_cast<CallFrame*>(
-        std::malloc(static_cast<size_t>(frameLimit) * (sizeof(CallFrame) + sizeof(const ObjTypeInfo*) + sizeof(Value))));
-    if (stack == nullptr || frames == nullptr) {
-        std::free(stack);
-        std::free(frames);
-        throw std::bad_alloc();
+    if (grows) {
+        stack = static_cast<Value*>(reserve(stackSize * sizeof(Value)));
+        frames = static_cast<CallFrame*>(reserve(static_cast<size_t>(frameLimit) * kFrameBytes));
+        if (stack == nullptr || frames == nullptr) {
+            unreserve(stack, stackSize * sizeof(Value));
+            unreserve(frames, static_cast<size_t>(frameLimit) * kFrameBytes);
+            throw std::bad_alloc();
+        }
+        stackReserveEnd = stack + stackSize;
+        stackEnd = stack;
+        this->frameLimit = 0;
+        if (!grow(stack + 256, 16)) throw std::bad_alloc();  // a page of values to start with
+    } else {
+        stack = static_cast<Value*>(std::malloc(stackSize * sizeof(Value)));
+        frames = static_cast<CallFrame*>(std::malloc(static_cast<size_t>(frameLimit) * kFrameBytes));
+        if (stack == nullptr || frames == nullptr) {
+            std::free(stack);
+            std::free(frames);
+            throw std::bad_alloc();
+        }
+        stackEnd = stack + stackSize;
+        this->frameLimit = frameLimit;
     }
-    stackEnd = stack + stackSize;
     sp = stack;
+}
+
+bool Context::grow(const Value* top, int wanted) {
+    if (!growable) return false;
+    if (top > stackEnd) {
+        const size_t have = static_cast<size_t>(stackEnd - stack);
+        size_t want = std::max<size_t>(have * 2, static_cast<size_t>(top - stack));
+        want = std::min<size_t>(want, static_cast<size_t>(stackReserveEnd - stack));
+        if (stack + want < top || !commit(stackEnd, stack + want)) return false;
+        stackEnd = stack + want;
+    }
+    if (wanted > frameLimit) {
+        const int limit = std::min(std::max(frameLimit * 2, wanted), maxFrames);
+        if (limit < wanted) return false;
+        // The frames, their type arguments after all of them, and their destinations after those.
+        char* base = reinterpret_cast<char*>(frames);
+        const size_t count = static_cast<size_t>(maxFrames);
+        if (!commit(base, base + static_cast<size_t>(limit) * sizeof(CallFrame))) return false;
+        char* types = base + count * sizeof(CallFrame);
+        if (!commit(types, types + static_cast<size_t>(limit) * sizeof(const ObjTypeInfo*))) return false;
+        char* places = types + count * sizeof(const ObjTypeInfo*);
+        if (!commit(places, places + static_cast<size_t>(limit) * sizeof(Value))) return false;
+        frameLimit = limit;
+    }
+    return true;
+}
+
+bool VM::growContext(const Value* top, int frames) {
+    if (!context_->growable || !context_->grow(top, frames)) return false;
+    stackEnd_ = context_->stackEnd;
+    frameLimit_ = context_->frameLimit;
+    return true;
 }
 
 Context::~Context() { release(); }
 
 void Context::release() {
+    if (growable) {
+        unreserve(stack, static_cast<size_t>(stackReserveEnd - stack) * sizeof(Value));
+        unreserve(frames, static_cast<size_t>(maxFrames) * kFrameBytes);
+        stack = stackEnd = sp = stackReserveEnd = nullptr;
+        frames = nullptr;
+        frameCount = 0;
+        handlers.clear();
+        openUpvalues = nullptr;
+        return;
+    }
     std::free(stack);
     std::free(frames);
     stack = stackEnd = sp = nullptr;
@@ -73,6 +174,7 @@ void VM::loadContext(Context* c) {
     frames_ = c->frames;
     frameCount_ = c->frameCount;
     maxFrames_ = c->maxFrames;
+    frameLimit_ = c->frameLimit;
     handlers_ = std::move(c->handlers);
     c->handlers.clear();
     openUpvalues_ = c->openUpvalues;
@@ -217,7 +319,7 @@ void VM::threadMain(ThreadState* me) {
     } catch (const AstraExit& exit) {
         if (onThreadExit) onThreadExit(exit.code);
     } catch (const FiberSuspend&) {
-        // Cannot happen: a thread's own context is not a flow.
+        // Cannot happen: a thread's own context is not a task.
     } catch (const WorkerStop&) {
         // The worker this thread belongs to has been told to stop.
     }
@@ -328,6 +430,7 @@ bool VM::monitorTryEnter(Value lock) {
     if (monitor.owner != nullptr) return false;
     monitor.owner = thread_;
     monitor.count = 1;
+    thread_->held.push_back(lock.as.obj);
     return true;
 }
 
@@ -343,11 +446,22 @@ void VM::monitorEnter(Value lock) {
     removeFrom(monitor.entering, me);
     monitor.owner = me;
     monitor.count = 1;
+    me->held.push_back(key);
+}
+
+// Forgets that this thread holds the lock, the last time it is listed.
+static void dropHeld(ThreadState* me, const Obj* key) {
+    for (auto it = me->held.rbegin(); it != me->held.rend(); ++it)
+        if (*it == key) {
+            me->held.erase(std::next(it).base());
+            return;
+        }
 }
 
 void VM::monitorExit(Value lock) {
     Monitor& monitor = heldMonitor(lock, "unlock");
     if (--monitor.count > 0) return;
+    dropHeld(thread_, lock.as.obj);
     monitor.owner = nullptr;
     if (!monitor.entering.empty()) unpark(monitor.entering.front());
     else if (monitor.waiting.empty()) monitors_.erase(lock.as.obj);
@@ -390,6 +504,30 @@ int VM::monitorWait(Value lock, int64_t timeoutMs) {
     monitor.owner = me;
     monitor.count = held;
     return status;
+}
+
+Value VM::innermostMonitor() const {
+    for (auto it = thread_->held.rbegin(); it != thread_->held.rend(); ++it) {
+        auto found = monitors_.find(*it);
+        if (found != monitors_.end() && found->second.owner == thread_) return Value::object(const_cast<Obj*>(*it));
+    }
+    return Value::null();
+}
+
+int VM::monitorLetGo(Value lock) {
+    Monitor& monitor = heldMonitor(lock, "let go of");
+    const int held = monitor.count;
+    dropHeld(thread_, lock.as.obj);
+    monitor.owner = nullptr;
+    monitor.count = 0;
+    if (!monitor.entering.empty()) unpark(monitor.entering.front());
+    else if (monitor.waiting.empty()) monitors_.erase(lock.as.obj);
+    return held;
+}
+
+void VM::monitorTakeBack(Value lock, int count) {
+    monitorEnter(lock);
+    monitors_[lock.as.obj].count = std::max(count, 1);
 }
 
 void VM::monitorNotify(Value lock, bool all) {
@@ -459,7 +597,7 @@ void VM::runEventLoop(bool wait, int64_t budgetMs) {
         if (stopRequested_.load()) throw WorkerStop{};
         if (!wait && budgetMs >= 0 && ranOne && Clock::now() >= deadline) return;
         ranOne = true;
-        // What a worker thread has handed over: the end of a read, say, with a flow to take up.
+        // What a worker thread has handed over: the end of a read, say, with a task to take up.
         std::function<void(VM&)> native;
         {
             std::lock_guard<std::mutex> hold(loopMutex_);
@@ -589,7 +727,7 @@ struct VM::Workers {
 Value VM::blocking(std::function<void()> work, std::function<Value(VM&)> finish) {
     if (inParallelSection()) throw runtimeError(Thrown::IllegalStateException, "a parallel section does not wait: reading, writing and other waiting is done outside it");
     if (canSuspend() && onLoopThread()) {
-        // In a flow on the loop thread: a worker does the waiting, and the flow is set aside
+        // In a task on the loop thread: a worker does the waiting, and the task is set aside
         // until the loop hears that the work is done.
         ObjFiber* fiber = context_->fiber;
         if (workers_ == nullptr) workers_ = std::make_shared<Workers>();
@@ -621,7 +759,7 @@ Value VM::blocking(std::function<void()> work, std::function<Value(VM&)> finish)
     return finish(*this);
 }
 
-// ---- Flows ----
+// ---- Tasks ----
 
 void VM::suspendFiber() {
     context_->fiber->pendingSlot = nativeBase_;
@@ -629,9 +767,9 @@ void VM::suspendFiber() {
 }
 
 void VM::runFiber(ObjFiber* fiber, bool ok, Value value) {
-    if (fiber->state == FiberState::Running) throw runtimeError(Thrown::IllegalStateException, "the flow is already running");
-    if (fiber->state == FiberState::Done) throw runtimeError(Thrown::IllegalStateException, "the flow has already finished");
-    if (thread_->nesting >= kMaxFlowNesting) throw runtimeError(Thrown::IllegalStateException, "too many flows are running inside one another");
+    if (fiber->state == FiberState::Running) throw runtimeError(Thrown::IllegalStateException, "the task is already running");
+    if (fiber->state == FiberState::Done) throw runtimeError(Thrown::IllegalStateException, "the task has already finished");
+    if (thread_->nesting >= kMaxTaskNesting) throw runtimeError(Thrown::IllegalStateException, "too many tasks are running inside one another");
     TempRoot keepFiber(*this, Value::object(fiber));
     TempRoot keepValue(*this, value);
 
@@ -644,7 +782,7 @@ void VM::runFiber(ObjFiber* fiber, bool ok, Value value) {
     thread_->current = context_;
     thread_->nesting++;
 
-    // Back to the context that took the flow up, whichever way the flow stopped.
+    // Back to the context that took the task up, whichever way the task stopped.
     auto leave = [&](FiberState state) {
         fiber->state = state;
         if (state == FiberState::Done) closeUpvalues(stack_);
@@ -701,7 +839,7 @@ int64_t timeLimit(VM& vm, int argc, const Value* args, int i) {
 }
 
 ObjFiber* fiberArgument(VM& vm, Value v) {
-    if (!v.isObjType(ObjType::Fiber)) throw vm.runtimeError(Thrown::ClassCastException, "expected a flow, got a value of type " + vm.typeName(v));
+    if (!v.isObjType(ObjType::Fiber)) throw vm.runtimeError(Thrown::ClassCastException, "expected a task, got a value of type " + vm.typeName(v));
     return asFiber(v);
 }
 
@@ -783,6 +921,15 @@ void registerThreads(VM& vm) {
         return Value::null();
     });
     define(vm, thread, "holds", 1, 1, [](VM& vm, int, Value* args) -> Value { return Value::boolean(vm.monitorHeld(args[0])); });
+    // The lock this thread took last and holds still, or null (waitUntil, D86).
+    define(vm, thread, "innermost", 0, 0, [](VM& vm, int, Value*) -> Value { return vm.innermostMonitor(); });
+    // Lets go of a lock however many times over it is held, giving that count, for a task set
+    // aside to take it back with afterwards.
+    define(vm, thread, "letGo", 1, 1, [](VM& vm, int, Value* args) -> Value { return Value::integer(vm.monitorLetGo(args[0])); });
+    define(vm, thread, "takeBack", 2, 2, [](VM& vm, int, Value* args) -> Value {
+        vm.monitorTakeBack(args[0], static_cast<int>(vm.toInt(args[1], "count")));
+        return Value::null();
+    });
     // 0: notified; 1: the time ran out; 2: interrupted.
     define(vm, thread, "wait", 1, 2, [](VM& vm, int argc, Value* args) -> Value {
         return Value::integer(vm.monitorWait(args[0], timeLimit(vm, argc, args, 1)));
@@ -828,33 +975,70 @@ void registerThreads(VM& vm) {
         return Value::null();
     });
 
-    // -- __flow: flows --
-    ObjClass* flow = holder(vm, "flow");
+    // -- __task: tasks --
+    ObjClass* task = holder(vm, "task");
 
-    // Starts a flow running `function`, and returns when it finishes or is first set aside.
-    define(vm, flow, "start", 1, 1, [](VM& vm, int, Value* args) -> Value {
+    // Starts a task running `function`, and returns when it finishes or is first set aside.
+    define(vm, task, "start", 1, 1, [](VM& vm, int, Value* args) -> Value {
         ObjFiber* fiber = vm.alloc<ObjFiber>(args[0]);
         vm.account(64 * 1024);
         vm.runFiber(fiber, true, Value::null());
         return Value::null();
     });
-    define(vm, flow, "current", 0, 0, [](VM& vm, int, Value*) -> Value {
+    // The running task, or null. A sequence's generator is not one: what waits in it waits as
+    // on a thread.
+    define(vm, task, "current", 0, 0, [](VM& vm, int, Value*) -> Value {
         ObjFiber* fiber = vm.currentFiber();
-        return fiber == nullptr ? Value::null() : Value::object(fiber);
+        return fiber == nullptr || fiber->generator ? Value::null() : Value::object(fiber);
     });
-    // A new place for the running flow to wait at. The number tells its answer from one
-    // meant for an earlier wait.
-    define(vm, flow, "prepare", 0, 0, [](VM& vm, int, Value*) -> Value {
+
+    // -- Generators: what sequence { } runs on (D98) --
+    // A generator is a task with a small stack that grows as needed, so that many can be alive
+    // at once. It is set aside only where it yields, and taken up again when the next value is
+    // asked for.
+
+    // Starts a generator running `function`, up to its first yield or its end.
+    define(vm, task, "generate", 1, 1, [](VM& vm, int, Value* args) -> Value {
+        ObjFiber* fiber = vm.alloc<ObjFiber>(args[0], true);
+        fiber->generator = true;
+        TempRoot keep(vm, Value::object(fiber));
+        vm.account(4 * 1024);
+        vm.runFiber(fiber, true, Value::null());
+        return Value::object(fiber);
+    });
+    // Sets the running generator aside, for its value to be taken.
+    define(vm, task, "yield", 0, 0, [](VM& vm, int, Value*) -> Value {
         ObjFiber* fiber = vm.currentFiber();
-        if (fiber == nullptr) throw vm.runtimeError(Thrown::IllegalStateException, "not in a flow");
+        if (fiber == nullptr || !fiber->generator) throw vm.runtimeError(Thrown::IllegalStateException, "yield gives a value from a sequence's block, and is called in it");
+        if (!vm.canSetAside())
+            throw vm.runtimeError(Thrown::IllegalStateException, "the sequence cannot give a value here: its block is inside a built-in function that is calling "
+                                  "back into the program (a sort, or a property being read); yield outside it");
+        fiber->waitingAt = 0;
+        vm.suspendFiber();
+    });
+    // Takes a generator up again, up to its next yield or its end.
+    define(vm, task, "next", 1, 1, [](VM& vm, int, Value* args) -> Value {
+        ObjFiber* fiber = fiberArgument(vm, args[0]);
+        if (!fiber->generator) throw vm.runtimeError(Thrown::IllegalStateException, "not a sequence's generator");
+        if (fiber->state != FiberState::Done) vm.runFiber(fiber, true, Value::null());
+        return Value::null();
+    });
+    define(vm, task, "finished", 1, 1, [](VM& vm, int, Value* args) -> Value {
+        return Value::boolean(fiberArgument(vm, args[0])->state == FiberState::Done);
+    });
+    // A new place for the running task to wait at. The number tells its answer from one
+    // meant for an earlier wait.
+    define(vm, task, "prepare", 0, 0, [](VM& vm, int, Value*) -> Value {
+        ObjFiber* fiber = vm.currentFiber();
+        if (fiber == nullptr) throw vm.runtimeError(Thrown::IllegalStateException, "not in a task");
         fiber->hasEarly = false;
         fiber->early = Value::null();
         return Value::integer(++fiber->waitToken);
     });
     // Waits for the answer to that wait: the value given, or the error raised here.
-    define(vm, flow, "wait", 1, 1, [](VM& vm, int, Value* args) -> Value {
+    define(vm, task, "wait", 1, 1, [](VM& vm, int, Value* args) -> Value {
         ObjFiber* fiber = vm.currentFiber();
-        if (fiber == nullptr || args[0].as.i != fiber->waitToken) throw vm.runtimeError(Thrown::IllegalStateException, "not in the flow that is to wait");
+        if (fiber == nullptr || args[0].as.i != fiber->waitToken) throw vm.runtimeError(Thrown::IllegalStateException, "not in the task that is to wait");
         if (fiber->hasEarly) {
             // It was answered before it got here, so there is nothing to wait for.
             fiber->hasEarly = false;
@@ -866,25 +1050,25 @@ void registerThreads(VM& vm) {
             throw thrown;
         }
         if (!vm.canSuspend())
-            throw vm.runtimeError(Thrown::IllegalStateException, "the flow cannot be set aside here: it is inside a built-in function that is calling back into the "
+            throw vm.runtimeError(Thrown::IllegalStateException, "the task cannot be set aside here: it is inside a built-in function that is calling back into the "
                                   "program (a sort, or a property being read); wait outside it");
         fiber->waitingAt = fiber->waitToken;
         vm.suspendFiber();
     });
     // Gives the answer to a wait: `ok` and a value, or not ok and what to throw there.
-    define(vm, flow, "resume", 4, 4, [](VM& vm, int, Value* args) -> Value {
+    define(vm, task, "resume", 4, 4, [](VM& vm, int, Value* args) -> Value {
         ObjFiber* fiber = fiberArgument(vm, args[0]);
         const int64_t token = vm.toInt(args[1], "wait");
-        // Waits are numbered as the flow comes to them, and answered in that order.
-        if (token <= fiber->resumedToken) throw vm.runtimeError(Thrown::IllegalStateException, "this continuation has already been resumed");
-        // An answer to a wait the flow gave up (an error took it elsewhere, or it has ended)
+        // Waits are numbered as the task comes to them, and answered in that order.
+        if (token <= fiber->resumedToken) throw vm.runtimeError(Thrown::IllegalStateException, "resume was called already: a task set aside is taken up again once");
+        // An answer to a wait the task gave up (an error took it elsewhere, or it has ended)
         // has nowhere to go.
         if (token != fiber->waitToken || fiber->state == FiberState::Done) return Value::null();
         fiber->resumedToken = token;
         if (fiber->state == FiberState::Suspended && fiber->waitingAt == token) {
             vm.runFiber(fiber, args[2].truthy(), args[3]);
         } else {
-            // The flow has not got as far as waiting: it finds the answer there when it does.
+            // The task has not got as far as waiting: it finds the answer there when it does.
             fiber->hasEarly = true;
             fiber->earlyOk = args[2].truthy();
             fiber->early = args[3];
@@ -892,7 +1076,7 @@ void registerThreads(VM& vm) {
         return Value::null();
     });
     // How many parameters a function takes; 1 where that cannot be told.
-    define(vm, flow, "arity", 1, 1, [](VM&, int, Value* args) -> Value {
+    define(vm, task, "arity", 1, 1, [](VM&, int, Value* args) -> Value {
         if (args[0].isObjType(ObjType::Closure)) return Value::integer(asClosure(args[0])->proto->arity);
         if (args[0].isObjType(ObjType::BoundMethod)) return Value::integer(asBoundMethod(args[0])->method->proto->arity);
         return Value::integer(1);

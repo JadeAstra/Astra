@@ -277,7 +277,9 @@ size_t keyItemHash(const KeyItem& a, int depth) {
 
 // Whether the running thread may look into an object: always, except in a parallel section
 // for one that another core owns.
-static bool readableHere(const Value& v) { return v.as.obj->core == 0 || v.as.obj->core == currentCore; }
+static bool readableHere(const Value& v) {
+    return v.as.obj->core == 0 || v.as.obj->core == currentCore || (currentReadable != nullptr && currentReadable->test(v.as.obj->core));
+}
 
 // Whether a value is of a kind whose class may have an == and a hashCode of its own: an object
 // or a value. Asked first, so that keys of other kinds never look at the thread's VM.
@@ -844,6 +846,7 @@ Characters ObjString::slice(size_t begin, size_t end) const {
 }
 
 thread_local uint8_t currentCore = 0;
+thread_local const std::bitset<256>* currentReadable = nullptr;
 thread_local KeyMethods* keyMethods = nullptr;
 
 // ---- ValueMap ----

@@ -283,5 +283,5 @@ print(Native.counters()[2] < 200)   // expect: true
 
 // -- Off the main thread there is no drawing: it says so --
 val results = []
-thread { results.add(attempt { Surface(4, 4) }) }.join()
+thread { results.add(attempt { Surface(4, 4) }) }.get()
 print(results)   // expect: ["windows and drawing belong to the main thread; hand the work to it with EventLoop.post"]

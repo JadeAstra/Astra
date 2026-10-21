@@ -63,7 +63,7 @@ Worker.parent!!.onMessage = { message ->
 // Sixty times a second, whatever the program is busy with: move every ball. It measures how
 // long it really was since last time, so that the balls keep their speed whatever the timer does.
 var last = clock()
-EventLoop.every(16) {
+EventLoop.every(16.milliseconds) {
   val now = clock()
   val elapsed = Math.min((now - last) * 60, 6)
   last = now

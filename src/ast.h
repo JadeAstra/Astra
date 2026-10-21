@@ -117,7 +117,7 @@ struct FunctionDecl : Node {
     // Written `override`: it takes the place of a member the class would otherwise be given.
     bool isOverride = false;
 
-    // Written `suspend`: it may wait, setting its flow aside, and only code that may wait too
+    // Written `suspend`: it may wait, setting its task aside, and only code that may wait too
     // calls it (R1, D30).
     bool isSuspend = false;
 
@@ -369,6 +369,7 @@ struct VarStmt : Stmt {
     bool isAbstract = false;  // `abstract val x`: for a subclass to supply
     bool isLateinit = false;  // `lateinit var x : T`: given its value after the object is made (D36)
     bool isLazy = false;      // `lazy val x = ...`: its value worked out when first read (D37)
+    bool isAtomic = false;    // `atomic var hits = 0`: changed in one step by any core of a parallel section (D92)
     Annotations annotations;  // (D153)
     uint8_t access = 0;       // the access word in front of a field of a class, as for FunctionDecl
     uint8_t setAccess = 0;    // the one in front of `set` under it (`private set`): who may assign
@@ -529,6 +530,9 @@ struct FunctionStmt : Stmt {
     std::string receiver;
     bool receiverNullable = false;  // `fun string?.orEmpty()`: null takes it too
     TypeAnnotation receiverType;    // the receiver in full, type arguments included: `List<T>`
+    // `val int.seconds : Duration get() => ...`: an extension property, read as `5.seconds`; its
+    // getter is the function.
+    bool isProperty = false;
 
     // `external fun print(vararg items : any?)`: provided by the C++, declared in Astra so that its
     // types and parameter names are known. Only in the standard library; it has no body.

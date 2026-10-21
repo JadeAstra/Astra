@@ -3,4 +3,4 @@ class Counter {
   var count = 0
   @Synchronized fun add() { count += 1 }
 }
-// expect compile error: @Synchronized is for the JVM: guard what it guards with a Lock, lock.withLock { ... } (D153)
+// expect compile error: @Synchronized is for the JVM: guard what it guards with a Lock, lock.useKey { ... } (D86, D153)

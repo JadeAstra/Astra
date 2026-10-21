@@ -4,9 +4,9 @@
 //
 // Anything here that waits (a read, an accept, waitFor) is written as an ordinary call:
 //   - on a thread it blocks that thread, and the other threads go on;
-//   - in a flow on the main thread the flow is set aside meanwhile, and the event loop goes
+//   - in a task on the main thread the task is set aside meanwhile, and the event loop goes
 //     on, so a window stays live;
-//   - on the main thread outside a flow it blocks the main thread.
+//   - on the main thread outside a task it blocks the main thread.
 // The work is done by the built-in __io (io.cpp). What it hands out to stand for an open
 // file, process or socket is a handle of the C++'s own, an `any` to Astra.
 
@@ -145,7 +145,7 @@ class Process {
   // Waits for the program to end and gives its exit code. With a time limit it gives true
   // if the program ended in that time and false if it is still running.
   fun waitFor() : int => __io.processWait(handle)
-  fun waitFor(timeout : Number, unit : Number? = null) : bool => __io.processWait(handle, TimeUnit.toMillis(timeout, unit)) != null
+  fun waitFor(timeout : Duration) : bool => __io.processWait(handle, timeout.inWholeMilliseconds) != null
 
   // The exit code of a program that has ended.
   fun exitValue() : int {
@@ -266,10 +266,10 @@ class Socket : AutoCloseable {
     if (host != null) { connect(host, port) }
   }
 
-  // With a time limit in milliseconds, gives up when it runs out.
-  fun connect(host : string, port : int, timeout : int? = null) : Socket throws IOException {
+  // With a time limit, gives up when it runs out.
+  fun connect(host : string, port : int, timeout : Duration? = null) : Socket throws IOException {
     if (handle != null) { throw IOException("the socket is already connected") }
-    adopt(__io.connect(host, port, timeout))
+    adopt(__io.connect(host, port, timeout?.inWholeMilliseconds))
     return this
   }
 

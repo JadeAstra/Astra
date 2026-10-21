@@ -98,5 +98,5 @@ val big : open List<Point> = []
 for (i in 0 ..< 1000) { big.add(Point(i, 1)) }
 print(big.parallelStream().map { it.x * it.y }.toList().sum())   // expect: 499500
 var seen = 0
-thread { seen = big.size + big[999].x }.join()
+thread { seen = big.size + big[999].x }.get()
 print(seen)   // expect: 1999

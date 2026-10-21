@@ -1,0 +1,62 @@
+// What parallel sections are built up with (M6.6 part 8, group 7): gather, reduce and fold,
+// parallel(), sections inside sections, shared collections, atomic fields, chunks, views and
+// parallelSort.
+
+// gather: each core fills a container of its own, and the containers are merged.
+val words = ["a", "b", "a", "c", "b", "a"]
+val counts = words.parallelStream().gather(
+  into = { val m : open Map<string, int> = {:}; m },
+  each = { m, w -> m[w] = (m[w] ?: 0) + 1 },
+  merge = { a, b -> for ((k, v) in b) { a[k] = (a[k] ?: 0) + v } })
+print(counts)                                                 // expect: {"a": 3, "b": 2, "c": 1}
+print((1..100).parallelStream().reduce { a, b -> a + b }, (1..4).parallelStream().fold(10) { a, b -> a + b })   // expect: 5050 20
+print((1..3).parallelStream().flatMap { [it, it * 10] }.toList())   // expect: [1, 10, 2, 20, 3, 30]
+
+// parallel(): a few functions at once, their results in order.
+print(parallel({ 1 + 1 }, { 2 * 2 }, { 3 }), parallel<any>({ 1 }, { "two" }))   // expect: [2, 4, 3] [1, "two"]
+
+// A section inside a section.
+val grid = (0..<20).toList()
+print(grid.parallelStream().map { r -> (0..<50).parallelStream().map { c -> r * c }.sumOf { it } }.toList().sum())   // expect: 232750
+
+// What every core may change: shared collections, Atomic, and atomic fields.
+val seen = SharedSet<int>()
+val totals = SharedMap<string, int>()
+val hits = Atomic(0)
+(1..2000).parallelStream().forEach { n -> seen.add(n % 100); totals.update(n % 2 == 0 ? "even" : "odd") { (it ?: 0) + 1 }; hits.increment() }
+print(seen.size, totals.get("even"), totals.get("odd"), hits.get())   // expect: 100 1000 1000 2000
+print(totals.putIfAbsent("none") { 7 }, totals.get("none"), totals.containsKey("odd"), totals.remove("odd"), totals.size)   // expect: 7 7 true 1000 2
+
+class Body(val id : int) {
+  atomic var hits = 0
+  atomic var force = 0.0
+}
+val body = Body(1)
+(1..1000).parallelStream().forEach { n -> body.hits += 1; body.force += 0.5 }
+print(body.hits, body.force)                                  // expect: 1000 500.0
+print(body.hits.compareAndSet(1000, 5), body.hits, body.hits.compareAndSet(1000, 6))   // expect: true 5 false
+body.hits = 0
+print(body.hits)                                              // expect: 0
+
+// Chunks of a list: each core gets the positions of one part, and writes those.
+val xs : open List<int> = List(1000) { 0 }
+xs.parallelChunks { r -> for (i in r) { xs[i] = i * 2 } }
+print(xs[999], xs.sum())                                      // expect: 1998 999000
+
+// parallelSort, and views: a list split in two, each half one function's to change.
+val big : open List<int> = List(50000) { (it * 7919) % 50000 }
+big.parallelSort()
+print(big.take(5), big == big.sorted(), big.size)             // expect: [0, 1, 2, 3, 4] true 50000
+val small : open List<string> = ["d", "b", "c", "a"]
+small.parallelSort()
+print(small)                                                  // expect: ["a", "b", "c", "d"]
+val ys : open List<int> = List(10) { it }
+ys.splitAt(5) { l, r -> parallel({ for (i in l.indices) { l[i] = -l[i] } }, { for (i in r.indices) { r[i] = r[i] * 10 } }) }
+print(ys)                                                     // expect: [0, -1, -2, -3, -4, 50, 60, 70, 80, 90]
+ys.splitAt(3) { l, r ->
+  r.sort()
+  print(l.size, r.size, l[2], r.toList().take(3), r.iterator().size)
+}
+// expect: 3 7 -2 [-4, -3, 50] 7
+try { ys.splitAt(5) { l, r -> parallel({ l[0] = 1 }, { l[1] = 2 }) } } catch (e) { print(e.message) }
+// expect: the same view is given to two of the functions: each view is one function's own

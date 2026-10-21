@@ -128,7 +128,7 @@ window.onResize = { width, height -> frame() }
 window.show()
 // Sixty times a second, or as often as the screen shows a new picture. When the window
 // is closed the timer is called off, and with nothing left to wait for the program ends.
-val timer = EventLoop.every(16, frame)
+val timer = EventLoop.every(16.milliseconds, frame)
 window.onCloseRequest = {
   timer.cancel()
   window.close()

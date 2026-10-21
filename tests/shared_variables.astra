@@ -21,7 +21,7 @@ val worker = thread {
   job.finish()
   job.note = "from the thread"
 }
-worker.join()
+worker.get()
 print(busy, progress, job.isDone(), job.note, job.name)      // expect: true 0.5 true from the thread render
 
 suspend fun twice(x : int) => x * 2

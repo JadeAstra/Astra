@@ -30,13 +30,130 @@ struct WorkerLink {
     std::string path;                // of its script, as the program wrote it
 };
 
+// ---- Frozen data shared between workers (D97) ----
+//
+// Frozen data sent to a worker (a frozenList, frozenMap or frozenSet, or frozen bytes, holding only
+// numbers, text and other frozen data) is not copied into each worker's heap: it is copied once
+// into a block outside every heap, which each VM that is sent it reads in place. A VM's
+// collection notes the blocks it still reaches and lets go of the others, and the last to let
+// go frees the block. What the sender shared stays shared as the same block for as long as the
+// sender keeps the frozen data.
+
+struct SharedBlock {
+    std::vector<Obj*> objects;   // all of it, the first the whole
+    int holds = 0;               // the VMs that hold it, and the messages carrying it
+};
+
 namespace {
+
+std::mutex blocksMutex;
+std::unordered_map<const Obj*, SharedBlock*> blockOf;  // every object outside the heaps, to its block
+
+void letGo(SharedBlock* block) {
+    std::lock_guard<std::mutex> hold(blocksMutex);
+    if (--block->holds > 0) return;
+    for (Obj* obj : block->objects) {
+        blockOf.erase(obj);
+        delete obj;
+    }
+    delete block;
+}
+
+void take(SharedBlock* block) {
+    std::lock_guard<std::mutex> hold(blocksMutex);
+    block->holds++;
+}
+
+// A copy of frozen data outside every heap, every object of it in `block`.
+Value outsideCopy(VM& vm, Value v, SharedBlock& block, int depth) {
+    if (depth > 64) throw vm.runtimeError(Thrown::IllegalArgumentException, "a message is nested too deeply (or holds itself)");
+    if (!v.isObj()) return v;
+    Obj* made = nullptr;
+    switch (v.as.obj->type) {
+        case ObjType::String: {
+            ObjString* text = new ObjString(asString(v)->utf8());
+            text->utf8();  // its UTF-8 made now, while one thread holds it
+            made = text;
+            break;
+        }
+        case ObjType::Bytes: {
+            ObjBytes* bytes = new ObjBytes();
+            bytes->data = asBytes(v)->data;
+            made = bytes;
+            break;
+        }
+        case ObjType::List: {
+            ObjList* list = new ObjList();
+            block.objects.push_back(list);
+            for (const Value& item : vm.listCopy(asList(v))) list->values().push_back(outsideCopy(vm, item, block, depth + 1));
+            list->frozen = v.as.obj->frozen;
+            list->outside = true;
+            list->immortal = true;
+            return Value::object(list);
+        }
+        case ObjType::Map: {
+            ObjMap* map = new ObjMap();
+            block.objects.push_back(map);
+            for (const ValueMap::Entry& entry : asMap(v)->map.entries())
+                if (entry.live) map->map.set(outsideCopy(vm, entry.key, block, depth + 1), outsideCopy(vm, entry.value, block, depth + 1));
+            map->frozen = v.as.obj->frozen;
+            map->outside = true;
+            map->immortal = true;
+            return Value::object(map);
+        }
+        case ObjType::Set: {
+            ObjSet* set = new ObjSet();
+            block.objects.push_back(set);
+            for (const Value& item : vm.setItems(asSet(v))) set->items.set(outsideCopy(vm, item, block, depth + 1), Value::null());
+            set->frozen = v.as.obj->frozen;
+            set->outside = true;
+            set->immortal = true;
+            return Value::object(set);
+        }
+        default:
+            throw vm.runtimeError(Thrown::IllegalArgumentException, "frozen data sent to a worker holds numbers, text, bytes and frozen lists, maps and sets, not a value of type " +
+                                                                        vm.typeName(v) + ": the two share no objects");
+    }
+    made->frozen = v.as.obj->frozen;
+    made->outside = true;
+    made->immortal = true;
+    block.objects.push_back(made);
+    return Value::object(made);
+}
+
+// The block a VM's frozen data is shared as, made the first time it is sent; one more hold on
+// it, for the message carrying it.
+SharedBlock* shareFrozen(VM& vm, Value v) {
+    if (v.as.obj->outside) {
+        // Data this VM was itself sent, sent on: the same block.
+        std::lock_guard<std::mutex> hold(blocksMutex);
+        SharedBlock* block = blockOf.at(v.as.obj);
+        block->holds++;
+        return block;
+    }
+    auto known = vm.sharedAs.find(v.as.obj);
+    SharedBlock* block = known != vm.sharedAs.end() ? known->second : nullptr;
+    if (block == nullptr) {
+        block = new SharedBlock;
+        outsideCopy(vm, v, *block, 0);  // the whole first in the block
+        {
+            std::lock_guard<std::mutex> hold(blocksMutex);
+            for (Obj* obj : block->objects) blockOf[obj] = block;
+            block->holds = 1;  // the sender's, for as long as it keeps the data
+        }
+        vm.sharedAs[v.as.obj] = block;
+        vm.heldBlocks.insert(block);
+    }
+    take(block);
+    return block;
+}
 
 // ---- Messages ----
 // A value is written out as bytes on the one side and built again on the other. It can hold
-// null, booleans, numbers, strings, bytes, and lists and maps of those.
+// null, booleans, numbers, strings, bytes, and lists and maps of those. Frozen data travels as
+// the block it is shared as; bytes handed over travel as their own buffer, moved.
 
-enum : char { kNull, kFalse, kTrue, kInt, kFloat, kString, kBytes, kList, kMap, kChar, kByte, kSet };
+enum : char { kNull, kFalse, kTrue, kInt, kFloat, kString, kBytes, kList, kMap, kChar, kByte, kSet, kShared, kHandedOver };
 
 void putRaw(std::string& out, const void* data, size_t size) { out.append(static_cast<const char*>(data), size); }
 
@@ -65,6 +182,13 @@ void encode(VM& vm, Value v, std::string& out, int depth) {
             putRaw(out, &v.as.i, sizeof v.as.i);
             return;
         default: break;
+    }
+    if (v.isObj() && v.as.obj->frozen != 0 && v.as.obj->type != ObjType::String) {
+        // Frozen data: shared, not copied (D97).
+        SharedBlock* block = shareFrozen(vm, v);
+        out += kShared;
+        putRaw(out, &block, sizeof block);
+        return;
     }
     if (v.isString()) {
         out += kString;
@@ -135,6 +259,25 @@ Value decode(VM& vm, Reader& in) {
         }
         case kByte: return Value::byte(static_cast<uint8_t>(in.raw<int64_t>()));
         case kString: return vm.str(std::string(in.text()));
+        case kShared: {
+            // What frozen data was shared as: the message's hold on it becomes this VM's, if it
+            // does not hold the block already.
+            SharedBlock* block = in.raw<SharedBlock*>();
+            if (block == nullptr) return Value::null();
+            if (!vm.heldBlocks.insert(block).second) letGo(block);
+            return Value::object(block->objects.front());
+        }
+        case kHandedOver: {
+            // A buffer moved here, not copied.
+            std::vector<uint8_t>* data = in.raw<std::vector<uint8_t>*>();
+            ObjBytes* made = vm.alloc<ObjBytes>();
+            if (data != nullptr) {
+                made->data.swap(*data);
+                delete data;
+            }
+            vm.account(made->data.size());
+            return Value::object(made);
+        }
         case kBytes: {
             const std::string_view data = in.text();
             ObjBytes* made = vm.alloc<ObjBytes>();
@@ -169,6 +312,17 @@ Value decode(VM& vm, Reader& in) {
         }
         default: return Value::null();
     }
+}
+
+// `post(bytes, handOver = true)` (D97): the buffer moved into the message, the sender's left
+// empty, so that only one side has it.
+void handOver(VM& vm, Value v, std::string& out) {
+    if (!v.isObjType(ObjType::Bytes)) throw vm.runtimeError(Thrown::IllegalArgumentException, "what is handed over is bytes, not a value of type " + vm.typeName(v));
+    vm.guardWrite(v.as.obj);
+    auto* data = new std::vector<uint8_t>();
+    data->swap(asBytes(v)->data);
+    out += kHandedOver;
+    putRaw(out, &data, sizeof data);
 }
 
 // Calls the function in field `name` of `object`, if there is one, with one argument.
@@ -307,10 +461,11 @@ void registerWorkers(VM& vm) {
         return link == nullptr ? Value::null() : vm.str(link->path);
     });
 
-    def("post", 2, 2, [](VM& vm, int, Value* args) -> Value {
+    def("post", 2, 3, [](VM& vm, int argc, Value* args) -> Value {
         auto link = linkOf(vm, args[0]);
         std::string data;
-        encode(vm, args[1], data, 0);
+        if (argc > 2 && args[2].truthy()) handOver(vm, args[1], data);
+        else encode(vm, args[1], data, 0);
         if (link == nullptr) return Value::boolean(false);  // it has ended
         std::lock_guard<std::mutex> hold(link->mutex);
         if (link->ended) return Value::boolean(false);
@@ -340,11 +495,12 @@ void registerWorkers(VM& vm) {
         return Value::null();
     });
 
-    def("send", 1, 1, [](VM& vm, int, Value* args) -> Value {
+    def("send", 1, 2, [](VM& vm, int argc, Value* args) -> Value {
         std::shared_ptr<WorkerLink> link = vm.workerLink;
         if (link == nullptr) throw vm.runtimeError(Thrown::IllegalStateException, "this program is not a worker: it has no parent to send to");
         std::string data;
-        encode(vm, args[0], data, 0);
+        if (argc > 1 && args[1].truthy()) handOver(vm, args[0], data);
+        else encode(vm, args[0], data, 0);
         std::lock_guard<std::mutex> hold(link->mutex);
         if (link->parent == nullptr) return Value::null();
         link->parent->postNative([link, data = std::move(data)](VM& vm) {
@@ -366,6 +522,34 @@ void registerWorkers(VM& vm) {
     });
 
     vm.defineGlobal("__worker", Value::object(worker));
+}
+
+// ---- A VM's holds on shared blocks ----
+
+void VM::noteOutside(const Obj* obj) {
+    std::lock_guard<std::mutex> hold(blocksMutex);
+    auto found = blockOf.find(obj);
+    if (found != blockOf.end()) reachedBlocks.insert(found->second);
+}
+
+void VM::releaseUnreachedBlocks() {
+    if (heldBlocks.empty()) return;
+    // What this VM's own frozen data was shared as stays held while the data is kept.
+    for (const auto& [own, block] : sharedAs) reachedBlocks.insert(block);
+    std::vector<SharedBlock*> gone;
+    for (SharedBlock* block : heldBlocks)
+        if (reachedBlocks.count(block) == 0) gone.push_back(block);
+    for (SharedBlock* block : gone) {
+        heldBlocks.erase(block);
+        letGo(block);
+    }
+    reachedBlocks.clear();
+}
+
+void VM::releaseAllBlocks() {
+    for (SharedBlock* block : heldBlocks) letGo(block);
+    heldBlocks.clear();
+    sharedAs.clear();
 }
 
 }  // namespace astra

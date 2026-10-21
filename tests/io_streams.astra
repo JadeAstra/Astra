@@ -15,7 +15,7 @@ if (args().contains("slow")) {
   // Says something, then nothing for a while, then something more.
   print("first")
   flush()
-  Thread.sleep(150)
+  Thread.sleep(150.milliseconds)
   print("second")
   exit(0)
 }
@@ -76,14 +76,14 @@ for word in ["hello", "naïve café", "with \"quotes\" and  spaces"] {
 // expect: echo: HELLO
 // expect: echo: NAÏVE CAFÉ
 // expect: echo: WITH "QUOTES" AND  SPACES
-print(echo.waitFor(20, TimeUnit.milliseconds), echo.isAlive)   // expect: false true
+print(echo.waitFor(20.milliseconds), echo.isAlive)   // expect: false true
 echo.outputStream!!.println("quit")
 print(echo.waitFor(), echo.inputStream!!.readLine(), echo.isAlive)   // expect: 7 null false
 // A process that will not end by itself is ended.
 val endless = ProcessBuilder(Process.currentCommand() + ["echo"]).start()
 endless.inputStream!!.readLine()
 endless.destroy()
-print(endless.waitFor(5, TimeUnit.seconds), endless.isAlive)   // expect: true false
+print(endless.waitFor(5.seconds), endless.isAlive)   // expect: true false
 
 // ---- Sockets ----
 val server = ServerSocket(0, bindAddress = "127.0.0.1")
@@ -118,11 +118,11 @@ print(first.inputStream.readLine(), first.isClosed)          // expect: null fal
 first.close()
 print(first.isClosed)                                        // expect: true
 val second = Socket()
-second.connect("localhost", port, 2000)
+second.connect("localhost", port, 2.seconds)
 second.getOutputStream().write("gamma\n")
 print(second.getInputStream().readLine())                    // expect: 2.1 gamma
 second.close()
-serving.join()
+serving.get()
 print(server.isClosed)                                       // expect: true
 try { Socket("127.0.0.1", port) } catch (e : IOException) { print(e.message!!.startsWith("cannot connect to 127.0.0.1:")) }   // expect: true
 try { Socket().inputStream } catch (e : IllegalStateException) { print(e.message) }   // expect: the socket is not connected
@@ -130,9 +130,9 @@ try { Socket().inputStream } catch (e : IllegalStateException) { print(e.message
 val idle = ServerSocket(0, bindAddress = "127.0.0.1")
 var acceptError : string? = null
 val accepting = thread { try { idle.accept() } catch (e : IOException) { acceptError = e.message } }
-Thread.sleep(30)
+Thread.sleep(30.milliseconds)
 idle.close()
-accepting.join()
+accepting.get()
 print(acceptError)                                           // expect: the socket is closed
 // A read that has waited too long gives up.
 val silent = ServerSocket(0, bindAddress = "127.0.0.1")
@@ -142,19 +142,19 @@ try { patient.inputStream.readLine() } catch (e : IOException) { print(e.message
 patient.close()
 silent.close()
 
-// ---- The same calls in a flow ----
-// On the main thread a read would stop the event loop. In a flow it sets the flow aside
-// instead, and the loop goes on: the timer keeps ticking while the flow waits for the line.
+// ---- The same calls in a task ----
+// On the main thread a read would stop the event loop. In a task it sets the task aside
+// instead, and the loop goes on: the timer keeps ticking while the task waits for the line.
 var ticks = 0
-val ticker = EventLoop.every(5) { ticks += 1 }
-startCoroutine {
+val ticker = EventLoop.every(5.milliseconds) { ticks += 1 }
+task {
   try {
     val slow = ProcessBuilder(Process.currentCommand() + ["slow"]).start()
     val before = ticks
     val lines = [slow.inputStream!!.readLine(), slow.inputStream!!.readLine(), slow.inputStream!!.readLine()]
     print(lines, "the loop went on:", ticks - before > 3, "exit code", slow.waitFor())
-    val note = File("io-streams-flow.txt")
-    note.writeText("written and read in a flow")
+    val note = File("io-streams-task.txt")
+    note.writeText("written and read in a task")
     print(note.readText(), note.delete())
   } catch (e : IOException) {
     print("failed:", e.message)
@@ -164,4 +164,4 @@ startCoroutine {
 print("the script has ended")
 // expect: the script has ended
 // expect: ["first", "second", null] the loop went on: true exit code 0
-// expect: written and read in a flow true
+// expect: written and read in a task true

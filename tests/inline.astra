@@ -92,19 +92,19 @@ var total = 0
 repeat(3) { total += it }
 print(total)                                       // expect: 3
 
-// synchronized and withLock are inline: a return in the block lets the lock go on the way out.
+// useKey is inline: a return or a break in the block gives the key back on the way out.
 val lock = Lock()
 fun locked() : int {
-  lock.withLock { return 6 }
+  lock.useKey { return 6 }
 }
 fun guardedSum(items : List<int>) : int {
   var total = 0
   for (x in items) {
-    synchronized(lock) {
+    lock.useKey {
       if (x > 2) { break }
       total += x
     }
   }
   return total
 }
-print(locked(), guardedSum([1, 2, 3, 4]), lock.isHeldByCurrentThread)   // expect: 6 3 false
+print(locked(), guardedSum([1, 2, 3, 4]), thread { lock.useKey { "free" } }.get())   // expect: 6 3 free

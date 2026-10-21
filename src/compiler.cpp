@@ -3447,7 +3447,50 @@ private:
         return true;
     }
 
+    // `for (x in channel)`: through an Iterator, its hasNext() and next() called as methods are,
+    // so that a task may be set aside in them.
+    void compileProtocolLoop(const ForInStmt& s, bool callIterator) {
+        beginScope();
+        compileExpr(*s.iterable);
+        line_ = s.line;
+        if (callIterator) {
+            emit(Op::Invoke, stringConstant("iterator"));
+            emitByte(0);
+        }
+        const int iteratorSlot = addLocal("(iterator)", false, s, true);
+        LoopState loop{fs_->loop, here(), fs_->scopeDepth, fs_->tryDepth, fs_->locals.size(), fs_->slotTop, {}};
+        loop.owner = fs_->owner;
+        loop.label = s.label;
+        fs_->loop = &loop;
+        line_ = s.line;
+        emit(Op::GetLocal, slotOf(iteratorSlot));
+        emit(Op::Invoke, stringConstant("hasNext"));
+        emitByte(0);
+        const int toExit = emitJump(Op::JumpIfFalse);
+        emit(Op::GetLocal, slotOf(iteratorSlot));
+        emit(Op::Invoke, stringConstant("next"));
+        emitByte(0);
+        beginScope();
+        if (s.pattern.empty()) {
+            addLocal(s.variable, false, s, true);
+        } else {
+            const int item = addLocal("(item)", true, s, true);
+            declareParts(s.pattern, item, false, s);
+        }
+        compileBlockBody(s.body->statements);
+        endScope();
+        emitLoop(loop.start);
+        patchJump(toExit);
+        for (int jump : loop.breakJumps) patchJump(jump);
+        fs_->loop = loop.enclosing;
+        endScope();
+    }
+
     void compileForIn(const ForInStmt& s) {
+        if (const int protocol = session_.checker != nullptr ? session_.checker->protocolLoop(s) : 0; protocol != 0) {
+            compileProtocolLoop(s, protocol == 2);
+            return;
+        }
         beginScope();
         int iteratorSlot;
         RangeParts range;
@@ -5212,6 +5255,10 @@ private:
             case ExprKind::Call: {
                 const auto& e = static_cast<const CallExpr&>(expr);
                 int argc = static_cast<int>(e.args.size());
+                if (Checker::AtomicFieldOp atomic; session_.checker != nullptr && session_.checker->atomicField(e, atomic)) {
+                    compileAtomicField(atomic, e);  // `x.hits.compareAndSet(a, b)` (D92)
+                    break;
+                }
                 if (fs_->decl != nullptr && fs_->decl->isTail && session_.checker != nullptr) refuseTailCall(e);
                 if (session_.checker != nullptr && session_.checker->samCall(e)) {
                     compileExpr(*e.args[0]);  // `Action { ... }`: the lambda, as the interface (D28)
@@ -5304,7 +5351,11 @@ private:
                 compileExpr(*e.object);
                 line_ = e.line;
                 int toEnd = e.safe ? emitJump(Op::JumpIfNull) : -1;
-                {
+                if (session_.checker != nullptr && session_.checker->extensionGetter(e)) {
+                    // An extension property: its getter called on the value.
+                    emit(Op::Invoke, stringConstant(e.name));
+                    emitByte(0);
+                } else {
                     const bool own = ownMember(*e.object, e.name);
                     const bool inPlace = session_.checker != nullptr && !copyReadsHere() && session_.checker->readsFieldInPlace(e);
                     emit(inPlace ? (own ? Op::GetOwnRef : Op::GetPropRef) : (own ? Op::GetOwn : Op::GetProp), stringConstant(e.name));
@@ -6063,7 +6114,23 @@ private:
         emit(Op::Pop);  // the place: the result is there already, or goes there now
     }
 
+    // An atomic field's change (D92), in one step.
+    void compileAtomicField(const Checker::AtomicFieldOp& op, const Node& at) {
+        line_ = at.line;
+        if (op.object != nullptr) compileExpr(*op.object);
+        else emitGet("this", at);
+        if (op.expected != nullptr) compileExpr(*op.expected);
+        compileExpr(*op.operand);
+        line_ = at.line;
+        emit(Op::AtomicField, stringConstant(op.field));
+        emitByte(op.kind);
+    }
+
     void compileAssign(const AssignExpr& e) {
+        if (Checker::AtomicFieldOp atomic; session_.checker != nullptr && session_.checker->atomicField(e, atomic)) {
+            compileAtomicField(atomic, e);
+            return;
+        }
         bool compound = e.op != TokenType::Eq;
 
         switch (e.target->kind) {

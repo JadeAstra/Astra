@@ -1,0 +1,115 @@
+// ---- Durations (D90) ----
+// A length of time, kept as a whole number of nanoseconds in a value of its own, free to make:
+//
+//   delay(16.milliseconds)
+//   job.get(timeout = 2.seconds)
+//   val frame = 1.seconds / 60          // 16.666666ms
+//
+// Every call that waits or times takes one: delay, Thread.sleep, join, Job.get, a channel's
+// receive, Countdown.await, waitUntil, EventLoop.after and every, a pool's after and every.
+
+value Duration(val inNanoseconds : int) {
+  op +(other : Duration) : Duration => Duration(inNanoseconds + other.inNanoseconds)
+  op -(other : Duration) : Duration => Duration(inNanoseconds - other.inNanoseconds)
+  op -() : Duration => Duration(-inNanoseconds)
+  op *(times : int) : Duration => Duration(inNanoseconds * times)
+  op *(times : float) : Duration => Duration(Math.round(inNanoseconds * times))
+  op /(by : int) : Duration => Duration(inNanoseconds / by)
+  op /(by : float) : Duration => Duration(Math.round(inNanoseconds / by))
+  // How many times the other fits in this one.
+  op /(other : Duration) : float => inNanoseconds.toFloat() / other.inNanoseconds.toFloat()
+
+  op <(other : Duration) : bool => inNanoseconds < other.inNanoseconds
+  op <=(other : Duration) : bool => inNanoseconds <= other.inNanoseconds
+  op >(other : Duration) : bool => inNanoseconds > other.inNanoseconds
+  op >=(other : Duration) : bool => inNanoseconds >= other.inNanoseconds
+  fun compareTo(other : Duration) : int => inNanoseconds < other.inNanoseconds ? -1 : inNanoseconds > other.inNanoseconds ? 1 : 0
+
+  // The length in each unit, with what is less than a whole one as a fraction.
+  val inMicroseconds : float
+    get() => inNanoseconds / 1000.0
+  val inMilliseconds : float
+    get() => inNanoseconds / 1000000.0
+  val inSeconds : float
+    get() => inNanoseconds / 1000000000.0
+  val inMinutes : float
+    get() => inNanoseconds / 60000000000.0
+  val inHours : float
+    get() => inNanoseconds / 3600000000000.0
+  val inDays : float
+    get() => inNanoseconds / 86400000000000.0
+  // In whole milliseconds, what is less than one left out: what waiting is counted in.
+  val inWholeMilliseconds : int
+    get() => inNanoseconds / 1000000
+
+  val isNegative : bool
+    get() => inNanoseconds < 0
+  val isZero : bool
+    get() => inNanoseconds == 0
+
+  // As Kotlin writes it: 1.7s, 16ms, 250us, 1m 30s, 2h 5m, 3d.
+  fun toString() : string {
+    if (inNanoseconds == 0) { return "0s" }
+    if (inNanoseconds < 0) { return "-" + Duration(-inNanoseconds).toString() }
+    val n = inNanoseconds
+    if (n >= 60000000000) {
+      val parts : open List<string> = []
+      var left = n
+      for ((unit, size) in ["d" to 86400000000000, "h" to 3600000000000, "m" to 60000000000]) {
+        if (left >= size) {
+          parts.add("${left / size}$unit")
+          left = left % size
+        }
+      }
+      if (left > 0) { parts.add(Duration(left).toString()) }
+      return parts.join(" ")
+    }
+    if (n >= 1000000000) { return __durationPart(n, 1000000000) + "s" }
+    if (n >= 1000000) { return __durationPart(n, 1000000) + "ms" }
+    if (n >= 1000) { return __durationPart(n, 1000) + "us" }
+    return "${n}ns"
+  }
+
+  static {
+    val zero = Duration(0)
+  }
+}
+
+// `n` in units of `size`, with up to six figures after the point and none that are 0 at the end.
+fun __durationPart(n : int, size : int) : string {
+  val whole = n / size
+  var digits = "${n % size + size}"[1..]   // what is left, with its zeros in front
+  if (digits.size > 6) { digits = digits[..<6] }
+  while (digits.endsWith("0")) { digits = digits[..<digits.size - 1] }
+  return digits.isEmpty() ? "$whole" : "${whole}.${digits}"
+}
+
+val int.nanoseconds : Duration
+  get() => Duration(this)
+val int.microseconds : Duration
+  get() => Duration(this * 1000)
+val int.milliseconds : Duration
+  get() => Duration(this * 1000000)
+val int.seconds : Duration
+  get() => Duration(this * 1000000000)
+val int.minutes : Duration
+  get() => Duration(this * 60000000000)
+val int.hours : Duration
+  get() => Duration(this * 3600000000000)
+val int.days : Duration
+  get() => Duration(this * 86400000000000)
+
+val float.nanoseconds : Duration
+  get() => Duration(Math.round(this))
+val float.microseconds : Duration
+  get() => Duration(Math.round(this * 1000.0))
+val float.milliseconds : Duration
+  get() => Duration(Math.round(this * 1000000.0))
+val float.seconds : Duration
+  get() => Duration(Math.round(this * 1000000000.0))
+val float.minutes : Duration
+  get() => Duration(Math.round(this * 60000000000.0))
+val float.hours : Duration
+  get() => Duration(Math.round(this * 3600000000000.0))
+val float.days : Duration
+  get() => Duration(Math.round(this * 86400000000000.0))

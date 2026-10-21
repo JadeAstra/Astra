@@ -58,19 +58,19 @@ print(sum, kept)   // expect: 11.0 Ball(x=4.0, dx=1.5, r=1.0)
 value P(val x : int, val y : int)
 val ps : open List<P> = [P(1, 10), P(2, 20), P(3, 30)]
 val seen : open List<string> = []
-var waiting : Continuation? = null
-startCoroutine {
+var waiting : ((any?) -> unit)? = null
+task {
   for p in ps {
     val a = p.x
-    suspendCoroutine { waiting = it }
+    suspendTask<any?> { waiting = it }
     seen.add("$a ${p.x} ${p.y}")
   }
 }
 while (waiting != null) {
-  val c = waiting
+  val resume = waiting
   waiting = null
   ps.sortByDescending { it.x }
-  c?.resume(null)
+  resume?.invoke(null)
 }
 print(seen)   // expect: ["1 1 10", "2 2 20", "1 1 10"]
 

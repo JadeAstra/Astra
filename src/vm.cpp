@@ -73,6 +73,9 @@ VM::VM(bool worker) : output(&std::cout), input(&std::cin), rng(std::random_devi
     names.step = intern("step");
     names.name = intern("name");
     names.ordinal = intern("ordinal");
+    names.compareTo = intern("compareTo");
+    names.hasNext = intern("hasNext");
+    names.next = intern("next");
     names.entries = intern("entries");
     names.enumEntries = intern("(entries)");
     names.entryName = intern("(name)");
@@ -119,6 +122,7 @@ VM::VM(bool worker) : output(&std::cout), input(&std::cin), rng(std::random_devi
 
 VM::~VM() {
     parallelPool_.reset();  // its cores first: they work on this VM's objects
+    releaseAllBlocks();
     Obj* obj = objects_;
     while (obj != nullptr) {
         Obj* next = obj->next;
@@ -232,6 +236,79 @@ void VM::memberSet(Value obj, ObjString* name, Value value) {
         }
     }
     setProperty(obj, name, value);
+}
+
+// ---- Atomic fields (D92) ----
+// An `atomic var` field changed in one step, whoever runs the code: an int's or a float's kept
+// as its payload with the processor's atomic operations, anything else under a lock shared by
+// address. Any piece of a parallel section may change one of an object it may read; what it
+// stores has to be a value every core may read.
+Value VM::atomicField(Value object, ObjString* name, int kind, const Value* operands) {
+    if (!object.isObjType(ObjType::Instance)) throw runtimeError(Thrown::InternalError, "an atomic field belongs to an object");
+    guardRead(object);
+    ObjInstance* instance = asInstance(object);
+    const FieldDecl* d = instance->declOf(name);
+    if (d == nullptr) throw runtimeError(Thrown::InternalError, "no atomic field '" + name->utf8() + "'");
+    const Value operand = operands[kind == 4 ? 1 : 0];
+    if (coreId_ != 0 && operand.isObj() && operand.as.obj->frozen == 0 && operand.as.obj->type != ObjType::String)
+        throw runtimeError(Thrown::IllegalStateException, "in a parallel section an atomic field is given values: numbers, bools, small values, text or frozen data; not this " +
+                                                              typeName(operand) + ", which a core may still change");
+    auto change = [&](const Value& old) -> Value {
+        if (kind == 4) return operand;
+        if (old.isInt() && operand.isInt()) {
+            int64_t r = 0;
+            if (kind == 0 ? addOverflows(old.as.i, operand.as.i, r) : kind == 1 ? subOverflows(old.as.i, operand.as.i, r) : false)
+                throw overflowError(kind == 0 ? Op::Add : Op::Sub, old.as.i, operand.as.i);
+            if (kind == 2) r = std::max(old.as.i, operand.as.i);
+            if (kind == 3) r = std::min(old.as.i, operand.as.i);
+            return Value::integer(r);
+        }
+        if (!old.isNumber() || !operand.isNumber())
+            throw runtimeError(Thrown::ClassCastException, "'" + name->utf8() + "' holds " + typeName(old) + ", which " + (kind < 2 ? "+= and -=" : "max and min") +
+                                                               " do not take with " + typeName(operand));
+        const double a = old.toDouble(), b = operand.toDouble();
+        return Value::number(kind == 0 ? a + b : kind == 1 ? a - b : kind == 2 ? std::max(a, b) : std::min(a, b));
+    };
+    if (d->payload == FieldDecl::IntPayload || d->payload == FieldDecl::FloatPayload) {
+        std::atomic_ref<int64_t> held(*reinterpret_cast<int64_t*>(instance->payloadData() + d->payloadOffset));
+        const ValueKind valueKind = d->payload == FieldDecl::IntPayload ? ValueKind::Int : ValueKind::Float;
+        auto toValue = [&](int64_t bits) {
+            Value v;
+            v.kind = valueKind;
+            v.as.i = bits;
+            return v;
+        };
+        auto toBits = [&](const Value& v) {
+            if (valueKind == ValueKind::Float && v.isInt()) return Value::number(static_cast<double>(v.as.i)).as.i;
+            return v.as.i;
+        };
+        int64_t old = held.load();
+        if (kind == 4) {
+            const Value expected = operands[0];
+            if (!expected.isNumber()) return Value::boolean(false);
+            int64_t want = toBits(expected);
+            return Value::boolean(held.compare_exchange_strong(want, toBits(operand)));
+        }
+        for (;;) {
+            const Value made = change(toValue(old));
+            if (valueKind == ValueKind::Int && !made.isInt())
+                throw runtimeError(Thrown::ClassCastException, "'" + name->utf8() + "' holds an int, which a float does not fit");
+            if (held.compare_exchange_weak(old, toBits(made))) return toValue(toBits(made));
+        }
+    }
+    if (d->payload != FieldDecl::NoPayload) throw runtimeError(Thrown::UnsupportedOperationException, "an atomic field holds a number, a bool, a small value or frozen data");
+    static std::mutex locks[64];
+    std::lock_guard<std::mutex> hold(locks[(reinterpret_cast<uintptr_t>(instance) >> 4) & 63]);
+    Value& slot = instance->fields()[d->slot];
+    if (kind == 4) {
+        const Value expected = operands[0];
+        const bool same = slot.kind == expected.kind && (slot.isObj() ? slot.as.obj == expected.as.obj : slot.isFloat() ? slot.as.i == expected.as.i : slot.as.i == expected.as.i);
+        if (!same) return Value::boolean(false);
+        slot = operand;
+        return Value::boolean(true);
+    }
+    slot = change(slot);
+    return slot;
 }
 
 Value VM::callWithTypes(Value callee, const std::vector<ObjTypeInfo*>& typeArgs, int argc, const Value* args) {
@@ -574,6 +651,8 @@ Value VM::runModule(int index) {
             if (program_->globalNames[i] == "RuntimeException" && errorClass_ == nullptr) errorClass_ = asClass(globals_[i]);
             if (program_->globalNames[i] == "MapEntry" && globals_[i].isObjType(ObjType::Class) && mapEntryClass_ == nullptr)
                 mapEntryClass_ = asClass(globals_[i]);
+            if (program_->globalNames[i] == "ListView" && globals_[i].isObjType(ObjType::Class) && viewClass_ == nullptr)
+                viewClass_ = asClass(globals_[i]);
         }
     }
     loaded_[static_cast<size_t>(index)] = true;
@@ -603,7 +682,7 @@ void VM::resetState() {
 }
 
 Value VM::call(Value callee, int argc, const Value* args) {
-    if (nativeDepth_ >= kMaxNativeDepth || stackEnd_ - sp_ < argc + 1) throw runtimeError(Thrown::StackOverflowError, "stack overflow");
+    if (nativeDepth_ >= kMaxNativeDepth || !roomFor(sp_ + argc + 1)) throw runtimeError(Thrown::StackOverflowError, "stack overflow");
 
     NativeCallGuard guard(nativeDepth_, nativeBase_);
 
@@ -617,7 +696,7 @@ Value VM::call(Value callee, int argc, const Value* args) {
 Value VM::callOn(Value receiver, Value callee, int argc, const Value* args) {
     // Only a function written in Astra can be given an object to run on.
     if (!callee.isObjType(ObjType::Closure)) return call(callee, argc, args);
-    if (nativeDepth_ >= kMaxNativeDepth || stackEnd_ - sp_ < argc + 1) throw runtimeError(Thrown::StackOverflowError, "stack overflow");
+    if (nativeDepth_ >= kMaxNativeDepth || !roomFor(sp_ + argc + 1)) throw runtimeError(Thrown::StackOverflowError, "stack overflow");
 
     NativeCallGuard guard(nativeDepth_, nativeBase_);
 
@@ -985,7 +1064,7 @@ AstraThrow VM::undefinedName(const CallFrame* frame, const Value* base, const Ob
 
 // Runs a method that takes no arguments on `receiver` and returns its result.
 Value VM::callWithReceiver(Value receiver, ObjClosure* method) {
-    if (nativeDepth_ >= kMaxNativeDepth || stackEnd_ - sp_ < 1) throw runtimeError(Thrown::StackOverflowError, "stack overflow");
+    if (nativeDepth_ >= kMaxNativeDepth || !roomFor(sp_ + 1)) throw runtimeError(Thrown::StackOverflowError, "stack overflow");
 
     NativeCallGuard guard(nativeDepth_, nativeBase_);
 
@@ -1123,7 +1202,7 @@ std::string VM::typeName(Value v) const {
         case ObjType::Class: return "Class";
         case ObjType::Instance: return asInstance(v)->cls->name->utf8();
         case ObjType::Value: return asValue(v)->cls->name->utf8();
-        case ObjType::Fiber: return "flow";
+        case ObjType::Fiber: return "task";
         case ObjType::Resource: return static_cast<const ObjResource*>(v.as.obj)->kind;
         case ObjType::Upvalue:
         case ObjType::Iterator: return "internal";
@@ -1187,7 +1266,7 @@ Value VM::settleEnumName(Value pending, const ObjClass* type) {
 int VM::packVarargs(const FunctionProto* proto, int argc) {
     const int at = proto->varargIndex;
     if (argc < proto->requiredArgs()) checkArity(proto->name, proto->requiredArgs(), -1, argc);
-    if (stackEnd_ - (sp_ - argc - 1) < proto->maxStack) throw runtimeError(Thrown::StackOverflowError, "stack overflow");
+    if (!roomFor(sp_ - argc - 1 + proto->maxStack)) throw runtimeError(Thrown::StackOverflowError, "stack overflow");
 
     for (; argc < at; argc++) *sp_++ = Value::undefined();
     const int extra = argc - at;
@@ -1366,7 +1445,8 @@ void VM::callClosure(ObjClosure* closure, int argc, bool packed) {
         checkArity(proto->name, proto->requiredArgs(), proto->arity, argc);
 
     Value* base = sp_ - argc - 1;
-    if (frameCount_ == maxFrames_ || stackEnd_ - base < proto->maxStack) throw runtimeError(Thrown::StackOverflowError, "stack overflow");
+    if ((frameCount_ == frameLimit_ || stackEnd_ - base < proto->maxStack) && !growContext(base + proto->maxStack, frameCount_ + 1))
+        throw runtimeError(Thrown::StackOverflowError, "stack overflow");
 
     if (pendingEnums_ > 0) {
         // A bare name may only arrive at a parameter that could make an enum entry of it.
@@ -1414,7 +1494,7 @@ void VM::callTrailing(ObjClosure* closure, int argc) {
         callClosure(closure, argc);
         return;
     }
-    if (stackEnd_ - sp_ < arity + 1) throw runtimeError(Thrown::StackOverflowError, "stack overflow");
+    if (!roomFor(sp_ + arity + 1)) throw runtimeError(Thrown::StackOverflowError, "stack overflow");
 
     int given = argc - 1;
     const int target = arity - 1;
@@ -1656,7 +1736,7 @@ bool VM::callNamed(int positional, int named) {
         if (arranged[static_cast<size_t>(i)].kind == ValueKind::Undefined)
             throw runtimeError(Thrown::IllegalArgumentException, display() + "() is missing argument '" + proto->paramNames[static_cast<size_t>(i)]->utf8() + "'");
 
-    if (stackEnd_ - first < arity) throw runtimeError(Thrown::StackOverflowError, "stack overflow");
+    if (!roomFor(first + arity)) throw runtimeError(Thrown::StackOverflowError, "stack overflow");
     for (int i = 0; i < arity; i++) first[i] = arranged[static_cast<size_t>(i)];
     sp_ = first + arity;
     return callValue(callee, arity, vararg >= 0);
@@ -1716,7 +1796,7 @@ bool VM::callNativeNamed(int positional, int named) {
         if (index + 1 > given) given = index + 1;
     }
 
-    if (stackEnd_ - first < given) throw runtimeError(Thrown::StackOverflowError, "stack overflow");
+    if (!roomFor(first + given)) throw runtimeError(Thrown::StackOverflowError, "stack overflow");
     for (int i = 0; i < given; i++) {
         const Value& value = arranged[static_cast<size_t>(i)];
         first[i] = value.kind == ValueKind::Undefined ? Value::null() : value;
@@ -1732,7 +1812,7 @@ bool VM::callSpread(int named) {
     Value* slot = sp_ - 2 * named - 1;
     ObjList* list = asList(*slot);
     const int count = static_cast<int>(list->size());
-    if (stackEnd_ - sp_ < count + 1) throw runtimeError(Thrown::StackOverflowError, "stack overflow");
+    if (!roomFor(sp_ + count + 1)) throw runtimeError(Thrown::StackOverflowError, "stack overflow");
 
     std::copy_backward(slot + 1, sp_, sp_ + count - 1);
     for (int i = 0; i < count; i++) slot[i] = listGet(list, static_cast<size_t>(i));
@@ -1931,7 +2011,7 @@ Value VM::tailCallOn(Value receiver, Value function) {
 // block's result. (Written with a lambda they are the standard library's inline functions, copied in
 // by the compiler, and never get here, D59.)
 //
-// The block is called as part of the program, not from inside this function, so that a flow
+// The block is called as part of the program, not from inside this function, so that a task
 // can be set aside in it. Returns 0 if `name` is not one of these, 1 if the result is on the
 // stack, and 2 if a call has been set going.
 int VM::scopeFunction(ObjString* name, int argc) {
@@ -1967,7 +2047,7 @@ int VM::scopeFunction(ObjString* name, int argc) {
         callClosure(asClosure(block), 0);
     } else {
         // also: block(receiver), and the result is dropped.
-        if (stackEnd_ - sp_ < 1) throw runtimeError(Thrown::StackOverflowError, "stack overflow");
+        if (!roomFor(sp_ + 1)) throw runtimeError(Thrown::StackOverflowError, "stack overflow");
         *sp_++ = receiver;
         callClosure(asClosure(block), 1);
     }
@@ -3565,10 +3645,15 @@ Value VM::getIndex(Value obj, Value index) {
 
 void VM::setIndex(Value obj, Value index, Value value) {
     if (obj.isObjType(ObjType::List)) {
-        guardWrite(obj.as.obj);
         ObjList* list = asList(obj);
         size_t i;
+        if (obj.as.obj != bandObject_) guardWrite(obj.as.obj);
         if (!position(index, list->size(), i, "list index")) throw outOfRange("list index", index, list->size());
+        // In a parallel section over the parts of a list, a piece writes its own part of it (D96).
+        if (obj.as.obj == bandObject_ && (i < bandFrom_ || i >= bandTo_ || obj.as.obj->frozen != 0)) [[unlikely]] {
+            if (obj.as.obj->frozen != 0) guardWrite(obj.as.obj);
+            throw outsideBand(i);
+        }
         listSet(list, i, value);
     } else if (obj.isObjType(ObjType::Map)) {
         guardWrite(obj.as.obj);
@@ -3942,14 +4027,15 @@ Value VM::makeIterator(Value iterable) {
             }
             case ObjType::Instance:
             case ObjType::Value: {
-                // An object can be looped over if it has an iterator() that gives something
-                // that can: a list, say, of what it holds.
+                // An Iterator itself (hasNext() and next()), or an object with an iterator() that
+                // gives one, or gives something else that can be looped over: a list, say.
+                if (isIteratorObject(iterable)) return Value::object(alloc<ObjIterator>(iterable));
                 const Value* method = classOf(iterable)->methods.find(names.iterator);
                 if (method == nullptr) break;
                 TempRoot bound(*this, Value::object(alloc<ObjBoundMethod>(iterable, asClosure(*method))));
                 Value inner = call(bound.get(), 0, nullptr);
-                if (classOf(inner) != nullptr)
-                    throw runtimeError(Thrown::IllegalStateException, "iterator() of " + typeName(iterable) + " has to give a list or another built-in collection");
+                if (classOf(inner) != nullptr && !isIteratorObject(inner))
+                    throw runtimeError(Thrown::IllegalStateException, "iterator() of " + typeName(iterable) + " has to give an Iterator, a list or another built-in collection");
                 TempRoot keep(*this, inner);
                 return makeIterator(inner);
             }
@@ -4135,6 +4221,15 @@ Value VM::frozenCopy(Value v, int depth) {
 
 // ---- Lazy values (D37) ----
 
+// Tells the threads waiting for a lazy value that it is there, or that working it out failed.
+void VM::wakeLazyWaiters(ObjLazy* lazy) {
+    if (lazy->waiters == 0) return;
+    const Value key = Value::object(lazy);
+    monitorEnter(key);
+    monitorNotify(key, true);
+    monitorExit(key);
+}
+
 Value VM::forceLazy(Value marker, const std::function<void(Value)>& store, const std::string& what) {
     static thread_local char here;
     const uintptr_t me = reinterpret_cast<uintptr_t>(&here);
@@ -4147,7 +4242,21 @@ Value VM::forceLazy(Value marker, const std::function<void(Value)>& store, const
         }
         if (lazy->state == 1) {
             if (lazy->owner == me) throw runtimeError(Thrown::IllegalStateException, what + " is read while its value is being worked out: its starting value needs itself");
-            yieldLock();  // another thread is working it out: let it finish
+            if (inParallelSection()) {
+                yieldLock();
+                continue;
+            }
+            // Another thread is working it out: wait until it is told the value is there, or
+            // that working it out failed.
+            const Value key = Value::object(lazy);
+            lazy->waiters++;
+            bool interrupted = false;
+            monitorEnter(key);
+            while (lazy->state == 1)
+                if (monitorWait(key, -1) == 2) interrupted = true;
+            monitorExit(key);
+            lazy->waiters--;
+            if (interrupted) thread_->interrupted = true;  // for whoever asks next
             continue;
         }
         lazy->state = 1;
@@ -4159,10 +4268,12 @@ Value VM::forceLazy(Value marker, const std::function<void(Value)>& store, const
             // A starting value that fails leaves it unset, for the next read to try again.
             lazy->state = 0;
             lazy->owner = 0;
+            wakeLazyWaiters(lazy);
             throw;
         }
         lazy->value = own(result);
         lazy->state = 2;
+        wakeLazyWaiters(lazy);
         store(lazy->value);
         return lazy->value;
     }
@@ -4252,9 +4363,25 @@ bool VM::iteratorNext(ObjIterator* it, Value& out) {
             }
             return false;
         }
+        case ObjType::Instance:
+        case ObjType::Value: {
+            // An Iterator: hasNext(), then next().
+            const Value hasNext = memberGet(source, names.hasNext);
+            TempRoot keepHas(*this, hasNext);
+            if (!call(hasNext, 0, nullptr).truthy()) return false;
+            const Value next = memberGet(source, names.next);
+            TempRoot keepNext(*this, next);
+            out = call(next, 0, nullptr);
+            return true;
+        }
         default:
             return false;
     }
+}
+
+bool VM::isIteratorObject(Value v) const {
+    const ObjClass* cls = classOf(v);
+    return cls != nullptr && cls->methods.find(names.hasNext) != nullptr && cls->methods.find(names.next) != nullptr;
 }
 
 // ---- Upvalues ----
@@ -4448,7 +4575,7 @@ void VM::run(int baseFrame) {
         Value* const base_ = sp - (argc) - 1;                                                                 \
         if ((argc) == proto_->arity && !proto_->chooser && proto_->varargIndex < 0 && pendingEnums_ == 0 &&   \
             (proto_->typeArgs & ~kTakesDestination) == 0 &&                                                   \
-            frameCount_ < maxFrames_ && stackEnd_ - base_ >= proto_->maxStack && bytesAllocated_ <= nextGC_ &&\
+            frameCount_ < frameLimit_ && stackEnd_ - base_ >= proto_->maxStack && bytesAllocated_ <= nextGC_ &&\
             !attention_.load(std::memory_order_relaxed)) {                                                    \
             frame->ip = ip + (size);                                                                          \
             CallFrame& next_ = frames_[static_cast<size_t>(frameCount_++)];                                   \
@@ -4878,6 +5005,7 @@ void VM::run(int baseFrame) {
                     case Op::CheckResult:
                     case Op::ClassOf:
                     case Op::ClassMeta:
+                    case Op::AtomicField:
                         ip = typeInstruction(static_cast<Op>(ip[-1]), ip, frame);
                         break;
 
@@ -7184,6 +7312,17 @@ const uint8_t* VM::typeInstruction(Op op, const uint8_t* ip, CallFrame* frame) {
             *sp_++ = Value::object(frame->closure);
             break;
         }
+        case Op::AtomicField: {
+            ObjString* name = asString(frame->closure->proto->constants[static_cast<size_t>(operandU16(ip))]);
+            ip += 2;
+            const int kind = *ip++;
+            frame->ip = ip;
+            const int operands = kind == 4 ? 2 : 1;
+            const Value result = atomicField(sp_[-operands - 1], name, kind, sp_ - operands);
+            sp_ -= operands;
+            sp_[-1] = result;
+            break;
+        }
         case Op::ClassMeta: {
             const FunctionProto* proto = frame->closure->proto->protos[operandU16(ip)];
             ip += 2;
@@ -7433,7 +7572,7 @@ void VM::stringifyInto(std::string& out, Value v, bool quote, int depth) {
         }
 
         case ObjType::Fiber:
-            out += "<flow>";
+            out += "<task>";
             return;
 
         case ObjType::Resource:
@@ -7497,6 +7636,7 @@ void VM::collectGarbage() {
     markObject(errorClass_);
     for (ObjClass* cls : thrownClasses_) markObject(cls);
     markObject(mapEntryClass_);
+    markObject(viewClass_);
     for (const TypeConstraint& declared : globalTypes_) markObject(declared.cls);
 
     while (!gray_.empty()) {
@@ -7505,6 +7645,7 @@ void VM::collectGarbage() {
         blacken(obj);
     }
 
+    releaseUnreachedBlocks();
     sweep();
     bytesAllocated_ = liveBytes_;
     nextGC_ = gcStress_ ? 0 : std::max(liveBytes_ * 2, kMinHeap);
@@ -7524,6 +7665,10 @@ void VM::markContext(const Context& context) {
 
 void VM::markObject(Obj* obj) {
     if (obj == nullptr || obj->marked) return;
+    if (obj->outside) [[unlikely]] {
+        noteOutside(obj);  // another heap's to free: only noted as reached (D97)
+        return;
+    }
     obj->marked = true;
     if (obj->type == ObjType::String) {
         // Strings have no references to trace. Interned ones are not counted as collectable heap.
@@ -7600,8 +7745,8 @@ void VM::blacken(Obj* obj) {
         case ObjType::Upvalue: {
             ObjUpvalue* upvalue = static_cast<ObjUpvalue*>(obj);
             liveBytes_ += sizeof(ObjUpvalue);
-            // While it is open its variable lives on a stack. If that is the stack of a flow,
-            // the flow is kept, and marks the stack itself if it has been set aside.
+            // While it is open its variable lives on a stack. If that is the stack of a task,
+            // the task is kept, and marks the stack itself if it has been set aside.
             if (upvalue->owner != nullptr) markObject(upvalue->owner);
             else markValue(*upvalue->location);
             break;
@@ -7749,6 +7894,13 @@ void VM::sweep() {
         } else {
             *link = obj->next;
             if (!monitors_.empty()) monitors_.erase(obj);  // it was locked and then forgotten
+            if (!sharedAs.empty()) [[unlikely]] {
+                // Frozen data shared with workers: what it was shared as is let go of with it.
+                if (auto shared = sharedAs.find(obj); shared != sharedAs.end()) {
+                    reachedBlocks.erase(shared->second);
+                    sharedAs.erase(shared);
+                }
+            }
             delete obj;
         }
     }

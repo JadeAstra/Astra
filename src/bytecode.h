@@ -350,6 +350,10 @@ enum class Op : uint8_t {
     // first asked for: `which` 0 its fields, 1 its methods and constructors (ObjClass::meta).
     ClassOf,            // u8 how                          operand -> type function
     ClassMeta,          // u16 nested function, u8 which   class -> class
+    // An `atomic var` field changed in one step, by any core of a parallel section (D92):
+    // `kind` 0 +=, 1 -=, 2 = max, 3 = min, giving the new value, or 4 compareAndSet, which takes
+    // what is expected before the new value and gives whether it set it.
+    AtomicField,        // u16 name, u8 kind               object [expected] value -> result
 
     Count_,
 };

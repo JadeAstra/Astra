@@ -86,7 +86,7 @@ val points = (0 ..< 1000).map { Point(it, it * 2) }
 val moved = points.parallelStream().map { it + Point(1, 1) }.toList()
 print(moved.size, moved[999], moved.parallelStream().sumOf { it.y })   // expect: 1000 Point(x=1000, y=1999) 1000000
 var fromThread : Point? = null
-thread { fromThread = Point(5, 5).scaled(2) }.join()
+thread { fromThread = Point(5, 5).scaled(2) }.get()
 print(fromThread)   // expect: Point(x=10, y=10)
 
 // A generic value type; a value that may be null; matched in a when, sorted.

@@ -192,7 +192,7 @@ can change, and an `==` without a `hashCode`.
 
 - **Checked exceptions are checked.** Code that does I/O in a callback (`button.onClick = {
   file.writeText(...) }`), a thread, a task or a timer catches the `IOException` inside it; the
-  compiler names the place. What only calls its lambda (`forEach`, `map`, `use`, `synchronized`)
+  compiler names the place. What only calls its lambda (`forEach`, `map`, `use`, `useKey`)
   passes it on.
 - **An override throws no more than what it replaces.** An interface whose implementations read
   files says so: `fun load() : string throws IOException`.
@@ -219,7 +219,7 @@ can change, and an `==` without a `hashCode`.
 | `prop.findAnnotation<Json>()` | `field.annotation<Json>()` | also on a class, a method, a parameter |
 | `annotation class Json(val name: String)` | `annotation Json(val name : string)` | no `class` (D153) |
 | `@Volatile`, `@Suppress(...)`, `@JvmField`, `@JvmName(...)` | delete it | an error saying so |
-| `@Synchronized fun f()` | `fun f() = lock.withLock { ... }` | |
+| `@Synchronized fun f()` | `fun f() = lock.useKey { ... }` | |
 | `@JvmStatic` in a companion | the member in `static { }` | |
 | `kotlin.test`: `@Test`, `assertEquals` | the same, run by `astra test` | `@BeforeTest`, `@AfterTest`, `@BeforeAll`, `@AfterAll`, `@Timeout`, `@TempDir` |
 
@@ -235,3 +235,60 @@ can change, and an `==` without a `hashCode`.
   `== Int::class`.
 - **`astra test` runs a file as a program first**: what its top level does runs before the
   tests.
+
+## Concurrency (M6.6 part 8, group 7)
+
+### What to write instead
+
+| Kotlin | Astra | |
+| --- | --- | --- |
+| `launch { }`, `async { }`, `startCoroutine` | `task { }` | gives a `Job<T>` of what the block returns (D81) |
+| `suspendCoroutine { c -> ... c.resume(v) }` | `suspendTask { resume -> ... resume(v) }` | `resume.fail(e)` for `resumeWithException` |
+| `delay(16)` | `delay(16.milliseconds)` | every time is a `Duration` (D90) |
+| `Thread.sleep(100)`, `join(500)` | `Thread.sleep(100.milliseconds)`, `join(timeout = 500.milliseconds)` | `kotlin.time`'s units: `.seconds`, `.minutes`... |
+| `TimeUnit.SECONDS.toMillis(2)` | `2.seconds.inWholeMilliseconds` | |
+| `thread { }` | the same | gives a `Job` of what the block returns (D117) |
+| `Future`, `CompletableFuture`, `Deferred` | `Job<T>` | `get()`, `get(timeout)`, `then { }`, `onError { }`, `complete`, `fail`, `cancel` (D89) |
+| `CompletableFuture.allOf(...)`, `awaitAll()` | `Job.all(jobs)` | a Job of all the results, in order |
+| `synchronized(x) { }`, `ReentrantLock`, `withLock { }` | `val lock = Lock()`, `lock.useKey { }` | data reached only with the key: `LockBox(value)` (D86) |
+| `lock.wait()`, `notifyAll()`, `Condition` | `waitUntil { condition }` inside `useKey` | checked again whenever a key is given back |
+| `BlockingQueue`, `kotlinx.coroutines.channels.Channel` | `Channel<T>(capacity = n)`, `Channel<T>.unbounded()` | `send`, `receive`, a `for` over it (D87) |
+| `Executors.newFixedThreadPool(n)` | `ThreadPool(threads = n)` | `submit`, `after`, `every`, `close` (D88) |
+| `Executors.newSingleThreadExecutor()` | `JobQueue(name)` | |
+| `ScheduledExecutorService.scheduleAtFixedRate` | `pool.every(period) { }` | |
+| `CountDownLatch(n)` | `Countdown(n)` | `countDown()`, `await(timeout?)`, `count` (D118) |
+| `AtomicInteger`, `AtomicReference`, `AtomicBoolean` | `Atomic(value)` | `incrementAndGet()` is `increment()`, `getAndSet` is `exchange` (D85) |
+| `@Volatile var count` changed by several threads | `atomic var count` | the field changes in one step in a parallel section (D92) |
+| `ConcurrentHashMap`, `ConcurrentHashMap.newKeySet()` | `SharedMap`, `SharedSet` | for parallel sections and threads (D94) |
+| `list.parallelStream().collect(...)` | `gather(into, each, merge)` | each core fills a container of its own (D93) |
+| `ForkJoinPool`, `RecursiveTask` | `parallel({ a }, { b })`, `list.splitAt(mid) { l, r -> }` | views of a list, each one function's (D96) |
+| `Arrays.parallelSort(a)` | `list.parallelSort()` | |
+| `sequence { yield(x) }`, `generateSequence`, `asSequence()` | the same | (D98) |
+
+### What compiles but means something else
+
+- **An error in a task is kept in its Job.** `task { }` is Kotlin's `async`, not `launch`: an
+  error it does not catch fails the job, and is seen through `get()` or `onError { }`. A
+  `thread { }` also reports it, as Java does for a thread.
+- **`Job.all` and `Job.any` give Jobs**, not lists: `Job.all(jobs).get()` waits for them all.
+- **Threads take turns.** One thread runs Astra code at a time, so threads overlap waiting,
+  not computing. Work that is to use the cores goes to a parallel section or to workers.
+- **`fold` on a parallel stream goes over the items in order, on one core**: what it combines
+  need not be associative. `reduce` is dealt out to the cores.
+- **A parallel section changes only its own items.** Code that adds to a shared list from
+  `forEach` gets an error the first time it tries; it returns its results (`map`, `gather`)
+  or uses `Atomic`, `atomic var`, `SharedMap` or `SharedSet`.
+- **A sequence's block waits only at `yield`**: a `delay` or another suspend call there is a
+  compile error, where Kotlin's `@RestrictsSuspension` gives a less direct one.
+- **Frozen data sent to a worker is shared**, not copied: `table.frozen()` sent to eight
+  workers is one copy. `post(bytes, handOver = true)` leaves the sender's buffer empty.
+- **A `Thread` made with a lambda takes it in parentheses**: `Thread({ work() }, "name")`.
+
+### What the compiler says
+
+`Future`, `CompletableFuture`, `Executors`, `ExecutorService`, the `BlockingQueue` family,
+`CountDownLatch`, the `Atomic*` classes, `TimeUnit`, `synchronized`, `ReentrantLock`,
+`startCoroutine`, `suspendCoroutine`, `Continuation` and `EmptyCoroutineContext` are each an
+error that names what Astra has in their place. A wait given a bare number (`Thread.sleep(100)`)
+says to write `100.milliseconds`; a `Channel<T>()` without a capacity says to choose one; and
+`lock.lock()` or `lock.withLock { }` says to use `useKey`.

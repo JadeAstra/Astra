@@ -15,6 +15,7 @@
 //   Worker.parent.onMessage = { job -> Worker.parent.post(countPrimes(job["upTo"])) }
 //
 // A message can hold numbers, strings, booleans, null, bytes, and lists and maps of those.
+// Frozen data in one is shared rather than copied, and bytes can be handed over (D97).
 // Messages arrive on the event loop of the side they are sent to, one at a time.
 // The work is done by the built-in __worker (worker.cpp).
 class Worker {
@@ -42,8 +43,10 @@ class Worker {
   val path : string
     get() => __worker.path(id)
 
-  // Sends a copy of the message. False if the worker has ended.
-  fun post(message : any?) : bool => __worker.post(id, message)
+  // Sends a copy of the message: false if the worker has ended. Frozen data (frozenList and the
+  // rest, frozen bytes) is not copied but shared, read in place by every worker it is sent to
+  // (D97). With `handOver`, bytes are moved to the worker with no copy, leaving these empty.
+  fun post(message : any?, handOver : bool = false) : bool => __worker.post(id, message, handOver)
 
   // Stops the worker, whatever it is doing: at its next call or loop round.
   fun terminate() {
@@ -63,9 +66,9 @@ class WorkerParent {
     __worker.attach(this)
   }
 
-  // Sends a copy of the message to the program.
-  fun post(message : any?) {
-    __worker.send(message)
+  // Sends a copy of the message to the program, as Worker.post does.
+  fun post(message : any?, handOver : bool = false) {
+    __worker.send(message, handOver)
   }
 
   // Says that the worker is finished: it ends once what it is doing is done.

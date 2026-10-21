@@ -178,6 +178,24 @@ public:
     // `p` in `p.x = 4` for a var p, `pts[i]`, `obj.pos`.
     bool isValuePlace(const Expr& e) const;
 
+    // `5.seconds`: a read of an extension property, compiled as a call of its getter.
+    bool extensionGetter(const MemberExpr& e) const;
+
+    // An atomic field's change (D92), one operation: `x.hits += 1`, `best = max(best, v)`,
+    // `x.hits.compareAndSet(a, b)`. `object` null for the object the code runs on.
+    struct AtomicFieldOp {
+        uint8_t kind = 0;  // 0 add, 1 subtract, 2 max, 3 min, 4 compare and set
+        const Expr* object = nullptr;
+        std::string field;
+        const Expr* operand = nullptr;
+        const Expr* expected = nullptr;
+    };
+    bool atomicField(const Expr& e, AtomicFieldOp& out) const;
+
+    // A for through an Iterator: 0 any other; 1 over an Iterator itself; 2 over what an object's
+    // iterator() gives.
+    int protocolLoop(const ForInStmt& loop) const;
+
     // `Image#` and `x#` (D48): 0 where it is the class of the object x; 1 where it names a class
     // or a built-in type, written in `out`; 2 where it names a class declared inside a function,
     // whose name gives the class itself.

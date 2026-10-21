@@ -167,11 +167,12 @@ print(Math.abs(two - 4 * one) < one / 2)   // expect: true
 val wanted = drawn("threads draw the same 中 😀", TextFont("Arial", 21), Picture.black, 500, 60)
 val results = []
 val workers = []
+val lock = Lock()
 for (n in 0..<6) {
   workers.add(thread {
     val mine = drawn("threads draw the same 中 😀", TextFont("Arial", 21), Picture.black, 500, 60)
-    synchronized(results) { results.add(mine == wanted) }
+    lock.useKey { results.add(mine == wanted) }
   })
 }
-for (w in workers) { w.join() }
+for (w in workers) { w.get() }
 print(results)   // expect: [true, true, true, true, true, true]

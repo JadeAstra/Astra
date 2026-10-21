@@ -1229,7 +1229,7 @@ size_t lastNameStart(std::string_view path) {
 }
 
 // A whole file read or written in one go. The work itself touches nothing of the VM, so it
-// can be done with the lock released, or by a worker while a flow is set aside (VM::blocking).
+// can be done with the lock released, or by a worker while a task is set aside (VM::blocking).
 struct FileJob {
     std::string path;
     std::string data;

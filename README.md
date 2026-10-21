@@ -580,7 +580,7 @@ and how a callback names the thing it was registered as:
 
 ```astra
 val factorial = fun(n) => n <= 1 ? 1 : n * factorial(n - 1)
-val timer = EventLoop.every(1000, fun() { timer.cancel() })
+val timer = EventLoop.every(1.seconds, fun() { timer.cancel() })
 ```
 
 That is the one way a variable can appear in its own initial value: `val x = x + 1` is a
@@ -2359,171 +2359,215 @@ writes the whole file. Two Files are `==` if their paths are the same text. The 
 
 ## Doing several things at once
 
-A program has five ways of having more than one thing in hand: **threads**, which share
-everything and take turns; the **event loop**, which runs small tasks one after another on
-the main thread; **flows**, functions that can stop in the middle to wait for something and
-go on later without holding a thread; **workers**, which share nothing and run on other
-cores; and **parallel sections**, where every core works on the items of one list. Reading and writing are written the same way in all three.
-`examples\watch.astra` and `examples\questions.astra` use them together.
+A program has five ways of having more than one thing in hand: **tasks**, functions that can
+stop in the middle to wait for something and go on later without holding a thread; the
+**event loop**, which runs small jobs one after another on the main thread; **threads**,
+which share everything and take turns; **workers**, which share nothing and run on other
+cores; and **parallel sections**, where every core works on the items of one list. Reading
+and writing are written the same way in all of them. `examples\watch.astra` and
+`examples\questions.astra` use them together.
 
 **When a program ends.** A program is over when its script has run to the end, every thread
-that is not a daemon has finished, and the event loop has nothing left to wait for: no task,
+that is not a daemon has finished, and the event loop has nothing left to wait for: no job,
 no timer that has not been cancelled, no reading or writing still going on. An error that
-nothing catches ends the program if it happens in the script or in a task of the event loop;
+nothing catches ends the program if it happens in the script or in a job of the event loop;
 on another thread it ends that thread, with a report, and the program goes on.
+
+**A time says its unit.** Every wait takes a `Duration`, never a bare number:
+`16.milliseconds`, `1.5.seconds`, `2.minutes`, `250.microseconds`, `3.days` (D90). Durations
+add, subtract, multiply and divide, compare and sort, read back as `inMilliseconds`,
+`inSeconds` and the rest (or `inWholeMilliseconds`), and print as Kotlin prints them: `1.5s`,
+`1m 30s`, `16ms`. `Thread.sleep(100)` is a compile error that says to write
+`100.milliseconds`.
+
+### Tasks
+
+A task is a function that can set itself aside in the middle of a call and be taken up again
+later, where it was. Code that asks one thing and then another, each answered through a
+callback, reads from top to bottom:
+
+```astra
+// Something that answers later: prompt returns at once, and calls back with the answer.
+suspend fun ask(question : string) : string => suspendTask { resume -> dialog.prompt(question) { answer -> resume(answer) } }
+
+task {
+  val name = ask("Name?")                 // the task is set aside here until the answer comes
+  val colour = ask("Favourite colour, $name?")
+  save(name, colour)
+}
+```
+
+- `task { ... }` starts a task. It runs at once, as far as the first place it has to wait,
+  and gives a `Job` of what the block returns (Kotlin's `async`): `then { }` runs with the
+  result on the event loop, `get()` waits for it. An error the block does not catch is kept in
+  the job, for `get()` to throw and `onError { }` to hear.
+- `suspendTask { resume -> ... }` sets the task aside and hands the block a function to
+  resume it with. Calling `resume(value)` gives the task its answer and takes it up again,
+  there and then; `resume.fail(error)` raises an error in it instead. It is resumed once. If
+  it is resumed before the block has returned, the task just goes on.
+- `delay(time)` waits without holding the main thread.
+- A function that may set a task aside is marked `suspend`, and is called like any other:
+  there is no `await` at the call. It is called only where waiting is possible: from another
+  suspend function, at the top level of the script, in the lambda given to `task`, `thread`
+  or a pool's `submit` (their parameters have the type `suspend () -> ...`), and in a lambda
+  that a function runs there and then, such as `map`, `forEach`, `let`, `apply` or a function
+  of the program's own that only calls it, which may wait where that call may. Anywhere else
+  the call is a compile error saying why and what to write: `'load' calls 'fetch', which may
+  wait, so 'load' may wait too: mark it 'suspend fun load()', or run the call in a task of its
+  own: task { fetch() }`.
+- A task holds no thread while it waits, and is not tied to one: it goes on, on whichever
+  thread resumes it.
+- `Result` and `runCatching { ... }` are Kotlin's: `isSuccess`, `getOrNull()`,
+  `exceptionOrNull()`, `getOrThrow()`, `getOrElse { }`, `onSuccess { }`, `onFailure { }`.
+
+`examples\dots.astra` is a small game written as tasks, and `examples\bounce_tasks.astra`
+animates balls with them.
+
+Nothing waits where an answer is wanted at once: in a getter or a setter, `toString`, `==`,
+`hashCode`, the making of an object, a static value, a sort's comparison, a parallel section
+or a sequence's block. A suspend call there is a compile error saying so, and so is one in a
+lambda kept to run later, where nothing would wait for it: one given to `EventLoop.post`, or
+kept in a variable without a suspend type (`val step : suspend () -> unit = { ... }` has
+one). An override is a suspend function when what it overrides is. Reading and writing files,
+sockets and other programs' streams is not marked: in a task on the main thread it sets the
+task aside while the work is done elsewhere, and anywhere else it waits on its thread.
+
+A task can be set aside anywhere in the program's own code, however many calls deep. On a
+thread that is not running a task, a suspend function simply waits on that thread; on the
+main thread outside a task it is an error when it runs, because the main thread waiting
+would stop the loop that brings the answer.
+
+**Jobs.** A `Job<T>` is a result to come, from `task`, `thread` or a pool, or made by hand as
+`Job<T>()` and given its value with `complete(value)` or `fail(error)`:
+
+| | |
+| --- | --- |
+| reading it | `get()` (waits; throws `ExecutionException` with the error as `cause`, or `CancellationException`), `get(timeout)` (`TimeoutException`), `getOrNull()`, `isDone`, `failed`, `isCancelled` |
+| hearing of it | `then { value -> }`, `onError { error -> }`, both run on the event loop |
+| ending it | `complete(value)`, `fail(error)`, `cancel(interrupt = false)` |
+| several | `Job.all(jobs)` is a job of all their results, in order; `Job.any(jobs)` of the first to finish |
+
+### Sequences
+
+A sequence gives its items one at a time, as they are asked for: nothing is worked out ahead
+and nothing is kept, so a sequence can be endless (D98).
+
+```astra
+val squares = generateSequence(1) { it + 1 }.map { it * it }
+print(squares.filter { it % 3 == 0 }.take(5).toList())      // [9, 36, 81, 144, 225]
+
+val fibonacci = sequence {
+  var a = 0
+  var b = 1
+  while (true) {
+    yield(a)
+    val next = a + b
+    a = b
+    b = next
+  }
+}
+```
+
+`sequence { }` runs its block as far as the next `yield` each time an item is asked for, on a
+stack of its own that starts small and grows, so thousands can be alive at once. The block
+waits nowhere but at `yield` and `yieldAll`; anything else that may wait is a compile error
+there. A suspend function of `SequenceScope`'s own may yield for it.
+
+| | |
+| --- | --- |
+| making one | `sequence { }`, `generateSequence(seed) { next }`, `generateSequence { next }` (until null), `sequenceOf(...)`, `emptySequence()`, and `asSequence()` on a list, a range, a set or a string |
+| a new sequence, worked out as it is gone over | `map`, `mapIndexed`, `mapNotNull`, `filter`, `filterNot`, `flatMap`, `take`, `takeWhile`, `drop`, `dropWhile`, `onEach`, `distinct`, `distinctBy`, `+` |
+| asking for the items | `toList`, `toSet`, `forEach`, a `for` loop, `first`, `firstOrNull`, `find`, `last`, `elementAt`, `count`, `any`, `all`, `none`, `fold`, `reduce`, `sum`, `sumOf`, `join` |
+
+Each time a sequence is gone over, it starts again from the beginning.
+
+### The event loop
+
+```astra
+EventLoop.post { refresh() }                    // run this on the main thread, soon; from any thread
+val tick = EventLoop.every(1.seconds) { print("tick") }
+EventLoop.after(5.5.seconds) { tick.cancel() }  // once, after a time
+EventLoop.isLoopThread
+```
+
+There is one loop, on the main thread. It starts when the script has run to its end, and
+runs the posted jobs and the timers one at a time. `post` is how a thread hands a result to
+the main thread, which is where a window's contents have to be changed from. A script that
+has something to do after the loop is idle calls `EventLoop.run()` itself.
 
 ### Threads
 
 ```astra
-val worker = Thread({ load(file) }, "loader")    // or Thread("loader") { load(file) }
+val loading = thread(name = "loader") { load(file) }    // a Job of what the block gives
+loading.then { shown = it }                              // on the event loop, when it is done
+
+val worker = Thread({ load(file) }, "loader")           // made, and started by hand
 worker.isDaemon = true            // a daemon does not keep the program alive
 worker.start()
-worker.join()                     // waits for it; join(500) for half a second at most
-
-thread(name = "saver") { save() }                 // makes one and starts it
-Thread.sleep(250)
-Thread.currentThread().name
+worker.join(timeout = 500.milliseconds)
+Thread.sleep(250.milliseconds)
 ```
 
 Threads share everything: a variable or an object is the same one on every thread. One
 thread runs Astra code at a time, and they change places at calls and at the ends of loop
 bodies. So a thread never sees a list or a map half changed, and a race between threads can
 give a wrong answer but cannot damage the program; but two steps that belong together are
-not done as one unless a lock makes them so. Astra code does not get faster on several cores.
-What runs side by side is the waiting: a thread that is reading, sleeping or waiting for a
-lock leaves the others free.
+not done as one unless a lock makes them so. Astra code does not get faster on several cores:
+threads are for blocking work and ported code, and workers and parallel sections use the
+cores. What runs side by side is the waiting: a thread that is reading, sleeping or waiting
+for a lock leaves the others free.
 
 | | |
 | --- | --- |
-| `Thread` | `Thread(task, name?)`, `start()`, `join(millis?)`, `isAlive`, `isDaemon`, `name`, `interrupt()`, `isInterrupted`; a class may extend it and override `run()` |
-| on the running thread | `Thread.currentThread()`, `Thread.sleep(ms)`, `Thread.interrupted()`, `Thread.yield()` |
-| `synchronized(lock) { }` | runs the block holding `lock`, which may be any object; no other thread is inside a `synchronized` on the same object meanwhile |
-| `Lock` | `lock()`, `unlock()`, `tryLock()`, `withLock { }`, and `wait(millis?)`, `notify()`, `notifyAll()` for waiting until another thread has changed something |
-| `AtomicInteger`, `AtomicBoolean`, `AtomicReference` | `get()`, `set(v)`, `incrementAndGet()`, `getAndAdd(n)`, `compareAndSet(expected, v)` and the like, each done in one piece |
-| `BlockingQueue(capacity?)` | `put(x)`, `take()` (waits for an item), `offer(x)`, `poll(timeout?)`, `peek()`, `size` |
-| `CountDownLatch(n)` | `countDown()`, `await(timeout?, unit?)` |
+| `thread(name?, daemon?) { }` | starts a thread, and gives a `Job` of what the block returns; an error it does not catch fails the job and is reported |
+| `Thread` | `Thread(task, name?)`, `start()`, `join(timeout?)` (false if the time ran out), `isAlive`, `isDaemon`, `name`, `interrupt()`, `isInterrupted`; a class may extend it and override `run()` |
+| on the running thread | `Thread.currentThread()`, `Thread.sleep(time)`, `Thread.interrupted()`, `Thread.yield()` |
+| `Lock` | `useKey { }`: runs the block holding the key; no other thread holds it meanwhile, and it is given back however the block ends |
+| `LockBox(value)` | data reached only with the key: `counts.useKey { it["clicks"] = 1 }` |
+| `waitUntil(timeout?) { condition }` | inside `useKey`: gives the key back until the condition holds, checked again whenever another thread gives a key back. Java's `wait` and `notify`, with no notify to forget |
+| `Channel<T>(capacity = n)` | items handed from one thread or task to another, in order: `send`, `receive`, `receive(timeout)`, `trySend`, `tryReceive`, `close()`, and a `for` over it until it is closed and empty. `Channel<T>.unbounded()` holds any number; capacity 0 makes each send wait for a receive |
+| `Countdown(n)` | `countDown()`, `await(timeout?)`, `count` |
+| `Atomic(value)` | `get()`, `set(v)`, `exchange(v)`, `compareAndSet(expected, v)`, `update { }`, and `increment()`, `decrement()`, `add(n)` on an int, each done in one step |
 
 ```astra
-val jobs = BlockingQueue()
-val results = []
-val lock = Lock()
-val workers = (1..3).map { thread { while (true) { val job = jobs.take(); if (job == null) { break }
-                                                     val done = job(); synchronized(lock) { results.add(done) } } } }
+val jobs = Channel<() -> int>.unbounded()
+val results = LockBox<open List<int>>([])
+repeat(3) { thread { for job in jobs { val done = job(); results.useKey { it.add(done) } } } }
 ```
+
+`useKey` is inline, so a `return` inside its block leaves the function around it, the key
+given back on the way out. A thread that has the key may take it again.
 
 **Interrupting.** `thread.interrupt()` marks a thread. If it is waiting (in `sleep`, `join`,
-`wait`, a queue), the wait ends with an `InterruptedException`; if it is working, it finds out
-when it asks `Thread.currentThread().isInterrupted`. That is how a task that runs too long is
-stopped: it checks now and then.
+`waitUntil`, a channel), the wait ends with an `InterruptedException`; if it is working, it
+finds out when it asks `Thread.currentThread().isInterrupted`. That is how a job that runs
+too long is stopped: it checks now and then.
 
-**Executors** keep threads that take tasks from a queue. A task gives a `Future`:
-
-```astra
-val pool = Executors.newFixedThreadPool(4)        // or newSingleThreadExecutor(), newCachedThreadPool()
-val total = pool.submit { sum(numbers) }
-total.get()                               // waits for the result
-total.get(2, TimeUnit.seconds)            // TimeoutException if it takes longer
-total.cancel(true)                        // and interrupt the thread working on it
-pool.shutdown()                           // its threads keep the program alive until then
-```
-
-`get()` throws `ExecutionException` (with the task's error as `cause`) if the task failed and
-`CancellationException` if it was cancelled. A `Future()` can also be made and completed by
-hand (`complete(value)`, `completeExceptionally(error)`), `whenComplete { value, error -> }`
-is told when it is done, and `Future.supplyAsync { ... }` runs a function on a thread of its
-own. A time limit is a number and a `TimeUnit` (`milliseconds`, `seconds`, `minutes`...), and
-milliseconds if no unit is given. Each of the factory functions takes a function that makes
-the thread for a task, for naming them or making them daemons:
-`Executors.newSingleThreadExecutor { work -> Thread(work, "saver").apply { isDaemon = true } }`.
-
-`synchronized` and `withLock` are inline, so a `return` inside their block leaves the function
-around it, the lock let go on the way out.
-
-### The event loop
+**Thread pools** keep threads that take jobs from a queue:
 
 ```astra
-EventLoop.post { refresh() }                  // run this on the main thread, soon; from any thread
-val tick = EventLoop.every(1000) { print("tick") }
-EventLoop.after(5500) { tick.cancel() }       // once, after a time
-EventLoop.isLoopThread
+val pool = ThreadPool(threads = 4)
+val total = pool.submit { sum(numbers) }        // a Job
+total.get(timeout = 2.seconds)                  // TimeoutException if it takes longer
+total.cancel(interrupt = true)                  // and interrupt the thread working on it
+pool.every(5.seconds) { autosave() }
+pool.close()                                    // its threads keep the program alive until then
 ```
 
-There is one loop, on the main thread. It starts when the script has run to its end, and
-runs the posted tasks and the timers one at a time. `post` is how a thread hands a result to
-the main thread, which is where a window's contents will have to be changed from. A script
-that has something to do after the loop is idle calls `EventLoop.run()` itself.
+`after(delay) { }` runs a job once after a time, `closeNow()` cancels what has not started, and
+`JobQueue(name)` is a pool of one thread, running its jobs in order.
 
-### Flows
-
-A flow is a function that can set itself aside in the middle of a call and be taken up again
-later, where it was. Code that asks one thing and then another, each answered through a
-callback, reads from top to bottom:
-
-```astra
-// Something that answers later: prompt returns at once, and calls back with the answer.
-suspend fun ask(question : string) : string => suspendCoroutine { continuation ->
-  dialog.prompt(question) { answer -> continuation.resume(answer) }
-} as string
-
-startCoroutine {
-  val name = ask("Name?")                 // the flow is set aside here until the answer comes
-  val colour = ask("Favourite colour, $name?")
-  save(name, colour)
-}
-```
-
-- `startCoroutine { ... }` starts a flow. It runs at once, as far as the first place it has
-  to wait, and then `startCoroutine` returns.
-- `suspendCoroutine { continuation -> ... }` sets the flow aside and hands the block a
-  continuation. Calling `continuation.resume(value)` gives the flow its answer and takes it up
-  again, there and then; `resumeWithException(error)` raises an error in it instead. A
-  continuation is resumed once. If it is resumed before the block has returned, the flow just
-  goes on.
-- A function that may set a flow aside is marked `suspend`, and is called like any other:
-  there is no `await` at the call. It is called only where waiting is possible: from another
-  suspend function, at the top level of the script, in the lambda given to `startCoroutine`,
-  `thread`, an executor's `submit` or `Future.supplyAsync` (their parameters have the type
-  `suspend () -> ...`), and in a lambda that a function runs there and then, such as `map`,
-  `forEach`, `let`, `apply` or a function of the program's own that only calls it, which may
-  wait where that call may. Anywhere else the call is a compile error saying why and what to
-  write: `'load' calls 'fetch', which may wait, so 'load' may wait too: mark it 'suspend fun
-  load()', or run the call in a task of its own: task { fetch() }`. The advice already uses
-  the names decided for M6.6 (D81, D89): `task { }` for what starts a flow, and `then { }` for
-  using its result.
-- A flow holds no thread while it waits, and is not tied to one: it goes on, on whichever
-  thread resumes it. `delay(ms)` waits without holding the main thread, and
-  `future.await()` waits for work done on a thread.
-- These are Kotlin's names, and code written on `kotlin.coroutines` ports as it is:
-  `block.startCoroutine(Continuation { result -> ... })` tells a completion how the flow
-  turned out, as a `Result` (`isSuccess`, `getOrNull()`, `exceptionOrNull()`, `getOrThrow()`);
-  `runCatching { ... }` makes one. Without a completion, an error the flow does not catch
-  goes to whoever was running it: the caller of `startCoroutine`, or of the `resume` that
-  took it up.
-
-`examples\dots.astra` is a small game written as flows, and `examples\bounce_flows.astra`
-animates balls with them.
-
-Nothing waits where an answer is wanted at once: in a getter or a setter, `toString`, `==`,
-`hashCode`, the making of an object, a static value, a sort's comparison or a parallel
-section. A suspend call there is a compile error saying so, and so is one in a lambda kept
-to run later, where nothing would wait for it: one given to `EventLoop.post`, or kept in a
-variable without a suspend type (`val step : suspend () -> unit = { ... }` has one). An
-override is a suspend function when what it overrides is. Reading and writing files,
-sockets and other programs' streams is not marked: in a flow on the main thread it sets the
-flow aside while the work is done elsewhere, and anywhere else it waits on its thread.
-
-A flow can be set aside anywhere in the program's own code, however many calls deep. On a
-thread that is not running a flow, a suspending function simply waits on that thread; on the
-main thread outside a flow it is an error when it runs, because the main thread waiting would
-stop the loop that brings the answer.
+Kotlin's and Java's names (`Future`, `CompletableFuture`, `Executors`, `BlockingQueue`,
+`CountDownLatch`, `AtomicInteger`, `TimeUnit`, `synchronized`, `ReentrantLock`,
+`startCoroutine`, `suspendCoroutine`) are compile errors that name what Astra has in their
+place.
 
 ### Workers
 
 A worker is a second copy of the runtime, on a thread of its own, running a script of its
 own. Unlike a thread it runs at the same time as the program that started it, on another
 core: four workers do four jobs in the time one takes. The price is that a worker shares
-nothing with the program, not a variable and not an object. The two exchange messages, and
-a message is copied.
+nothing with the program, not a variable and not an object. The two exchange messages.
 
 ```astra
 // In the program:
@@ -2532,20 +2576,26 @@ worker.onMessage = { count -> print("the worker found", count) }
 worker.post({"upTo": 100000})
 
 // In primes.astra. Worker.parent is the program that started it.
-Worker.parent.onMessage = { job -> Worker.parent.post(countPrimes(job["upTo"])) }
+Worker.parent!!.onMessage = { job -> Worker.parent!!.post(countPrimes(job["upTo"])) }
 ```
 
 - **The script** is named by a string written in the call itself. It is compiled into the
   program there, so a program built into an executable takes its workers with it. Its names
   are its own: it does not see the program's functions and variables, nor clash with them.
   It can `import` what it needs, as any file can.
-- **A message** can hold numbers, strings, booleans, `null`, `bytes`, and lists and maps of
-  those. Anything else is refused where it is sent. What arrives is a copy: changing it does
-  nothing to the original.
+- **A message** can hold numbers, strings, booleans, `null`, `bytes`, and lists, maps and
+  sets of those. Anything else is refused where it is sent. What arrives is a copy: changing
+  it does nothing to the original.
+- **Frozen data is shared, not copied** (D97). A `frozen()` list, map or set holding only
+  numbers, text and other frozen data is put once outside every heap, and each worker it is
+  sent to reads that one copy in place: a large table sent to eight workers costs one copy,
+  not eight. It is freed when the last side to hold it lets go.
+- **Bytes can be handed over**: `worker.post(buffer, handOver = true)` moves the buffer into
+  the message, and the sender is left with an empty one, so that only one side has it.
 - **Messages arrive on the event loop** of the side they are sent to, one at a time, in the
-  order they were sent. A worker has an event loop, threads and flows of its own.
+  order they were sent. A worker has an event loop, threads and tasks of its own.
 - `worker.terminate()` stops a worker whatever it is doing, at its next call or loop round.
-  In the worker, `Worker.parent.close()` says it is finished. `worker.isAlive` asks.
+  In the worker, `Worker.parent!!.close()` says it is finished. `worker.isAlive` asks.
 - **An error** that nothing catches in a worker ends that worker. The program is told through
   `worker.onError = { description -> ... }`, and without one the error is reported as an
   uncaught error is.
@@ -2581,7 +2631,9 @@ holds every core to:
 - **Everything else it may read and not change**: the variables around the lambda, other
   lists, maps and objects, and whatever an item holds that is an object of its own.
 - Another core's item it may not even look into, since that core may be changing it. (Asking
-  whether two values are the same object is not looking: `items.indexOf(it)` is fine.)
+  whether two values are the same object is not looking: `items.indexOf(it)` is fine.) To
+  read every item from every core, go over the positions instead:
+  `items.indices.parallelStream()`.
 
 A lambda that keeps to the rule runs on every core. One that does not gets an error the
 first time it tries, which says what it tried to change. It never damages anything:
@@ -2599,11 +2651,46 @@ So a section hands its results back by returning them, and they are put together
 | --- | --- |
 | `forEach { }` | runs the lambda on every item |
 | `replaceAll { }` | replaces every item of the list by what the lambda gives for it |
-| `map { }`, `mapNotNull { }`, `filter { }` | give a stream to go on from; `toList()`, `toSet()`, `sorted()` end it. The order of the items is kept |
-| `sumOf { }`, `maxOf { }`, `minOf { }`, `count { }`, `any { }`, `all { }`, `none { }` | one value from all the items |
+| `map { }`, `mapNotNull { }`, `filter { }`, `flatMap { }` | give a stream to go on from; `toList()`, `toSet()`, `sorted()` end it. The order of the items is kept |
+| `sumOf { }`, `maxOf { }`, `minOf { }`, `count { }`, `any { }`, `all { }`, `none { }`, `reduce { }` | one value from all the items; `fold(initial) { }` goes over them in order, on one core |
+| `gather(into, each, merge)` | each core fills a container of its own (`into`), item by item (`each`), and the containers are merged at the end (`merge`) |
 
 `list.parallelStream()` and `range.parallelStream()` start one; `availableProcessors()` says
 how many cores a section has.
+
+**What every core may change.** Some things are made to be changed by many cores at once,
+each change done whole (D85, D92, D94):
+
+```astra
+val hits = Atomic(0)
+val seen = SharedSet<string>()
+val byKind = SharedMap<string, int>()
+pages.parallelStream().forEach { page ->
+  hits.increment()
+  for link in page.links { seen.add(link) }
+  byKind.update(page.kind) { (it ?: 0) + 1 }
+}
+
+class Body {
+  atomic var hits = 0           // changed in a section through +=, -=, = max(...), = min(...), compareAndSet
+}
+```
+
+There is no shared list: cores adding as they finish would give a different order each run.
+
+**Sections inside sections, and functions at once** (D96). A section may start another, and
+`parallel({ a() }, { b() })` runs a few functions at once and gives their results in order; the
+cores share the work out between them as they come free. A list split with `splitAt` gives two
+views that never overlap, each one function's to write, so divide and conquer is written in
+place; `parallelSort()` sorts a list that way.
+
+```astra
+fun increment(view : ListView<int>) {
+  if (view.size < 1000) { for i in view.indices { view[i] += 1 } }
+  else { view.splitAt(view.size / 2) { left, right -> parallel({ increment(left) }, { increment(right) }) } }
+}
+numbers.splitAt(numbers.size / 2) { left, right -> parallel({ increment(left) }, { increment(right) }) }
+```
 
 - An item's own fields can be assigned, and an item that is a list or a map can be changed.
   What an item *holds* was not dealt out and is shared: to change it, put something the core
@@ -2614,14 +2701,14 @@ how many cores a section has.
   changes them there, `replaceAll { it.moved() }` builds each new one there, and nothing is
   copied. A core looks only into its own part: `balls[0]` read from another core's part is an
   error, and so is a built-in function given the whole list.
-- Nothing waits in a section: sleeping, locks, reading and writing, and setting a flow aside
-  are errors there. Neither does a section start another, or touch a window.
+- Nothing waits in a section: sleeping, locks, reading and writing, and setting a task aside
+  are errors there, and neither does a section touch a window.
 - An error in the lambda stops the section and comes out of the call.
 - Starting the cores costs about 0.04 ms, so a section pays from a few hundred quick items,
   or a few slow ones.
 
-**A buffer in parts.** `bytes` can be shared out by position: each core gets the positions of
-one part, and may write those and no others.
+**A buffer or a list in parts.** `bytes`, or any list, can be shared out by position: each
+core gets the positions of one part, and may write those and no others.
 
 ```astra
 pixels.parallelChunks { positions -> for i in positions { pixels[i] = shade(i) } }
@@ -2632,8 +2719,8 @@ pixels.parallelChunks { positions -> for i in positions { pixels[i] = shade(i) }
 Anything here that waits is an ordinary call, and the same one everywhere:
 
 - on a thread it blocks that thread, and the others go on;
-- in a flow on the main thread it sets the flow aside, and the event loop goes on;
-- on the main thread outside a flow it blocks the main thread.
+- in a task on the main thread it sets the task aside, and the event loop goes on;
+- on the main thread outside a task it blocks the main thread.
 
 That holds for a `File`'s `readText`, `writeText` and the like as well.
 
@@ -2673,14 +2760,14 @@ python.destroy()
 changes), `redirectErrorStream()` (errors go with the ordinary output), and
 `redirectInput`, `redirectOutput`, `redirectError`, each taking a `File` or
 `ProcessBuilder.pipe`, `.inherit` or `.discard`; `inheritIO()` for all three. After:
-`waitFor()` (the exit code), `waitFor(timeout, unit)` (true if it ended in time), `isAlive`,
+`waitFor()` (the exit code), `waitFor(timeout)` (true if it ended in time), `isAlive`,
 `exitValue()`, `pid()`, `destroy()`. `Process.currentCommand()` is what started this program,
 so that it can start another of itself.
 
 **Sockets** are TCP connections:
 
 ```astra
-val socket = Socket("example.org", 80)                     // or Socket().connect(host, port, timeoutMs)
+val socket = Socket("example.org", 80)                     // or Socket().connect(host, port, timeout = 5.seconds)
 socket.outputStream.write("GET / HTTP/1.0\r\nHost: example.org\r\n\r\n")
 print(socket.inputStream.readLine())
 socket.close()
@@ -2835,7 +2922,7 @@ source ──lexer──▶ tokens ──parser──▶ AST ──compiler─�
 | `src/value.*` | Values and heap objects (strings, lists, maps, classes, closures...) |
 | `src/vm.*` | Interpreter loop, calls, exceptions, mark-and-sweep garbage collector |
 | `src/builtins.cpp`, `src/stdlib.cpp` | Standard library, the part built into the runtime |
-| `src/threads.cpp` | Threads and the lock they share, locks for programs, the event loop, flows |
+| `src/threads.cpp` | Threads and the lock they share, locks for programs, the event loop, tasks and the generators sequences run on |
 | `src/io.cpp` | Streams, processes and sockets |
 | `src/worker.cpp` | Workers: a second runtime on its own thread, and the copying of messages |
 | `src/parallel.cpp` | Parallel sections: an interpreter for each core on one heap, and who owns what |
@@ -2932,7 +3019,7 @@ opportunity, which is slow but useful for finding memory bugs when changing the 
 - Drawing is done from the main thread only: no thread, worker or parallel section can draw.
   Five examples animate fifty thousand balls: `bounce.astra` moves and draws them in one loop,
   `bounce_parallel.astra` moves them in a parallel section (one line different),
-  `bounce_threads.astra` on background threads, `bounce_flows.astra` in flows on the main
+  `bounce_threads.astra` on background threads, `bounce_tasks.astra` in tasks on the main
   thread, and `bounce_workers.astra` in workers.
 - Top-level variables get their values in order (file by file for a folder), so one cannot be
   used by a statement that runs earlier, unless it is `lazy`.

@@ -83,8 +83,8 @@ td.when { min-width: 9em; }
 <nav>
 <h2>Contents</h2>
 <ul>
-<li><a href="#choices">Choices to confirm</a> (nineteen from the first half; seven from part 8, group 1; twelve from group 2; eleven from group 3; eleven from group 4; eleven from group 5; eleven from group 6)</li>
-<li><a href="#gaps">Gaps left</a> (fifty-one)</li>
+<li><a href="#choices">Choices to confirm</a> (nineteen from the first half; seven from part 8, group 1; twelve from group 2; eleven from group 3; eleven from group 4; eleven from group 5; eleven from group 6; thirteen from group 7)</li>
+<li><a href="#gaps">Gaps left</a> (fifty-five)</li>
 </ul>
 </nav>
 
@@ -646,6 +646,84 @@ td.when { min-width: 9em; }
 <div class="verdict"><span class="label">Your choice</span><span class="blank"></span></div>
 </section>
 
+<section class="decision" id="p8-task-errors">
+<h3><span class="code">8.7a</span>Where a task&#39;s error goes (part 8, group 7)</h3>
+<p>D89 makes <code>task { }</code> Kotlin&#39;s <code>async</code>. As built, an error the block does not catch is kept in its Job: <code>get()</code> throws it inside an ExecutionException, <code>onError { }</code> hears it, and nothing is printed if nobody asks. <code>thread { }</code> keeps it in its Job too, and also reports it as an uncaught error on a thread is reported, as Java does, since a thread&#39;s failure is otherwise easy to miss. A pool&#39;s <code>submit { }</code> keeps it, as Java&#39;s executors do.</p>
+<div class="verdict"><span class="label">Your choice</span><span class="blank"></span></div>
+</section>
+
+<section class="decision" id="p8-job-all">
+<h3><span class="code">8.7b</span>What Job.all and Job.any give (part 8, group 7)</h3>
+<p>D89 names them. As built, each gives a Job: <code>Job.all(jobs)</code> one of all the results in order, failing with the first failure; <code>Job.any(jobs)</code> one of the first to finish. So they are used as any Job is, <code>Job.all(jobs).get()</code> or <code>then { }</code>, and a task can wait for them without holding a thread.</p>
+<div class="verdict"><span class="label">Your choice</span><span class="blank"></span></div>
+</section>
+
+<section class="decision" id="p8-parallel-fold">
+<h3><span class="code">8.7c</span>fold on a parallel stream (part 8, group 7)</h3>
+<p>D93 keeps <code>fold</code> and <code>reduce</code> giving one answer. As built, <code>reduce</code> is dealt out to the cores, each reducing its share and the shares reduced in order, so its operation must be associative, as Java&#39;s is; <code>fold</code> goes over the items in order on one core, since its starting value and operation (an <code>(R, T) -&gt; R</code>) cannot be split. <code>gather</code> is the parallel form of a fold.</p>
+<div class="verdict"><span class="label">Your choice</span><span class="blank"></span></div>
+</section>
+
+<section class="decision" id="p8-thread-lambda">
+<h3><span class="code">8.7d</span>A Thread made with a lambda (part 8, group 7)</h3>
+<p>D117 keeps <code>Thread</code> for making and extending threads. As built, its constructor takes <code>(task, name)</code> as Java&#39;s does, so the lambda is written in the parentheses, <code>Thread({ work() }, &quot;name&quot;)</code>; <code>Thread(&quot;name&quot;) { work() }</code>, which the README showed before, no longer parses as one call. <code>thread(name) { }</code> is the usual way, and gives a Job.</p>
+<div class="verdict"><span class="label">Your choice</span><span class="blank"></span></div>
+</section>
+
+<section class="decision" id="p8-int-millis-left">
+<h3><span class="code">8.7e</span>Times still in milliseconds (part 8, group 7)</h3>
+<p>D90 puts a Duration wherever a time is meant. Two are left as int milliseconds: <code>@Timeout(millis)</code>, since an annotation&#39;s arguments are constants and a Duration is made by a call; and Jade&#39;s <code>scheduler</code>, which is JadeUI&#39;s API and so waits for your word (D83). Changing either is a line or two each.</p>
+<div class="verdict"><span class="label">Your choice</span><span class="blank"></span></div>
+</section>
+
+<section class="decision" id="p8-atomic-locks">
+<h3><span class="code">8.7f</span>How Atomic and the shared collections keep a change whole (part 8, group 7)</h3>
+<p>D85 asks for real atomic operations. As built, an Atomic or an <code>atomic var</code> holding an int or a float is changed with the processor&#39;s own operations on its eight bytes; one holding anything else (a bool, text, frozen data) under a small lock, one of 64 shared by address. A SharedMap or SharedSet takes one such lock for each operation on it, so cores adding to the same map take turns; cores working on different maps seldom meet. Kotlin&#39;s <code>ConcurrentHashMap</code> locks by part of the map, which a later part could do.</p>
+<div class="verdict"><span class="label">Your choice</span><span class="blank"></span></div>
+</section>
+
+<section class="decision" id="p8-section-pieces">
+<h3><span class="code">8.7g</span>How a section is divided, and sections inside sections (part 8, group 7)</h3>
+<p>D96 asks for work stealing. As built, a section is cut into as many pieces as there are cores, each piece a part of the items, and each core keeps a queue of pieces that the others take from when theirs is empty; a core waiting for a section of its own helps with what is queued meanwhile. Each piece has an owner number, for telling whose an object is; there are 255, and a section inside others that would need more than are free runs in the piece that starts it, on one core, with the same result.</p>
+<div class="verdict"><span class="label">Your choice</span><span class="blank"></span></div>
+</section>
+
+<section class="decision" id="p8-chunks-views">
+<h3><span class="code">8.7h</span>parallelChunks, and views of a list (part 8, group 7)</h3>
+<p>D96 extends <code>parallelChunks</code> from bytes to lists of values. As built, it takes any list: each core may write the positions of its part, whatever the items are, and read the rest. A view from <code>splitAt</code> is made only by the standard library (its constructor takes a key no program has), and while <code>splitAt</code>&#39;s block runs, a view that was split is lent to its halves: writing through it is an error until the block ends. In a <code>parallel(...)</code> the list itself, captured, is read-only to every function, as all captured data is, so it is written only through the views; the same view given to two of the functions is an error. <code>sort()</code> on a view sorts that stretch in place.</p>
+<div class="verdict"><span class="label">Your choice</span><span class="blank"></span></div>
+</section>
+
+<section class="decision" id="p8-shared-blocks">
+<h3><span class="code">8.7i</span>Frozen data shared with workers (part 8, group 7)</h3>
+<p>D97 asks for frozen data to be kept once outside the heaps. As built, the first time frozen data is sent it is copied once into a block outside every heap, which each worker it is sent to reads in place; the sender keeps its own frozen data in its heap too, so there are two copies however many workers read it, not one for each. The same data sent again, or sent on by a worker, is the same block. Only frozen data holding numbers, text, bytes and other frozen data is shared; a <code>frozen()</code> list of objects is refused, as any message holding objects is.</p>
+<div class="verdict"><span class="label">Your choice</span><span class="blank"></span></div>
+</section>
+
+<section class="decision" id="p8-channel-lock">
+<h3><span class="code">8.7j</span>A for over a channel, and waking at a Lock (part 8, group 7)</h3>
+<p>A <code>for</code> over a channel waits for each item, so its iterator&#39;s <code>hasNext</code> is a suspend function; the loop works through any object with <code>hasNext</code> and <code>next</code> (and anything with an <code>iterator()</code> giving one), not only those declared as an <code>Iterator</code>, so a waiting one can be written. And <code>waitUntil</code> wakes the threads waiting at a Lock whenever any key is given back, so that a condition another thread has made true is seen; a key given back by a thread that changed nothing wakes them for nothing, and they wait again.</p>
+<div class="verdict"><span class="label">Your choice</span><span class="blank"></span></div>
+</section>
+
+<section class="decision" id="p8-generators">
+<h3><span class="code">8.7k</span>How a sequence&#39;s block runs (part 8, group 7)</h3>
+<p>D98 runs generators as tasks with small growing stacks. As built, each <code>sequence { }</code> gone over runs its block on a stack of its own, reserved at the size of a task&#39;s and given memory a page at a time as it is used, so twenty thousand alive at once cost little. It is set aside only at <code>yield</code>: in the block, anything else that may wait is a compile error, and a function called from it that waits on its thread does so as on a thread, not setting the sequence aside. A suspend function of <code>SequenceScope</code>&#39;s own, written by the program, may yield for the block. <code>yieldAll</code> takes a sequence or a list. The lazy operations (<code>map</code>, <code>filter</code> and the rest) are written without a block of their own, so they cost a call per item, not a switch of stacks.</p>
+<div class="verdict"><span class="label">Your choice</span><span class="blank"></span></div>
+</section>
+
+<section class="decision" id="p8-atomic-field-rules">
+<h3><span class="code">8.7l</span>What an atomic field is (part 8, group 7)</h3>
+<p>D92 marks fields <code>atomic var</code>. As built, it is a field of an object (not static, where an <code>Atomic</code> does the same), a <code>var</code>, given its starting value where it is declared, with no accessors and not <code>lazy</code> or <code>lateinit</code>; each is a compile error saying so. Outside a section it is read and assigned as any field. In a section, <code>+=</code>, <code>-=</code>, <code>x = max(x, v)</code>, <code>x = min(x, v)</code> and <code>x.compareAndSet(expected, v)</code> are each one atomic step, and anything else assigning it is a compile error.</p>
+<div class="verdict"><span class="label">Your choice</span><span class="blank"></span></div>
+</section>
+
+<section class="decision" id="p8-duration">
+<h3><span class="code">8.7m</span>What a Duration is (part 8, group 7)</h3>
+<p>D90 asks for <code>Duration</code> as a value type. As built, it holds a whole number of nanoseconds (up to 292 years either way); <code>16.milliseconds</code> and the rest are extension properties on <code>int</code> and <code>float</code>, a kind of declaration Astra did not have, now written <code>val int.milliseconds : Duration get() =&gt; ...</code> as Kotlin writes them. A Duration prints as Kotlin&#39;s does (<code>1.5s</code>, <code>1m 30s</code>, <code>16ms</code>), its <code>inSeconds</code> and the like are floats, <code>inWholeMilliseconds</code> an int, and a Duration divided by one is a float.</p>
+<div class="verdict"><span class="label">Your choice</span><span class="blank"></span></div>
+</section>
+
 <h2 id="gaps">Gaps left</h2>
 <p class="note">Each is known, and the code around it is tested; none gives a wrong result. Most make something slower or leave a feature for a later part.</p>
 
@@ -685,7 +763,6 @@ td.when { min-width: 9em; }
 <tr><td class="part">8.3</td><td><code>extend</code> of a built-in type (<code>string</code>, <code>List</code>): a value of one has no class to carry the interface when the program runs.</td><td class="when">Not placed yet</td></tr>
 <tr><td class="part">8.3</td><td>Extension functions and <code>extend</code>s are in reach as imports say for the checker only: when running, one is found by its type and name, once its file is loaded, and <code>is</code> on a value of type <code>any</code> answers by every extend loaded. Two libraries giving one type an extension function of the same name and parameters would meet there.</td><td class="when">With a second library</td></tr>
 <tr><td class="part">8.3</td><td>Two extension functions of one name on one type from two imported folders are not reported where a call is ambiguous (D70); the one found first is taken.</td><td class="when">Not placed yet</td></tr>
-<tr><td class="part">8.3</td><td>A thread reading a lazy value another thread is working out waits by handing the lock over again and again, not by sleeping until it is told.</td><td class="when">Group 7, concurrency</td></tr>
 <tr><td class="part">8.4</td><td>A function declared inside another, or a generic one, calling itself as its last step stays a call; so does such a call inside a try, or in a <code>when</code> or <code>if</code> giving what is returned (D29).</td><td class="when">Not placed yet</td></tr>
 <tr><td class="part">8.4</td><td>A call of an inline function with spread arguments, of a static inline member or of one with a vararg is an ordinary call: its lambdas are made, and a bare <code>return</code> in them is an error (D59).</td><td class="when">Not placed yet</td></tr>
 <tr><td class="part">8.4</td><td>Inside code copied in from an inline function, a value is never read where it is: a list of value types gives copies there (D59).</td><td class="when">With the next measurements</td></tr>
@@ -702,6 +779,11 @@ td.when { min-width: 9em; }
 <tr><td class="part">8.6</td><td>A test held in a wait (<code>sleep</code>, <code>join</code>, a read) past its <code>@Timeout</code> is stopped only once the wait ends.</td><td class="when">Not placed yet</td></tr>
 <tr><td class="part">8.6</td><td><code>@Deprecated</code>, which D153 places at 1.0.</td><td class="when">1.0</td></tr>
 <tr><td class="part">8.6</td><td>Reflection and astra test cost about 0.7 ms at every start (9.3 ms against 8.6 for a script printing one line, built with Clang): half the descriptions of the standard library&#39;s classes, half <code>reflect.astra</code> and <code>test.astra</code>. Compiling a program afresh costs 1.1 ms more for the descriptions of Jade&#39;s classes (7.3 ms against 6.2); a later run starts from the cache.</td><td class="when">With the next measurements</td></tr>
+<tr><td class="part">8.7</td><td>A message holding shared frozen data that is never read (its worker ended first) keeps its hold on the block, which is then not freed until the program ends (8.7i).</td><td class="when">Not placed yet</td></tr>
+<tr><td class="part">8.7</td><td>A SharedMap or SharedSet takes one lock for the whole collection on each operation, so cores changing the same one take turns (8.7f).</td><td class="when">Not placed yet</td></tr>
+<tr><td class="part">8.7</td><td>A sequence&#39;s block may go 4,000 calls deep, as a task may, where a thread may go 20,000.</td><td class="when">Not placed yet</td></tr>
+<tr><td class="part">8.7</td><td><code>yieldAll</code> takes a sequence or a list, and a map has no <code>asSequence()</code> (its <code>entries.toList()</code> has).</td><td class="when">Not placed yet</td></tr>
+<tr><td class="part">8.7</td><td><code>@Timeout</code> and Jade&#39;s <code>scheduler</code> take int milliseconds, not a Duration (8.7e).</td><td class="when">Your choice on 8.7e</td></tr>
 <tr><td class="part">All</td><td>Under MSVC, code placement alone moves the <code>fields</code> benchmark by 10 to 20% with the same loop. Not a gap in Astra, but a caution in reading timings: compare against a baseline built the same way, and count instructions, before calling a change slower.</td><td class="when">D160: the Clang build's dispatch, M6.7</td></tr>
 </tbody>
 </table></div>

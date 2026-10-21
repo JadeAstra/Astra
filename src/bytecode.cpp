@@ -219,6 +219,7 @@ const OpInfo kOps[] = {
     {"ITER_NEXT_PAIR", Operand::U16I32},
     {"CLASS_OF", Operand::U8},
     {"CLASS_META", Operand::U16U8},
+    {"ATOMIC_FIELD", Operand::U16U8},
 };
 
 const char* const kTypeNames[] = {"", "int", "float", "Number", "string", "bool", "List", "Map", "Range", "Function", "Bytes", "Type", "",
@@ -900,6 +901,12 @@ static int analyzeStack(FunctionProto& f, const Program& program, bool partial) 
                     pops = 1;
                     pushes = 2;
                     break;
+                case Op::AtomicField:
+                    requireName(a);
+                    if (b > 4) fail("bad atomic operation");
+                    pops = b == 4 ? 3 : 2;
+                    pushes = 1;
+                    break;
                 case Op::ClassMeta:
                     if (static_cast<size_t>(a) >= f.protos.size()) fail("nested function out of range");
                     if (b > 1) fail("bad description of a class");
@@ -1151,6 +1158,9 @@ void disassembleFunction(const FunctionProto& f, const Program& program, std::os
                 break;
             case Op::ClassMeta:
                 out << " " << a << (b == 0 ? " fields" : " methods") << "  ; " << f.protos[a]->name;
+                break;
+            case Op::AtomicField:
+                out << " " << a << " " << (b == 0 ? "+=" : b == 1 ? "-=" : b == 2 ? "max" : b == 3 ? "min" : "compareAndSet") << "  ; " << asString(f.constants[a])->utf8();
                 break;
             case Op::DefaultArg:
             case Op::IterNext:

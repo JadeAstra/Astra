@@ -1,0 +1,6 @@
+// A function that waits for an answer the event loop brings, called on the main thread outside
+// a task, would stop that loop: it is an error there (D81).
+print("before")                                              // expect: before
+val answer = suspendTask<int> { resume -> EventLoop.post { resume(1) } }
+print("never reached", answer)
+// expect runtime error: suspendTask was called outside a task on the main thread, which would stop the event loop that is to bring the answer; start a task with task { ... }

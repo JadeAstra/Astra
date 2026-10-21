@@ -1,0 +1,40 @@
+// Concurrency (M6.6 part 8, group 7): what Kotlin and Java write is named in Astra's terms,
+// a time says its unit, and what is changed by several cores at once says how.
+
+// Kotlin's and Java's names, and what Astra has in their place.
+val future = CompletableFuture<int>()   // check: a result to come is a Job<T> in Astra, made by hand as Job<T>() and given its value with complete(v) or fail(e) (D89)
+val latch = CountDownLatch(2)           // check: a CountDownLatch is Countdown(n) in Astra: countDown(), await(timeout = ...), count (D118)
+val number = AtomicInteger(0)           // check: Java's atomics are one Atomic<T> in Astra: Atomic(0), with get, set, update { }, exchange, compareAndSet, and increment, decrement and add on an int (D85)
+val queue = LinkedBlockingQueue<int>()  // check: a LinkedBlockingQueue is Channel<T>.unbounded() in Astra: send, receive, and a for over it (D87)
+val pool = Executors.newFixedThreadPool(4)   // check: Executors.newFixedThreadPool(n) is ThreadPool(threads = n) in Astra, newSingleThreadExecutor() a JobQueue(name) (D88)
+val unit = TimeUnit.SECONDS             // check: a time is a Duration in Astra: 16.milliseconds, 2.seconds, 5.minutes (D90)
+val started = startCoroutine { 1 }      // check: startCoroutine is task { ... } in Astra, which gives a Job of what the block returns (D81)
+fun guarded() {
+  synchronized(future) { 1 }            // check: synchronized(x) { } is a Lock's useKey in Astra: val lock = Lock(), then lock.useKey { ... }; data reached only with the key is a LockBox(value) (D86)
+}
+
+// A Lock is used with its key.
+val lock = Lock()
+fun locking() {
+  lock.lock()                           // check: a Lock is used with useKey { }: lock.useKey { ... } takes the key, and gives it back however the block ends (D86)
+  lock.withLock { 1 }                   // check: a Lock is used with useKey { }: lock.useKey { ... } takes the key, and gives it back however the block ends (D86)
+}
+
+// A time says its unit; a channel says how much it holds.
+Thread.sleep(100)                       // check: Thread.sleep(...) takes a Duration for 'time': a time says its unit, as 16.milliseconds or 2.seconds (D90)
+EventLoop.after(16) { 1 }               // check: EventLoop.after(...) takes a Duration for 'delay': a time says its unit, as 16.milliseconds or 2.seconds (D90)
+val channel = Channel<int>()            // check: a channel says how much it holds: Channel<T>(capacity = n), with 0 for each send to wait for a receive, or Channel<T>.unbounded() (D87)
+
+// An atomic field changes in one step in a parallel section.
+class Counter {
+  atomic var count = 0
+}
+val counter = Counter()
+(1..10).parallelStream().forEach { counter.count += 1 }
+(1..10).parallelStream().forEach { counter.count = counter.count + 1 }   // check: 'count' is an atomic var: in a parallel section it changes through +=, -=, = max(count, v), = min(count, v) or count.compareAndSet(expected, v) (D92)
+
+// A sequence's block waits only where it gives a value (D98).
+val values = sequence<int> {
+  yield(1)
+  Thread.sleep(1.milliseconds)          // check: 'sleep' may wait (it is a suspend function), and a sequence's block waits only where it gives a value (yield, yieldAll): its values are worked out as they are asked for, by whoever asks. Wait before making the sequence, or make a list in a task instead: task { buildList { ... } }
+}

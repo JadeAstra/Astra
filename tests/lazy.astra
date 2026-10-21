@@ -69,12 +69,13 @@ class Shared {
   lazy val value = slow()
   fun slow() : int {
     made += 1
-    Thread.sleep(20)
+    val until = clock() + 0.02
+    while (clock() < until) { }
     return 7
   }
 }
 val shared = Shared()
-val readers = (1..4).map { Thread { print("read ${shared.value}") } }
+val readers = (1..4).map { Thread({ print("read ${shared.value}") }) }
 readers.forEach { it.start() }
 readers.forEach { it.join() }
 print(made)   // expect: read 7

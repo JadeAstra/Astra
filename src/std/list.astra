@@ -1,7 +1,7 @@
 // ---- Lists ----
 // The methods a list has besides the built-in ones (add, get, slice, sort and so on, which
 // are in builtins.cpp and stdlib.cpp). Every method that takes a function is written here:
-// the function then runs as part of the program, and a flow can be set aside inside it.
+// the function then runs as part of the program, and a task can be set aside inside it.
 
 // -- The oldest ones --
 

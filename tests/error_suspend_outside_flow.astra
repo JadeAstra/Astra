@@ -1,6 +1,0 @@
-// A suspending function waits for an answer that the event loop brings. Called on the main
-// thread outside a flow it would stop that loop, so it is an error there.
-print("before")                                              // expect: before
-val answer = suspendCoroutine { c -> EventLoop.post { c.resume(1) } }
-print("never reached", answer)
-// expect runtime error: suspendCoroutine was called outside a flow on the main thread, which would stop the event loop that is to bring the answer; start a flow with startCoroutine { ... }

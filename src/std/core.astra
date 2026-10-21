@@ -50,6 +50,17 @@ fun error(message : any?) : nothing {
   throw IllegalStateException("$message")
 }
 
+// What a for goes through, one item at a time, as Kotlin's: hasNext() says whether there is
+// another, next() gives it. A for over an object whose iterator() gives one goes through that.
+interface Iterator<T> {
+  fun hasNext() : bool
+  fun next() : T
+}
+
+interface Iterable<T> {
+  fun iterator() : Iterator<T>
+}
+
 // Something to close when it is done with (D113): a stream, a socket. A class of someone
 // else's that has a close() is fitted to it with extend (D33).
 interface AutoCloseable {

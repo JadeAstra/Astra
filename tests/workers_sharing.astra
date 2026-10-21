@@ -1,0 +1,26 @@
+// Frozen data sent to workers is shared, not copied, and bytes can be handed over (D97).
+val table = [(1..1000).toList(), "text", {"k": 1}].frozen()
+val replies : open List<any?> = []
+val workers = (1..2).map { Worker("workers/sharer.astra") }
+for w in workers {
+  w.onMessage = { replies.add(it) }
+  w.post(table)
+}
+// Handed over: the buffer moves to the worker, and the sender is left with none of it.
+val buffer = Bytes(1000)
+workers[0].post(buffer, handOver = true)
+print("left here:", buffer.size)                              // expect: left here: 0
+fun finish() {
+  if (replies.size < 5) {
+    EventLoop.after(10.milliseconds) { finish() }
+    return
+  }
+  print(replies.filter { it is string }.sorted())
+  val back = replies.filter { !(it is string) }
+  // What comes back is the same data, still frozen.
+  print(back.size, back[0] == table, back[1] == table)
+  for w in workers { w.terminate() }
+}
+finish()
+// expect: ["bytes: 1000", "sum 500500 of 3, refused: yes", "sum 500500 of 3, refused: yes"]
+// expect: 2 true true

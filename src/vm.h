@@ -15,6 +15,7 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -60,7 +61,7 @@ struct Handler {
 struct ObjFiber;
 
 // What belongs to one line of execution: its value stack, the calls in progress and their
-// catch blocks. Every thread has one, and so has every flow. The VM works on the one that is
+// catch blocks. Every thread has one, and so has every task. The VM works on the one that is
 // running through members of its own (sp_, frames_ and so on); the others keep their state
 // here until it is their turn.
 struct Context {
@@ -69,22 +70,29 @@ struct Context {
     Value* sp = nullptr;
     CallFrame* frames = nullptr;
     int frameCount = 0;
-    int maxFrames = 0;
+    int maxFrames = 0;   // the frames laid out, with their type arguments and destinations after them
+    int frameLimit = 0;  // how many may be used now: all of them, or of a stack that grows, those committed
+    // A stack that grows (a generator's, D98): its memory reserved whole and committed as it is
+    // used, so that it starts small and moves nowhere; how far it may go.
+    bool growable = false;
+    Value* stackReserveEnd = nullptr;
     std::vector<Handler> handlers;
     ObjUpvalue* openUpvalues = nullptr;
     int nativeDepth = 0;
     Value* nativeBase = nullptr;
     Context* parent = nullptr;  // the one waiting for this one to finish or be set aside
-    ObjFiber* fiber = nullptr;  // the flow this is the stack of; null for a thread's own
+    ObjFiber* fiber = nullptr;  // the task this is the stack of; null for a thread's own
 
-    Context(size_t stackSize, int frameLimit);
+    Context(size_t stackSize, int frameLimit, bool grows = false);
     ~Context();
     Context(const Context&) = delete;
     Context& operator=(const Context&) = delete;
     void release();  // gives the memory back; the context is finished with
+    // Of a stack that grows: commits enough for `top` and `frames`; false where it has no more.
+    bool grow(const Value* top, int frames);
 };
 
-// A flow: a function running on a stack of its own, so that it can be set aside in the
+// A task: a function running on a stack of its own, so that it can be set aside in the
 // middle of a call and taken up again later (Kotlin's coroutine). See threads.cpp.
 enum class FiberState : uint8_t { Fresh, Running, Suspended, Done };
 
@@ -99,19 +107,22 @@ struct ObjFiber final : Obj {
     int64_t waitToken = 0;        // the wait it is at, or was last at
     int64_t resumedToken = -1;    // the last wait an answer has been given for
     int64_t waitingAt = 0;        // the wait it is set aside at; 0 if it is set aside for something else
-    bool hasEarly = false;        // an answer came before the flow got as far as waiting
+    bool generator = false;       // a sequence's generator (D98): set aside only where it yields
+    bool hasEarly = false;        // an answer came before the task got as far as waiting
     bool earlyOk = false;
     Value early;
 
-    explicit ObjFiber(Value function) : Obj(ObjType::Fiber), context(kStackSize, kMaxFrames), entry(function) {
+    // A generator's (D98) has a stack that starts small and grows as needed, so that many can
+    // be alive at once.
+    explicit ObjFiber(Value function, bool small = false) : Obj(ObjType::Fiber), context(kStackSize, kMaxFrames, small), entry(function) {
         context.fiber = this;
     }
 };
 
 inline ObjFiber* asFiber(const Value& v) { return static_cast<ObjFiber*>(v.as.obj); }
 
-// Thrown by a built-in function to set the running flow aside. It passes through the
-// interpreter loop untouched, leaving the flow's calls as they are, to where the flow was
+// Thrown by a built-in function to set the running task aside. It passes through the
+// interpreter loop untouched, leaving the task's calls as they are, to where the task was
 // started or last taken up.
 struct FiberSuspend {};
 
@@ -121,13 +132,15 @@ struct WorkerStop {};
 
 struct WorkerLink;    // worker.cpp: what a worker and the program that started it share
 struct ParallelPool;  // parallel.cpp: the cores of a VM's parallel sections
-struct ParallelJob;
+struct ParallelSection;
+struct ParallelPiece;
+struct SharedBlock;   // worker.cpp: frozen data shared with workers, outside every heap (D97)
 
 // One operating-system thread that runs Astra code.
 struct ThreadState {
     Context base;
     Context* current;  // the innermost context running on this thread
-    int nesting = 0;   // how many flows are running inside one another on it
+    int nesting = 0;   // how many tasks are running inside one another on it
 
     // The thread's temporaries, while another thread has the lock (see VM::tempRoots).
     std::vector<Value> tempRoots;
@@ -141,6 +154,8 @@ struct ThreadState {
     Value self;      // the Thread object a program holds, if one was made for it
     std::atomic<bool> interrupted{false};
     std::vector<ThreadState*> joiners;
+    // The locks it holds, the one taken last at the back: what waitUntil gives back (D86).
+    std::vector<const Obj*> held;
 
     // park() and unpark(): how a thread waits for something another thread will do.
     std::mutex parkMutex;
@@ -181,6 +196,9 @@ struct Names {
     ObjString* step;
     ObjString* name;
     ObjString* ordinal;
+    ObjString* compareTo;
+    ObjString* hasNext;
+    ObjString* next;
     ObjString* entries;
     ObjString* entryName;    // an entry's own name, kept apart from a `name` property that replaces it
     ObjString* entryOrdinal; // and its place in the list, likewise
@@ -352,7 +370,9 @@ public:
         if (r.as.obj == bandObject_) {
             if (r.refIndex < bandFrom_ || r.refIndex >= bandTo_) return nullptr;
         } else if (r.as.obj->type == ObjType::Instance) {
-            if (write ? r.as.obj->core != coreId_ : (r.as.obj->core != 0 && r.as.obj->core != coreId_)) return nullptr;
+            if (write ? r.as.obj->core != coreId_
+                      : (r.as.obj->core != 0 && r.as.obj->core != coreId_ && (readable_ == nullptr || !readable_->test(r.as.obj->core))))
+                return nullptr;
         } else if (write && (r.as.obj->type == ObjType::List ? r.as.obj->core != coreId_ : !static_cast<const ObjValue*>(r.as.obj)->constructing)) {
             return nullptr;
         }
@@ -429,7 +449,11 @@ public:
     // A member read, set or found by its name, whoever may use it: as reflection does once it
     // has listed it to the code asking.
     Value memberGet(Value obj, ObjString* name);
+    // Whether a value is an Iterator, an object with hasNext() and next().
+    bool isIteratorObject(Value v) const;
     void memberSet(Value obj, ObjString* name, Value value);
+    // An atomic field changed in one step (Op::AtomicField, D92).
+    Value atomicField(Value object, ObjString* name, int kind, const Value* operands);
     // Calls `callee` with type arguments, as a generic function or class is called.
     Value callWithTypes(Value callee, const std::vector<ObjTypeInfo*>& typeArgs, int argc, const Value* args);
 
@@ -595,7 +619,7 @@ public:
     std::vector<Value> pinned;
     std::vector<const std::vector<Value>*> tempVectors;
 
-    // ---- Threads, the event loop and flows (threads.cpp) ----
+    // ---- Threads, the event loop and tasks (threads.cpp) ----
     //
     // Threads share one heap, and one of them runs Astra code at a time: whichever holds the
     // lock. A thread gives the lock up at a safe point when another has waited long enough,
@@ -625,6 +649,9 @@ public:
     bool monitorTryEnter(Value lock);
     int monitorWait(Value lock, int64_t timeoutMs);  // 0 notified, 1 timed out, 2 interrupted
     void monitorNotify(Value lock, bool all);
+    Value innermostMonitor() const;
+    int monitorLetGo(Value lock);
+    void monitorTakeBack(Value lock, int count);
     bool monitorHeld(Value lock) const;
 
     // The event loop: tasks posted from any thread and timers, run on the main thread.
@@ -667,7 +694,9 @@ public:
     bool inParallelSection() const { return coreId_ != 0; }
     // Throws if this core may not look into, or may not change, the object.
     void guardRead(const Obj* obj) const {
-        if (obj->core != coreId_ && obj->core != 0) [[unlikely]] throw otherCores(obj);
+        if (obj->core != coreId_ && obj->core != 0) [[unlikely]] {
+            if (readable_ == nullptr || !readable_->test(obj->core)) throw otherCores(obj);
+        }
     }
     void guardRead(Value v) const {
         if (v.kind == ValueKind::Obj) guardRead(v.as.obj);
@@ -681,6 +710,7 @@ public:
     // A lazy field's, static's or global's value (D37), worked out on this first read and given
     // to `store` for its place; `what` names it for the errors.
     Value forceLazy(Value marker, const std::function<void(Value)>& store, const std::string& what);
+    void wakeLazyWaiters(ObjLazy* lazy);
     // A global's value where a read finds none: a lazy one's, worked out; an error otherwise.
     Value globalOrLazy(size_t index);
     // Keys (D26): a class's own == and hashCode, called for a map or a set, and the error
@@ -706,8 +736,18 @@ public:
     // a range, each allowed to write that part of it.
     void runParallelChunks(Value buffer, Value function);
     int parallelCores();
-    // One core's share of a section. Called on that core's thread, in its own VM.
-    void runParallelShare(ParallelJob& job, size_t share);
+    // The core of a parallel section this VM is (1 and up), or 0 for a program's own.
+    uint8_t coreId() const { return coreId_; }
+    // parallel({ a }, { b }) (D96): each function at once, on whatever cores are free; what they
+    // give, in order.
+    Value runParallelFunctions(const std::vector<Value>& functions);
+    // gather (D93): for each piece of the items, `into` makes a result and `each` adds an item
+    // to it; the pieces' results, in order.
+    Value runParallelGather(Value source, Value into, Value each);
+    // Runs a section from this VM, the program's or a core's, and waits for its pieces.
+    void runSection(ParallelSection& section);
+    // One piece of a section, run on this core's VM.
+    void runParallelPiece(ParallelPiece& piece);
 
     // ---- Workers (worker.cpp) ----
     // A worker is a second VM on a thread of its own, with a heap and a lock of its own, so
@@ -720,6 +760,16 @@ public:
     std::shared_ptr<WorkerLink> workerLink;
     // In a worker: the object its messages are delivered to (Worker.parent).
     Value workerSelf;
+
+    // ---- Frozen data shared with workers (D97, worker.cpp) ----
+    // The blocks outside every heap this VM holds, and what of its own frozen data was shared as
+    // which. A collection notes the blocks it reaches; those it does not are let go.
+    std::unordered_set<SharedBlock*> heldBlocks;
+    std::unordered_set<SharedBlock*> reachedBlocks;
+    std::unordered_map<const Obj*, SharedBlock*> sharedAs;
+    void noteOutside(const Obj* obj);
+    void releaseUnreachedBlocks();
+    void releaseAllBlocks();
     // The Worker objects of the workers this VM has started, by id.
     std::unordered_map<int64_t, Value> workerObjects;
     std::unordered_map<int64_t, std::shared_ptr<WorkerLink>> workerLinks;
@@ -736,19 +786,21 @@ public:
     // `receiver` becomes the object the function runs on.
     Value tailCallOn(Value receiver, Value function);
 
-    // Flows.
+    // Tasks.
     ObjFiber* currentFiber() const { return context_->fiber; }
-    // Starts or takes up a flow, giving it `value` as the result of what it was waiting for
-    // (or, with `ok` false, raising it there as an error). Returns when the flow finishes or
-    // is set aside again; an error the flow does not catch comes out of this call.
+    // Starts or takes up a task, giving it `value` as the result of what it was waiting for
+    // (or, with `ok` false, raising it there as an error). Returns when the task finishes or
+    // is set aside again; an error the task does not catch comes out of this call.
     void runFiber(ObjFiber* fiber, bool ok, Value value);
-    // Whether a built-in function called now could set the running flow aside.
-    bool canSuspend() const { return context_->fiber != nullptr && nativeDepth_ == 0 && nativeBase_ != nullptr; }
-    // Sets the running flow aside: does not return. The flow goes on when runFiber is called.
+    // Whether a built-in function called now could set the running task aside.
+    bool canSuspend() const { return context_->fiber != nullptr && !context_->fiber->generator && canSetAside(); }
+    // Whether what runs now could be set aside: no built-in function is calling back into it.
+    bool canSetAside() const { return nativeDepth_ == 0 && nativeBase_ != nullptr; }
+    // Sets the running task aside: does not return. The task goes on when runFiber is called.
     [[noreturn]] void suspendFiber();
 
     // Runs `work`, which blocks and must not touch the VM, and gives what `finish` makes of
-    // it. In a flow on the loop thread the flow is set aside while a worker thread does the
+    // it. In a task on the loop thread the task is set aside while a worker thread does the
     // work, and the loop stays live; anywhere else the calling thread waits, with the lock
     // released. A built-in function has to return what this returns straight away.
     Value blocking(std::function<void()> work, std::function<Value(VM&)> finish);
@@ -764,7 +816,7 @@ private:
     static constexpr size_t kThreadStackSize = 1 << 18;
     static constexpr int kThreadMaxFrames = 8000;
     static constexpr int kMaxNativeDepth = 200;
-    static constexpr int kMaxFlowNesting = 60;
+    static constexpr int kMaxTaskNesting = 60;
     static constexpr size_t kMinHeap = 4 * 1024 * 1024;
 
     // Execution state: that of the context that is running (see Context).
@@ -774,6 +826,10 @@ private:
     CallFrame* frames_;
     int frameCount_ = 0;
     int maxFrames_ = 0;
+    int frameLimit_ = 0;
+    // Whether the stack has room up to `top`: it has, or it grew to have it (Context::grow).
+    bool roomFor(const Value* top) { return top <= stackEnd_ || growContext(top, frameCount_); }
+    bool growContext(const Value* top, int frames);
     std::vector<Handler> handlers_;
     ObjUpvalue* openUpvalues_ = nullptr;
     int nativeDepth_ = 0;
@@ -827,13 +883,21 @@ private:
     bool loopWake_ = false;
     std::deque<std::function<void(VM&)>> nativeTasks_;
     void wakeLoop();
-    std::vector<ObjFiber*> waitingFibers_;  // flows set aside until work in progress is done
+    std::vector<ObjFiber*> waitingFibers_;  // tasks set aside until work in progress is done
     bool isWorker_ = false;
     int liveWorkers_ = 0;
 
     // Parallel sections
     VM* root_ = nullptr;           // for a core's VM: the VM whose objects it works on
-    uint8_t coreId_ = 0;           // which core this VM is; 0 for a VM that is not a core's
+    // Which piece of work this VM is running, by the number what the piece owns is marked with;
+    // 0 for a VM that is not a core's. A core's runs one piece after another, and pieces inside
+    // pieces (D96): each reads, besides its own and what is shared, what `readable_` holds,
+    // the numbers of the pieces that started its section.
+    uint8_t coreId_ = 0;
+    const std::bitset<256>* readable_ = nullptr;
+    ParallelSection* section_ = nullptr;   // the section of the piece running
+    uint64_t seenGeneration_ = 0;          // the outermost section it last took the program's state for
+    int coreIndex_ = -1;                   // which core's VM this is
     std::shared_ptr<ParallelPool> parallelPool_;
     std::mutex internMutex_;       // cores intern strings in the root's table
     uint64_t extensionEpoch_ = 0;  // goes up when an extension function is added
@@ -886,6 +950,7 @@ private:
     ObjClass* errorClass_ = nullptr;
     ObjClass* thrownClasses_[static_cast<size_t>(Thrown::Count_)] = {};
     ObjClass* mapEntryClass_ = nullptr;  // MapEntry, from the standard library: what a map's entries are
+    ObjClass* viewClass_ = nullptr;      // ListView, from the standard library: what splitAt hands out (D96)
     ObjString* opNames_[static_cast<int>(Op::Count_)] = {};
 
     // Heap state
@@ -1063,7 +1128,7 @@ private:
 };
 
 void registerBuiltins(VM& vm);
-void registerThreads(VM& vm);  // threads.cpp: threads, locks, the event loop and flows
+void registerThreads(VM& vm);  // threads.cpp: threads, locks, the event loop and tasks
 void registerIo(VM& vm);       // io.cpp: streams, processes and sockets
 void registerWorkers(VM& vm);  // worker.cpp: isolated workers
 void registerParallel(VM& vm); // parallel.cpp: parallel sections

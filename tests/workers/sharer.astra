@@ -1,0 +1,14 @@
+// A worker for tests/workers_sharing.astra: it reads frozen data it was sent, which it shares
+// with the program that sent it, and says how much bytes handed to it hold.
+Worker.parent!!.onMessage = { message ->
+  if (message is Bytes) {
+    Worker.parent!!.post("bytes: ${message.size}")
+  } else {
+    val table = message as List<any?>
+    var refused = "no"
+    val any : any = table
+    try { (any as open List<any?>).add(1) } catch (e) { refused = "yes" }
+    Worker.parent!!.post("sum ${(table[0] as List<int>).sum()} of ${table.size}, refused: $refused")
+    Worker.parent!!.post(table)
+  }
+}

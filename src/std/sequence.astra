@@ -1,0 +1,485 @@
+// ---- Sequences (D98) ----
+// A sequence gives its items one at a time, as they are asked for: nothing is worked out ahead,
+// and nothing is kept, so a sequence can be endless, or longer than would fit in memory.
+//
+//   val squares = generateSequence(1) { it + 1 }.map { it * it }
+//   print(squares.filter { it % 3 == 0 }.take(5).toList())     // [9, 36, 81, 144, 225]
+//
+//   val fibonacci = sequence {
+//     var (a, b) = 0 to 1
+//     while (true) {
+//       yield(a)
+//       (a, b) = b to a + b
+//     }
+//   }
+//
+// map, filter, take and the others make a new sequence, which does its work as its items are
+// asked for; toList, first, count, fold and the others ask for them. Each time a sequence is
+// gone over, it starts again from the beginning.
+
+class Sequence<T> {
+  private val make : () -> Iterator<T>
+
+  // A sequence of what the iterators `make` makes give, one made each time it is gone over.
+  fun init(make : () -> Iterator<T>) {
+    this.make = make
+  }
+
+  fun iterator() : Iterator<T> => make()
+
+  // -- What makes a new sequence, its items worked out as they are asked for --
+
+  fun <R> map(transform : (T) -> R) : Sequence<R> => Sequence<R>({
+    val items = make()
+    __Pulled<R>({ items.hasNext() ? transform(items.next()) : __sequenceEnd })
+  })
+
+  fun <R> mapIndexed(transform : (int, T) -> R) : Sequence<R> => Sequence<R>({
+    val items = make()
+    var index = -1
+    __Pulled<R>({
+      index += 1
+      items.hasNext() ? transform(index, items.next()) : __sequenceEnd
+    })
+  })
+
+  fun <R> mapNotNull(transform : (T) -> R?) : Sequence<R> => Sequence<R>({
+    val items = make()
+    __Pulled<R>({
+      var found : any? = __sequenceEnd
+      while (items.hasNext()) {
+        val made = transform(items.next())
+        if (made != null) {
+          found = made
+          break
+        }
+      }
+      found
+    })
+  })
+
+  fun filter(predicate : (T) -> bool) : Sequence<T> => Sequence<T>({
+    val items = make()
+    __Pulled<T>({
+      var found : any? = __sequenceEnd
+      while (items.hasNext()) {
+        val item = items.next()
+        if (predicate(item)) {
+          found = item
+          break
+        }
+      }
+      found
+    })
+  })
+
+  fun filterNot(predicate : (T) -> bool) : Sequence<T> => filter { !predicate(it) }
+
+  // Each item's items, one sequence after another.
+  fun <R> flatMap(transform : (T) -> Sequence<R>) : Sequence<R> => Sequence<R>({
+    val items = make()
+    var inner : Iterator<R>? = null
+    __Pulled<R>({
+      var found : any? = __sequenceEnd
+      while (true) {
+        val now = inner
+        if (now != null and now.hasNext()) {
+          found = now.next()
+          break
+        }
+        if (!items.hasNext()) { break }
+        inner = transform(items.next()).iterator()
+      }
+      found
+    })
+  })
+
+  // The first `count` items, or all of them if there are fewer.
+  fun take(count : int) : Sequence<T> {
+    if (count < 0) { throw IllegalArgumentException("take($count): the count is negative") }
+    return Sequence<T>({
+      val items = make()
+      var left = count
+      __Pulled<T>({
+        if (left > 0 and items.hasNext()) {
+          left -= 1
+          items.next()
+        } else {
+          __sequenceEnd
+        }
+      })
+    })
+  }
+
+  fun takeWhile(predicate : (T) -> bool) : Sequence<T> => Sequence<T>({
+    val items = make()
+    var going = true
+    __Pulled<T>({
+      var found : any? = __sequenceEnd
+      if (going and items.hasNext()) {
+        val item = items.next()
+        if (predicate(item)) { found = item } else { going = false }
+      }
+      found
+    })
+  })
+
+  // All but the first `count` items.
+  fun drop(count : int) : Sequence<T> {
+    if (count < 0) { throw IllegalArgumentException("drop($count): the count is negative") }
+    return Sequence<T>({
+      val items = make()
+      var skip = count
+      __Pulled<T>({
+        while (skip > 0 and items.hasNext()) {
+          skip -= 1
+          items.next()
+        }
+        items.hasNext() ? items.next() : __sequenceEnd
+      })
+    })
+  }
+
+  fun dropWhile(predicate : (T) -> bool) : Sequence<T> => Sequence<T>({
+    val items = make()
+    var dropping = true
+    __Pulled<T>({
+      var found : any? = __sequenceEnd
+      while (items.hasNext()) {
+        val item = items.next()
+        if (!dropping or !predicate(item)) {
+          dropping = false
+          found = item
+          break
+        }
+      }
+      found
+    })
+  })
+
+  // The same items, the action run on each as it goes by.
+  fun onEach(action : (T) -> unit) : Sequence<T> => Sequence<T>({
+    val items = make()
+    __Pulled<T>({
+      if (items.hasNext()) {
+        val item = items.next()
+        action(item)
+        item
+      } else {
+        __sequenceEnd
+      }
+    })
+  })
+
+  // Each item once, the first time it comes; those seen are kept to tell.
+  fun distinct() : Sequence<T> => distinctBy { it }
+
+  fun distinctBy(selector : (T) -> any?) : Sequence<T> => Sequence<T>({
+    val items = make()
+    val seen : open Map<any?, bool> = {:}
+    __Pulled<T>({
+      var found : any? = __sequenceEnd
+      while (items.hasNext()) {
+        val item = items.next()
+        val key = selector(item)
+        if (seen.get(key) == null) {
+          seen[key] = true
+          found = item
+          break
+        }
+      }
+      found
+    })
+  })
+
+  // This sequence's items, then the other's.
+  op +(other : Sequence<T>) : Sequence<T> => sequenceOf(this, other).flatMap { it }
+
+  // -- What asks for the items --
+
+  fun toList() : open List<T> {
+    val out : open List<T> = []
+    for item in this { out.add(item) }
+    return out
+  }
+
+  fun toSet() : open Set<T> {
+    val out : open Set<T> = Set()
+    for item in this { out.add(item) }
+    return out
+  }
+
+  fun forEach(action : (T) -> unit) {
+    for item in this { action(item) }
+  }
+
+  fun count() : int {
+    var count = 0
+    for item in this { count += 1 }
+    return count
+  }
+
+  fun count(predicate : (T) -> bool) : int {
+    var count = 0
+    for item in this {
+      if (predicate(item)) { count += 1 }
+    }
+    return count
+  }
+
+  fun any() : bool => iterator().hasNext()
+
+  fun any(predicate : (T) -> bool) : bool {
+    for item in this {
+      if (predicate(item)) { return true }
+    }
+    return false
+  }
+
+  fun all(predicate : (T) -> bool) : bool {
+    for item in this {
+      if (!predicate(item)) { return false }
+    }
+    return true
+  }
+
+  fun none() : bool => !any()
+
+  fun none(predicate : (T) -> bool) : bool => !any(predicate)
+
+  fun first() : T {
+    val items = iterator()
+    if (!items.hasNext()) { throw NoSuchElementException("first() of an empty sequence") }
+    return items.next()
+  }
+
+  fun first(predicate : (T) -> bool) : T {
+    for item in this {
+      if (predicate(item)) { return item }
+    }
+    throw NoSuchElementException("first(): no item of the sequence meets the condition")
+  }
+
+  fun firstOrNull() : T? {
+    val items = iterator()
+    return items.hasNext() ? items.next() : null
+  }
+
+  fun firstOrNull(predicate : (T) -> bool) : T? {
+    for item in this {
+      if (predicate(item)) { return item }
+    }
+    return null
+  }
+
+  fun find(predicate : (T) -> bool) : T? => firstOrNull(predicate)
+
+  fun last() : T {
+    val items = iterator()
+    if (!items.hasNext()) { throw NoSuchElementException("last() of an empty sequence") }
+    var last = items.next()
+    while (items.hasNext()) { last = items.next() }
+    return last
+  }
+
+  fun elementAt(index : int) : T {
+    if (index >= 0) {
+      var at = 0
+      for item in this {
+        if (at == index) { return item }
+        at += 1
+      }
+    }
+    throw IndexOutOfBoundsException("elementAt($index): the sequence has no item there")
+  }
+
+  fun <R> fold(initial : R, operation : (R, T) -> R) : R {
+    var result = initial
+    for item in this { result = operation(result, item) }
+    return result
+  }
+
+  fun reduce(operation : (T, T) -> T) : T {
+    val items = iterator()
+    if (!items.hasNext()) { throw UnsupportedOperationException("reduce() of an empty sequence needs a starting value: fold(initial) { ... }") }
+    var result = items.next()
+    while (items.hasNext()) { result = operation(result, items.next()) }
+    return result
+  }
+
+  fun <R : Number> sumOf(selector : (T) -> R) : R {
+    var total : Number = 0
+    for item in this { total += selector(item) }
+    return total as R
+  }
+
+  // The items as text, as a list's join gives them; with a limit, only so many are asked for.
+  fun join(separator : string = ", ", prefix : string = "", postfix : string = "", limit : int = -1,
+           truncated : string = "...", transform : ((T) -> any?)? = null) : string =>
+    (limit < 0 ? toList() : take(limit + 1).toList()).join(separator, prefix, postfix, limit, truncated, transform)
+
+  override fun toString() : string => "Sequence"
+}
+
+// A list of ints sums to an int, one with a float in it to a float.
+fun <T : Number> Sequence<T>.sum() : T {
+  var total : Number = 0
+  for item in this { total += item }
+  return total as T
+}
+
+// -- Making a sequence --
+
+// What a sequence { } block gives its values with.
+class SequenceScope<T> {
+  var __value : T? = null
+
+  // Gives a value. The block waits here until the next one is asked for, and goes no further
+  // if none is.
+  suspend fun yield(value : T) {
+    __value = value
+    __task.yield()
+  }
+
+  suspend fun yieldAll(items : Sequence<T>) {
+    for item in items { yield(item) }
+  }
+
+  suspend fun yieldAll(items : List<T>) {
+    for item in items { yield(item) }
+  }
+}
+
+// A sequence of what the block gives with yield. The block runs as its values are asked for,
+// up to the yield of the next one each time, on a stack of its own that starts small (D98); it
+// waits nowhere else.
+fun <T> sequence(block : suspend SequenceScope<T>.() -> unit) : Sequence<T> => Sequence<T>({ __Generated<T>(block) })
+
+// `seed`, then what `next` makes of each item, until it gives null.
+fun <T> generateSequence(seed : T?, next : (T) -> T?) : Sequence<T> => Sequence<T>({
+  var ahead : T? = seed
+  var started = false
+  __Pulled<T>({
+    if (started and ahead != null) { ahead = next(ahead as T) }
+    started = true
+    ahead == null ? __sequenceEnd : ahead
+  })
+})
+
+// What `next` gives, each time, until it gives null.
+fun <T> generateSequence(next : () -> T?) : Sequence<T> => Sequence<T>({
+  var done = false
+  __Pulled<T>({
+    val made = done ? null : next()
+    if (made == null) { done = true }
+    made == null ? __sequenceEnd : made
+  })
+})
+
+fun <T> sequenceOf(vararg items : T) : Sequence<T> => items.asSequence()
+
+fun <T> emptySequence() : Sequence<T> => Sequence<T>({ __Pulled<T>({ __sequenceEnd }) })
+
+// A list's items, read as they are asked for: a change to the list shows in what is still to come.
+fun <T> List<T>.asSequence() : Sequence<T> => Sequence<T>({
+  val list = this
+  var index = 0
+  __Pulled<T>({
+    if (index < list.size) {
+      index += 1
+      list[index - 1]
+    } else {
+      __sequenceEnd
+    }
+  })
+})
+
+// A range's numbers, worked out as they are asked for: (1..1_000_000_000).asSequence() keeps none.
+fun Range.asSequence() : Sequence<int> => Sequence<int>({
+  val range = this
+  val size = range.size
+  val first = size > 0 ? range.first() : 0
+  var index = 0
+  __Pulled<int>({
+    if (index < size) {
+      index += 1
+      first + (index - 1) * range.step
+    } else {
+      __sequenceEnd
+    }
+  })
+})
+
+fun <T> Set<T>.asSequence() : Sequence<T> => this.toList().asSequence()
+
+fun string.asSequence() : Sequence<char> => this.toList().asSequence()
+
+fun <T> Sequence<T>.asSequence() : Sequence<T> => this
+
+// -- How they are made --
+
+// The end of a sequence, as what a __Pulled's function gives.
+class __SequenceEnd
+val __sequenceEnd = __SequenceEnd()
+
+// The items `pull` gives, one each call, until it gives __sequenceEnd.
+class __Pulled<T> : Iterator<T> {
+  private val pull : () -> any?
+  private var ahead : any? = null
+  private var known = false
+
+  fun init(pull : () -> any?) {
+    this.pull = pull
+  }
+
+  override fun hasNext() : bool {
+    if (!known) {
+      ahead = pull()
+      known = true
+    }
+    return ahead !== __sequenceEnd
+  }
+
+  override fun next() : T {
+    if (!hasNext()) { throw NoSuchElementException("the sequence has no more items") }
+    known = false
+    val item = ahead
+    ahead = null
+    return item as T
+  }
+}
+
+// The values a sequence { } block gives, the block run on a generator: a task with a small
+// stack of its own, set aside at each yield.
+class __Generated<T> : Iterator<T> {
+  private val scope = SequenceScope<T>()
+  private val body : suspend () -> unit
+  private var generator : any? = null
+  private var state = 0  // 0: the next value not worked out yet; 1: it is ready; 2: the block has ended
+
+  fun init(block : suspend SequenceScope<T>.() -> unit) {
+    val scope = this.scope
+    this.body = { block(scope) }
+  }
+
+  override fun hasNext() : bool {
+    if (state == 0) {
+      state = 2  // an error from the block ends it
+      if (generator == null) {
+        generator = __task.generate(body)
+      } else {
+        __task.next(generator)
+      }
+      state = (__task.finished(generator) as bool) ? 2 : 1
+    }
+    return state == 1
+  }
+
+  override fun next() : T {
+    if (!hasNext()) { throw NoSuchElementException("the sequence has no more items") }
+    state = 0
+    val value = scope.__value
+    scope.__value = null
+    return value as T
+  }
+}

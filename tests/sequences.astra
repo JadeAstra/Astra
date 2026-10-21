@@ -1,0 +1,101 @@
+// Sequences (D98): items worked out one at a time, as they are asked for.
+
+// Endless, and nothing done ahead.
+val squares = generateSequence(1) { it + 1 }.map { it * it }
+print(squares.filter { it % 3 == 0 }.take(5).toList())        // expect: [9, 36, 81, 144, 225]
+var made = 0
+val counted = (1..1_000_000_000).asSequence().map { made += 1; it * 2 }
+print(counted.drop(3).first(), made)                          // expect: 8 4
+
+// sequence { }: a block that gives its values with yield, run up to the next one each time.
+val fibonacci = sequence {
+  var a = 0
+  var b = 1
+  while (true) {
+    yield(a)
+    val next = a + b
+    a = b
+    b = next
+  }
+}
+print(fibonacci.take(10).toList())                            // expect: [0, 1, 1, 2, 3, 5, 8, 13, 21, 34]
+// Each time it is gone over, it starts again.
+print(fibonacci.take(3).toList(), fibonacci.elementAt(20))    // expect: [0, 1, 1] 6765
+val parts = sequence {
+  yield(1)
+  yieldAll(listOf(2, 3))
+  yieldAll(sequenceOf(4, 5))
+}
+for x in parts { print(x) }
+// expect: 1
+// expect: 2
+// expect: 3
+// expect: 4
+// expect: 5
+// One sequence gone over inside another's block.
+print(sequence { for x in fibonacci.take(5) { yield(x * 100) } }.toList())   // expect: [0, 100, 100, 200, 300]
+// A suspend function of SequenceScope's may yield for the block.
+suspend fun SequenceScope<int>.twice(x : int) {
+  yield(x)
+  yield(x)
+}
+print(sequence { twice(7); twice(8) }.toList())               // expect: [7, 7, 8, 8]
+// The block runs only as far as it is asked to.
+val steps : open List<string> = []
+val lazy = sequence {
+  steps.add("one")
+  yield(1)
+  steps.add("two")
+  yield(2)
+}
+print(lazy.first(), steps)                                    // expect: 1 ["one"]
+
+// The operations.
+print((10 downTo 0 step 3).asSequence().toList(), [1, 2, 2, 3, 1].asSequence().distinct().toList())   // expect: [10, 7, 4, 1] [1, 2, 3]
+print(sequenceOf(1, 2, 3).flatMap { sequenceOf(it, it * 10) }.toList())   // expect: [1, 10, 2, 20, 3, 30]
+print(sequenceOf(5, 6, 7).mapIndexed { i, x -> i * x }.join("-"), sequenceOf("a", "bb").distinctBy { it.size }.count())   // expect: 0-6-14 2
+print((1..10).asSequence().takeWhile { it < 4 }.toList(), (1..10).asSequence().dropWhile { it < 8 }.toList())   // expect: [1, 2, 3] [8, 9, 10]
+print(sequenceOf<string?>("a", null, "b").mapNotNull { it }.toList(), (1..6).asSequence().filterNot { it % 2 == 0 }.toList())   // expect: ["a", "b"] [1, 3, 5]
+print((1..5).asSequence().sum(), (1..5).asSequence().fold(0) { acc, x -> acc + x }, (1..5).asSequence().reduce { a, b -> a * b }, (1..4).asSequence().sumOf { it * 0.5 })   // expect: 15 15 120 5.0
+print(emptySequence<int>().any(), sequenceOf(1).none(), (1..9).asSequence().any { it > 8 }, (1..9).asSequence().all { it > 1 }, (1..9).asSequence().count { it % 3 == 0 })   // expect: false false true false 3
+print((1..9).asSequence().first { it > 4 }, (1..9).asSequence().firstOrNull { it > 9 }, (1..9).asSequence().find { it * it == 49 }, (1..9).asSequence().last())   // expect: 5 null 7 9
+print("abc".asSequence().toList(), Set([3, 1, 3]).asSequence().toList(), (sequenceOf(1, 2) + sequenceOf(3)).toSet())   // expect: ['a', 'b', 'c'] [3, 1] {1, 2, 3}
+print(generateSequence(1) { it + 1 }.join(limit = 3), (1..3).asSequence().onEach { print("saw", it) }.last())
+// expect: saw 1
+// expect: saw 2
+// expect: saw 3
+// expect: 1, 2, 3, ... 3
+var n = 0
+print(generateSequence { n += 1; n < 4 ? n : null }.toList(), generateSequence<int>(null) { it + 1 }.toList())   // expect: [1, 2, 3] []
+try { emptySequence<int>().first() } catch (e : NoSuchElementException) { print(e.message) }   // expect: first() of an empty sequence
+
+// An error in the block comes out where the item is asked for, and ends the sequence.
+val failing = sequence {
+  yield(1)
+  throw IllegalStateException("boom")
+}
+val items = failing.iterator()
+print(items.next())                                           // expect: 1
+try { items.hasNext() } catch (e : IllegalStateException) { print("caught", e.message) }   // expect: caught boom
+print(items.hasNext())                                        // expect: false
+
+// Each block runs on a stack of its own that starts small and grows: many can be alive at
+// once, and each can go deep.
+val many = (1..2000).map { k -> sequence { yield(k); yield(k + 1) }.iterator() }
+var total = 0
+for g in many { total += g.next() }
+print(total)                                                  // expect: 2001000
+fun depth(k : int) : int => k == 0 ? 0 : 1 + depth(k - 1)
+print(sequence { yield(depth(3000)) }.first())                // expect: 3000
+try { sequence { yield(depth(1_000_000)) }.first() } catch (e : StackOverflowError) { print(e.message) }   // expect: stack overflow
+
+// A sequence gone over in a task: the task waits as it likes between items.
+task {
+  val letters = sequence { yield("a"); yield("b") }
+  for x in letters {
+    delay(1.milliseconds)
+    print("task got", x)
+  }
+}
+// expect: task got a
+// expect: task got b

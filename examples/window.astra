@@ -164,7 +164,7 @@ if (arguments.contains("picture")) {
   // A number on the command line closes the window after that many seconds.
   val seconds = arguments.firstOrNull { it.toFloatOrNull() != null }
   if (seconds != null) {
-    EventLoop.after((seconds.toFloat() * 1000).toInt()) {
+    EventLoop.after(seconds.toFloat().seconds) {
       if (window.isOpen) { window.close() }
     }
   }

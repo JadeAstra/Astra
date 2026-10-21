@@ -1,9 +1,9 @@
-// An error that nothing catches in a task of the event loop ends the program, as one in the
+// An error that nothing catches in a job of the event loop ends the program, as one in the
 // script itself does.
-EventLoop.post { print("first task") }
-EventLoop.after(5) { throw RuntimeException("the timer failed") }
-EventLoop.after(200) { print("never reached") }
+EventLoop.post { print("first job") }
+EventLoop.after(5.milliseconds) { throw RuntimeException("the timer failed") }
+EventLoop.after(200.milliseconds) { print("never reached") }
 print("script end")
 // expect: script end
-// expect: first task
+// expect: first job
 // expect runtime error: Uncaught RuntimeException: the timer failed
