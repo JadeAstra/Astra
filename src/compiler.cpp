@@ -86,6 +86,12 @@ struct Local {
     // function's locals; further up when it is declared in a block that is part of an
     // expression, with the half-built values of that expression underneath it.
     int slot = 0;
+
+    // Whose code declares it (D59): 0 the function's own, else the body of an inline function
+    // copied in, whose names are its own. Code sees only the locals of its owner.
+    int owner = 0;
+    // Another name for a slot a local already has, which takes no slot of its own.
+    bool alias = false;
 };
 
 // What an initializer is certain to evaluate to: a TypeId, kStaticNull, or 0 if only
@@ -132,6 +138,7 @@ struct LoopState {
     std::string label;               // `outer@ for ...`
     bool continueForward = false;    // do-while: `continue` goes on to the test, further down
     std::vector<int> continueJumps;
+    int owner = 0;                   // whose code the loop is (D59): break and continue reach their own
 };
 
 // A `finally` block that the code being compiled is inside of. Leaving it early, by return,
@@ -141,6 +148,7 @@ struct FinallyState {
     const BlockStmt* block;
     int tryDepth;      // try blocks open in the function before this one was entered
     LoopState* loop;   // the loop it was entered in, if any
+    const void* scope = nullptr;  // the CodeScope it is written in: an inline body's, maybe (D59)
 };
 
 struct FunctionState;
@@ -179,6 +187,7 @@ inline bool isCaptureMark(int resolved) { return resolved >= kCaptureMark; }
 
 struct FunctionState {
     FunctionState* enclosing = nullptr;
+    const FunctionDecl* decl = nullptr;  // what is compiled, where it is written; null for a script
     ObjectBuild* object = nullptr;  // a member of an anonymous object's class, which reaches the code around through it
     FunctionKind kind = FunctionKind::Script;
     FunctionProto* proto = nullptr;
@@ -197,9 +206,11 @@ struct FunctionState {
     std::vector<Local> locals;
     int slotTop = 0;  // the slot the next local will get
     std::map<std::pair<int, uint64_t>, int> constantIndex;
+    int owner = 0;    // whose code is being compiled in it now (Local::owner)
 
     void add(Local local) {
         local.slot = slotTop++;
+        local.owner = owner;
         locals.push_back(std::move(local));
     }
 
@@ -224,16 +235,17 @@ struct FunctionState {
     std::string property, backingField;
 };
 
-// The body of `value.let { ... }`, `also` or `takeIf`, compiled in place as part of the
+// The body of a lambda copied into an inline function's call (D59), compiled as part of the
 // function it is written in rather than as a function of its own.
 struct InlineBlock {
     InlineBlock* enclosing;
-    std::string name, label;       // let / also / takeIf, and a label written before the lambda
+    std::string name, label;       // the inline function it is given to, and a label written before it
     FunctionState* function;
     int valueSlot;                 // the slot of the value the block works on
     FinallyState* finallyAtEntry;
     int tryDepth;
     std::vector<int> exits;        // `return@let value` jumps, to be pointed at the end
+    int owner = 0;                 // whose code it is in (D59)
 };
 
 struct ClassState {
@@ -359,6 +371,7 @@ public:
             compileStmt(*stmt);
             hoisted_.insert(stmt.get());
         }
+        session_.fileImports_[fileKey_] = importsNow();  // what an inline function's body sees (D59)
     }
 
     void hoistFunctions(const std::vector<StmtPtr>& statements) {
@@ -698,6 +711,388 @@ public:
 private:
     bool jumpInExpression_ = false;  // the statement about to be compiled is a jump inside an expression
 
+    // ---- Inline functions (D59) ----
+    //
+    // A call of an inline function is its body copied in: its receiver and arguments become
+    // locals, then the body is compiled where the call is, in a scope of its own (CodeScope):
+    // its names are those of the file and class it is written in, its locals its own, and it
+    // reaches nothing of the code around. A lambda given for a parameter the body only calls is
+    // not made: each call of the parameter is the lambda's body, compiled in the scope it was
+    // written in, so its `return` leaves the function around and its break and continue reach
+    // the loops around the call.
+    struct InlineFrame;
+    struct CodeScope {
+        std::string fileKey;
+        Namespace* ns = nullptr;
+        std::vector<Import> imports;
+        ClassState* cls = nullptr;
+        int thisSlot = -1;               // an inline member's receiver
+        std::vector<int> implicitSlots;  // objects bare names may be members of, innermost last
+        bool implicitOnly = false;       // and no others: an inline function's body
+        InlineFrame* frame = nullptr;    // the inline function whose body this is, if any
+        int owner = 0;
+        int lineFixed = -1;              // the line its code is said to be at: the call's
+    };
+    struct BoundLambda {
+        const FunctionDecl* lambda = nullptr;
+        CodeScope scope;      // where it is written, where its body is compiled
+        std::string callee;   // the inline function it was given to, a name for return@
+    };
+    struct InlineFrame {
+        const FunctionDecl* fn = nullptr;
+        int owner = 0;
+        std::unordered_map<std::string, BoundLambda> lambdas;  // parameters given lambdas copied in
+        std::vector<int> exits;                                // its returns, to the end
+        int baseSlot = 0;                                      // where its own locals start
+        FinallyState* finallyAtEntry = nullptr;
+        int tryDepth = 0;
+        std::unique_ptr<ClassState> cls;                       // a member's class, as its body sees it
+    };
+    int thisSlot_ = -1;
+    std::vector<int> implicitSlots_;
+    bool implicitOnly_ = false;
+    InlineFrame* frame_ = nullptr;
+    int lineFixed_ = -1;
+    int nextOwner_ = 0;
+    std::unordered_set<int> inlineBodies_;  // owners that are inline bodies, reaching nothing around
+    int inlineDepth_ = 0;
+    int copiedDepth_ = 0;  // lambdas being copied in
+    // What the checker says of reads where a value is (M6.6 parts 4 and 5) is of the code as
+    // written, not as copied into another's: in an inline body or a lambda copied in, every
+    // read is a copy (D59).
+    bool inPlaceOff() const { return inlineDepth_ > 0 || copiedDepth_ > 0; }
+    bool copyReadsHere() const { return copyingReads() || inPlaceOff(); }
+
+    CodeScope scopeNow() const {
+        CodeScope s;
+        s.fileKey = fileKey_;
+        s.ns = ns_;
+        s.imports = imports_;
+        s.cls = class_;
+        s.thisSlot = thisSlot_;
+        s.implicitSlots = implicitSlots_;
+        s.implicitOnly = implicitOnly_;
+        s.frame = frame_;
+        s.owner = fs_->owner;
+        s.lineFixed = lineFixed_;
+        return s;
+    }
+    void enterScope(const CodeScope& s) {
+        fileKey_ = s.fileKey;
+        ns_ = s.ns;
+        imports_ = s.imports;
+        class_ = s.cls;
+        thisSlot_ = s.thisSlot;
+        implicitSlots_ = s.implicitSlots;
+        implicitOnly_ = s.implicitOnly;
+        frame_ = s.frame;
+        fs_->owner = s.owner;
+        lineFixed_ = s.lineFixed;
+    }
+
+    // Another name for a local's slot, in the code of the current owner.
+    void aliasLocal(const std::string& name, int slot, bool isVal = true) {
+        Local named{name, fs_->scopeDepth, VarInfo{isVal, TypeSpec{}, false}};
+        named.slot = slot;
+        named.owner = fs_->owner;
+        named.alias = true;
+        fs_->locals.push_back(std::move(named));
+    }
+
+    // What a member's body sees of its class: its members and statics, as compileClass has them.
+    std::unique_ptr<ClassState> classScopeOf(const ClassStmt& s, const std::string& bound) {
+        auto cls = std::make_unique<ClassState>(ClassState{nullptr});
+        cls->storage = s.isObject ? "(object " + bound + ")" : bound;
+        cls->qualified = bound;
+        cls->hasSuper = s.hasSuper;
+        cls->isEnum = s.isEnum;
+        cls->isValue = s.isValue;
+        for (const TypeParam& p : s.typeParams) cls->typeParams.push_back(p.name);
+        cls->id = classId(s);
+        if (!s.isInterface && !s.hasSuper && !s.fields.empty()) cls->closed = &s;
+        for (const auto& field : s.fields) cls->members.insert(field->name);
+        for (const auto& field : s.staticFields) cls->statics.insert(field->name);
+        for (const auto& inner : s.nested) cls->statics.insert(inner->name);
+        for (const auto& method : s.methods) (method->isStatic ? cls->statics : cls->members).insert(method->name);
+        if (s.isEnum) {
+            for (const EnumEntry& entry : s.entries) cls->statics.insert(entry.name);
+            cls->statics.insert("entries");
+            cls->members.insert("name");
+            cls->members.insert("ordinal");
+        }
+        return cls;
+    }
+
+    // The lambda a parameter of the inline function whose body is being compiled was given, if
+    // it is copied in and `name` means that parameter here.
+    const BoundLambda* boundLambda(const std::string& name) {
+        if (frame_ == nullptr || fs_->owner != frame_->owner) return nullptr;
+        auto found = frame_->lambdas.find(name);
+        if (found == frame_->lambdas.end()) return nullptr;
+        VarInfo info;
+        Node at;
+        if (resolveLocal(fs_, name, at, info) != -1) return nullptr;  // a local of the body, by the same name
+        return &found->second;
+    }
+
+    bool compileInlineCall(const CallExpr& e) {
+        if (session_.checker == nullptr || inlineDepth_ >= 48) return false;
+        Checker::InlineCall info;
+        if (!session_.checker->inlineCall(e, info)) return false;
+        const FunctionDecl& fn = *info.fn;
+        if (fn.varargIndex >= 0 || fn.isStatic || fn.isAbstract || e.hasSpread) return false;
+        const MemberExpr* member = e.callee->kind == ExprKind::Member ? static_cast<const MemberExpr*>(e.callee.get()) : nullptr;
+        if (member != nullptr && importedMember(*member->object, member->name, *member) != nullptr) member = nullptr;
+        const bool hasReceiver = info.extension || info.owner != nullptr;
+        if (hasReceiver && member == nullptr && e.callee->kind != ExprKind::Name) return false;
+
+        const int saved = enterValueBlock();
+        beginScope();
+        line_ = e.line;
+        int toNull = -1;
+        int receiver = -1;
+        if (hasReceiver) {
+            if (member != nullptr) {
+                compileExpr(*member->object);
+                line_ = member->line;
+                if (member->safe) toNull = emitJump(Op::JumpIfNull);
+            } else {
+                emitGet("this", e);  // a member called bare, on the object of the code calling it
+            }
+            receiver = addLocal("(inline receiver)", true, e, true);
+        }
+        // The arguments, in the order they are written; a lambda the body only calls is kept, not made.
+        const size_t n = fn.params.size();
+        std::vector<int> given(n, -1);
+        std::vector<std::optional<BoundLambda>> bound(n);
+        for (size_t i = 0; i < e.args.size(); i++) {
+            const int p = i < info.paramOf.size() ? info.paramOf[i] : -1;
+            const Expr& arg = *e.args[i];
+            if (p < 0 || static_cast<size_t>(p) >= n) {
+                compileExpr(arg);
+                emit(Op::Pop);
+                continue;
+            }
+            if (session_.checker->copiedIn(fn, p)) {
+                RuntimeType iface;
+                std::string method;
+                int arity = 0;
+                if (arg.kind == ExprKind::Function && static_cast<const FunctionExpr&>(arg).fn->isLambda &&
+                    !session_.checker->samConversion(arg, iface, method, arity)) {
+                    bound[static_cast<size_t>(p)] = BoundLambda{static_cast<const FunctionExpr&>(arg).fn.get(), scopeNow(), fn.name};
+                    continue;
+                }
+                if (arg.kind == ExprKind::Name) {
+                    if (const BoundLambda* passed = boundLambda(static_cast<const NameExpr&>(arg).name)) {
+                        bound[static_cast<size_t>(p)] = *passed;  // passed on from the inline function around
+                        continue;
+                    }
+                }
+            }
+            compileExpr(arg);
+            given[static_cast<size_t>(p)] = addLocal("(inline argument)", true, arg, true);
+        }
+
+        // The body, in a scope of its own.
+        const CodeScope caller = scopeNow();
+        InlineFrame frame;
+        frame.fn = &fn;
+        frame.owner = ++nextOwner_;
+        inlineBodies_.insert(frame.owner);
+        frame.finallyAtEntry = fs_->finally;
+        frame.tryDepth = fs_->tryDepth;
+        for (size_t p = 0; p < n; p++)
+            if (bound[p]) frame.lambdas[fn.params[p]] = *bound[p];
+        if (info.owner != nullptr) frame.cls = classScopeOf(*info.owner, info.ownerName);
+        CodeScope body;
+        body.fileKey = info.fileKey;
+        body.ns = info.prelude ? session_.builtins_ : info.ns != nullptr ? info.ns : ns_;
+        auto imported = session_.fileImports_.find(info.fileKey);
+        if (imported != session_.fileImports_.end())
+            for (const auto& i : imported->second) body.imports.push_back(Import{i.ns, i.alias, i.path, i.all});
+        body.cls = frame.cls.get();
+        if (receiver >= 0) {
+            if (info.owner != nullptr) body.thisSlot = slotOf(receiver);
+            body.implicitSlots.push_back(slotOf(receiver));
+        }
+        body.implicitOnly = true;
+        body.frame = &frame;
+        body.owner = frame.owner;
+        body.lineFixed = lineFixed_ >= 0 ? lineFixed_ : e.line;
+        enterScope(body);
+        inlineDepth_++;
+        // It keeps its own rights where it is copied: the function it is copied into may use what
+        // its class and its library keep to themselves (see Op::MemberAccess).
+        auto grant = [&](int id) {
+            std::vector<uint16_t>& ids = fs_->proto->classIds;
+            if (std::find(ids.begin(), ids.end(), static_cast<uint16_t>(id)) == ids.end()) ids.insert(ids.end() - 1, static_cast<uint16_t>(id));
+        };
+        if (class_ != nullptr) grant(class_->id);
+        grant(libraryId());
+        beginScope();
+        frame.baseSlot = fs_->slotTop;
+        if (receiver >= 0) aliasLocal("this", slotOf(receiver));
+        for (size_t p = 0; p < n; p++) {
+            if (bound[p]) continue;
+            if (given[p] >= 0) {
+                aliasLocal(fn.params[p], slotOf(given[p]));
+                continue;
+            }
+            // Left out: its default, worked out here from the parameters before it.
+            if (fn.paramDefaults[p]) compileExpr(*fn.paramDefaults[p]);
+            else emit(Op::Null);
+            addLocal(fn.params[p], true, fn, true);
+        }
+        compileInlineBody(fn.body);
+        endScopeKeepingValue();
+        for (int jump : frame.exits) patchJump(jump);
+        inlineDepth_--;
+        enterScope(caller);
+        line_ = e.line;
+        endScopeKeepingValue();
+        if (toNull >= 0) patchJump(toNull);
+        leaveValueBlock(saved);
+        return true;
+    }
+
+    // A body compiled in place leaves its value: what its last expression comes to, or null.
+    void compileInlineBody(const std::vector<StmtPtr>& body) {
+        for (size_t i = 0; i + 1 < body.size(); i++) compileStmt(*body[i]);
+        const Stmt* last = body.empty() ? nullptr : body.back().get();
+        if (last != nullptr && last->kind == StmtKind::Return && static_cast<const ReturnStmt&>(*last).implicit &&
+            static_cast<const ReturnStmt&>(*last).value) {
+            line_ = last->line;
+            compileExpr(*static_cast<const ReturnStmt&>(*last).value);
+        } else {
+            if (last != nullptr) compileStmt(*last);
+            emit(Op::Null);
+        }
+    }
+
+    // `return` in an inline function's body: the value of the call, after the finally blocks
+    // entered since it began.
+    void compileInlineReturn(const ReturnStmt& s, bool inExpression) {
+        InlineFrame& frame = *frame_;
+        if (s.value) compileExpr(*s.value);
+        else emit(Op::Null);
+        line_ = s.line;
+        if (inExpression) emitSettle(true);
+        beginScope();
+        const int result = addLocal("(inline value)", false, s, true);
+        const int open = emitPendingFinally(nullptr, frame.finallyAtEntry);
+        for (int i = open; i > frame.tryDepth; i--) emit(Op::TryEnd);
+        emit(Op::GetLocal, slotOf(result));
+        emit(Op::PopUnder, fs_->slotTop - frame.baseSlot);
+        frame.exits.push_back(emitJump(Op::Jump));
+        endScope();
+    }
+
+    // A call of a parameter given a lambda copied in: the lambda's body, in the scope it was
+    // written in, given the arguments, and the object it runs on if its type says one.
+    void compileLambdaCopy(const BoundLambda& b, const std::vector<const Expr*>& args, const Expr* receiver, const Node& at) {
+        const FunctionDecl& lambda = *b.lambda;
+        const int saved = enterValueBlock();
+        beginScope();
+        line_ = at.line;
+        int object = -1;
+        if (receiver != nullptr) {
+            compileExpr(*receiver);
+            object = addLocal("(block receiver)", true, at, true);
+        }
+        std::vector<int> given;
+        for (const Expr* arg : args) {
+            compileExpr(*arg);
+            given.push_back(addLocal("(block argument)", true, *arg, true));
+        }
+        const CodeScope here = scopeNow();
+        CodeScope scope = b.scope;
+        copiedDepth_++;
+        if (object >= 0) scope.implicitSlots.push_back(slotOf(object));
+        enterScope(scope);
+        InlineBlock block{inline_, b.callee, lambda.label, fs_, fs_->slotTop - 1, fs_->finally, fs_->tryDepth, {}, fs_->owner};
+        inline_ = &block;
+        beginScope();
+        const bool it = lambda.params.size() == 1 && lambda.params[0] == "it" && !lambda.paramTypes[0].present() &&
+                        lambda.paramDefaults.size() == 1 && lambda.paramDefaults[0] != nullptr;
+        for (size_t i = 0; i < lambda.params.size(); i++) {
+            if (it && given.empty()) break;  // no `it`: nothing was given
+            if (i < given.size()) {
+                if (lambda.params[i] != "_") aliasLocal(lambda.params[i], slotOf(given[i]));
+            } else {
+                emit(Op::Null);
+                addLocal(lambda.params[i], true, lambda, true);
+            }
+            if (i < lambda.paramPatterns.size() && !lambda.paramPatterns[i].empty() && i < given.size())
+                declareParts(lambda.paramPatterns[i], given[i], true, lambda);
+        }
+        if (object >= 0) {
+            aliasLocal("this", slotOf(object));
+            if (!lambda.label.empty()) aliasLocal("this@" + lambda.label, slotOf(object));
+            if (!b.callee.empty() && b.callee != lambda.label) aliasLocal("this@" + b.callee, slotOf(object));
+        }
+        compileInlineBody(lambda.body);
+        endScopeKeepingValue();
+        for (int jump : block.exits) patchJump(jump);
+        copiedDepth_--;
+        inline_ = block.enclosing;
+        enterScope(here);
+        endScopeKeepingValue();
+        leaveValueBlock(saved);
+    }
+
+    // A call in an inline function's body of a parameter given a lambda copied in: `action(x)`,
+    // `block(obj, x)` or `obj.block(x)` for one run on an object.
+    bool compileBoundCall(const CallExpr& e) {
+        if (frame_ == nullptr || fs_->owner != frame_->owner || e.namedCount != 0 || e.hasSpread) return false;
+        const Expr* receiver = nullptr;
+        std::vector<const Expr*> args;
+        const BoundLambda* b = nullptr;
+        if (e.callee->kind == ExprKind::Name) {
+            b = boundLambda(static_cast<const NameExpr&>(*e.callee).name);
+            if (b == nullptr) return false;
+            size_t first = 0;
+            if (session_.checker->callsOnObject(e) && !e.args.empty()) {
+                receiver = e.args[0].get();
+                first = 1;
+            }
+            for (size_t i = first; i < e.args.size(); i++) args.push_back(e.args[i].get());
+        } else if (e.callee->kind == ExprKind::Member && session_.checker->memberLocalCall(e)) {
+            const auto& m = static_cast<const MemberExpr&>(*e.callee);
+            b = boundLambda(m.name);
+            if (b == nullptr) return false;
+            receiver = m.object.get();
+            for (const ExprPtr& a : e.args) args.push_back(a.get());
+        } else {
+            return false;
+        }
+        compileLambdaCopy(*b, args, receiver, e);
+        return true;
+    }
+
+    // `block(obj, x)` and `obj.block(x)` for a function value run on an object (D58).
+    bool compileCallOn(const CallExpr& e) {
+        if (session_.checker == nullptr || e.namedCount != 0 || e.hasSpread) return false;
+        if (e.callee->kind == ExprKind::Name && session_.checker->callsOnObject(e) && !e.args.empty()) {
+            compileExpr(*e.callee);
+            for (const ExprPtr& a : e.args) compileExpr(*a);
+            line_ = e.line;
+            emit(Op::CallOn);
+            emitByte(static_cast<int>(e.args.size()) - 1);
+            return true;
+        }
+        if (e.callee->kind == ExprKind::Member && session_.checker->memberLocalCall(e)) {
+            const auto& m = static_cast<const MemberExpr&>(*e.callee);
+            emitGet(m.name, m);
+            compileExpr(*m.object);
+            for (const ExprPtr& a : e.args) compileExpr(*a);
+            line_ = e.line;
+            emit(Op::CallOn);
+            emitByte(static_cast<int>(e.args.size()));
+            return true;
+        }
+        return false;
+    }
+
     CompileError error(const Node& at, const std::string& message) const {
         return CompileError(file_, at.line, at.col, message);
     }
@@ -721,7 +1116,7 @@ private:
 
     void emitByte(int b) {
         fs_->proto->code.push_back(static_cast<uint8_t>(b));
-        fs_->proto->lines.push_back(line_);
+        fs_->proto->lines.push_back(lineFixed_ >= 0 ? lineFixed_ : line_);
     }
 
     void emitU16(int value) {
@@ -879,9 +1274,11 @@ private:
         fs_->scopeDepth--;
         std::vector<Local>& locals = fs_->locals;
         while (!locals.empty() && locals.back().depth > fs_->scopeDepth) {
-            emit(locals.back().isCaptured ? Op::CloseUpvalue : Op::Pop);
+            if (!locals.back().alias) {
+                emit(locals.back().isCaptured ? Op::CloseUpvalue : Op::Pop);
+                fs_->slotTop--;
+            }
             locals.pop_back();
-            fs_->slotTop--;
         }
     }
 
@@ -895,6 +1292,7 @@ private:
         if (!hidden) {
             for (size_t i = locals.size(); i-- > 0;) {
                 const Local& existing = locals[i];
+                if (existing.owner != fs_->owner) continue;
                 if (existing.depth >= 0 && existing.depth < fs_->scopeDepth) break;
                 if (existing.name == name) throw error(at, "variable '" + name + "' is already declared in this scope");
             }
@@ -909,7 +1307,7 @@ private:
     int resolveLocal(FunctionState* state, const std::string& name, const Node& at, VarInfo& info, bool fromInner = false) {
         for (size_t i = state->locals.size(); i-- > 0;) {
             Local& local = state->locals[i];
-            if (local.name != name) continue;
+            if (local.name != name || local.owner != state->owner) continue;
             info = local.info;
 
             if (local.depth < 0) {
@@ -934,14 +1332,14 @@ private:
     // anonymous object's class, as a capture of the object (see ObjectBuild).
     int resolveUpvalue(FunctionState* state, const std::string& name, const Node& at, VarInfo& info) {
         info = VarInfo{};
-        if (state->enclosing == nullptr) return -1;
+        if (state->enclosing == nullptr || inlineBodies_.count(state->owner) != 0) return -1;
         if (state->object != nullptr) return captureFor(state, name, at, info);
 
         int local = resolveLocal(state->enclosing, name, at, info, true);
         if (local != -1) {
             Local& captured = state->enclosing->locals[static_cast<size_t>(local)];
             noteOuterUse(state, static_cast<size_t>(local));
-            captured.isCaptured = true;
+            markCaptured(*state->enclosing, captured);
             return addUpvalue(state, true, captured.slot);
         }
 
@@ -950,6 +1348,15 @@ private:
         if (isCaptureMark(upvalue)) return addUpvalue(state, false, upvalue - kCaptureMark, true);
         noteOuterUse(state, 0);
         return addUpvalue(state, false, upvalue);
+    }
+
+    // A local a closure keeps: under another name (an inline function's parameter, D59), the
+    // local whose slot it is, which is closed when its scope ends.
+    static void markCaptured(FunctionState& state, Local& local) {
+        local.isCaptured = true;
+        if (!local.alias) return;
+        for (Local& real : state.locals)
+            if (!real.alias && real.slot == local.slot) real.isCaptured = true;
     }
 
     // What a member of an anonymous object's class uses of the function the object is made in:
@@ -961,7 +1368,7 @@ private:
         if (local != -1) {
             if (local == object.superLocal) return kCaptureMark + object.add(3, 0);  // the same for every object
             Local& captured = around->locals[static_cast<size_t>(local)];
-            captured.isCaptured = true;
+            markCaptured(*around, captured);
             return kCaptureMark + object.add(0, captured.slot);
         }
         const int upvalue = resolveUpvalue(around, name, at, info);
@@ -1479,7 +1886,7 @@ private:
     // by one of its methods. Its own code may always use it, on an object of a subclass too,
     // so the instruction that asks nothing is written (GetOwn and the like).
     bool ownMember(const Expr& object, const std::string& name) const {
-        return object.kind == ExprKind::This && class_ != nullptr && kindHasThis(fs_->kind) &&
+        return object.kind == ExprKind::This && class_ != nullptr && directThis() &&
                classSide() == ClassSide::Instance && class_->members.count(name) != 0;
     }
 
@@ -1490,7 +1897,29 @@ private:
 
     // Whether the function being compiled may be run on an object whose members its bare
     // names can mean: a lambda, or an extension function.
-    bool namesFromReceiver() const { return fs_->isLambda || fs_->isExtension; }
+    bool namesFromReceiver() const {
+        if (frame_ != nullptr) return !implicitSlots_.empty();  // an inline function's body: its own receiver's alone
+        return fs_->isLambda || fs_->isExtension || !implicitSlots_.empty();
+    }
+
+    // `this` of the code being compiled reached directly: a method's own, or that of an inline
+    // member's body (D59), where no block copied in place runs on an object nearer (D58).
+    bool directThis() const {
+        if (thisSlot_ >= 0) return implicitSlots_.size() == 1 && implicitSlots_[0] == thisSlot_;
+        return kindHasThis(fs_->kind) && implicitSlots_.empty();
+    }
+    void emitThisValue() { emit(Op::GetLocal, thisSlot_ >= 0 ? thisSlot_ : 0); }
+
+    // A lookup of a bare name when the program runs, told first of the objects of the blocks
+    // copied in place around it, innermost last; in an inline function's body, of its receiver
+    // and no other (D58, D59).
+    void emitImplicitOp(Op op, int operand) {
+        for (size_t i = 0; i < implicitSlots_.size(); i++) {
+            emit(Op::ImplicitFirst, implicitSlots_[i]);
+            emitByte(i + 1 == implicitSlots_.size() && implicitOnly_ ? 1 : 0);
+        }
+        emit(op, operand);
+    }
 
     // Compiles an expression whose value is headed for something declared as `type`.
     void compileExprFor(const Expr& expr, const TypeSpec& type) {
@@ -1531,7 +1960,7 @@ private:
         line_ = expr.line;
         int toEnd = -1;
         if (mayBeMemberHere()) {
-            emit(Op::TryImplicit, stringConstant(name));
+            emitImplicitOp(Op::TryImplicit, stringConstant(name));
             toEnd = here();
             emitI32(0);
         }
@@ -1548,7 +1977,7 @@ private:
         line_ = expr.line;
         int toEnd = -1;
         if (mayBeMemberHere()) {
-            emit(Op::TryImplicit, stringConstant(name));
+            emitImplicitOp(Op::TryImplicit, stringConstant(name));
             toEnd = here();
             emitI32(0);
         }
@@ -1592,6 +2021,7 @@ private:
     // class itself (a static method, the value of a static field), or to neither.
     ClassSide classSide() const {
         if (class_ == nullptr) return ClassSide::None;
+        if (thisSlot_ >= 0) return ClassSide::Instance;  // an inline member's body (D59)
         for (const FunctionState* state = fs_; state != nullptr; state = state->enclosing) {
             if (kindHasThis(state->kind)) return ClassSide::Instance;
             if (state->kind == FunctionKind::StaticMethod) return ClassSide::Static;
@@ -1605,7 +2035,7 @@ private:
     bool mayBeMember(ClassSide side) const {
         if (side != ClassSide::Instance) return namesFromReceiver();
         // A class written inside a method also reaches the object that method belongs to.
-        return !(kindHasThis(fs_->kind) && class_->closed != nullptr && fs_->proto->outerReceivers.empty());
+        return !(directThis() && class_->closed != nullptr && (thisSlot_ >= 0 || fs_->proto->outerReceivers.empty()));
     }
 
     // The class around the one being compiled, however far out, that has a static member
@@ -1621,7 +2051,7 @@ private:
         if (owner == nullptr) return false;
         int toEnd = -1;
         if (mayBeMemberHere()) {
-            emit(Op::TryImplicit, stringConstant(name));
+            emitImplicitOp(Op::TryImplicit, stringConstant(name));
             toEnd = here();
             emitI32(0);
         }
@@ -1633,6 +2063,11 @@ private:
 
     // A type as written: a name, or `Outer.Inner` for a class declared inside another.
     void emitTypeName(const std::string& name, const Node& at) {
+        // A class by its global's slot, as the compiler names one it makes a class of (D28).
+        if (name.rfind("(global ", 0) == 0) {
+            emit(Op::GetGlobal, std::stoi(name.substr(8)));
+            return;
+        }
         size_t dot = name.find('.');
         size_t afterImport = 0;
         if (const Import* import = aliasPrefix(name, afterImport)) {
@@ -1656,7 +2091,7 @@ private:
         here.line = line_;
         here.col = 1;
         const int slot = resolveGlobal(name, here)->slot;
-        emit(op, stringConstant(name));
+        emitImplicitOp(op, stringConstant(name));
         emitU16(slot);
     }
 
@@ -1698,9 +2133,9 @@ private:
         const ClassSide side = classSide();
         if (side != ClassSide::None) {
             if (side == ClassSide::Instance && class_->members.count(name) != 0) {
-                if (kindHasThis(fs_->kind)) {
-                    emit(Op::GetLocal, 0);
-                    const bool inPlace = session_.checker != nullptr && !copyingReads() && session_.checker->readsFieldInPlace(at);
+                if (directThis()) {
+                    emitThisValue();
+                    const bool inPlace = session_.checker != nullptr && !copyReadsHere() && session_.checker->readsFieldInPlace(at);
                     emit(inPlace ? Op::GetOwnRef : Op::GetOwn, stringConstant(name));
                 } else {
                     emitImplicit(Op::GetImplicit, name);  // in a function inside the method
@@ -1711,7 +2146,7 @@ private:
                 // An inherited member, or one of a lambda's receiver, comes before a static.
                 int toEnd = -1;
                 if (namesFromReceiver() || (side == ClassSide::Instance && class_->hasSuper)) {
-                    emit(Op::TryImplicit, stringConstant(name));
+                    emitImplicitOp(Op::TryImplicit, stringConstant(name));
                     toEnd = here();
                     emitI32(0);
                 }
@@ -1733,7 +2168,7 @@ private:
             // Not a variable of the lambda or of anything around it: a member of the object
             // the lambda runs on, if that has one by this name, and otherwise a global.
             const int slot = resolveGlobal(name, at)->slot;
-            emit(Op::GetImplicit, stringConstant(name));
+            emitImplicitOp(Op::GetImplicit, stringConstant(name));
             emitU16(slot);
             return;
         }
@@ -1777,8 +2212,8 @@ private:
         const ClassSide side = classSide();
         if (side != ClassSide::None) {
             if (side == ClassSide::Instance && class_->members.count(name) != 0) {
-                if (kindHasThis(fs_->kind)) {
-                    emit(Op::GetLocal, 0);
+                if (directThis()) {
+                    emitThisValue();
                     emit(Op::Swap);
                     emit(Op::SetOwn, stringConstant(name));
                 } else {
@@ -1800,7 +2235,7 @@ private:
 
         if (namesFromReceiver()) {
             const int slot = resolveGlobal(name, at)->slot;
-            emit(Op::SetImplicit, stringConstant(name));
+            emitImplicitOp(Op::SetImplicit, stringConstant(name));
             emitU16(slot);
             return;
         }
@@ -2048,7 +2483,7 @@ private:
         } else if (&call == destinationCall_ && above >= 0 && above <= 0xFF) {
             emit(Op::WithDestinationAt);
             emitByte(above);
-        } else if (session_.checker != nullptr && !copyingReads() && !session_.checker->constructsValue(call) && session_.checker->readsFieldInPlace(call)) {
+        } else if (session_.checker != nullptr && !copyReadsHere() && !session_.checker->constructsValue(call) && session_.checker->readsFieldInPlace(call)) {
             emit(Op::WithRefResult);  // what it gives back may stay where it is (M6.6 part 5)
         }
         emitTypeArguments(call);
@@ -2174,6 +2609,12 @@ private:
     uint8_t staticTypeHere(const Expr& e) const {
         uint8_t b;
         if (session_.checker != nullptr && session_.checker->byteAt(e, b)) return kTypeByte;
+        if (e.kind == ExprKind::Function && session_.checker != nullptr) {
+            RuntimeType iface;
+            std::string method;
+            int arity = 0;
+            if (session_.checker->samConversion(e, iface, method, arity)) return 0;  // an object of the interface (D28)
+        }
         return staticTypeOf(e);
     }
 
@@ -2462,6 +2903,7 @@ private:
             case StmtKind::While: {
                 const auto& s = static_cast<const WhileStmt&>(stmt);
                 LoopState loop{fs_->loop, here(), fs_->scopeDepth, fs_->tryDepth, fs_->locals.size(), fs_->slotTop, {}};
+                loop.owner = fs_->owner;
                 loop.label = s.label;
                 fs_->loop = &loop;
                 if (s.doWhile) {
@@ -2495,9 +2937,13 @@ private:
             case StmtKind::Return: {
                 const auto& s = static_cast<const ReturnStmt&>(stmt);
                 if (!s.label.empty() && compileLabelledReturn(s, inExpression)) break;
+                if (s.label.empty() && frame_ != nullptr && fs_->owner == frame_->owner) {
+                    compileInlineReturn(s, inExpression);  // leaves the inline function's body (D59)
+                    break;
+                }
                 if (fs_->isLambda && !s.implicit && s.label.empty())
-                    throw error(s, "'return' leaves the function it is written in, which a lambda cannot do except inside " +
-                                       std::string("let, also or takeIf; to leave the lambda itself write return@") +
+                    throw error(s, "'return' leaves the function it is written in, which a lambda cannot do unless it is copied into an " +
+                                       std::string("inline function, as forEach and let are (D59); to leave the lambda itself write return@") +
                                        (!fs_->calleeLabel.empty() ? fs_->calleeLabel : !fs_->label.empty() ? fs_->label : "name"));
                 if (fs_->kind == FunctionKind::Initializer) {
                     if (s.value) throw error(s, "cannot return a value from an initializer");
@@ -2505,6 +2951,9 @@ private:
                 } else if (fs_->kind == FunctionKind::Setter) {
                     if (s.value) throw error(s, "cannot return a value from a setter");
                     emit(Op::GetLocal, 1);
+                } else if (s.value && !inExpression && tailReturnHere() && hasSelfCall(*s.value)) {
+                    compileTailReturn(*s.value, s);
+                    break;
                 } else if (s.value) {
                     // A function given where its result goes passes that on to a call it returns
                     // the result of (M6.6 part 4).
@@ -2635,12 +3084,91 @@ private:
         }
     }
 
+    // ---- Tail calls (D29) ----
+    //
+    // A function calling itself as its last step, on the same object, starts again in the same
+    // frame: `return walk(next)`, or such a call as a branch of `? :` or after `?:` in what it
+    // returns. Not inside a try, whose handlers belong to the frame's round, nor for a generic
+    // function, whose type arguments the call may change, nor with arguments by name or spread.
+    bool tailReturnHere() const {
+        return session_.checker != nullptr && fs_->decl != nullptr && !fs_->isLambda && fs_->tryDepth == 0 && fs_->finally == nullptr &&
+               (fs_->kind == FunctionKind::Function || fs_->kind == FunctionKind::Method) && fs_->decl->typeParams.empty() &&
+               fs_->decl->varargIndex < 0 && fs_->typeParams.empty();
+    }
+    bool selfCallFits(const Expr& e) const {
+        if (e.kind != ExprKind::Call) return false;
+        const auto& call = static_cast<const CallExpr&>(e);
+        return session_.checker->callsItself(call) && call.namedCount == 0 && !call.hasSpread &&
+               call.args.size() <= fs_->decl->params.size();
+    }
+    bool hasSelfCall(const Expr& e) const {
+        if (selfCallFits(e)) return true;
+        if (e.kind == ExprKind::Ternary) {
+            const auto& t = static_cast<const TernaryExpr&>(e);
+            return hasSelfCall(*t.then) || hasSelfCall(*t.otherwise);
+        }
+        if (e.kind == ExprKind::Elvis) return hasSelfCall(*static_cast<const ElvisExpr&>(e).right);
+        return false;
+    }
+    // In a `tail fun`, a call of itself that is not made a loop is an error saying why (D29).
+    void refuseTailCall(const CallExpr& call) {
+        bool overridden = false;
+        if (!session_.checker->selfCall(call, overridden)) return;
+        const std::string name = fs_->decl->name;
+        std::string why = "it is not the last step, what it gives being used afterwards; a parameter that gathers the result can do that instead";
+        if (overridden) why = "a subclass overrides " + name + ", so the call may run another function";
+        else if (fs_->tryDepth > 0 || fs_->finally != nullptr) why = "it is inside a try, whose handlers belong to this round";
+        else if (!fs_->decl->typeParams.empty() || !fs_->typeParams.empty()) why = "a generic function may be given other type arguments by it";
+        else if (fs_->decl->varargIndex >= 0) why = "it takes a vararg";
+        else if (call.namedCount != 0 || call.hasSpread) why = "its arguments are given by name or spread";
+        throw error(call, "this call cannot be a loop, as tail fun " + name + " asks: " + why + " (D29)");
+    }
+
+    void compileTailReturn(const Expr& value, const ReturnStmt& s) {
+        if (selfCallFits(value)) {
+            const auto& call = static_cast<const CallExpr&>(value);
+            for (size_t i = 0; i < call.args.size(); i++) compileExprFor(*call.args[i], fs_->locals[i + 1].info.type);
+            for (size_t i = call.args.size(); i < fs_->decl->params.size(); i++) emit(Op::Unset);  // its default, worked out again
+            line_ = call.line;
+            emit(Op::TailLoop);
+            emitByte(static_cast<int>(fs_->decl->params.size()));
+            return;
+        }
+        if (value.kind == ExprKind::Ternary) {
+            const auto& t = static_cast<const TernaryExpr&>(value);
+            compileExpr(*t.condition);
+            const int toElse = emitJump(Op::JumpIfFalse);
+            compileTailReturn(*t.then, s);
+            patchJump(toElse);
+            compileTailReturn(*t.otherwise, s);
+            return;
+        }
+        if (value.kind == ExprKind::Elvis && hasSelfCall(value)) {
+            const auto& e = static_cast<const ElvisExpr&>(value);
+            compileExpr(*e.left);
+            const int toRight = emitJump(Op::JumpIfNotNull);
+            const int skip = emitJump(Op::Jump);
+            patchJump(toRight);
+            line_ = s.line;
+            emitReturnCheck(staticTypeHere(*e.left), *e.left, e.left.get());
+            emit(Op::Return);
+            patchJump(skip);
+            emit(Op::Pop);
+            compileTailReturn(*e.right, s);
+            return;
+        }
+        compileExprFor(value, fs_->returnType);
+        line_ = s.line;
+        emitReturnCheck(staticTypeHere(value), value, &value);
+        emit(Op::Return);
+    }
+
     // `return@name value`. Inside a block compiled in place it ends the block with that value,
     // which this handles, returning true. Naming the lambda being compiled it is an ordinary
     // return from it, left to the caller (false). Anything else is an error.
     bool compileLabelledReturn(const ReturnStmt& s, bool inExpression) {
         for (InlineBlock* block = inline_; block != nullptr && block->function == fs_; block = block->enclosing) {
-            if (block->name != s.label && block->label != s.label) continue;
+            if (block->owner != fs_->owner || (block->name != s.label && block->label != s.label)) continue;
             if (s.value) compileExpr(*s.value);
             else emit(Op::Null);
             line_ = s.line;
@@ -2664,61 +3192,6 @@ private:
             if (outer->isLambda && (outer->label == s.label || outer->calleeLabel == s.label))
                 throw error(s, "return@" + s.label + " can only leave the lambda it is written in, not one further out");
         throw error(s, "there is no lambda called '" + s.label + "' around this return");
-    }
-
-    // value.let { ... }, value.also { ... } and value.takeIf { ... } with a lambda literal are
-    // compiled in place: the value becomes a variable, the lambda's body runs as part of this
-    // function, and so a `return` in it leaves this function. Returns false for any other call.
-    bool compileScopeCall(const CallExpr& e) {
-        if (e.callee->kind != ExprKind::Member || e.args.size() != 1 || e.namedCount != 0 || e.hasSpread) return false;
-        if (e.args[0]->kind != ExprKind::Function) return false;
-        const auto& member = static_cast<const MemberExpr&>(*e.callee);
-        const FunctionDecl& fn = *static_cast<const FunctionExpr&>(*e.args[0]).fn;
-        const bool let = member.name == "let", also = member.name == "also", takeIf = member.name == "takeIf";
-        if (!fn.isLambda || fn.params.size() != 1 || !(let || also || takeIf)) return false;
-
-        const int saved = enterValueBlock();
-        beginScope();
-        compileExpr(*member.object);
-        line_ = member.line;
-        const int toNull = member.safe ? emitJump(Op::JumpIfNull) : -1;
-        const bool parts = !fn.paramPatterns.empty() && !fn.paramPatterns[0].empty();
-        const int value = addLocal(parts ? "(scope value)" : fn.params[0], true, fn, true);
-
-        InlineBlock block{inline_, member.name, fn.label, fs_, slotOf(value), fs_->finally, fs_->tryDepth, {}};
-        inline_ = &block;
-        beginScope();
-        if (parts) declareParts(fn.paramPatterns[0], value, true, fn);
-        for (size_t i = 0; i + 1 < fn.body.size(); i++) compileStmt(*fn.body[i]);
-        const Stmt* last = fn.body.empty() ? nullptr : fn.body.back().get();
-        if (last != nullptr && last->kind == StmtKind::Return && static_cast<const ReturnStmt&>(*last).implicit) {
-            line_ = last->line;
-            compileExpr(*static_cast<const ReturnStmt&>(*last).value);  // the block's value
-        } else {
-            if (last != nullptr) compileStmt(*last);
-            emit(Op::Null);
-        }
-        endScopeKeepingValue();
-        for (int jump : block.exits) patchJump(jump);
-        inline_ = block.enclosing;
-
-        // The stack holds the value and, above it, what the block came to.
-        line_ = e.line;
-        if (also) {
-            emit(Op::Pop);
-            emit(Op::GetLocal, slotOf(value));
-        } else if (takeIf) {
-            int toNo = emitJump(Op::JumpIfFalse);
-            emit(Op::GetLocal, slotOf(value));
-            int toEnd = emitJump(Op::Jump);
-            patchJump(toNo);
-            emit(Op::Null);
-            patchJump(toEnd);
-        }
-        endScopeKeepingValue();
-        if (toNull >= 0) patchJump(toNull);
-        leaveValueBlock(saved);
-        return true;
     }
 
     // val (a, b) = value: the value is worked out once, then each name gets its part.
@@ -2888,10 +3361,12 @@ private:
 
     // The loop a break or continue is for: the innermost, or with `@name` the one of that name.
     LoopState* loopFor(const std::string& label, const Stmt& at, const char* keyword) {
-        if (fs_->loop == nullptr) throw error(at, std::string("'") + keyword + "' outside of a loop");
-        if (label.empty()) return fs_->loop;
-        for (LoopState* loop = fs_->loop; loop != nullptr; loop = loop->enclosing)
-            if (loop->label == label) return loop;
+        LoopState* own = fs_->loop;
+        while (own != nullptr && own->owner != fs_->owner) own = own->enclosing;
+        if (own == nullptr) throw error(at, std::string("'") + keyword + "' outside of a loop");
+        if (label.empty()) return own;
+        for (LoopState* loop = own; loop != nullptr; loop = loop->enclosing)
+            if (loop->label == label && loop->owner == fs_->owner) return loop;
         throw error(at, "there is no loop called '" + label + "' around this " + keyword);
     }
 
@@ -2926,18 +3401,57 @@ private:
         if (!keepTop) emit(Op::Pop);
     }
 
+    // `a..b`, `a..<b`, `a downTo b`, and either `step n` (D72): what a range written in place is
+    // made of, which a Range instruction makes, or a loop counts through, with nothing called.
+    struct RangeParts {
+        const Expr* start = nullptr;
+        const Expr* end = nullptr;
+        const Expr* step = nullptr;
+        bool inclusive = false, descending = false;
+    };
+    bool rangeParts(const Expr& e, RangeParts& out) {
+        if (e.kind == ExprKind::Range) {
+            const auto& r = static_cast<const RangeExpr&>(e);
+            if (!r.start || !r.end) return false;
+            out = RangeParts{r.start.get(), r.end.get(), r.step.get(), r.inclusive, r.descending};
+            return true;
+        }
+        if (e.kind != ExprKind::Call || session_.checker == nullptr) return false;
+        const auto& c = static_cast<const CallExpr&>(e);
+        std::string which;
+        if (!c.isInfix || c.args.size() != 1 || !session_.checker->rangeWord(c, which)) return false;
+        const auto& m = static_cast<const MemberExpr&>(*c.callee);
+        if (which == "downTo") {
+            out = RangeParts{m.object.get(), c.args[0].get(), nullptr, true, true};
+            return true;
+        }
+        if (!rangeParts(*m.object, out) || out.step != nullptr) return false;
+        out.step = c.args[0].get();
+        return true;
+    }
+    bool compileRangeCall(const CallExpr& e) {
+        RangeParts parts;
+        if (!e.isInfix || !rangeParts(e, parts)) return false;
+        compileExpr(*parts.start);
+        compileExpr(*parts.end);
+        if (parts.step) compileExpr(*parts.step);
+        line_ = e.line;
+        emit(Op::Range);
+        emitByte((parts.inclusive ? 1 : 0) | (parts.descending ? 2 : 0) | (parts.step ? 4 : 0));
+        return true;
+    }
+
     void compileForIn(const ForInStmt& s) {
         beginScope();
         int iteratorSlot;
-        const bool counted = s.iterable->kind == ExprKind::Range && static_cast<const RangeExpr&>(*s.iterable).start &&
-                             static_cast<const RangeExpr&>(*s.iterable).end;
+        RangeParts range;
+        const bool counted = rangeParts(*s.iterable, range);
         if (counted) {
             // A range written in place is counted through, with nothing made for it.
-            const auto& range = static_cast<const RangeExpr&>(*s.iterable);
             compileExpr(*range.start);
             compileExpr(*range.end);
             if (range.step) compileExpr(*range.step);
-            line_ = range.line;
+            line_ = s.iterable->line;
             emit(Op::RangeLoop);
             emitByte((range.inclusive ? 1 : 0) | (range.descending ? 2 : 0) | (range.step ? 4 : 0));
             iteratorSlot = addLocal("(next)", false, s, true);
@@ -2951,11 +3465,12 @@ private:
         }
 
         LoopState loop{fs_->loop, here(), fs_->scopeDepth, fs_->tryDepth, fs_->locals.size(), fs_->slotTop, {}};
+        loop.owner = fs_->owner;
         loop.label = s.label;
         fs_->loop = &loop;
         line_ = s.line;
         // A list of values may hand the loop its items where they are (M6.6 part 4).
-        const bool inPlace = !counted && session_.checker != nullptr && session_.checker->loopsInPlace(s) &&
+        const bool inPlace = !counted && session_.checker != nullptr && !inPlaceOff() && session_.checker->loopsInPlace(s) &&
                              (!copyingReads() || session_.checker->loopPassesOn(s));
         // Two names taking the item apart, `for ((key, value) in map)`: both parts at once, with
         // nothing made for a map's entry (D64, D73).
@@ -2997,7 +3512,11 @@ private:
             for (int i = fs_->tryDepth; i > f->tryDepth; i--) emit(Op::TryEnd);
             fs_->tryDepth = f->tryDepth;
             fs_->finally = f->enclosing;
+            // In the scope it is written in, which a return in a lambda copied in from elsewhere is not.
+            const CodeScope saved = scopeNow();
+            if (f->scope != nullptr) enterScope(*static_cast<const CodeScope*>(f->scope));
             compileStmt(*f->block);
+            enterScope(saved);
         }
         const int open = fs_->tryDepth;
         fs_->finally = savedFinally;
@@ -3015,7 +3534,9 @@ private:
         // an error that gets past them lands in its handler, which runs the block and throws
         // the error on. Leaving normally runs the block once, after the outer try has ended.
         int toHandler = emitJump(Op::TryBegin);
+        const CodeScope written = scopeNow();
         FinallyState state{fs_->finally, s.finalizer.get(), fs_->tryDepth, fs_->loop};
+        state.scope = &written;
         fs_->tryDepth++;
         fs_->finally = &state;
         if (s.catches.empty()) compileTryBlock(s, *s.body);
@@ -3989,6 +4510,7 @@ private:
         state.proto->varargIndex = decl.varargIndex;
         state.scopeDepth = 1;
         state.isLambda = decl.isLambda;
+        state.decl = &decl;
         for (const TypeParam& p : decl.typeParams) state.typeParams.push_back(p.name);
         if (!decl.typeParams.empty()) state.proto->typeArgs |= kTypeArgsOwn;
         if (session_.checker != nullptr && session_.checker->returnsValue(decl)) state.proto->typeArgs |= kTakesDestination;
@@ -3999,17 +4521,68 @@ private:
         state.property = std::exchange(nextProperty_, std::string());
         state.backingField = std::exchange(nextBackingField_, std::string());
 
-        // Slot 0 holds the receiver in methods and the callee itself otherwise.
+        // Slot 0 holds the receiver in methods and the callee itself otherwise. A lambda run on
+        // an object its type says has that object there, which is what `this` means in it (D58).
+        const bool onObject = decl.isLambda && session_.checker != nullptr && session_.checker->runsOnObject(decl);
         bool hasThis = kind == FunctionKind::Method || kind == FunctionKind::Initializer || kind == FunctionKind::Setter;
-        state.add(Local{hasThis ? "this" : "", 1, VarInfo{}});
+        state.add(Local{hasThis || onObject ? "this" : "", 1, VarInfo{}});
+        // Given a function type that takes nothing, a lambda without an arrow has no `it`: the
+        // name is that of a lambda around it (D55).
+        const bool noIt = decl.isLambda && session_.checker != nullptr && session_.checker->hasNoIt(decl);
         for (size_t i = 0; i < decl.params.size(); i++) {
-            state.add(Local{decl.params[i], 1, VarInfo{false, resolveType(decl.paramTypes[i])}});
+            state.add(Local{noIt ? std::string("(no it)") : decl.params[i], 1, VarInfo{false, resolveType(decl.paramTypes[i])}});
             state.proto->paramNames.push_back(session_.vm_.intern(decl.params[i]));
+        }
+        // `this@Name` (D57): slot 0 under the names that reach it, the class's for a method, the
+        // function's for an extension, and the lambda's labels for a block run on an object.
+        auto alias = [&](const std::string& label) {
+            if (label.empty()) return;
+            Local named{"this@" + label, 1, VarInfo{true, TypeSpec{}, false}};
+            named.slot = 0;
+            state.locals.push_back(std::move(named));
+        };
+        if (hasThis && class_ != nullptr && kind != FunctionKind::Setter) {
+            const std::string& q = class_->qualified;
+            alias(q.substr(q.rfind('.') == std::string::npos ? 0 : q.rfind('.') + 1));
+        }
+        if (hasThis && state.isExtension) alias(decl.name);
+        if (onObject) {
+            alias(decl.label);
+            if (decl.calleeLabel != decl.label) alias(decl.calleeLabel);
         }
 
         state.returnType = resolveType(decl.returnType);
         if (kind == FunctionKind::Initializer && decl.returnType.present())
             throw error(decl.returnType, "an initializer cannot declare a return type");
+
+        // Inside an inline function's body or a block copied in place, the objects they run on
+        // come first, kept as upvalues; and nothing of their scope is the new function's (D59).
+        if (state.object == nullptr)
+            for (size_t i = implicitSlots_.size(); i-- > 0;) {
+                for (Local& local : fs_->locals)
+                    if (local.slot == implicitSlots_[i]) markCaptured(*fs_, local);
+                state.proto->outerReceivers.push_back(static_cast<uint16_t>(addUpvalue(&state, true, implicitSlots_[i])));
+            }
+        struct InlineScopeGuard {
+            ModuleCompiler& c;
+            int thisSlot;
+            std::vector<int> implicitSlots;
+            bool implicitOnly;
+            InlineFrame* frame;
+            explicit InlineScopeGuard(ModuleCompiler& m)
+                : c(m), thisSlot(m.thisSlot_), implicitSlots(std::move(m.implicitSlots_)), implicitOnly(m.implicitOnly_), frame(m.frame_) {
+                c.thisSlot_ = -1;
+                c.implicitSlots_.clear();
+                c.implicitOnly_ = false;
+                c.frame_ = nullptr;
+            }
+            ~InlineScopeGuard() {
+                c.thisSlot_ = thisSlot;
+                c.implicitSlots_ = std::move(implicitSlots);
+                c.implicitOnly_ = implicitOnly;
+                c.frame_ = frame;
+            }
+        } inlineScope(*this);
 
         // A lambda written inside other lambdas can also reach the objects those run on,
         // innermost first: in `grid { row { ... } }` the inner block sees the row, then the grid.
@@ -4204,9 +4777,9 @@ private:
                     emit(Op::PlaceUpvalue, upvalue);
                     return;
                 }
-                if (upvalue == -1 && classSide() == ClassSide::Instance && class_->members.count(n.name) != 0 && kindHasThis(fs_->kind)) {
+                if (upvalue == -1 && classSide() == ClassSide::Instance && class_->members.count(n.name) != 0 && directThis()) {
                     // A field of what the method runs on.
-                    emit(Op::GetLocal, 0);
+                    emitThisValue();
                     emit(class_->isValue ? Op::GetOwn : Op::PlaceField, stringConstant(n.name));
                     return;
                 }
@@ -4282,7 +4855,12 @@ private:
     // ---- Expressions ----
 
     void requireMethodContext(const Node& at, const char* keyword) {
+        if (std::string(keyword) == "this") {
+            VarInfo info;
+            if (resolveLocal(fs_, "this", at, info) != -1) return;  // an inline body's receiver, or a block's object (D58, D59)
+        }
         for (FunctionState* state = fs_; state != nullptr; state = state->enclosing) {
+            if (state->isLambda && !state->locals.empty() && state->locals[0].name == "this" && std::string(keyword) == "this") return;
             if (state->kind == FunctionKind::Method || state->kind == FunctionKind::Initializer ||
                 state->kind == FunctionKind::Setter)
                 return;
@@ -4380,10 +4958,22 @@ private:
                 else emitGet(static_cast<const NameExpr&>(expr).name, expr);
                 break;
 
-            case ExprKind::This:
+            case ExprKind::This: {
+                const auto& e = static_cast<const ThisExpr&>(expr);
+                if (!e.label.empty()) {
+                    // `this@Name` (D57): what slot 0 is called where it is that object.
+                    VarInfo info;
+                    const std::string named = "this@" + e.label;
+                    if (resolveLocal(fs_, named, e, info) == -1 && resolveUpvalue(fs_, named, e, info) == -1)
+                        throw error(e, "there is no class or block called '" + e.label + "' around this: this@Name names the object of a class " +
+                                          "the code is written in, or of the block given to the function name (D57)");
+                    emitGet(named, e);
+                    break;
+                }
                 requireMethodContext(expr, "this");
                 emitGet("this", expr);
                 break;
+            }
 
             case ExprKind::Super: {
                 const auto& e = static_cast<const SuperExpr&>(expr);
@@ -4418,67 +5008,9 @@ private:
                 compileWhen(static_cast<const WhenExpr&>(expr));
                 break;
 
-            case ExprKind::Object: {
-                // The class is made the first time and kept in a global of the file's own that
-                // nothing else can name (M6.5 part 4), in a variable here as well; then its one
-                // object, which keeps what its members use of the code around (ObjectBuild).
-                const ClassStmt& cls = *static_cast<const ObjectExpr&>(expr).cls;
-                const int saved = enterValueBlock();
-                beginScope();
-                const int number = anonymousClasses_++;
-                const std::string bound = "(object " + std::to_string(number) + ")";
-                ObjectBuild build;
-                build.boundary = fs_;
-                build.outer = objectBuild_;
-                build.localsAtStart = fs_->locals.size();
-                objectBuild_ = &build;
-
-                // The shell's inputs may write the same object again: there it is made every time.
-                int kept = 0xFFFF;
-                int skip = -1;
-                if (!shellInput_) {
-                    const std::string hiddenName = "(object class " + std::to_string(number) + ")";
-                    GlobalName& hidden = session_.privates_[fileKey_][hiddenName];
-                    if (hidden.slot < 0) hidden.slot = session_.newSlot(hiddenName);
-                    hidden.declared = true;
-                    kept = hidden.slot;
-                    line_ = cls.line;
-                    emit(Op::ObjectClass, kept);
-                    skip = static_cast<int>(code().size());
-                    emitI32(0);
-                }
-                compileClass(cls, bound);
-                objectBuild_ = build.outer;
-                line_ = cls.line;
-                if (skip >= 0) {
-                    emitGet(bound, cls);
-                    const int keptAt = static_cast<int>(code().size()) + 1;  // StoreClass's operand
-                    emit(Op::StoreClass, kept);
-                    emit(Op::Pop);
-                    patchJump(skip);
-                    if (build.usesOuter) {
-                        // Made from what the code around holds: made every time, and kept nowhere.
-                        code()[static_cast<size_t>(skip) - 2] = 0xFF;
-                        code()[static_cast<size_t>(skip) - 1] = 0xFF;
-                        code()[static_cast<size_t>(keptAt)] = 0xFF;
-                        code()[static_cast<size_t>(keptAt) + 1] = 0xFF;
-                    }
-                }
-
-                emitGet(bound, cls);
-                if (build.captures.size() > 255)
-                    throw error(cls, "an object can use at most 255 variables of the code around it");
-                for (size_t i = 0; i < build.captures.size(); i++) {
-                    const ObjectBuild::Capture& capture = build.captures[i];
-                    emit(Op::Capture, capture.kind == 3 ? static_cast<int>(i) : capture.index);
-                    emitByte(capture.kind);
-                }
-                emit(Op::NewObject);
-                emitByte(static_cast<int>(build.captures.size()));
-                endScopeKeepingValue();
-                leaveValueBlock(saved);
+            case ExprKind::Object:
+                compileAnonymousObject(*static_cast<const ObjectExpr&>(expr).cls);
                 break;
-            }
 
             case ExprKind::Statement: {
                 const int saved = enterValueBlock();
@@ -4543,6 +5075,12 @@ private:
             case ExprKind::Call: {
                 const auto& e = static_cast<const CallExpr&>(expr);
                 int argc = static_cast<int>(e.args.size());
+                if (fs_->decl != nullptr && fs_->decl->isTail && session_.checker != nullptr) refuseTailCall(e);
+                if (session_.checker != nullptr && session_.checker->samCall(e)) {
+                    compileExpr(*e.args[0]);  // `Action { ... }`: the lambda, as the interface (D28)
+                    break;
+                }
+                if (compileRangeCall(e) || compileBoundCall(e) || compileInlineCall(e) || compileCallOn(e)) break;
                 noteWorkerScript(e);
                 // A lambda after the call belongs to the last parameter, which only the
                 // function being called knows the position of.
@@ -4551,9 +5089,7 @@ private:
                                                                        static_cast<const MemberExpr&>(*e.callee).name, *e.callee) == nullptr
                                                     ? session_.checker->argumentOrder(e)
                                                     : nullptr;
-                if (compileScopeCall(e)) {
-                    // let, also or takeIf with a lambda: done in place
-                } else if (order != nullptr) {
+                if (order != nullptr) {
                     // A C++ method given named arguments or a lambda after the call: each in its
                     // parameter's place, as the form the checker chose has them.
                     const auto& member = static_cast<const MemberExpr&>(*e.callee);
@@ -4633,7 +5169,7 @@ private:
                 int toEnd = e.safe ? emitJump(Op::JumpIfNull) : -1;
                 {
                     const bool own = ownMember(*e.object, e.name);
-                    const bool inPlace = session_.checker != nullptr && !copyingReads() && session_.checker->readsFieldInPlace(e);
+                    const bool inPlace = session_.checker != nullptr && !copyReadsHere() && session_.checker->readsFieldInPlace(e);
                     emit(inPlace ? (own ? Op::GetOwnRef : Op::GetPropRef) : (own ? Op::GetOwn : Op::GetProp), stringConstant(e.name));
                 }
                 if (toEnd >= 0) patchJump(toEnd);
@@ -4647,7 +5183,7 @@ private:
                 if (e.defaultValue) compileExpr(*e.defaultValue);
                 line_ = e.line;
                 if (e.defaultValue) emit(Op::GetIndexOr);
-                else if (session_.checker != nullptr && !copyingReads() && session_.checker->readsInPlace(e)) emit(Op::GetIndexRef);  // M6.6 part 4
+                else if (session_.checker != nullptr && !copyReadsHere() && session_.checker->readsInPlace(e)) emit(Op::GetIndexRef);  // M6.6 part 4
                 else emit(Op::GetIndex);
                 break;
             }
@@ -4746,10 +5282,146 @@ private:
 
             case ExprKind::Function: {
                 const FunctionDecl& fn = *static_cast<const FunctionExpr&>(expr).fn;
+                RuntimeType iface;
+                std::string method;
+                int arity = 0;
+                if (session_.checker != nullptr && session_.checker->samConversion(expr, iface, method, arity)) {
+                    compileSamObject(expr, fn, iface, method, arity);
+                    break;
+                }
                 compileFunction(fn, FunctionKind::Function, fn.name);
                 break;
             }
         }
+    }
+
+    // An anonymous object: the class is made the first time and kept in a global of the file's
+    // own that nothing else can name (M6.5 part 4), in a variable here as well; then its one
+    // object, which keeps what its members use of the code around (ObjectBuild).
+    void compileAnonymousObject(const ClassStmt& cls) {
+        const int saved = enterValueBlock();
+        beginScope();
+        const int number = anonymousClasses_++;
+        const std::string bound = "(object " + std::to_string(number) + ")";
+        ObjectBuild build;
+        build.boundary = fs_;
+        build.outer = objectBuild_;
+        build.localsAtStart = fs_->locals.size();
+        objectBuild_ = &build;
+
+        // The shell's inputs may write the same object again: there it is made every time.
+        int kept = 0xFFFF;
+        int skip = -1;
+        if (!shellInput_) {
+            const std::string hiddenName = "(object class " + std::to_string(number) + ")";
+            GlobalName& hidden = session_.privates_[fileKey_][hiddenName];
+            if (hidden.slot < 0) hidden.slot = session_.newSlot(hiddenName);
+            hidden.declared = true;
+            kept = hidden.slot;
+            line_ = cls.line;
+            emit(Op::ObjectClass, kept);
+            skip = static_cast<int>(code().size());
+            emitI32(0);
+        }
+        compileClass(cls, bound);
+        objectBuild_ = build.outer;
+        line_ = cls.line;
+        if (skip >= 0) {
+            emitGet(bound, cls);
+            const int keptAt = static_cast<int>(code().size()) + 1;  // StoreClass's operand
+            emit(Op::StoreClass, kept);
+            emit(Op::Pop);
+            patchJump(skip);
+            if (build.usesOuter) {
+                // Made from what the code around holds: made every time, and kept nowhere.
+                code()[static_cast<size_t>(skip) - 2] = 0xFF;
+                code()[static_cast<size_t>(skip) - 1] = 0xFF;
+                code()[static_cast<size_t>(keptAt)] = 0xFF;
+                code()[static_cast<size_t>(keptAt) + 1] = 0xFF;
+            }
+        }
+
+        emitGet(bound, cls);
+        if (build.captures.size() > 255)
+            throw error(cls, "an object can use at most 255 variables of the code around it");
+        for (size_t i = 0; i < build.captures.size(); i++) {
+            const ObjectBuild::Capture& capture = build.captures[i];
+            emit(Op::Capture, capture.kind == 3 ? static_cast<int>(i) : capture.index);
+            emitByte(capture.kind);
+        }
+        emit(Op::NewObject);
+        emitByte(static_cast<int>(build.captures.size()));
+        endScopeKeepingValue();
+        leaveValueBlock(saved);
+    }
+
+    // A lambda given as an interface with one abstract method (D28): one small object of a class
+    // made once, as `object : I { override fun m(a, b) => lambda(a, b) }` would be, which keeps
+    // the lambda. The interface is named by its global, which this file need not import.
+    std::vector<std::unique_ptr<ClassStmt>> samClasses_;
+    void compileSamObject(const Expr& at, const FunctionDecl& fn, const RuntimeType& iface, const std::string& method, int arity) {
+        std::string shape;
+        std::vector<TypeOperand> operands;
+        if (!shapeOf(iface, shape, operands) || operands.size() != 1 || operands[0].global < 0)
+            throw error(at, "the interface this lambda is given as cannot be named here (D28)");
+        auto cls = std::make_unique<ClassStmt>();
+        cls->line = at.line;
+        cls->col = at.col;
+        cls->name = "(lambda)";
+        const std::string super = "(global " + std::to_string(operands[0].global) + ")";
+        cls->supertypes.push_back(super);
+        TypeAnnotation written;
+        written.name = super;
+        cls->supertypeTypes.push_back(written);
+        cls->hasSuper = true;
+        cls->superName = super;
+        auto m = std::make_unique<FunctionDecl>();
+        m->line = at.line;
+        m->col = at.col;
+        m->name = method;
+        m->isOverride = true;
+        m->generated = true;
+        auto call = std::make_unique<CallExpr>();
+        call->line = at.line;
+        call->col = at.col;
+        auto callee = std::make_unique<NameExpr>();
+        callee->line = at.line;
+        callee->col = at.col;
+        callee->name = "(lambda kept)";
+        call->callee = std::move(callee);
+        for (int i = 0; i < arity; i++) {
+            const std::string param = "(" + std::to_string(i) + ")";
+            m->params.push_back(param);
+            Node position;
+            position.line = at.line;
+            position.col = at.col;
+            m->paramPositions.push_back(position);
+            m->paramTypes.emplace_back();
+            m->paramDefaults.push_back(nullptr);
+            auto arg = std::make_unique<NameExpr>();
+            arg->line = at.line;
+            arg->col = at.col;
+            arg->name = param;
+            call->args.push_back(std::move(arg));
+            call->names.emplace_back();
+            call->spread.push_back(0);
+        }
+        auto ret = std::make_unique<ReturnStmt>();
+        ret->line = at.line;
+        ret->col = at.col;
+        ret->value = std::move(call);
+        m->body.push_back(std::move(ret));
+        cls->methods.push_back(std::move(m));
+        const ClassStmt& made = *cls;
+        samClasses_.push_back(std::move(cls));
+
+        const int saved = enterValueBlock();
+        beginScope();
+        compileFunction(fn, FunctionKind::Function, fn.name);
+        addLocal("(lambda kept)", true, at, true);
+        compileAnonymousObject(made);
+        endScopeKeepingValue();
+        leaveValueBlock(saved);
     }
 
     // A call with `name = value` arguments. The callee is evaluated to a value first (a bound
@@ -4775,9 +5447,11 @@ private:
         std::vector<Local>& locals = fs_->locals;
         int count = 0;
         while (!locals.empty() && locals.back().depth > fs_->scopeDepth) {
+            if (!locals.back().alias) {
+                fs_->slotTop--;
+                count++;
+            }
             locals.pop_back();
-            fs_->slotTop--;
-            count++;
         }
         if (count > 0) emit(Op::PopUnder, count);
     }
@@ -4957,8 +5631,8 @@ private:
         const bool own = side != ClassSide::None && (class_->statics.count(name) != 0 ||
                                                      (side == ClassSide::Instance && class_->members.count(name) != 0));
         if (!own && outerStaticOwner(name) != nullptr) return false;  // called as a value
-        if (side == ClassSide::Instance && class_->members.count(name) != 0 && kindHasThis(fs_->kind)) {
-            emit(Op::GetLocal, 0);
+        if (side == ClassSide::Instance && class_->members.count(name) != 0 && directThis()) {
+            emitThisValue();
             compileArgs(e.args);
             emitCallPrelude(e, argc + 1);
             line_ = e.line;
@@ -5450,6 +6124,8 @@ private:
 static uint64_t skeletonOf(const std::vector<Token>& tokens, const std::vector<StmtPtr>& statements) {
     std::vector<std::pair<size_t, size_t>> bodies;
     auto add = [&](const FunctionDecl& d) {
+        // An inline function's body is copied into the files calling it: theirs to see too (D59).
+        if (d.isInline) return;
         if (d.bodyTo > d.bodyFrom) bodies.emplace_back(d.bodyFrom, d.bodyTo);
     };
     std::function<void(const ClassStmt&)> inClass = [&](const ClassStmt& c) {

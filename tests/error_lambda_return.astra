@@ -1,6 +1,7 @@
-// A plain return in a lambda would have to leave the function around it.
+// A plain return in a lambda would have to leave the function around it: allowed only in a
+// lambda copied into an inline function (forEach is one, D59); `later` keeps its lambda.
+fun later(action : (int) -> unit) { action(1) }
 fun firstEven(items : List<int>) {
-  items.forEach { if it % 2 == 0 { return it } }
-  return null
+  later { if it % 2 == 0 { return } }
 }
-// expect compile error: 'return' leaves the function it is written in, which a lambda cannot do except inside let, also or takeIf; to leave the lambda itself write return@forEach
+// expect compile error: 'return' leaves the function it is written in, which a lambda cannot do unless it is copied into an inline function, as forEach and let are (D59); to leave the lambda itself write return@later

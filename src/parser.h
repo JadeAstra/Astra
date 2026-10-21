@@ -110,7 +110,8 @@ private:
     ExprPtr equality();
     ExprPtr comparison();
     ExprPtr elvis();
-    ExprPtr pairing();
+    ExprPtr infixCall();
+    void checkInfix(const FunctionDecl& fn, bool member, const Token& at);
     ExprPtr range();
     ExprPtr bitOr();
     ExprPtr bitXor();

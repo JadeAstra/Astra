@@ -240,6 +240,7 @@ private:
     std::unordered_map<std::string, std::unique_ptr<Namespace>> namespaces_;  // by folder
     Namespace* builtins_ = nullptr;                                           // the prelude and the built-in names
     std::unordered_map<std::string, std::unordered_map<std::string, GlobalName>> privates_;  // by file: its private names
+    std::unordered_map<std::string, std::vector<ShellImport>> fileImports_;  // by file: what it imports, for inline bodies (D59)
     std::unordered_map<int, std::string> globalClassTypes_;                   // global slot -> the class it is declared as
     std::unordered_map<std::string, std::vector<std::string>> enums_;         // enum (see enumKey) -> its entries
 

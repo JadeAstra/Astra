@@ -1,0 +1,5 @@
+// this@Name names a class around the code or a block given to a function (D57).
+class Box(val n : int) {
+  fun f() : int => this@Nowhere.n
+}
+// expect compile error: there is no class or block called 'Nowhere' around this: this@Name names the object of a class the code is written in, or of the block given to the function name (D57)

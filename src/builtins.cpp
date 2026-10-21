@@ -257,13 +257,6 @@ void registerGlobals(VM& vm) {
         return Value::object(vm.alloc<ObjRange>(start, end, step, false));
     });
 
-    // with(obj) { ... }: runs the block on obj, so that the names in it are obj's members.
-    vm.defineNative("with", 2, 2, [](VM& vm, int, Value* args) -> Value {
-        // The block is set going in place of this call, not run from inside it.
-        if (args[1].isObjType(ObjType::Closure)) return vm.tailCallOn(args[0], args[1]);
-        return vm.callOn(args[0], args[1], 0, nullptr);
-    });
-
     vm.defineNative("assert", 1, 2, [](VM& vm, int argc, Value* args) -> Value {
         if (args[0].truthy()) return Value::null();
         throw vm.runtimeError(argc > 1 ? vm.stringify(args[1]) : "assertion failed");

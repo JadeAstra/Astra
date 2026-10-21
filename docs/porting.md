@@ -145,3 +145,32 @@ can change, and an `==` without a `hashCode`.
   property with a getter too.
 - **Extension functions follow imports.** One declared in another folder is in reach only of
   files importing that folder.
+
+## Functions (M6.6 part 8, group 4)
+
+### What to write instead
+
+| Kotlin | Astra | |
+| --- | --- | --- |
+| `fun interface Action { ... }` | `interface Action { ... }` | any interface with one abstract method takes a lambda (D28) |
+| `tailrec fun walk(...)` | `tail fun walk(...)` | or no word: a call of itself as the last step is a loop anyway (D29) |
+| `inline fun f(noinline a : () -> Unit)` | `inline fun f(a : () -> unit)` | no `noinline` or `crossinline`: worked out from the body (D59) |
+| `infix fun Int.over(x : Int)` | `infix fun int.over(x : int)` | (D72) |
+| `this@Outer`, `this@apply` | the same | (D57) |
+| `block(obj)`, `obj.block()` for `T.() -> R` | the same | `with(obj, block)` still works (D58) |
+| `1 until 5` | `1..<5` | `until` is an error saying so |
+
+### What compiles but means something else
+
+- **`this` in a block run on an object is that object**, in a method too, as in Kotlin: inside
+  `other.run { this.name }` it is `other`'s name. The method's object is `this@Class` (D58).
+- **A bare `return` in `forEach`, `map` and the other lambda functions of the standard
+  library** leaves the function the call is in, as Kotlin's inline functions do; `return@forEach`
+  goes on to the next item. Before, it was an error everywhere but `let`, `also` and `takeIf`.
+- **A function calling itself as its last step does not run out of stack**: such recursion is a
+  loop, and a test that relied on a stack overflow needs the call to do something after it.
+- **A block given a type that takes nothing has no `it`.** `items.forEach { later { print(it) } }`
+  prints the item, where `it` was null before (D55); `it` inside another lambda's `it` is an
+  error asking for a name.
+- **`to`, `downTo` and `step` are infix functions**, with infix precedence: `a downTo b step c`
+  is `(a downTo b) step c`, below arithmetic and above comparisons, as in Kotlin.

@@ -44,6 +44,8 @@ struct CallFrame {
     // The call's result is not wanted: what was under it on the stack is the result instead.
     // This is how `apply` and `also` give back the value they were called on.
     bool dropResult;
+    // How many times the function has started again, calling itself as its last step (D29).
+    uint32_t repeats;
 };
 // The type arguments a frame's generic function was called with (M6.6 part 1) are kept beside
 // the frames, not in them, which stay small for the calls that have none: VM::frameTypeArgs.
@@ -894,6 +896,11 @@ private:
 
     Value callWithReceiver(Value receiver, ObjClosure* method);
     Value implicitReceiver(const CallFrame* frame, const Value* base, const ObjString* name) const;
+    // What ImplicitFirst gave the next lookup of a bare name (D58, D59).
+    mutable Value implicitFirst_[8];
+    mutable uint8_t implicitFirstCount_ = 0;
+    mutable bool implicitOnly_ = false;
+    mutable uint8_t implicitTried_ = 0;  // how many of them the last lookup tried, for its error
     void setAccess(ObjClass* cls, Table& marks, ObjString* name, bool write, const std::vector<uint16_t>& run, int kind);
     void declareAccess(ObjClass* cls, Table& marks, ObjString* name, int id, int kind, bool write);
     void joinProtected(ObjClass* subclass);

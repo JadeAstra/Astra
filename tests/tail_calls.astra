@@ -1,0 +1,40 @@
+// A function calling itself as its last step is a loop (D29): deep recursion of that shape
+// does not run out of stack, and an error's trace counts the repeats.
+
+fun sum(n : int, acc : int = 0) : int {
+  if (n == 0) { return acc }
+  return sum(n - 1, acc + n)
+}
+print(sum(1000000))                                // expect: 500000500000
+
+// A branch of ? : or what follows ?: in what is returned.
+fun gcd(a : int, b : int) : int => b == 0 ? a : gcd(b, a % b)
+print(gcd(1071, 462))                              // expect: 21
+fun lastOf(items : List<int>, at : int = 0) : int? => items.getOrNull(at + 1) == null ? items.getOrNull(at) : lastOf(items, at + 1)
+print(lastOf([4, 5, 6]))                           // expect: 6
+
+// A method calling itself on its own object, where no subclass overrides it.
+class Counter {
+  fun count(n : int, acc : int) : int => n == 0 ? acc : this.count(n - 1, acc + 1)
+}
+print(Counter().count(500000, 0))                  // expect: 500000
+
+// tail asks for every call of itself to be its last step.
+tail fun down(n : int) : int => n <= 0 ? n : down(n - 2)
+print(down(300001))                                // expect: -1
+
+// A closure made in one round keeps that round's values.
+fun keep(n : int, out : List<() -> int>) : List<() -> int> {
+  if (n == 0) { return out }
+  val k = n
+  return keep(n - 1, out + [{ k }])
+}
+print(keep(3, []).map { it() })                    // expect: [3, 2, 1]
+
+fun fails(n : int) : int {
+  if (n == 0) { throw Error("bottom") }
+  return fails(n - 1)
+}
+try { fails(10) } catch (e) { print(e.message) }   // expect: bottom
+fails(10000)
+// expect runtime error: at fails (tail_calls.astra:35), 10,001 times

@@ -54,8 +54,14 @@ fun error(message : any?) : nothing {
   throw Error("$message")
 }
 
+// `a to b` is Pair(a, b) (D72).
+inline infix fun <A, B> A.to(that : B) : Pair<A, B> => Pair(this, that)
+
+// `10 downTo 1`: from 10 down to 1, both of them included (D72).
+infix external fun int.downTo(to : int) : Range
+
 // Runs `action` that many times, giving it 0, 1, 2 and so on.
-fun repeat(times : int, action : (int) -> unit) {
+inline fun repeat(times : int, action : (int) -> unit) {
   for index in 0..<times { action(index) }
 }
 
@@ -67,8 +73,24 @@ fun any?.equals(other : any?) : bool => this == other
 // data classes and values; an object of any other class by which object it is (D26).
 fun any?.hashCode() : int => __hashCode(this)
 fun any.compareTo(other : any?) : int => compareValues(this, other)
-fun <T> T.takeIf(predicate : (T) -> bool) : T? => predicate(this) ? this : null
-fun <T> T.takeUnless(predicate : (T) -> bool) : T? => predicate(this) ? null : this
+
+// The scope functions, copied into each call with their blocks (D58, D59): a bare `return` in
+// a block leaves the function the call is in. `let` and `also` hand the value to the block,
+// `apply`, `run` and `with` run the block on it; `also` and `apply` give the value back, the
+// others the block's result. The value may be null, as T may stand for a type that takes it.
+inline fun <T, R> T.let(block : (T) -> R) : R => block(this)
+inline fun <T> T.also(block : (T) -> unit) : T {
+  block(this)
+  return this
+}
+inline fun <T> T.apply(block : T.() -> unit) : T {
+  block(this)
+  return this
+}
+inline fun <T, R> T.run(block : T.() -> R) : R => block(this)
+inline fun <T, R> with(receiver : T, block : T.() -> R) : R => block(receiver)
+inline fun <T> T.takeIf(predicate : (T) -> bool) : T? => predicate(this) ? this : null
+inline fun <T> T.takeUnless(predicate : (T) -> bool) : T? => predicate(this) ? null : this
 
 // For a string, a list, a map or a set that may be null. It is one function for all of them,
 // since null does not say which of them it would have been.
@@ -154,13 +176,13 @@ fun <T> emptyList() : List<T> => []
 fun <T> listOfNotNull(vararg items : T?) : open List<T> => items.filterNotNull()
 
 // List(3) { it * 2 } is [0, 2, 4]: `size` items, each worked out from its position.
-fun <T> List(size : int, init : (int) -> T) : open List<T> {
+inline fun <T> List(size : int, init : (int) -> T) : open List<T> {
   val out : open List<T> = []
   for index in 0..<size { out.add(init(index)) }
   return out
 }
 
-fun <T> MutableList(size : int, init : (int) -> T) : open List<T> => List(size, init)
+inline fun <T> MutableList(size : int, init : (int) -> T) : open List<T> => List(size, init)
 
 // mapOf("a" to 1, "b" to 2)
 fun <K, V> mapOf(vararg pairs : Pair<K, V>) : open Map<K, V> {
@@ -182,25 +204,25 @@ fun <T> emptySet() : Set<T> => Set()
 
 // Each runs the lambda on a new collection, so that add(...), put(...) or append(...) inside
 // it fill that collection, and gives what was built.
-fun <T> buildList(builder : open List<T>.() -> unit) : open List<T> {
+inline fun <T> buildList(builder : open List<T>.() -> unit) : open List<T> {
   val out : open List<T> = []
   with(out, builder)
   return out
 }
 
-fun <K, V> buildMap(builder : open Map<K, V>.() -> unit) : open Map<K, V> {
+inline fun <K, V> buildMap(builder : open Map<K, V>.() -> unit) : open Map<K, V> {
   val out : open Map<K, V> = {:}
   with(out, builder)
   return out
 }
 
-fun <T> buildSet(builder : open Set<T>.() -> unit) : open Set<T> {
+inline fun <T> buildSet(builder : open Set<T>.() -> unit) : open Set<T> {
   val out : open Set<T> = Set()
   with(out, builder)
   return out
 }
 
-fun buildString(builder : StringBuilder.() -> unit) : string {
+inline fun buildString(builder : StringBuilder.() -> unit) : string {
   val out = StringBuilder()
   with(out, builder)
   return out.toString()

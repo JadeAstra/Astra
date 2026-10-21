@@ -28,7 +28,6 @@ external fun flush()
 external fun input(prompt : string = "") : string?
 external fun <T> maxOf(first : T, vararg rest : T) : T
 external fun <T> minOf(first : T, vararg rest : T) : T
-external fun <T, R> with(receiver : T, block : T.() -> R) : R
 
 // -- string --
 
@@ -181,6 +180,8 @@ external val Range.size : int
 external val Range.start : int
 external val Range.end : int
 external val Range.step : int
+// `0..10 step 2`, `10 downTo 0 step 3`: every so many of a range's numbers, from its first (D72).
+infix external fun Range.step(by : int) : Range
 external fun Range.toList() : open List<int>
 external fun Range.contains(value : any?) : bool
 external fun Range.first() : int

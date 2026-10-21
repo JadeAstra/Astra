@@ -551,7 +551,7 @@ More about loops:
 
 ```astra
 for i in 10 downTo 1 { ... }             // counting down, 1 included
-for i in 0..100 step 10 { ... }          // every tenth; also after ..<, until and downTo
+for i in 0..100 step 10 { ... }          // every tenth; also after ..< and downTo
 do { line = read() } while line != null  // the block runs before the first test
 
 rows@ for row in grid {                  // a name for the loop
@@ -691,6 +691,66 @@ included, so `List<int>` and `List<float>` can each have a `total()`. A list doe
 its element type when the program runs, so such forms are chosen only when compiling, where
 the list's type has to be known.
 
+#### Infix functions
+
+A member or an extension function with one parameter, marked `infix`, can be called with its
+name between the two values, as Kotlin has it (D72):
+
+```astra
+infix fun string.repeatedTimes(n : int) : string => this.repeat(n)
+"ab" repeatedTimes 3                  // "ababab", the same as "ab".repeatedTimes(3)
+```
+
+It binds less tightly than arithmetic and the ranges and more tightly than `?:`, comparisons,
+`in` and `is`, from left to right: `1 + 2 to 3 * 4` is `(1 + 2) to (3 * 4)`. The name is on the
+line its left side ends on. Calling a function not marked infix that way is an error, and so
+is an infix function with other than one parameter, or with a default for it. `to`, `downTo`
+and `step` are the standard library's infix functions; a range made with them is made in place,
+and a `for` over one counts through it with nothing made.
+
+#### Inline functions
+
+`inline fun` is copied into each call, with the lambdas given to it (D59). A bare `return` in
+such a lambda leaves the function the call is in, `break` and `continue` reach the loops
+around the call, `return@name` leaves the lambda alone, and no lambda is made:
+
+```astra
+inline fun <T> List<T>.each(action : (T) -> unit) {
+  for (x in this) { action(x) }
+}
+fun firstOver(items : List<int>, limit : int) : int {
+  items.each { if (it > limit) { return it } }     // leaves firstOver
+  return -1
+}
+```
+
+A lambda parameter that the body only calls, or passes on to another inline function that
+does, is copied in; one the body keeps or passes elsewhere is made as usual, and a bare
+`return` in a lambda given for it is the usual error. So there is no `noinline` or
+`crossinline`. The body's names are those of the file and class it is written in, its
+variables its own, and it keeps its rights where it is copied: a private inline member may
+use the class's private fields wherever it is called. An inline function cannot call itself,
+directly or through others, cannot be declared inside another function, and an inline member
+cannot be overridden. The standard library's functions that take a lambda and run it there
+and then are inline: `forEach`, `map`, `filter`, `any`, `first`, `fold`, `sumOf` and the rest
+for lists, maps and sets, the scope functions, `repeat`, `buildList` and `buildMap`.
+
+#### Tail calls
+
+A function that calls itself as its last step starts again in the same frame instead, so
+recursion of that shape never runs out of stack (D29). This holds for a top-level function,
+an extension, and a method calling itself on its own object where no subclass overrides it; the
+call may be `return f(...)`, an expression body, or a branch of `? :` or what follows `?:` in
+what is returned. `tail fun` asks for it: a call of itself that is not its last step is then a
+compile error saying why (Kotlin's `tailrec` is written `tail`). An error's trace counts the
+repeats in place of the frames saved: `at sum (list.astra:5), 10,001 times`.
+
+```astra
+fun sum(n : int, acc : int = 0) : int => n == 0 ? acc : sum(n - 1, acc + n)
+tail fun gcd(a : int, b : int) : int => b == 0 ? a : gcd(b, a % b)
+sum(1000000)                          // no stack overflow
+```
+
 ### Lambdas
 
 A function can be written in braces where a value is expected. Its value is its last
@@ -721,6 +781,27 @@ words.groupBy { it.size }                        // the lambda is keySelector
 words.groupBy({ it.size }) { it.upper() }        // keySelector, then valueTransform
 ```
 
+Whether a lambda without a parameter list has an `it` is decided by the function type it is
+given: given `() -> unit` it has none, and `it` in it is that of a lambda around it. A lambda
+that uses `it` inside another that uses its own is an error asking for one of them to be named
+(`rows.forEach { row -> row.cells.forEach { print(it) } }`), since the inner would hide the
+outer (D55).
+
+**A lambda where an interface is expected.** An interface with exactly one abstract method,
+whatever default methods it has besides, takes a lambda, as in Java (D28): the lambda becomes
+an object of the interface whose method runs it. Kotlin's `fun interface` is written
+`interface`, and `Action { ... }`, the interface's name and a lambda, makes one too:
+
+```astra
+interface Action { fun run(x : int) : int }
+fun use(a : Action) : int => a.run(3)
+use { it * 2 }                            // 6
+val tens = Action { it * 10 }
+```
+
+Where overloads take a function type and an interface, a lambda goes to the function type;
+where they take two such interfaces, the call is an error until the lambda says which.
+
 In the condition of an `if`, `while` or `for` a `{` opens the body, so a call there that takes
 a lambda goes in parentheses: `if (items.any { it > 1 }) { ... }`. A parameter list may be
 broken after a comma. What tells a lambda from a map is what follows the brace: a key and a
@@ -740,24 +821,40 @@ with(panel) { row("second") }
 
 A name in such a lambda is looked for among its own variables and those of the functions
 around it first, then on the object, then (in a lambda inside another) on the objects of the
-lambdas around it, and last among the globals.
+lambdas around it, and last among the globals. `this` in it is the object it runs on (D58), and
+the object of a class around the code, or of a block given to a function, is `this@Name` (D57):
 
-Every value has `let`, `also`, `apply`, `run` and `takeIf`:
+```astra
+class Form(val name : string) {
+  fun title() : string => Panel().run { this.title + " of " + this@Form.name }
+}
+grid { listOf(1, 2).forEach { this@grid.add(it) } }    // the grid, from a lambda inside its block
+fun Box.twice() : int => this@twice.n * 2              // an extension's receiver, by its name
+```
+
+A value of a function type run on an object, `Panel.() -> unit`, is called on one as Kotlin
+has it: `block(panel)` or `panel.block()`.
+
+Every value has `let`, `also`, `apply`, `run`, `takeIf` and `takeUnless`, and `with(x) { }`
+runs a block on `x`:
 
 | | the lambda gets the value as | the result is |
 | --- | --- | --- |
 | `x.let { ... }` | `it` | the lambda's value |
 | `x.also { ... }` | `it` | `x` |
 | `x.takeIf { ... }` | `it` | `x` if the lambda gives true, else `null` |
+| `x.takeUnless { ... }` | `it` | `x` if the lambda gives false, else `null` |
 | `x.run { ... }` | the object it runs on | the lambda's value |
 | `x.apply { ... }` | the object it runs on | `x` |
+| `with(x) { ... }` | the object it runs on | the lambda's value |
 
 With `?.` they are the usual way to do something only when a value is there:
-`user?.let { greet(it) }`.
+`user?.let { greet(it) }`. They are inline functions of the standard library.
 
-**`return` in a lambda.** Written with a lambda, `let`, `also` and `takeIf` are compiled in
-place, as part of the function they are in. A `return` there leaves that function, and
-`break` and `continue` reach a loop around them:
+**`return` in a lambda.** A lambda given to an inline function is copied in with it, as part
+of the function it is written in (see "Inline functions"): the scope functions, `forEach`,
+`map`, `filter` and the like are inline. A `return` there leaves that function, and `break` and
+`continue` reach a loop around it:
 
 ```astra
 fun find(node : Node, name : string) : Node? {
@@ -2204,8 +2301,8 @@ milliseconds if no unit is given. Each of the factory functions takes a function
 the thread for a task, for naming them or making them daemons:
 `Executors.newSingleThreadExecutor { work -> Thread(work, "saver").apply { isDaemon = true } }`.
 
-`return` inside the block of `synchronized` or `withLock` is `return@synchronized value`, as
-in any lambda that is not `let`, `also` or `takeIf`.
+`synchronized` and `withLock` are inline, so a `return` inside their block leaves the function
+around it, the lock let go on the way out.
 
 ### The event loop
 
@@ -2680,8 +2777,8 @@ opportunity, which is slow but useful for finding memory bugs when changing the 
 - `if` always needs its braces, also as a value: `if wide { 200 } else { 100 }`.
 - Extension functions are not scoped to the file that imports them, and there are no extension
   properties. A class has one initializer: there are no secondary constructors.
-- `apply`, `run`, `synchronized` and `withLock` are ordinary calls, so a plain `return` inside
-  their lambda is an error; it works in `let`, `also` and `takeIf`.
+- A call of itself is a loop only for a function of the top level or a class, not for one
+  declared inside another or a generic one; nor inside a try.
 - Text is one glyph for each character, left to right. Scripts whose letters join or change
   places (Arabic, Hebrew's direction, Devanagari, Thai's marks) and emoji made of several
   characters are not laid out yet: that is the second part of the text engine.
@@ -2698,8 +2795,8 @@ opportunity, which is slow but useful for finding memory bugs when changing the 
   `bounce_parallel.astra` moves them in a parallel section (one line different),
   `bounce_threads.astra` on background threads, `bounce_flows.astra` in flows on the main
   thread, and `bounce_workers.astra` in workers.
-- An `object` is created where it is written, and top-level variables get their values in
-  order (file by file for a folder), so one cannot be used by a statement that runs earlier.
+- Top-level variables get their values in order (file by file for a folder), so one cannot be
+  used by a statement that runs earlier, unless it is `lazy`.
 - Bytecode files are verified when loaded, but that is a consistency check rather than a
   security sandbox. Run only `.astc` files you trust.
 - Standalone programs are 1.7 to 2.2 MB each and have only been tried on Windows. They carry

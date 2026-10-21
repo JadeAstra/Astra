@@ -1,0 +1,110 @@
+// Inline functions (D59): copied into each call with the lambdas they only call, so a bare
+// `return` in such a lambda leaves the function the call is in, break and continue reach the
+// loops around the call, and no lambda is made.
+
+inline fun twice(action : (int) -> unit) {
+  action(1)
+  action(2)
+}
+var log = ""
+twice { log += "$it " }
+print(log.trim())                                  // expect: 1 2
+
+inline fun <T> List<T>.each(action : (T) -> unit) {
+  for (x in this) { action(x) }
+}
+fun firstOver(items : List<int>, limit : int) : int {
+  items.each { if (it > limit) { return it } }
+  return -1
+}
+print(firstOver([1, 5, 9], 4), firstOver([1, 2], 4))   // expect: 5 -1
+
+// return@name leaves the lambda alone; break and continue reach the loop around the call.
+var steps = ""
+for (i in 0..<5) {
+  twice {
+    if (i == 1) { return@twice }
+    if (i == 3) { break }
+    steps += "$i.$it "
+  }
+}
+print(steps.trim())                                // expect: 0.1 0.2 2.1 2.2
+
+// A member, private, reaching the object's fields; and the object the code calling it is in.
+class Selection(var from : int, var to : int) {
+  private inline fun withSelection(action : (int, int) -> unit) { action(from, to) }
+  fun show() : string {
+    var out = ""
+    withSelection { a, b -> out = "$a-$b" }
+    return out
+  }
+}
+print(Selection(3, 7).show())                      // expect: 3-7
+
+// A lambda run on an object, called block(obj) or obj.block(); a lambda passed on to another
+// inline function; a parameter left out, given its default.
+inline fun <T> T.configure(block : T.() -> unit) : T {
+  block(this)
+  return this
+}
+class Box(var n : int)
+print(Box(1).configure { n = 5 }.n)                // expect: 5
+inline fun outer(action : (int) -> unit) { inner(action) }
+inline fun inner(go : (int) -> unit) { go(42) }
+outer { print("passed $it") }                      // expect: passed 42
+inline fun step(by : int = 3, action : (int) -> unit) { action(by) }
+step { print("default $it") }                      // expect: default 3
+
+// A lambda the body keeps is made as usual; a closure keeps the value it saw.
+inline fun later(x : int) : () -> int {
+  val k = x * 2
+  return { k + x }
+}
+print(later(5)())                                  // expect: 15
+
+// finally blocks of the body run when a return in the lambda leaves through them.
+inline fun guarded(action : () -> unit) {
+  try { action() } finally { log = "finally" }
+}
+fun early() : string {
+  guarded { return "early" }
+  return "late"
+}
+print(early(), log)                                // expect: early finally
+
+// The value of an expression body, and of a return in the middle of the body.
+inline fun firstMatch(items : List<int>, pred : (int) -> bool) : int? {
+  for (x in items) { if (pred(x)) { return x } }
+  return null
+}
+print(firstMatch([3, 8, 9]) { it > 5 } ?: 0, firstMatch([1]) { it > 5 } ?: 0)   // expect: 8 0
+
+// The standard library's functions that take a lambda are inline (D58).
+fun findBig(items : List<int>) : string {
+  items.forEach { if (it > 100) { return "found $it" } }
+  return "none"
+}
+print(findBig([1, 200]), findBig([1]))             // expect: found 200 none
+val n : int? = null
+print(n?.let { it + 1 }, 4.let { it * 2 }, 5.takeIf { it > 3 }, 2.takeUnless { it > 1 })   // expect: null 8 5 null
+print(buildList<int> { add(1); add(2) })           // expect: [1, 2]
+var total = 0
+repeat(3) { total += it }
+print(total)                                       // expect: 3
+
+// synchronized and withLock are inline: a return in the block lets the lock go on the way out.
+val lock = Lock()
+fun locked() : int {
+  lock.withLock { return 6 }
+}
+fun guardedSum(items : List<int>) : int {
+  var total = 0
+  for (x in items) {
+    synchronized(lock) {
+      if (x > 2) { break }
+      total += x
+    }
+  }
+  return total
+}
+print(locked(), guardedSum([1, 2, 3, 4]), lock.isHeldByCurrentThread)   // expect: 6 3 false

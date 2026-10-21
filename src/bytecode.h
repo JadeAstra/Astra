@@ -168,6 +168,16 @@ enum class Op : uint8_t {
     Component,          // u8 index                        value -> part
 
     MissingArg,         // u16 parameter name              throws: the call left out an argument that has no default
+    // A function calling itself as its last step (D29): the arguments become its parameters
+    // and it starts again in the same frame, which counts the times.
+    TailLoop,           // u8 count                        arguments ->
+    // Before a bare name's lookup (GetImplicit and the rest): the object in a local to try first,
+    // that of a block copied in place (D58, D59); flags 1: that one and no other (an inline
+    // function's body, which runs on no object of the frame's).
+    ImplicitFirst,      // u16 slot, u8 flags              ->
+    // `block(obj, a)` or `obj.block(a)`: a function run on an object (D58), the object where a
+    // method has `this`.
+    CallOn,             // u8 argc                         callee object args -> result
 
     // A class's static values are worked out by a function of its own, attached with
     // ClassInit and run on first need: by EnsureClassInit, or by any use of a static member.

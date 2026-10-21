@@ -773,6 +773,20 @@ void registerIndexMethods(VM& vm) {
     });
 }
 
+// `10 downTo 1` and `range step 2` (D72): infix functions of the standard library, which the
+// compiler writes in place where it sees them, as it does a range written with `..`.
+void registerRangeWords(VM& vm) {
+    vm.defineMethod(BuiltinType::Number, "downTo", 1, 1, [](VM& vm, Value self, int, Value* args) -> Value {
+        return Value::object(vm.alloc<ObjRange>(vm.toInt(self, "start"), vm.toInt(args[0], "end"), -1, true));
+    });
+    vm.defineMethod(BuiltinType::Range, "step", 1, 1, [](VM& vm, Value self, int, Value* args) -> Value {
+        const ObjRange* range = asRange(self);
+        const int64_t by = vm.toInt(args[0], "step");
+        if (by <= 0) throw vm.runtimeError("the step of a range must be a positive int");
+        return Value::object(vm.alloc<ObjRange>(range->start, range->end, range->step < 0 ? -by : by, range->inclusive));
+    });
+}
+
 // A byte's methods (D19): the int it holds.
 void registerByteMethods(VM& vm) {
     vm.defineMethod(BuiltinType::Byte, "toInt", 0, 0, [](VM&, Value self, int, Value*) -> Value { return Value::integer(self.as.i); });
@@ -1395,6 +1409,7 @@ void registerStdlib(VM& vm) {
     registerCharMethods(vm);
     registerByteMethods(vm);
     registerIndexMethods(vm);
+    registerRangeWords(vm);
     registerNumberConstants(vm);
     registerListMethods(vm);
     registerMapMethods(vm);

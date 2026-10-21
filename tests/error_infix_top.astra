@@ -1,0 +1,3 @@
+// An infix function is called on a value: a member or an extension (D72).
+infix fun pair(a : int) : int => a
+// expect compile error: an infix function is a member or an extension, fun Type.pair(other), called value pair other (D72)

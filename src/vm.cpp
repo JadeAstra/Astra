@@ -852,6 +852,16 @@ Value VM::implicitReceiver(const CallFrame* frame, const Value* base, const ObjS
     auto has = [&](Value candidate) {
         return hasMember(candidate, name) && !(name->restricted != 0 && accessDenied(candidate, name, proto, false));
     };
+    implicitTried_ = implicitFirstCount_;
+    if (implicitFirstCount_ != 0) {
+        // The objects of blocks copied in place, innermost first (D58, D59).
+        const int count = implicitFirstCount_;
+        implicitFirstCount_ = 0;
+        const bool only = std::exchange(implicitOnly_, false);
+        for (int i = count; i-- > 0;)
+            if (has(implicitFirst_[i])) return implicitFirst_[i];
+        if (only) return Value::undefined();
+    }
     if (has(base[0])) return base[0];
     for (uint16_t upvalue : proto->outerReceivers) {
         const ObjUpvalue* cell = receiverUpvalue(frame, base, upvalue);
@@ -865,6 +875,8 @@ Value VM::implicitReceiver(const CallFrame* frame, const Value* base, const ObjS
 AstraThrow VM::undefinedName(const CallFrame* frame, const Value* base, const ObjString* name, size_t global) {
     const FunctionProto* proto = frame->closure->proto;
     auto kept = [&](Value candidate) { return hasMember(candidate, name) && accessDenied(candidate, name, proto, false); };
+    for (int i = std::exchange(implicitTried_, uint8_t{0}); i-- > 0;)
+        if (kept(implicitFirst_[i])) return accessError(implicitFirst_[i], name, proto);
     if (kept(base[0])) return accessError(base[0], name, proto);
     for (uint16_t upvalue : proto->outerReceivers) {
         const ObjUpvalue* cell = receiverUpvalue(frame, base, upvalue);
@@ -948,7 +960,14 @@ std::vector<std::string> VM::captureTrace() const {
         const FunctionProto* p = f.closure->proto;
         size_t offset = static_cast<size_t>(f.ip - p->code.data());
         if (offset > 0) offset--;
-        trace.push_back("at " + p->name + " (" + p->source + ":" + std::to_string(p->lines[offset]) + ")");
+        std::string line = "at " + p->name + " (" + p->source + ":" + std::to_string(p->lines[offset]) + ")";
+        if (f.repeats > 0) {
+            // In place of the frames a call of itself as its last step saved (D29).
+            std::string count = std::to_string(static_cast<uint64_t>(f.repeats) + 1);
+            for (int at = static_cast<int>(count.size()) - 3; at > 0; at -= 3) count.insert(static_cast<size_t>(at), ",");
+            line += ", " + count + " times";
+        }
+        trace.push_back(std::move(line));
     }
     return trace;
 }
@@ -1262,6 +1281,7 @@ void VM::callClosure(ObjClosure* closure, int argc, bool packed) {
 
     CallFrame& frame = frames_[static_cast<size_t>(frameCount_++)];
     frame.dropResult = false;
+    frame.repeats = 0;
     frame.closure = closure;
     // A generic function takes those WithTypes gave; a lambda has those of where it was made.
     // Only a function that reads them keeps them, which the others are not slowed by.
@@ -1809,8 +1829,8 @@ Value VM::tailCallOn(Value receiver, Value function) {
 // x.let { }, x.also { }, x.apply { } and x.run { } on any value that has no method of its own
 // by that name. `let` and `also` hand the value to the block as its argument; `apply` and
 // `run` run the block on the value. `also` and `apply` give the value back, the others the
-// block's result. (Written with a lambda, let and also are expanded in place by the compiler
-// and never get here.)
+// block's result. (Written with a lambda they are the standard library's inline functions, copied in
+// by the compiler, and never get here, D59.)
 //
 // The block is called as part of the program, not from inside this function, so that a flow
 // can be set aside in it. Returns 0 if `name` is not one of these, 1 if the result is on the
@@ -4334,7 +4354,7 @@ void VM::run(int baseFrame) {
             !attention_.load(std::memory_order_relaxed)) {                                                    \
             frame->ip = ip + (size);                                                                          \
             CallFrame& next_ = frames_[static_cast<size_t>(frameCount_++)];                                   \
-            next_.dropResult = false;                                                                         \
+            next_.dropResult = false; next_.repeats = 0;                                                                         \
             next_.closure = quick_;                                                                           \
             next_.ip = proto_->code.data();                                                                   \
             next_.base = base_;                                                                               \
@@ -5915,6 +5935,45 @@ void VM::run(int baseFrame) {
                         closeUpvalues(sp_ - 1);
                         sp_--;
                         break;
+                    case Op::CallOn: {
+                        const int argc = READ_U8();
+                        Value* const at = sp_ - argc - 2;
+                        const Value callee = at[0];
+                        SAVE_IP();
+                        if (!callee.isObjType(ObjType::Closure)) {
+                            // Only a function written in Astra runs on an object: any other is given the arguments alone.
+                            for (int i = 0; i < argc; i++) at[1 + i] = at[2 + i];
+                            sp_--;
+                            if (callValue(callee, argc)) LOAD_FRAME();
+                            break;
+                        }
+                        for (int i = 0; i <= argc; i++) at[i] = at[1 + i];
+                        sp_--;
+                        callClosure(asClosure(callee), argc);
+                        LOAD_FRAME();
+                        break;
+                    }
+                    case Op::ImplicitFirst: {
+                        const int slot = READ_U16();
+                        const int flags = READ_U8();
+                        if (implicitFirstCount_ < 8) implicitFirst_[implicitFirstCount_++] = base[slot];
+                        if ((flags & 1) != 0) implicitOnly_ = true;
+                        break;
+                    }
+                    case Op::TailLoop: {
+                        // The function calls itself as its last step (D29): what a closure kept of
+                        // this round keeps its values, the arguments become the parameters, and it
+                        // starts again in this frame.
+                        const int count = READ_U8();
+                        Value* const given = sp_ - count;
+                        closeUpvalues(base + 1);
+                        for (int i = 0; i < count; i++) base[1 + i] = given[i];
+                        sp_ = base + 1 + count;
+                        frame->repeats++;
+                        ip = code;
+                        GC_SAFE_POINT();
+                        break;
+                    }
 
                     case Op::ReturnInit:
                         // The object is made once its own class's initializer has returned.

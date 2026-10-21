@@ -1,0 +1,4 @@
+// tail asks for every call of itself to be its last step (D29).
+tail fun count(n : int) : int => n == 0 ? 0 : 1 + count(n - 1)
+print(count(3))
+// expect compile error: this call cannot be a loop, as tail fun count asks: it is not the last step, what it gives being used afterwards; a parameter that gathers the result can do that instead (D29)

@@ -201,6 +201,9 @@ struct ClassInfo {
     const ClassStmt* decl = nullptr;
     Unit* unit = nullptr;
     ClassInfo* outer = nullptr;
+    // A class declared inside a function, or an anonymous object's: what `this@Name` may name
+    // around it, innermost first (D57).
+    std::vector<std::pair<std::string, Type>> outerThis;
     bool isInterface = false, isObject = false, isEnum = false, isData = false, isAbstract = false;
     bool isValue = false;  // `value Point(...)` (M6.6 part 2)
     bool isEnumClass = false;  // `enum class Event`, `enum interface Shape` (D39)
@@ -1905,7 +1908,9 @@ struct Checker::Impl {
             // A built-in type's own methods (in C++) come before extensions for every type when
             // the program runs, and the checker does not know them yet (part 3): the standard
             // library's `any?.equals` is not what `"a".equals("A", ignoreCase = true)` calls.
-            if (t.kind != Type::Class && (key == "any" || key == "<T>")) {
+            // The scope functions are no type's own (D58).
+            const bool scope = name == "let" || name == "also" || name == "apply" || name == "run" || name == "takeIf" || name == "takeUnless" || name == "to";
+            if (t.kind != Type::Class && (key == "any" || key == "<T>") && !scope) {
                 std::vector<FuncInfo*> own;
                 for (FuncInfo* f : *found)
                     if (f->unit == nullptr || !f->unit->prelude) own.push_back(f);
@@ -1955,8 +1960,7 @@ struct Checker::Impl {
 
     // Members every object has, which the VM gives without a declaration.
     static bool builtinMember(const std::string& name) {
-        return name == "toString" || name == "hashCode" || name == "equals" || name == "class" || name == "let" ||
-               name == "also" || name == "apply" || name == "run" || name == "takeIf" || name == "takeUnless";
+        return name == "toString" || name == "hashCode" || name == "equals" || name == "class";
     }
 
     // Whether a member not found on a class should be reported. Every field is declared
@@ -2435,6 +2439,7 @@ struct Checker::Impl {
                 const auto& fs = static_cast<const FunctionStmt&>(s);
                 if (ctx != nullptr && ctx->topLevel && scopes.size() <= 1) break;  // checked with the file's functions
                 // A function declared inside another: a local whose type is a function.
+                if (fs.fn->isInline) report(*fs.fn, "a function declared inside another cannot be inline: it is a value of the code around it (D59)");
                 FuncInfo* f = newFunc(*fs.fn, unit, ctx ? ctx->cls : nullptr);
                 resolveFunc(f);
                 effects[effectKeyHere()].calls.push_back(fs.fn.get());  // called through a local, which is not followed
@@ -2449,6 +2454,7 @@ struct Checker::Impl {
                 if (ctx != nullptr && ctx->topLevel && scopes.size() <= 1) break;  // a file's class: already gathered
                 const auto& cs = static_cast<const ClassStmt&>(s);
                 ClassInfo* k = gatherClass(cs, unit, nullptr);
+                k->outerThis = outerThisHere();
                 if (localClasses.empty()) push();
                 localClasses.back()[cs.name] = k;
                 checkClass(k);
@@ -2508,6 +2514,28 @@ struct Checker::Impl {
 
     void returnStmt(const ReturnStmt& r) {
         if (ctx == nullptr) return;
+        // A bare return in a lambda copied into an inline function leaves the function around it,
+        // whose type it is checked against (D59); in any other lambda the compiler refuses it.
+        if (ctx->isLambda && !r.implicit && r.label.empty()) {
+            FnCtx* around = ctx;
+            while (around != nullptr && around->isLambda) around = around->parent;
+            const bool known = around != nullptr && around->returnKnown && !around->topLevel;
+            const Type value = r.value ? (known ? exprExpected(*r.value, around->expected) : expr(*r.value)) : Type::of(Type::Unit);
+            if (around == nullptr || around->topLevel) return;
+            if (around->returns != nullptr) {
+                if (r.value) around->returns->push_back(value);
+                else around->returnsBare = true;
+            }
+            if (!known) return;
+            const Type& expected = around->expected;
+            if (!r.value && expected.known() && expected.kind != Type::Unit && expected.kind != Type::Nothing)
+                report(r, "the function this return leaves gives " + describe(expected) + "; return needs a value");
+            else if (r.value && expected.kind == Type::Unit && value.known() && value.kind != Type::Unit && value.kind != Type::Nothing)
+                report(*r.value, "the function this return leaves gives nothing (unit); it cannot return " + describe(value));
+            else if (r.value && expected.kind != Type::Unit && !fits(value, expected))
+                report(*r.value, "the function this return leaves gives " + describe(expected) + "; it cannot return " + describe(value));
+            return;
+        }
         const bool checked = ctx->returnKnown && r.label.empty() && !(ctx->isLambda && !r.implicit);
         Type value = r.value ? (checked ? exprExpected(*r.value, ctx->expected) : expr(*r.value)) : Type::of(Type::Unit);
         // `return cached`: the field is given back at once, and is copied on the way unless the
@@ -2603,6 +2631,32 @@ struct Checker::Impl {
         narrowed = std::move(savedNarrowed);
     }
 
+    // Lambdas run on an object their type says (D58).
+    std::unordered_set<const FunctionDecl*> onObject;
+
+    // `it` (D55): the lambdas without an arrow that have none, and for each lambda being checked
+    // that has one, whether it uses it and the uses of inner lambdas' own.
+    std::unordered_set<const FunctionDecl*> noItLambdas;
+    struct ItUser {
+        const FunctionDecl* decl;
+        bool used;
+        std::vector<const Node*> innerUses;
+    };
+    std::vector<ItUser*> itUsers;
+    std::unordered_set<const Node*> itReported;
+    static const std::string& noItName() {
+        static const std::string name = "(no it)";
+        return name;
+    }
+    void noteItUse(const Local& l, const NameExpr& n) {
+        if (!l.lambdaParam || l.paramOfDecl == nullptr) return;
+        size_t at = itUsers.size();
+        while (at > 0 && itUsers[at - 1]->decl != l.paramOfDecl) at--;
+        if (at == 0) return;
+        itUsers[at - 1]->used = true;
+        for (size_t i = 0; i + 1 < at; i++) itUsers[i]->innerUses.push_back(&n);
+    }
+
     // A lambda kept in a variable or field with no type written runs on no object: its bare names
     // are looked for as anywhere else, where one passed where the checker cannot tell may run on
     // an object.
@@ -2649,12 +2703,21 @@ struct Checker::Impl {
         const bool itLambda = d.isLambda && d.params.size() == 1 && d.params[0] == "it" && !d.paramTypes[0].present() &&
                               d.paramDefaults.size() == 1 && d.paramDefaults[0] != nullptr;
         ft.knownParams = !itLambda || typed;
+        // Given a type that takes nothing, it has no `it` of its own (D55).
+        const bool noIt = itLambda && typed && expected->args.empty();
+        if (silent == 0 && itLambda) {
+            if (noIt) noItLambdas.insert(&d);
+            else noItLambdas.erase(&d);
+        }
+        ItUser itUser{&d, false, {}};
+        if (itLambda && !noIt) itUsers.push_back(&itUser);
         for (size_t i = 0; i < d.params.size(); i++) {
             Type p = i < d.paramTypes.size() ? resolve(d.paramTypes[i], *unit) : unknownType();
             if (p.unknown() && typed && i < expected->args.size()) p = expected->args[i];
             ft.args.push_back(p);
-            declareLocal(d.params[i], p, true);
-            Local& declared = scopes.back()[d.params[i]];
+            const std::string& paramName = noIt ? noItName() : d.params[i];
+            declareLocal(paramName, p, true);
+            Local& declared = scopes.back()[paramName];
             declared.lambdaParam = true;
             declared.paramOfDecl = &d;
             noteValueParam(d, static_cast<int>(i), p);
@@ -2672,9 +2735,22 @@ struct Checker::Impl {
         }
         if (c.hasReceiver) ft.receiver = std::make_shared<Type>(c.receiver);
         ft.suspend = c.suspendLambda;
+        if (silent == 0 && d.isLambda) {
+            if (c.hasReceiver && !c.receiverUnknown) onObject.insert(&d);
+            else onObject.erase(&d);
+        }
         for (const StmtPtr& s : d.body) stmt(*s);
         pop();
         ctx = saved;
+        if (itLambda && !noIt) {
+            itUsers.pop_back();
+            // An `it` of a lambda inside this one, which also uses its own: one hides the other (D55).
+            if (itUser.used && silent == 0)
+                for (const Node* inner : itUser.innerUses)
+                    if (itReported.insert(inner).second)
+                        report(*inner, "this 'it' is the inner lambda's, and the lambda around it uses an 'it' of its own: "
+                                       "name one of them, as in rows.forEach { row -> row.cells.forEach { print(it) } } (D55)");
+        }
         for (const Type& given : returns)
             if (given.kind == Type::Class && !given.nullable && given.cls != nullptr && given.cls->isValue) valueLambdas.insert(&d);
         Type r = (!d.isLambda && c.returnKnown) ? c.expected : unknownType();
@@ -3062,12 +3138,75 @@ struct Checker::Impl {
         // A kind of an enum class by its bare name, where one is expected (D39).
         if (const Type plain = withNull(expected, false); plain.kind == Type::Class && plain.cls != nullptr && plain.cls->isEnumClass)
             if (std::unique_ptr<Type> kind = bareKind(e, plain.cls)) return *kind;
+        // A lambda where an interface with one abstract method goes: an object of it (D28).
+        if (e.kind == ExprKind::Function)
+            if (const Type plain = withNull(expected, false); plain.kind == Type::Class && plain.cls != nullptr && plain.cls->isInterface) {
+                std::string method;
+                Type fn;
+                if (samType(plain, method, fn)) {
+                    lambda(*static_cast<const FunctionExpr&>(e).fn, &fn);
+                    if (silent == 0) samConversions[&e] = Sam{plain, method, static_cast<int>(fn.args.size())};
+                    return plain;
+                }
+            }
         if (e.kind == ExprKind::List || e.kind == ExprKind::Map) {
             const Type made = exprExpectedLiteral(e, expected);
             literalTypes[&e] = made;
             return made;
         }
         return exprExpectedLiteral(e, expected);
+    }
+
+    // D28: an interface with exactly one abstract method, whatever default methods it has
+    // besides, takes a lambda, as in Java. Its method's name and type, as a function type.
+    struct Sam {
+        Type iface;
+        std::string method;
+        int arity = 0;
+    };
+    std::unordered_map<const Expr*, Sam> samConversions;
+    std::unordered_set<const Node*> samCalls;
+
+    bool samType(const Type& iface, std::string& method, Type& fn) {
+        ClassInfo* k = iface.cls;
+        if (k == nullptr || !k->isInterface || k->isEnumClass || hasUnknownSuper(k)) return false;
+        std::map<std::string, int> abstractForms;
+        std::unordered_set<std::string> given;  // a default somewhere, which fills the name
+        bool property = false;
+        std::unordered_set<ClassInfo*> visited;
+        std::function<void(ClassInfo*)> walk = [&](ClassInfo* i) {
+            if (i == nullptr || !visited.insert(i).second) return;
+            resolveSupers(i);
+            for (const auto& [name, field] : i->fields)
+                if (field->decl == nullptr || !(field->decl->getter || field->decl->init)) property = true;
+            for (const auto& [name, forms] : i->methods)
+                for (FuncInfo* f : forms) {
+                    if (f->decl == nullptr) continue;
+                    if (f->decl->isAbstract) abstractForms[name]++;
+                    else given.insert(name);
+                }
+            for (ClassInfo* above : i->interfaces) walk(above);
+        };
+        walk(k);
+        if (property) return false;
+        int count = 0;
+        for (const auto& [name, forms] : abstractForms) {
+            if (given.count(name) != 0) continue;
+            count += forms;
+            method = name;
+        }
+        if (count != 1) return false;
+        Member mem = lookupMember(iface, method, true);
+        if (mem.methods.empty()) return false;
+        FuncInfo* f = mem.methods[0];
+        resolveFunc(f);
+        const Env& env = mem.methodEnvs.empty() ? mem.env : mem.methodEnvs[0];
+        fn = Type::of(Type::Function);
+        fn.knownParams = true;
+        for (const Type& p : f->params) fn.args.push_back(subst(p, env));
+        fn.required = static_cast<int>(f->params.size());
+        fn.result = std::make_shared<Type>(subst(resultOf(f), env));
+        return true;
     }
 
     // For a call of a C++ function with named arguments or a lambda after it: which argument
@@ -3178,6 +3317,7 @@ struct Checker::Impl {
             case ExprKind::Name:
                 return name(static_cast<const NameExpr&>(e));
             case ExprKind::This:
+                if (!static_cast<const ThisExpr&>(e).label.empty()) return labelledThis(static_cast<const ThisExpr&>(e));
                 return thisType();
             case ExprKind::Super:
                 return unknownType();
@@ -3325,6 +3465,7 @@ struct Checker::Impl {
             case ExprKind::Object: {
                 const auto& o = static_cast<const ObjectExpr&>(e);
                 ClassInfo* k = gatherClass(*o.cls, unit, ctx ? ctx->cls : nullptr);
+                k->outerThis = outerThisHere();
                 checkClass(k);
                 resolveSupers(k);
                 // Its own class: what it adds, and what every type it is made from has.
@@ -3352,6 +3493,51 @@ struct Checker::Impl {
             if (f != it->end()) return f->second;
         }
         return t;
+    }
+
+    // `this@Name` (D57): the object of the class Name around the code, or of the block given to
+    // the function name (or labelled name@), innermost first.
+    Type labelledThis(const ThisExpr& t) {
+        for (FnCtx* c = ctx; c != nullptr; c = c->parent) {
+            if (c->isLambda) {
+                const FunctionDecl* d = c->placeDecl;
+                if (d != nullptr && c->hasReceiver && (d->label == t.label || d->calleeLabel == t.label))
+                    return c->receiverUnknown ? unknownType() : c->receiver;
+                continue;
+            }
+            if (c->cls != nullptr && !c->isStatic && c->cls->name == t.label) return selfType(c->cls);
+            if (c->fn != nullptr && c->fn->isExtension && c->fn->name == t.label) return c->receiver;
+            if (c->cls != nullptr && !c->isStatic)
+                for (const auto& [label, type] : c->cls->outerThis)
+                    if (label == t.label) return type;
+            break;
+        }
+        report(t, "there is no class or block called '" + t.label + "' around this: this@Name names the object of a class " +
+                      "the code is written in, or of the block given to the function name (D57)");
+        return unknownType();
+    }
+
+    // What `this@Name` may name where a class is declared inside a function.
+    std::vector<std::pair<std::string, Type>> outerThisHere() {
+        std::vector<std::pair<std::string, Type>> found;
+        for (FnCtx* c = ctx; c != nullptr; c = c->parent) {
+            if (c->isLambda) {
+                const FunctionDecl* d = c->placeDecl;
+                if (d != nullptr && c->hasReceiver) {
+                    const Type t = c->receiverUnknown ? unknownType() : c->receiver;
+                    if (!d->label.empty()) found.emplace_back(d->label, t);
+                    if (!d->calleeLabel.empty()) found.emplace_back(d->calleeLabel, t);
+                }
+                continue;
+            }
+            if (c->cls != nullptr && !c->isStatic) {
+                found.emplace_back(c->cls->name, selfType(c->cls));
+                for (const auto& p : c->cls->outerThis) found.push_back(p);
+            }
+            if (c->fn != nullptr && c->fn->isExtension) found.emplace_back(c->fn->name, c->receiver);
+            break;
+        }
+        return found;
     }
 
     // What `this` is, before any test narrows it.
@@ -3571,6 +3757,7 @@ struct Checker::Impl {
 
     Type name(const NameExpr& n) {
         if (Local* l = findLocal(n.name)) {
+            if (n.name == "it") noteItUse(*l, n);
             if (l->loopOf != nullptr) {
                 LoopCandidate& loop = loopCandidates[l->loopOf];
                 loop.uses.insert(&n);
@@ -4872,6 +5059,7 @@ struct Checker::Impl {
         }
         Binding b = bind(f, args, at, what);
         if (f->decl != nullptr && f->decl->isSuspend) noteWait(at, f->name);
+        if (f->decl != nullptr && f->decl->isInline && silent == 0) noteInlineCall(f, b, at);
         // Named arguments and a lambda after the call, given to a C++ function, are put where the
         // form chosen has them; a parameter between them that is not given gets a null, which
         // the C++ takes as not given (`names.join(", ") { }`, `items.add(item = x)`).
@@ -5027,6 +5215,19 @@ struct Checker::Impl {
 
     Type constructorCall(ClassInfo* k, const Args& args, const std::vector<TypeAnnotation>& typeArgs, const Node& at) {
         const std::string what = k->name + "(...)";
+        // `Action { ... }`: the lambda, as the interface (D28).
+        if (k->isInterface && args.exprs.size() == 1 && args.exprs[0]->kind == ExprKind::Function && !args.spread) {
+            Type iface = classType(k);
+            for (size_t i = 0; i < k->typeParams.size(); i++)
+                iface.args.push_back(i < typeArgs.size() ? resolve(typeArgs[i], *unit) : unknownType());
+            std::string method;
+            Type fn;
+            if (samType(iface, method, fn)) {
+                const Type made = exprExpected(*args.exprs[0], iface);
+                if (silent == 0) samCalls.insert(&at);
+                return made;
+            }
+        }
         if (k->isEnumClass && silent == 0 && !std::exchange(superCall, false))
             report(at, k->name + " is an enum class: it is made only as one of its kinds (D39)");
         superCall = false;
@@ -5059,6 +5260,8 @@ struct Checker::Impl {
         methodCall = &c;
         Args args{c.args, c.names, c.trailingLambda, c.hasSpread};
         auto envOfForm = [&](size_t i) -> const Env& { return envs != nullptr && i < envs->size() ? (*envs)[i] : env; };
+        if (fs.size() == 1) checkInfixCall(fs[0], c);
+        if (fs.size() == 1) noteSelfCall(fs[0], c);
         if (fs.size() == 1) return callWith(fs[0], args, c.typeArgs, envOfForm(0), receiver, c, what + "(...)");
         // Forms with the same receiver and parameters are one form declared in several places:
         // the nearest is the one meant, as for any name.
@@ -5077,6 +5280,8 @@ struct Checker::Impl {
                 formEnvs[at->second] = envOfForm(i);
             }
         }
+        if (forms.size() == 1) checkInfixCall(forms[0], c);
+        if (forms.size() == 1) noteSelfCall(forms[0], c);
         if (forms.size() == 1) return callWith(forms[0], args, c.typeArgs, formEnvs[0], receiver, c, what + "(...)");
         size_t index = 0;
         auto envOfChosen = [&](size_t i) -> const Env& { return formEnvs[i]; };
@@ -5086,7 +5291,143 @@ struct Checker::Impl {
             return unknownType();
         }
         chosenForms[&c] = f;
+        checkInfixCall(f, c);
+        noteSelfCall(f, c);
         return callWith(f, args, c.typeArgs, formEnvs[index], receiver, c, what + "(...)");
+    }
+
+    // A call of the function being checked, on the same object: a bare name or `this.name`
+    // (D29). Whether a subclass overrides it is seen once the whole program is.
+    std::unordered_map<const CallExpr*, FuncInfo*> selfCalls;
+    void noteSelfCall(FuncInfo* f, const CallExpr& c) {
+        if (silent != 0 || ctx == nullptr || ctx->isLambda || ctx->fn != f || f->decl == nullptr || f->decl->isLambda) return;
+        if (c.callee->kind == ExprKind::Member) {
+            const auto& m = static_cast<const MemberExpr&>(*c.callee);
+            if (m.safe || m.object->kind != ExprKind::This || !static_cast<const ThisExpr&>(*m.object).label.empty()) return;
+        } else if (c.callee->kind != ExprKind::Name) {
+            return;
+        }
+        selfCalls[&c] = f;
+    }
+    bool overriddenBelow(const FuncInfo* f) const {
+        if (f->owner == nullptr || f->isStatic) return false;
+        for (const auto& k : classStore) {
+            if (k.get() == f->owner || k->methods.count(f->name) == 0) continue;
+            for (const ClassInfo* above = k->superclass; above != nullptr; above = above->superclass)
+                if (above == f->owner) return true;
+            if (f->owner->isInterface) return true;  // a class may implement it with one of its own
+        }
+        return false;
+    }
+
+    // ---- Inline functions (D59) ----
+
+    std::unordered_set<const CallExpr*> onObjectCalls, memberLocalCalls;
+    struct InlineCallFact {
+        FuncInfo* fn = nullptr;
+        std::vector<int> paramOf;
+    };
+    std::unordered_map<const Node*, InlineCallFact> inlineCalls;
+    // The inline functions each inline function's body calls, to find one that calls itself.
+    std::map<FuncInfo*, std::vector<std::pair<FuncInfo*, const Node*>>> inlineCallsFrom;
+    std::map<std::pair<FuncInfo*, int>, int> copiedKnown;  // 1 being worked out, 2 yes, 3 no
+
+    void noteInlineCall(FuncInfo* f, const Binding& b, const Node& at) {
+        inlineCalls[&at] = InlineCallFact{f, b.paramOf};
+        FnCtx* c = ctx;
+        while (c != nullptr && c->isLambda) c = c->parent;
+        if (c != nullptr && c->fn != nullptr && c->fn->decl != nullptr && c->fn->decl->isInline)
+            inlineCallsFrom[c->fn].emplace_back(f, &at);
+    }
+
+    bool copiedIn(FuncInfo* f, int param) {
+        if (f == nullptr || f->decl == nullptr || !f->decl->isInline || param < 0 || param == f->vararg) return false;
+        resolveFunc(f);
+        if (static_cast<size_t>(param) >= f->params.size() || f->params[static_cast<size_t>(param)].kind != Type::Function) return false;
+        const auto key = std::make_pair(f, param);
+        auto known = copiedKnown.find(key);
+        if (known != copiedKnown.end()) return known->second != 3;
+        copiedKnown[key] = 1;
+        bool yes = true;
+        auto uses = paramUses.find(key);
+        if (uses != paramUses.end())
+            for (const ParamUse& u : uses->second) {
+                if (u.kind == ParamUse::Other || (u.kind == ParamUse::PassedOn && !copiedIn(u.to, u.toParam))) yes = false;
+                for (const FunctionDecl* l : u.lambdas) {
+                    auto site = lambdaSites.find(l);
+                    yes = yes && site != lambdaSites.end() && copiedIn(site->second.fn, site->second.param);
+                }
+                if (!yes) break;
+            }
+        copiedKnown[key] = yes ? 2 : 3;
+        return yes;
+    }
+
+    // After the whole program: an inline function may not call itself, directly or through
+    // others, since copying it into its calls would never end.
+    void judgeInline() {
+        std::map<FuncInfo*, int> state;  // 1 on the path, 2 done
+        std::unordered_set<FuncInfo*> told;
+        std::vector<FuncInfo*> path;
+        std::function<void(FuncInfo*)> visit = [&](FuncInfo* f) {
+            state[f] = 1;
+            path.push_back(f);
+            for (const auto& [g, at] : inlineCallsFrom[f]) {
+                if (state[g] == 1) {
+                    // Each function of the cycle is told, starting from itself.
+                    std::vector<FuncInfo*> cycle;
+                    bool on = false;
+                    for (FuncInfo* p : path) {
+                        on = on || p == g;
+                        if (on) cycle.push_back(p);
+                    }
+                    for (size_t i = 0; i < cycle.size(); i++) {
+                        FuncInfo* p = cycle[i];
+                        if (p->unit == nullptr || !told.insert(p).second) continue;
+                        std::string text;
+                        for (size_t j = 0; j <= cycle.size(); j++) text += (j > 0 ? " -> " : "") + cycle[(i + j) % cycle.size()]->name;
+                        Unit* saved = unit;
+                        unit = p->unit;
+                        report(*p->decl, "inline fun " + p->name + " calls itself (" + text +
+                                             "): copied into each call, it would never end; take 'inline' from one of them (D59)");
+                        unit = saved;
+                    }
+                } else if (state[g] == 0) {
+                    visit(g);
+                }
+            }
+            path.pop_back();
+            state[f] = 2;
+        };
+        for (const auto& [f, calls] : inlineCallsFrom)
+            if (state[f] == 0) visit(f);
+        // A member's calls are copies of its own body: nothing may take its place, and it has one.
+        for (const auto& [decl, f] : funcOf) {
+            if (!decl->isInline || f->unit == nullptr) continue;
+            Unit* saved = unit;
+            if (decl->isAbstract) {
+                unit = f->unit;
+                report(*decl, "inline fun " + f->name + " has no body to copy into its calls (D59)");
+            }
+            if (f->owner != nullptr && !f->isStatic)
+                for (FuncInfo* g : overridersOf(f)) {
+                    if (g->unit == nullptr || g->decl == nullptr) continue;
+                    unit = g->unit;
+                    report(*g->decl, "'" + g->name + "' would take the place of inline fun " + f->owner->name + "." + f->name +
+                                         ", whose calls are copies of its own body: an inline member cannot be overridden (D59)");
+                }
+            unit = saved;
+        }
+    }
+
+    // `a name b` calls a function marked infix (D72).
+    std::unordered_map<const CallExpr*, const FuncInfo*> infixCallees;
+    void checkInfixCall(const FuncInfo* f, const CallExpr& c) {
+        if (c.isInfix && silent == 0) infixCallees[&c] = f;
+        if (!c.isInfix || f->decl == nullptr || f->decl->isInfix) return;
+        const auto& m = static_cast<const MemberExpr&>(*c.callee);
+        report(m, "'" + m.name + "' is not an infix function, so it is called " + placeText(*m.object) + "." + m.name + "(" +
+                      placeText(*c.args[0]) + "); to call it this way, declare it infix fun (D72)");
     }
 
     // How near a declaration is to the code being checked: its own file, its folder, another
@@ -5111,6 +5452,7 @@ struct Checker::Impl {
         Env env;
         int defaultsUsed = 0;
         bool vararg = false;
+        int conversions = 0;  // lambdas given as interfaces (D28)
     };
 
     template <typename EnvOf>
@@ -5155,7 +5497,19 @@ struct Checker::Impl {
                 const bool byName = i < args.names.size() && !args.names[i].empty();
                 const Type want = p == f->vararg ? (byName ? listOf(f->varargItem) : f->varargItem) : f->params[static_cast<size_t>(p)];
                 if (args.exprs[i]->kind == ExprKind::Function) {
-                    ok = lambdaFits(static_cast<const FunctionExpr&>(*args.exprs[i]), subst(want, fit.env));
+                    const auto& given = static_cast<const FunctionExpr&>(*args.exprs[i]);
+                    const Type plain = withNull(subst(want, fit.env), false);
+                    std::string method;
+                    Type fn;
+                    if (plain.kind == Type::Class && plain.cls != nullptr && plain.cls->isInterface) {
+                        // An interface takes a lambda if it has one abstract method (D28).
+                        ok = samType(plain, method, fn) && lambdaFits(given, fn);
+                        fit.conversions++;
+                    } else if (plain.kind == Type::Function || plain.unknown() || plain.kind == Type::Any || plain.kind == Type::TypeParam) {
+                        ok = lambdaFits(given, subst(want, fit.env));
+                    } else {
+                        ok = false;  // a list, a number, a class: not what a lambda is
+                    }
                 } else {
                     unify(want, types[i], fit.env, vars);
                     ok = fits(types[i], subst(want, fit.env));
@@ -5224,7 +5578,7 @@ struct Checker::Impl {
         // Where an argument's type is not known, the forms cannot be told apart by it: that is
         // left to when the program runs.
         for (size_t i = 0; i < args.exprs.size(); i++) {
-            if (!types[i].unknown()) continue;
+            if (!types[i].unknown() || args.exprs[i]->kind == ExprKind::Function) continue;
             const std::string first = argText(paramType(candidates[0], i));
             for (const Fit& fit : candidates)
                 if (argText(paramType(fit, i)) != first) return nullptr;
@@ -5246,6 +5600,7 @@ struct Checker::Impl {
             if (ab && !ba) return true;
             if (ba && !ab) return false;
             if (!ab) return false;
+            if (a.conversions != b.conversions) return a.conversions < b.conversions;  // a function type before an interface
             if (a.vararg != b.vararg) return !a.vararg;
             return a.defaultsUsed < b.defaultsUsed;
         };
@@ -5270,8 +5625,11 @@ struct Checker::Impl {
         }
         std::vector<size_t> which;
         for (size_t i : best) which.push_back(candidates[i].index);
+        bool lambdaGiven = false;
+        for (size_t i : best) lambdaGiven = lambdaGiven || candidates[i].conversions > 0;
         report(at, "this call fits more than one form of " + what + "(...): " + formsText(which) +
-                       "; give an argument a type that tells them apart, with a typed variable or 'as'");
+                       (lambdaGiven ? "; the lambda could be either interface: say which, as in Name { ... } (D28)"
+                                    : "; give an argument a type that tells them apart, with a typed variable or 'as'"));
         return nullptr;
     }
 
@@ -5539,8 +5897,24 @@ struct Checker::Impl {
             ClassInfo* k = obj.cls;
             Member mem = lookupMember(plain, m.name, true);
             noteKeyMember(mem, m.name);
+            // A member that cannot take a lambda gives way to an extension that can, as in Kotlin:
+            // `obj.let { }` where obj has a let(int) of its own (D58).
+            if (!mem.methods.empty() && c.args.size() == 1 && c.args[0]->kind == ExprKind::Function) {
+                bool takes = false;
+                for (FuncInfo* f : mem.methods) {
+                    resolveFunc(f);
+                    if (f->params.empty()) continue;
+                    const Type& p = f->params[0];
+                    takes = takes || p.kind == Type::Function || p.unknown() || p.kind == Type::Any || p.kind == Type::TypeParam;
+                }
+                if (!takes)
+                    if (std::vector<FuncInfo*> ext = findExtensions(plain, m.name); !ext.empty()) return callFunctions(ext, c, m.name, {}, &plain);
+            }
             if (!mem.methods.empty()) return callFunctions(mem.methods, c, k->name + "." + m.name, mem.env, nullptr, &mem.methodEnvs);
-            if (mem.field || mem.getter) return callValue(memberOf(plain, m.name, m, false), c, m.name);
+            if (mem.field || mem.getter) {
+                if (c.isInfix) report(m, "'" + m.name + "' is a property, not an infix function (D72)");
+                return callValue(memberOf(plain, m.name, m, false), c, m.name);
+            }
             std::vector<FuncInfo*> ext = findExtensions(plain, m.name);
             if (!ext.empty()) return callFunctions(ext, c, m.name, {}, &plain);
             auto st = k->staticMethods.find(m.name);
@@ -5565,29 +5939,6 @@ struct Checker::Impl {
             else if (!builtinProperty(plain, m.name, property)) report(m, describe(plain) + " has no method '" + m.name + "'");
         }
         return unknownType();
-    }
-
-    // let, also and takeIf with a lambda of one parameter written after them are compiled in
-    // place, as Kotlin's scope functions, whatever the value is, null too, and whatever its
-    // class has (compileScopeCall in compiler.cpp).
-    static bool isScopeCall(const CallExpr& c, const MemberExpr& m) {
-        if (c.args.size() != 1 || c.namedCount != 0 || c.hasSpread || c.args[0]->kind != ExprKind::Function) return false;
-        const FunctionDecl& fn = *static_cast<const FunctionExpr&>(*c.args[0]).fn;
-        return fn.isLambda && fn.params.size() == 1 && (m.name == "let" || m.name == "also" || m.name == "takeIf");
-    }
-
-    Type scopeCall(const Type& on, const CallExpr& c, const MemberExpr& m) {
-        const Type obj = m.safe ? withNull(on, false) : on;
-        Type want = Type::of(Type::Function);
-        want.knownParams = true;
-        want.args.push_back(obj);
-        want.result = std::make_shared<Type>(m.name == "takeIf" ? Type::of(Type::Bool) : unknownType());
-        Type lambda = exprExpected(*c.args[0], want);
-        Type result;
-        if (m.name == "let") result = lambda.kind == Type::Function && lambda.result ? *lambda.result : unknownType();
-        else if (m.name == "also") result = obj;
-        else result = withNull(obj);
-        return m.safe && result.known() ? withNull(result) : result;
     }
 
     // Whether the methods of a built-in type are all declared (src/std/builtins.astra), so
@@ -5709,7 +6060,6 @@ struct Checker::Impl {
         }
         if (c.callee->kind == ExprKind::Member) {
             const auto& m = static_cast<const MemberExpr&>(*c.callee);
-            noteScopeLambda(c, m.name);
             if (m.object->kind == ExprKind::Name) {
                 const std::string& base = static_cast<const NameExpr&>(*m.object).name;
                 if (findLocal(base) == nullptr && !nameIsMember(base)) {
@@ -5744,17 +6094,45 @@ struct Checker::Impl {
             }
             if (obj.kind == Type::Nothing) return obj;
             if (obj.kind == Type::Null) {
+                // `null to x`, `null.let { }`: a function for any T takes null, as in Kotlin.
+                if (!m.safe) {
+                    std::vector<FuncInfo*> any;
+                    for (FuncInfo* f : findExtensions(Type::of(Type::Any), m.name)) {
+                        resolveFunc(f);
+                        if (f->isExtension && f->receiver.kind == Type::TypeParam && f->receiver.bound == nullptr) any.push_back(f);
+                    }
+                    if (!any.empty()) return callFunctions(any, c, m.name, {}, &obj);
+                }
                 for (const ExprPtr& a : c.args) expr(*a);
                 return m.safe ? Type::of(Type::Null) : unknownType();
             }
-            if (isScopeCall(c, m)) return scopeCall(obj, c, m);
+            // `obj.block(...)`: a local of a function type run on an object, where the object has
+            // no member of that name (D58).
+            if (Local* l = findLocal(m.name)) {
+                const Type ft = localType(m.name, *l);
+                const Type plain = withNull(obj, false);
+                if (ft.kind == Type::Function && ft.receiver && !ft.nullable &&
+                    !(plain.kind == Type::Class && lookupMember(plain, m.name, true).found()) && findExtensions(plain, m.name).empty()) {
+                    if (!fits(plain, *ft.receiver)) report(m, "'" + m.name + "' runs on " + describe(*ft.receiver) + ", not " + describe(plain));
+                    noteUse(*l, ParamUse::Called);
+                    if (l->paramOf != nullptr) effects[effectKeyHere()].callsParams = true;
+                    else effects[effectKeyHere()].any = true;
+                    callingKnown = true;
+                    if (silent == 0) memberLocalCalls.insert(&c);
+                    Type plainCall = ft;
+                    plainCall.receiver.reset();
+                    return callValue(plainCall, c, m.name);
+                }
+            }
             if (obj.nullable && !m.safe) {
                 // `fun string?.isNullOrEmpty()`: an extension that takes null.
                 Type plain = withNull(obj, false);
                 std::vector<FuncInfo*> takesNull;
                 for (FuncInfo* f : findExtensions(plain, m.name)) {
                     resolveFunc(f);
-                    if (f->isExtension && f->receiver.nullable) takesNull.push_back(f);
+                    // `fun <T> T.let(...)`: T may stand for a type that takes null, as in Kotlin.
+                    if (f->isExtension && (f->receiver.nullable || (f->receiver.kind == Type::TypeParam && f->receiver.bound == nullptr)))
+                        takesNull.push_back(f);
                 }
                 if (takesNull.empty()) {
                     // `fun any?.isNullOrEmpty()`, which findExtensions passes over for a built-in type.
@@ -5827,6 +6205,20 @@ struct Checker::Impl {
         if (t.kind == Type::Function && t.suspend) noteWait(c, name.empty() ? std::string("this function") : name);
         if (t.nullable) report(c, who + " may be null, so it cannot be called; check it first");
         else if (t.kind != Type::Function) report(c, who + " is " + describe(t) + ", which cannot be called");
+        // `block(obj, ...)`: a function run on an object is given it first, as Kotlin has it (D58).
+        if (t.kind == Type::Function && t.receiver && t.knownParams && !c.hasSpread && c.namedCount == 0 &&
+            c.args.size() == t.args.size() + 1) {
+            const Type given = exprExpected(*c.args[0], *t.receiver);
+            if (!fits(given, *t.receiver)) report(*c.args[0], who + " runs on " + describe(*t.receiver) + ", not " + describe(given));
+            for (size_t i = 1; i < c.args.size(); i++) {
+                valueCallArg = c.args[i].get();
+                const Type a = exprExpected(*c.args[i], t.args[i - 1]);
+                valueCallArg = nullptr;
+                if (!fits(a, t.args[i - 1])) report(*c.args[i], who + " takes " + describe(t.args[i - 1]) + " here, not " + describe(a));
+            }
+            if (silent == 0) onObjectCalls.insert(&c);
+            return t.result ? *t.result : unknownType();
+        }
         if (t.kind == Type::Function && t.knownParams && !c.hasSpread && c.namedCount == 0) {
             size_t least = t.required < 0 ? t.args.size() : static_cast<size_t>(t.required);
             // A lambda after the call goes to the last parameter; those between take their defaults.
@@ -5869,9 +6261,20 @@ struct Checker::Impl {
         for (size_t i = first; i < units.size(); i++) gather(*units[i]);
         for (size_t i = first; i < units.size(); i++)
             if (!units[i]->skipBodies) checkUnit(units[i].get());
+        // The bodies of a kept file's inline functions are checked all the same: they are
+        // copied into the code that calls them (D59).
+        for (size_t i = first; i < units.size(); i++) {
+            if (!units[i]->skipBodies) continue;
+            eachFunction(*units[i]->statements, [&](const FunctionDecl& d) {
+                if (!d.isInline) return;
+                auto known = funcOf.find(&d);
+                if (known != funcOf.end()) checkFunctionBody(known->second, nullptr);
+            });
+        }
         ctx = nullptr;
         judgeWaits();
         judgeKeys();
+        judgeInline();
     }
 
     // A file's top level, in order, then its functions, classes and extensions.
@@ -6455,16 +6858,6 @@ struct Checker::Impl {
         lambdaSites[static_cast<const FunctionExpr&>(e).fn.get()] = site;
     }
 
-    // let, also, takeIf, apply and run with a lambda: run where they are called, whatever the
-    // object (compileScopeCall in compiler.cpp, VM::scopeFunction).
-    void noteScopeLambda(const CallExpr& c, const std::string& name) {
-        if (silent > 0 || c.args.size() != 1 || c.args[0]->kind != ExprKind::Function) return;
-        if (name != "let" && name != "also" && name != "takeIf" && name != "apply" && name != "run") return;
-        LambdaSite site;
-        site.inPlace = true;
-        lambdaSites[static_cast<const FunctionExpr&>(*c.args[0]).fn.get()] = site;
-    }
-
     void noteUse(const Local& l, ParamUse::Kind kind, FuncInfo* to = nullptr, int toParam = -1) {
         if (silent > 0 || l.paramOf == nullptr) return;
         ParamUse use;
@@ -6824,6 +7217,68 @@ RuntimeType runtimeTypeOf(const Type& t) {
 }
 
 }  // namespace
+
+bool Checker::runsOnObject(const FunctionDecl& lambda) const { return impl_->onObject.count(&lambda) != 0; }
+
+bool Checker::hasNoIt(const FunctionDecl& lambda) const { return impl_->noItLambdas.count(&lambda) != 0; }
+
+bool Checker::samConversion(const Expr& lambda, RuntimeType& iface, std::string& method, int& arity) const {
+    auto found = impl_->samConversions.find(&lambda);
+    if (found == impl_->samConversions.end()) return false;
+    Type plain = found->second.iface;
+    plain.args.clear();  // the class alone: what it was made for is not kept in its objects
+    iface = runtimeTypeOf(plain);
+    method = found->second.method;
+    arity = found->second.arity;
+    return iface.kind == RuntimeType::Class;
+}
+
+bool Checker::samCall(const CallExpr& call) const { return impl_->samCalls.count(&call) != 0; }
+
+bool Checker::inlineCall(const CallExpr& call, InlineCall& out) const {
+    auto found = impl_->inlineCalls.find(&call);
+    if (found == impl_->inlineCalls.end()) return false;
+    const FuncInfo* f = found->second.fn;
+    if (f->decl == nullptr || f->unit == nullptr) return false;
+    out.fn = f->decl;
+    out.paramOf = found->second.paramOf;
+    out.fileKey = f->unit->fileKey;
+    out.ns = f->unit->ns;
+    out.owner = f->owner != nullptr ? f->owner->decl : nullptr;
+    out.ownerName = f->owner != nullptr ? f->owner->name : std::string();
+    out.extension = f->isExtension;
+    out.prelude = f->unit->prelude;
+    return true;
+}
+
+bool Checker::copiedIn(const FunctionDecl& fn, int param) const {
+    auto found = impl_->funcOf.find(&fn);
+    return found != impl_->funcOf.end() && impl_->copiedIn(found->second, param);
+}
+
+bool Checker::rangeWord(const CallExpr& call, std::string& which) const {
+    auto found = impl_->infixCallees.find(&call);
+    if (found == impl_->infixCallees.end()) return false;
+    const FuncInfo* f = found->second;
+    if (f->unit == nullptr || !f->unit->prelude || !f->isExternal || (f->name != "downTo" && f->name != "step")) return false;
+    which = f->name;
+    return true;
+}
+
+bool Checker::callsOnObject(const CallExpr& call) const { return impl_->onObjectCalls.count(&call) != 0; }
+bool Checker::memberLocalCall(const CallExpr& call) const { return impl_->memberLocalCalls.count(&call) != 0; }
+
+bool Checker::selfCall(const CallExpr& call, bool& overridden) const {
+    auto found = impl_->selfCalls.find(&call);
+    if (found == impl_->selfCalls.end()) return false;
+    overridden = impl_->overriddenBelow(found->second);
+    return true;
+}
+
+bool Checker::callsItself(const CallExpr& call) const {
+    auto found = impl_->selfCalls.find(&call);
+    return found != impl_->selfCalls.end() && !impl_->overriddenBelow(found->second);
+}
 
 bool Checker::typeArguments(const Node& call, std::vector<RuntimeType>& out) const {
     auto found = impl_->typeArgumentsAt.find(&call);

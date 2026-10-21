@@ -168,6 +168,46 @@ public:
     // Whether a field read (a member, or a bare name in a method) gives a value kept inside its
     // object where it is (M6.6 part 5): where nothing that may change values of its type runs
     // while it is in use.
+    // A lambda run on an object its type says (`Grid.() -> unit`): `this` in it is that object (D58).
+    bool runsOnObject(const FunctionDecl& lambda) const;
+    // A lambda without an arrow given a function type that takes nothing: it has no `it`, which
+    // is then that of a lambda around it (D55).
+    bool hasNoIt(const FunctionDecl& lambda) const;
+    // A lambda given where an interface with one abstract method is expected (D28): the
+    // interface as the running program names it, and the method the lambda becomes.
+    bool samConversion(const Expr& lambda, RuntimeType& iface, std::string& method, int& arity) const;
+    // `Action { ... }`, an interface with one abstract method called with a lambda: the call is
+    // that lambda, given as the interface (D28).
+    bool samCall(const CallExpr& call) const;
+    // A call of the function it is written in, on the same object, which nothing overrides:
+    // as its last step, a loop (D29).
+    bool callsItself(const CallExpr& call) const;
+    // Any call of the function it is written in, on the same object; `overridden` when a
+    // subclass has one of its own (D29, for `tail fun`).
+    bool selfCall(const CallExpr& call, bool& overridden) const;
+
+    // A call of an inline function (D59): the function, which parameter each argument goes to,
+    // and the file it is written in, whose names its body sees.
+    struct InlineCall {
+        const FunctionDecl* fn = nullptr;
+        std::vector<int> paramOf;
+        std::string fileKey;
+        Namespace* ns = nullptr;
+        const ClassStmt* owner = nullptr;  // a member's class
+        std::string ownerName;             // as the program names it: `Outer.Inner`
+        bool extension = false;
+        bool prelude = false;              // the standard library's
+    };
+    bool inlineCall(const CallExpr& call, InlineCall& out) const;
+    // Whether a lambda given for this parameter of an inline function is copied in with it: the
+    // body only calls it, or passes it on to an inline function that copies it in (D59).
+    bool copiedIn(const FunctionDecl& fn, int param) const;
+    // `block(obj, ...)` and `obj.block(...)`: a function value of a type run on an object,
+    // called on one (D58).
+    bool callsOnObject(const CallExpr& call) const;
+    bool memberLocalCall(const CallExpr& call) const;
+    // `a downTo b` or `r step n`, the standard library's (D72): which of them.
+    bool rangeWord(const CallExpr& call, std::string& which) const;
     bool readsFieldInPlace(const Node& read) const;
 
     // A field written without its type: the type the checker works out for it, where that is an

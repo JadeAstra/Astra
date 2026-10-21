@@ -112,6 +112,15 @@ struct FunctionDecl : Node {
     // values, and is called on a place, which holds the result.
     bool isMutating = false;
 
+    // Written `infix` (D72): a member or an extension of one parameter, called `a name b`.
+    bool isInfix = false;
+
+    // Written `inline` (D59): copied into each call with the lambdas given to it.
+    bool isInline = false;
+
+    // Written `tail` (D29): each call it makes of itself is in tail position, made a loop.
+    bool isTail = false;
+
     // Where its body is among the file's tokens, from its first to past its last: what a
     // file's summary leaves out, other files seeing only what is learned from it (D145).
     size_t bodyFrom = 0, bodyTo = 0;
@@ -161,6 +170,9 @@ struct NameExpr : Expr {
 };
 
 struct ThisExpr : Expr {
+    // `this@Outer`, `this@grid` (D57): the object of the class Outer around the code, or of the
+    // block given to grid. Empty for a bare `this`.
+    std::string label;
     ThisExpr() : Expr(ExprKind::This) {}
 };
 
@@ -229,6 +241,9 @@ struct CallExpr : Expr {
     // One per argument: `*list` passes each element of the list as an argument of its own.
     std::vector<char> spread;
     bool hasSpread = false;
+
+    // Written `a name b` (D72): `name` must be an infix function.
+    bool isInfix = false;
     CallExpr() : Expr(ExprKind::Call) {}
 };
 

@@ -134,6 +134,9 @@ const OpInfo kOps[] = {
     {"BRIDGE", Operand::U16},
     {"COMPONENT", Operand::U8},
     {"MISSING_ARG", Operand::U16},
+    {"TAIL_LOOP", Operand::U8},
+    {"IMPLICIT_FIRST", Operand::U16U8},
+    {"CALL_ON", Operand::U8},
     {"CLASS_INIT", Operand::None},
     {"ENSURE_CLASS_INIT", Operand::None},
     {"EXTENSION", Operand::U16U8},
@@ -767,6 +770,18 @@ static int analyzeStack(FunctionProto& f, const Program& program, bool partial) 
                     requireName(a);
                     terminal = true;
                     break;
+                case Op::TailLoop:
+                    pops = a;
+                    terminal = true;
+                    break;
+                case Op::CallOn:
+                    pops = a + 2;
+                    pushes = 1;
+                    break;
+                case Op::ImplicitFirst:
+                    if (a >= depth) fail("local slot out of range");
+                    if ((b & 0xFE) != 0) fail("bad flags");
+                    break;
                 case Op::ClassInit:
                     pops = 2;
                     pushes = 1;
@@ -1228,7 +1243,7 @@ void disassemble(const Program& program, std::ostream& out) {
 namespace {
 
 const char kMagic[4] = {'A', 'S', 'T', 'R'};
-const uint8_t kFormatVersion = 19;
+const uint8_t kFormatVersion = 20;
 const int kMaxProtoNesting = 200;
 
 enum ConstantTag : uint8_t { TagInt = 0, TagFloat = 1, TagString = 2, TagChar = 3, TagByte = 4 };

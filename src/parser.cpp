@@ -13,9 +13,17 @@ const int kMaxNesting = 256;
 // Kotlin's `open`, `final` and `sealed` are not words of Astra: every class can be subclassed
 // and every member overridden, and a fixed set of kinds is an `enum class`. Written in front
 // of a declaration, any of them is an error.
-bool kotlinOnlyWord(const std::string& word) { return word == "open" || word == "final" || word == "sealed"; }
+bool kotlinOnlyWord(const std::string& word) {
+    return word == "open" || word == "final" || word == "sealed" || word == "tailrec";
+}
+
+// The words that may stand in front of `fun` (D29, D59, D72).
+bool functionWord(const std::string& word) { return word == "infix" || word == "inline" || word == "tail"; }
 
 std::string notAstraWord(const std::string& word) {
+    if (word == "tailrec")
+        return "Kotlin's tailrec is written tail in Astra: tail fun name(...); a function calling itself as its last "
+               "step is made a loop with or without it, and the word asks for an error where a call is not its last step (D29)";
     if (word == "sealed")
         return "'sealed' is not a keyword; a fixed set of kinds is an 'enum class', and an 'abstract class' "
                "can stand in for one";
@@ -235,9 +243,15 @@ StmtPtr Parser::declaration() {
             // Who may see a declaration: `private` its file, `internal` its library, and
             // otherwise everyone. `public` is accepted and changes nothing.
             const bool makesAbstract = word.text == "abstract";
+            // `infix fun`, `inline fun`, `tail fun` (D72, D59, D29): only words in front of `fun`.
+            const bool forFunction = functionWord(word.text) && !after.newlineBefore &&
+                                     (after.type == TokenType::Fun ||
+                                      (after.type == TokenType::Identifier &&
+                                       (functionWord(after.text) || after.text == "suspend" || after.text == "private" || after.text == "external" ||
+                                        after.text == "internal" || after.text == "public")));
             // `suspend fun` marks a function that may wait, setting its flow aside (R1).
             const bool modifier = word.text == "private" || word.text == "internal" || word.text == "public" ||
-                                  makesAbstract ||
+                                  makesAbstract || forFunction ||
                                   (word.text == "suspend" && (after.type == TokenType::Fun || after.type == TokenType::Identifier));
             const bool declares = after.type == TokenType::Val || after.type == TokenType::Var || after.type == TokenType::Fun ||
                                   after.type == TokenType::Class || after.type == TokenType::Identifier;
@@ -260,6 +274,19 @@ StmtPtr Parser::declaration() {
                 if (word.text == "suspend") {
                     if (declared->kind != StmtKind::Function) throw error(word, "'suspend' goes in front of a function");
                     static_cast<FunctionStmt&>(*declared).fn->isSuspend = true;
+                }
+                if (forFunction) {
+                    if (declared->kind != StmtKind::Function) throw error(word, "'" + word.text + "' goes in front of a function");
+                    const auto& s = static_cast<FunctionStmt&>(*declared);
+                    if (word.text == "infix") {
+                        if (s.receiver.empty())
+                            throw error(word, "an infix function is a member or an extension, fun Type." + s.fn->name +
+                                                  "(other), called value " + s.fn->name + " other (D72)");
+                        s.fn->isInfix = true;
+                        checkInfix(*s.fn, false, word);
+                    }
+                    if (word.text == "inline") s.fn->isInline = true;
+                    if (word.text == "tail") s.fn->isTail = true;
                 }
                 if (word.text == "private") declared->visibility = 2;
                 else if (word.text == "internal" && declared->visibility == 0) declared->visibility = 1;
@@ -1147,11 +1174,12 @@ void Parser::classMember(ClassStmt& s, bool inStatic) {
     bool mutates = false;
     bool lateinit = false;
     bool lazy = false;
+    bool infix = false, inlines = false, tail = false;
     uint8_t access = 0;
     for (; check(TokenType::Identifier) && !peekNext().newlineBefore &&
            (peek().text == "private" || peek().text == "internal" || peek().text == "public" || peek().text == "protected" ||
             peek().text == "override" || kotlinOnlyWord(peek().text) || peek().text == "abstract" ||
-            peek().text == "suspend" || peek().text == "mutating" ||
+            peek().text == "suspend" || peek().text == "mutating" || functionWord(peek().text) ||
             ((peek().text == "lateinit" || peek().text == "lazy") &&
              (peekNext().type == TokenType::Val || peekNext().type == TokenType::Var))) &&
            (peekNext().type == TokenType::Val || peekNext().type == TokenType::Var || peekNext().type == TokenType::Fun ||
@@ -1164,6 +1192,9 @@ void Parser::classMember(ClassStmt& s, bool inStatic) {
         mutates = mutates || peek().text == "mutating";
         lateinit = lateinit || peek().text == "lateinit";
         lazy = lazy || peek().text == "lazy";
+        infix = infix || peek().text == "infix";
+        inlines = inlines || peek().text == "inline";
+        tail = tail || peek().text == "tail";
         if (accessWord(peek().text) != 0) access = accessWord(peek().text);
     }
     struct AbstractMember {
@@ -1172,6 +1203,8 @@ void Parser::classMember(ClassStmt& s, bool inStatic) {
         AbstractMember(bool& f, bool value) : flag(f), saved(f) { flag = value; }
         ~AbstractMember() { flag = saved; }
     } abstractMember(abstractMember_, abstracts);
+    if ((infix || inlines || tail) && !check(TokenType::Fun))
+        throw error(peek(), "'infix', 'inline' and 'tail' go in front of a function");
 
     // init { ... }: runs when an object is made.
     if (word("init") && peekNext().type == TokenType::LBrace) {
@@ -1296,8 +1329,16 @@ void Parser::classMember(ClassStmt& s, bool inStatic) {
         s.methods.push_back(std::move(property));
     } else {
         if (inStatic && word("op")) throw error(peek(), "operators cannot be static");
+        const Token& start = peek();
         auto member = method();
         if (inStatic) member->isStatic = true;
+        if (infix) {
+            if (member->isStatic) throw error(start, "an infix function is called on a value, value " + member->name + " other: it cannot be static (D72)");
+            member->isInfix = true;
+            checkInfix(*member, true, start);
+        }
+        member->isInline = inlines;
+        member->isTail = tail;
         member->isOverride = overrides;
         member->isSuspend = suspends;
         member->isMutating = mutates;
@@ -1426,6 +1467,10 @@ std::unique_ptr<FunctionDecl> Parser::functionRest(std::string name, const Token
             advance();
             decl->varargIndex = static_cast<int>(decl->params.size());
         }
+        if (check(TokenType::Identifier) && (peek().text == "noinline" || peek().text == "crossinline") &&
+            peekNext().type == TokenType::Identifier && !peekNext().newlineBefore)
+            throw error(peek(), "'" + peek().text + "' is not needed: an inline function's lambda parameters are worked out " +
+                                    "from what its body does with them, copied in where it only calls them (D59)");
         const Token& param = expect(TokenType::Identifier, "a parameter name");
         if (std::find(decl->params.begin(), decl->params.end(), param.text) != decl->params.end())
             throw error(param, "duplicate parameter '" + param.text + "'");
@@ -1842,58 +1887,70 @@ ExprPtr Parser::comparison() {
 // `a ?: b` is a, unless a is null. It binds tighter than a comparison and looser than
 // arithmetic, so `count ?: 0 > limit` compares and `total ?: a + b` adds first.
 ExprPtr Parser::elvis() {
-    ExprPtr left = pairing();
+    ExprPtr left = infixCall();
     while (check(TokenType::Elvis)) {
         const Token& op = advance();
         auto e = node<ElvisExpr>(op);
         e->left = std::move(left);
-        e->right = pairing();
+        e->right = infixCall();
         left = std::move(e);
     }
     return left;
 }
 
-// `a to b` is Pair(a, b). `to` is only a word with a meaning here, between two values on one
-// line; anywhere else it is an ordinary name.
-ExprPtr Parser::pairing() {
+// `a name b` calls a.name(b), for a function marked infix (D72), with Kotlin's precedence:
+// below arithmetic and the ranges, above ?:, `in`, `is` and comparisons, from left to right.
+// The name is on the line `a` ends on; what it is given may start the next.
+ExprPtr Parser::infixCall() {
     ExprPtr left = range();
-    while (word("to") && !peek().newlineBefore) {
-        const Token& op = advance();
-        auto call = node<CallExpr>(op);
-        auto pair = node<NameExpr>(op);
-        pair->name = "Pair";
-        call->callee = std::move(pair);
-        call->args.push_back(std::move(left));
+    for (;;) {
+        if (!check(TokenType::Identifier) || peek().newlineBefore || p_ + 1 >= toks_.size()) return left;
+        if (word("until")) throw error(peek(), "'until' is not a keyword; a range that stops before its end is written a..<b");
+        {
+            const size_t saved = p_;
+            p_++;
+            const bool operand = startsExpression();
+            p_ = saved;
+            if (!operand) return left;
+        }
+        const Token& name = advance();
+        auto call = node<CallExpr>(name);
+        auto member = node<MemberExpr>(name);
+        member->object = std::move(left);
+        member->name = name.text;
+        call->callee = std::move(member);
         call->args.push_back(range());
-        call->names.resize(2);
-        call->spread.resize(2, 0);
+        call->names.resize(1);
+        call->spread.resize(1, 0);
+        call->isInfix = true;
         left = std::move(call);
     }
-    return left;
+}
+
+// Kotlin's rules for an infix function: one parameter, with no default, and not vararg.
+void Parser::checkInfix(const FunctionDecl& fn, bool, const Token& at) {
+    if (fn.params.size() != 1 || fn.varargIndex >= 0)
+        throw error(at, "infix " + fn.name + " takes exactly one parameter, what stands after its name: value " + fn.name +
+                            " other (D72)");
+    if (fn.paramDefaults[0]) throw error(at, "the parameter of infix " + fn.name + " cannot have a default: value " + fn.name + " other always gives it (D72)");
 }
 
 ExprPtr Parser::range() {
     ExprPtr left = bitOr();
     // a..b runs from a to b; a..<b stops before b. Kotlin's `a until b` is refused in favour
-    // of a..<b. `a downTo b` counts down to b, and `step n` after any of them takes every nth.
+    // of a..<b. `a downTo b` and `step n` are the standard library's infix functions (D72).
     if (word("until") && !peek().newlineBefore)
         throw error(peek(), "'until' is not a keyword; a range that stops before its end is written a..<b");
-    const bool downTo = word("downTo") && !peek().newlineBefore;
-    if (check(TokenType::DotDot) || check(TokenType::DotDotLt) || downTo) {
+    if (check(TokenType::DotDot) || check(TokenType::DotDotLt)) {
         const Token& op = advance();
         auto e = node<RangeExpr>(op);
-        e->inclusive = op.type == TokenType::DotDot || downTo;
-        e->descending = downTo;
+        e->inclusive = op.type == TokenType::DotDot;
         e->start = std::move(left);
         if (inIndex_ > 0 && check(TokenType::RBracket)) {
             // `items[1..]`: from 1 to the end (D147).
-            if (!e->inclusive || downTo) throw error(op, "a slice to the end is written a.., with nothing after it");
+            if (!e->inclusive) throw error(op, "a slice to the end is written a.., with nothing after it");
         } else {
             e->end = bitOr();
-        }
-        if (word("step") && !peek().newlineBefore) {
-            advance();
-            e->step = bitOr();
         }
         return e;
     }
@@ -2211,8 +2268,14 @@ ExprPtr Parser::primary() {
             return e;
         }
 
-        case TokenType::This:
-            return node<ThisExpr>(t);
+        case TokenType::This: {
+            auto e = node<ThisExpr>(t);
+            if (check(TokenType::At) && adjacentToPrevious()) {
+                advance();
+                e->label = expect(TokenType::Identifier, "the name of a class or of a function given a block, after 'this@'").text;
+            }
+            return e;
+        }
 
         case TokenType::InterpString: {
             auto e = node<InterpExpr>(t);

@@ -104,7 +104,8 @@ print(search())                              // expect: [0, "two", 3]
 try { throw Error("still works") } catch (e) { print(e.message) }   // expect: still works
 
 // stack overflow is an ordinary, catchable error
-fun forever() { return forever() }
+// (a call that is the last step is a loop, D29: this one adds to what it gives)
+fun forever() : int { return 1 + forever() }
 try { forever() } catch (e) { print(e.message) }        // expect: stack overflow
 class Loopy { fun toString() { return "${this}" } }
 try { print(Loopy()) } catch (e) { print(e.message) }   // expect: stack overflow

@@ -1,0 +1,37 @@
+// A lambda where an interface with one abstract method is expected (D28): an object of the
+// interface, whose method runs the lambda; its default methods come with it.
+
+interface Action {
+  fun run(x : int) : int
+  fun twice(x : int) : int => run(run(x))
+}
+
+fun use(a : Action) : int => a.run(3)
+print(use { it * 2 })                              // expect: 6
+
+val inc : Action = { x -> x + 1 }
+print(inc.run(1), inc.twice(1), inc is Action)     // expect: 2 3 true
+
+// Kotlin's form, the interface's name and the lambda.
+val tens = Action { it * 10 }
+print(tens.run(2))                                 // expect: 20
+
+// A generic interface takes its types from where it goes.
+interface Mapper<T> { fun map(x : T) : T }
+fun <T> twiceOver(m : Mapper<T>, x : T) : T => m.map(m.map(x))
+print(twiceOver({ s : string -> s + "!" }, "hi"))  // expect: hi!!
+
+val actions : List<Action> = [{ it + 1 }, { it * 3 }]
+print(actions.map { it.run(5) })                   // expect: [6, 15]
+
+// A function type comes before an interface, which needs the lambda made into an object.
+fun pick(a : Action) : string => "interface"
+fun pick(f : (int) -> int) : string => "function"
+print(pick { it }, pick(Action { it }))            // expect: function interface
+
+// What the lambda's code around it holds is still its.
+var calls = 0
+val counting : Action = { calls += 1; it }
+counting.run(1)
+counting.twice(1)
+print(calls)                                       // expect: 3

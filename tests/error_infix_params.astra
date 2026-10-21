@@ -1,0 +1,3 @@
+// An infix function takes exactly one parameter (D72).
+infix fun string.join2(a : int, b : int) : string => this
+// expect compile error: infix join2 takes exactly one parameter, what stands after its name: value join2 other (D72)

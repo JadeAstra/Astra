@@ -1,0 +1,30 @@
+// Infix functions (D72): a member or extension of one parameter, marked infix, called a name b,
+// below arithmetic and the ranges and above ?:, comparisons and `in`, from left to right.
+
+infix fun string.repeatedTimes(n : int) : string => this.repeat(n)
+
+class Vec(val x : int, val y : int) {
+  infix fun dot(other : Vec) : int => x * other.x + y * other.y
+  infix fun plus(other : Vec) : Vec => Vec(x + other.x, y + other.y)
+  override fun toString() : string => "($x, $y)"
+}
+
+print("ab" repeatedTimes 3, "ab".repeatedTimes(2))   // expect: ababab abab
+print(Vec(1, 2) dot Vec(3, 4))                        // expect: 11
+print(Vec(1, 1) plus Vec(2, 2) plus Vec(3, 3))        // expect: (6, 6)
+print(1 + 2 to 3 * 4)                                 // expect: Pair(first=3, second=12)
+print(Vec(1, 2) dot Vec(1, 1) > 2)                    // expect: true
+val n : int? = null
+print(n ?: 5 to 6)                                    // expect: Pair(first=5, second=6)
+
+// to, downTo and step are the standard library's, written in place where they are seen.
+print(mapOf("a" to 1, "b" to 2))                      // expect: {"a": 1, "b": 2}
+print(10 downTo 7, 0..10 step 4, 9 downTo 0 step 3)   // expect: 10..7 step -1 0..10 step 4 9..0 step -3
+var counted = ""
+for (i in 10 downTo 0 step 5) { counted += "$i " }
+for (i in 0..<7 step 3) { counted += "$i " }
+print(counted.trim())                                 // expect: 10 5 0 0 3 6
+val r = 1..9
+print(r step 4, (r step 4).toList(), r.step)          // expect: 1..9 step 4 [1, 5, 9] 1
+val pair = null to "nothing"
+print(pair.first, pair.second)                        // expect: null nothing

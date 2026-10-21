@@ -1,0 +1,3 @@
+// noinline and crossinline are not needed (D59).
+inline fun run2(noinline action : () -> unit) { action() }
+// expect compile error: 'noinline' is not needed: an inline function's lambda parameters are worked out from what its body does with them, copied in where it only calls them (D59)

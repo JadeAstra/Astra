@@ -46,63 +46,63 @@ fun <T> Set<T>.minus(other : Set<T>) : open Set<T> => this.subtract(other)
 
 // What a list has for reading.
 fun <T> Set<T>.firstOrNull() : T? => this.isEmpty() ? null : this.first()
-fun <T> Set<T>.firstOrNull(predicate : (T) -> bool) : T? => this.toList().firstOrNull(predicate)
+inline fun <T> Set<T>.firstOrNull(predicate : (T) -> bool) : T? => this.toList().firstOrNull(predicate)
 fun <T> Set<T>.lastOrNull() : T? => this.isEmpty() ? null : this.last()
-fun <T> Set<T>.lastOrNull(predicate : (T) -> bool) : T? => this.toList().lastOrNull(predicate)
-fun <T> Set<T>.find(predicate : (T) -> bool) : T? => this.toList().firstOrNull(predicate)
+inline fun <T> Set<T>.lastOrNull(predicate : (T) -> bool) : T? => this.toList().lastOrNull(predicate)
+inline fun <T> Set<T>.find(predicate : (T) -> bool) : T? => this.toList().firstOrNull(predicate)
 fun <T> Set<T>.single() : T => this.toList().single()
 fun <T> Set<T>.singleOrNull() : T? => this.toList().singleOrNull()
-fun <T> Set<T>.forEach(action : (T) -> unit) {
+inline fun <T> Set<T>.forEach(action : (T) -> unit) {
   for item in this { action(item) }
 }
-fun <T, R> Set<T>.map(transform : (T) -> R) : open List<R> => this.toList().map(transform)
-fun <T, R> Set<T>.mapNotNull(transform : (T) -> R?) : open List<R> => this.toList().mapNotNull(transform)
-fun <T, R> Set<T>.flatMap(transform : (T) -> List<R>) : open List<R> => this.toList().flatMap(transform)
-fun <T> Set<T>.filter(predicate : (T) -> bool) : open List<T> => this.toList().filter(predicate)
-fun <T> Set<T>.filterNot(predicate : (T) -> bool) : open List<T> => this.toList().filterNot(predicate)
+inline fun <T, R> Set<T>.map(transform : (T) -> R) : open List<R> => this.toList().map(transform)
+inline fun <T, R> Set<T>.mapNotNull(transform : (T) -> R?) : open List<R> => this.toList().mapNotNull(transform)
+inline fun <T, R> Set<T>.flatMap(transform : (T) -> List<R>) : open List<R> => this.toList().flatMap(transform)
+inline fun <T> Set<T>.filter(predicate : (T) -> bool) : open List<T> => this.toList().filter(predicate)
+inline fun <T> Set<T>.filterNot(predicate : (T) -> bool) : open List<T> => this.toList().filterNot(predicate)
 fun <T> Set<T>.any() : bool => this.isNotEmpty()
-fun <T> Set<T>.any(predicate : (T) -> bool) : bool {
+inline fun <T> Set<T>.any(predicate : (T) -> bool) : bool {
   for item in this {
     if (predicate(item)) { return true }
   }
   return false
 }
-fun <T> Set<T>.all(predicate : (T) -> bool) : bool {
+inline fun <T> Set<T>.all(predicate : (T) -> bool) : bool {
   for item in this {
     if (!predicate(item)) { return false }
   }
   return true
 }
 fun <T> Set<T>.none() : bool => this.isEmpty()
-fun <T> Set<T>.none(predicate : (T) -> bool) : bool => !this.any(predicate)
+inline fun <T> Set<T>.none(predicate : (T) -> bool) : bool => !this.any(predicate)
 fun <T> Set<T>.count() : int => this.size
-fun <T> Set<T>.count(predicate : (T) -> bool) : int {
+inline fun <T> Set<T>.count(predicate : (T) -> bool) : int {
   var total = 0
   for item in this {
     if (predicate(item)) { total += 1 }
   }
   return total
 }
-fun <T, R> Set<T>.fold(initial : R, operation : (R, T) -> R) : R => this.toList().fold(initial, operation)
+inline fun <T, R> Set<T>.fold(initial : R, operation : (R, T) -> R) : R => this.toList().fold(initial, operation)
 fun <T> Set<T>.sum() : any? => (this.toList() as List<Number>).sum()
-fun <T, R : Number> Set<T>.sumOf(selector : (T) -> R) : R => this.toList().sumOf(selector)
+inline fun <T, R : Number> Set<T>.sumOf(selector : (T) -> R) : R => this.toList().sumOf(selector)
 fun <T> Set<T>.max() : T => this.toList().max()
 fun <T> Set<T>.min() : T => this.toList().min()
 fun <T> Set<T>.maxOrNull() : T? => this.toList().maxOrNull()
 fun <T> Set<T>.minOrNull() : T? => this.toList().minOrNull()
-fun <T, R> Set<T>.maxOf(selector : (T) -> R) : R => this.toList().maxOf(selector)
-fun <T, R> Set<T>.minOf(selector : (T) -> R) : R => this.toList().minOf(selector)
-fun <T> Set<T>.maxByOrNull(selector : (T) -> any?) : T? => this.toList().maxByOrNull(selector)
-fun <T> Set<T>.minByOrNull(selector : (T) -> any?) : T? => this.toList().minByOrNull(selector)
+inline fun <T, R> Set<T>.maxOf(selector : (T) -> R) : R => this.toList().maxOf(selector)
+inline fun <T, R> Set<T>.minOf(selector : (T) -> R) : R => this.toList().minOf(selector)
+inline fun <T> Set<T>.maxByOrNull(selector : (T) -> any?) : T? => this.toList().maxByOrNull(selector)
+inline fun <T> Set<T>.minByOrNull(selector : (T) -> any?) : T? => this.toList().minByOrNull(selector)
 fun <T> Set<T>.sorted() : open List<T> => this.toList().sorted()
 fun <T> Set<T>.sortedDescending() : open List<T> => this.toList().sortedDescending()
 fun <T> Set<T>.sortedBy(selector : (T) -> any?) : open List<T> => this.toList().sortedBy(selector)
 fun <T> Set<T>.sortedByDescending(selector : (T) -> any?) : open List<T> => this.toList().sortedByDescending(selector)
 fun <T> Set<T>.sortedWith(comparator : (T, T) -> int) : open List<T> => this.toList().sortedWith(comparator)
-fun <T, V> Set<T>.associateWith(valueSelector : (T) -> V) : open Map<T, V> => this.toList().associateWith(valueSelector)
-fun <T, K> Set<T>.associateBy(keySelector : (T) -> K) : open Map<K, T> => this.toList().associateBy(keySelector)
-fun <T, K> Set<T>.groupBy(keySelector : (T) -> K) : open Map<K, open List<T>> => this.toList().groupBy(keySelector)
-fun <T> Set<T>.partition(predicate : (T) -> bool) : Pair<List<T>, List<T>> => this.toList().partition(predicate)
+inline fun <T, V> Set<T>.associateWith(valueSelector : (T) -> V) : open Map<T, V> => this.toList().associateWith(valueSelector)
+inline fun <T, K> Set<T>.associateBy(keySelector : (T) -> K) : open Map<K, T> => this.toList().associateBy(keySelector)
+inline fun <T, K> Set<T>.groupBy(keySelector : (T) -> K) : open Map<K, open List<T>> => this.toList().groupBy(keySelector)
+inline fun <T> Set<T>.partition(predicate : (T) -> bool) : Pair<List<T>, List<T>> => this.toList().partition(predicate)
 fun <T> Set<T>.join(separator : string = ", ", prefix : string = "", postfix : string = "", limit : int = -1,
                     truncated : string = "...", transform : ((T) -> any?)? = null) : string {
   return this.toList().join(separator, prefix, postfix, limit, truncated, transform)

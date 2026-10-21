@@ -1,0 +1,24 @@
+// Group 4's errors the checker reports: infix calls (D72), `it` (D55), this@Name (D57),
+// lambdas as interfaces (D28) and inline functions (D59).
+
+fun string.twice(n : int) : string => this
+interface A { fun run(x : int) : int }
+interface B { fun go(x : int) : int }
+fun pick(a : A) : string => "A"
+fun pick(b : B) : string => "B"
+inline fun a(n : int) : int => n == 0 ? 0 : b(n - 1)   // check: inline fun a calls itself (a -> b -> a): copied into each call, it would never end; take 'inline' from one of them (D59)
+inline fun b(n : int) : int => a(n)     // check: inline fun b calls itself (b -> a -> b): copied into each call, it would never end; take 'inline' from one of them (D59)
+abstract class Base { inline fun f() : int => 1 }
+class Sub : Base() {
+  override fun f() : int => 2           // check: 'f' would take the place of inline fun Base.f, whose calls are copies of its own body: an inline member cannot be overridden (D59)
+}
+
+fun use(rows : List<List<int>>) : int {
+  print("a" twice 2)                    // check: 'twice' is not an infix function, so it is called "a".twice(2); to call it this way, declare it infix fun (D72)
+  rows.forEach { it.forEach { print(it) } }   // check: this 'it' is the inner lambda's, and the lambda around it uses an 'it' of its own: name one of them, as in rows.forEach { row -> row.cells.forEach { print(it) } } (D55)
+  print(pick { it })                    // check: this call fits more than one form of pick(...): pick(a : A) and pick(b : B); the lambda could be either interface: say which, as in Name { ... } (D28)
+  fun local() {
+    inline fun nested() {}              // check: a function declared inside another cannot be inline: it is a value of the code around it (D59)
+  }
+  return 0
+}

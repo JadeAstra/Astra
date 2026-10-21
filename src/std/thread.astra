@@ -129,7 +129,7 @@ fun thread(start : bool = true, isDaemon : bool = false, name : string? = null, 
 
 // Runs the block while holding `lock`, which may be any object: no other thread is inside a
 // synchronized on the same object at the same time. A thread may take a lock it already holds.
-fun <T> synchronized(lock : any, block : () -> T) : T {
+inline fun <T> synchronized(lock : any, block : () -> T) : T {
   __thread.enter(lock)
   try {
     return block()
@@ -161,7 +161,7 @@ class Lock {
   val isHeldByCurrentThread : bool
     get() => __thread.holds(this)
 
-  fun <T> withLock(block : () -> T) : T {
+  inline fun <T> withLock(block : () -> T) : T {
     __thread.enter(this)
     try {
       return block()

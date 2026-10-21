@@ -1,0 +1,43 @@
+// `this@Name` (D57) and `this` in a block run on an object (D58).
+
+class Box(var n : int) {
+  fun bump() { n += 1 }
+}
+
+class Holder(val name : string) {
+  // In a block run on an object, `this` is that object; the method's is this@Holder.
+  fun inRun() : string => Box(7).run { "${this.n} ${this@Holder.name}" }
+  fun inApply() : int => Box(1).apply { bump(); this.bump() }.n
+  // From a lambda, an anonymous object or a function inside the method.
+  fun inLambda() : string => listOf(1).map { this@Holder.name + it }[0]
+  fun inObject() : string {
+    val o = object { fun tell() : string => this@Holder.name }
+    return o.tell()
+  }
+}
+
+val h = Holder("h")
+print(h.inRun(), h.inApply(), h.inLambda(), h.inObject())   // expect: 7 h 3 h1 h
+
+// The object of the block given to a function, by the function's name or a label.
+fun grid(build : Box.() -> unit) : Box {
+  val b = Box(0)
+  b.build()
+  return b
+}
+val made = grid {
+  n = 4
+  listOf(1, 2).forEach { this@grid.n += it }
+}
+print(made.n)                                                // expect: 7
+print(with(Box(3)) { n * 2 })                                // expect: 6
+
+// An extension's receiver, by the function's name.
+fun Box.twice() : int => this@twice.n * 2
+print(Box(5).twice())                                        // expect: 10
+
+// A block given a type that takes nothing has no `it` of its own: `it` is the one around (D55).
+fun later(action : () -> unit) { action() }
+var seen = ""
+listOf(1, 2).forEach { later { seen += "$it" } }
+print(seen)                                                  // expect: 12

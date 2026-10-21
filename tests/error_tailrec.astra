@@ -1,0 +1,3 @@
+// Kotlin's tailrec is written tail (D29).
+tailrec fun walk(n : int) : int => n == 0 ? 0 : walk(n - 1)
+// expect compile error: Kotlin's tailrec is written tail in Astra: tail fun name(...); a function calling itself as its last step is made a loop with or without it, and the word asks for an error where a call is not its last step (D29)
