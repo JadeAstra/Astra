@@ -81,14 +81,17 @@ class Page(val key : string) {
   init {
     fetch("init")   // check: 'fetch' may wait (it is a suspend function), and an object is made at once: whoever makes it would be held up. Call it from a suspend function, or start it in a task and use the result when it is ready: task { fetch() }.then { ... }
   }
-  get title() : string => fetch(key)   // check: 'fetch' may wait (it is a suspend function), and a getter must give its value at once: whoever reads 'title' would be held up. Call it from a suspend function, or start it in a task and use the result when it is ready: task { fetch() }.then { title = it }
-  set title(value : string) {
-    fetch(value)   // check: 'fetch' may wait (it is a suspend function), and a setter must finish at once: whoever sets 'title' would be held up. Call it from a suspend function, or start it in a task and use the result when it is ready: task { fetch() }.then { ... }
-  }
+  var title : string
+    get() => fetch(key)   // check: 'fetch' may wait (it is a suspend function), and a getter must give its value at once: whoever reads 'title' would be held up. Call it from a suspend function, or start it in a task and use the result when it is ready: task { fetch() }.then { title = it }
+    set(value : string) {
+      fetch(value)   // check: 'fetch' may wait (it is a suspend function), and a setter must finish at once: whoever sets 'title' would be held up. Call it from a suspend function, or start it in a task and use the result when it is ready: task { fetch() }.then { ... }
+    }
   override fun toString() : string => fetch(key)   // check: 'fetch' may wait (it is a suspend function), and toString must give its text at once: whoever prints the object would be held up. Call it from a suspend function, or start it in a task and use the result when it is ready: task { fetch() }.then { ... }
   op ==(other : any?) : bool => fetch(key) == "x"   // check: 'fetch' may wait (it is a suspend function), and == must give its answer at once: every comparison would be held up. Call it from a suspend function, or start it in a task and use the result when it is ready: task { fetch() }.then { ... }
   fun hashCode() : int => fetch(key).size   // check: 'fetch' may wait (it is a suspend function), and hashCode must give its answer at once: every map and set holding the object would be held up. Call it from a suspend function, or start it in a task and use the result when it is ready: task { fetch() }.then { ... }
-  static val first : string = fetch("static")   // check: 'fetch' may wait (it is a suspend function), and a static value must be there at once: the class is being set up. Call it from a suspend function, or start it in a task and use the result when it is ready: task { fetch() }.then { ... }
+  static {
+    val first : string = fetch("static")   // check: 'fetch' may wait (it is a suspend function), and a static value must be there at once: the class is being set up. Call it from a suspend function, or start it in a task and use the result when it is ready: task { fetch() }.then { ... }
+  }
 }
 
 suspend fun noWaitingThere(words : List<string>) {

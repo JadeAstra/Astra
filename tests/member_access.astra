@@ -201,8 +201,8 @@ class Counter {
       bump()
       return total
     }
+    private val step = 5
   }
-  private static val step = 5
   private class Secret(val word : string)
   fun steps() => Counter.step + step
   fun whisper() => Secret("hush").word
@@ -236,7 +236,9 @@ tell { print(Registry.names) }            // expect: 'names' is private in class
 class Widget {
   protected var state = "idle"
   protected fun paint() => "paint " + state
-  protected static val limit = 3
+  static {
+    protected val limit = 3
+  }
   fun show() => paint()
   fun sameAs(other : Widget) => state == other.state      // on another object, a subclass's too
 }
@@ -338,8 +340,9 @@ print(FineMeter().raise(), second.reading, meter.reading)   // expect: 5 1 1
 // A setter written on its own, and a static one.
 class Temp {
   private var c = 0
-  get degrees() => c
-  private set degrees(value) { c = value }
+  var degrees
+    get() => c
+    private set(value) { c = value }
   fun warm() {
     degrees = 30
     return this
@@ -348,11 +351,13 @@ class Temp {
 print(Temp().warm().degrees)              // expect: 30
 tell { Temp().degrees = 1 }               // expect: 'degrees' cannot be assigned here: its setter is private in class Temp, so only code written in that class can assign to it
 class Tally {
-  static var count = 0
-    private set
-  static fun add() {
-    count += 1
-    return count
+  static {
+    var count = 0
+      private set
+    fun add() {
+      count += 1
+      return count
+    }
   }
 }
 print(Tally.add(), Tally.add(), Tally.count)   // expect: 1 2 2

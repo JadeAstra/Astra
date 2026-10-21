@@ -41,8 +41,10 @@ class Level(val value : int) {
   op +(other : Level) : Level => Level(this.value + other.value)
 }
 class Maker {
-  static fun of(x : int) : string => "int"
-  static fun of(s : string) : string => "string"
+  static {
+    fun of(x : int) : string => "int"
+    fun of(s : string) : string => "string"
+  }
 }
 fun operating(a : Level) {
   val b : Level = a + 2 + Level(5)

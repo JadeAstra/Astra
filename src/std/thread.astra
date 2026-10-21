@@ -41,7 +41,29 @@ object TimeUnit {
 // A program ends when its script has finished, every thread that is not a daemon has too,
 // and the event loop has nothing left.
 class Thread {
-  static var made = 0
+  static {
+    var made = 0
+    fun currentThread() : Thread {
+      var current : Thread? = __thread.current()
+      if (current == null) {
+        // The main thread, which no program made.
+        val main = Thread(null, __thread.currentName())
+        main.id = __thread.currentId()
+        __thread.setCurrent(main)
+        return main
+      }
+      return current
+    }
+    fun sleep(millis : Number) {
+      if (!__thread.sleep(millis)) { throw InterruptedException() }
+    }
+    // Whether the running thread has been interrupted. Asking clears the mark.
+    fun interrupted() : bool => __thread.interrupted()
+    // Lets another thread run, if one is waiting to.
+    fun yield() {
+      __thread.yield()
+    }
+  }
 
   var name : string = ""
   var isDaemon = false
@@ -77,7 +99,8 @@ class Thread {
     if (id != 0 and __thread.join(id, millis) == 2) { throw InterruptedException() }
   }
 
-  get isAlive() : bool => id != 0 and __thread.isAlive(id)
+  val isAlive : bool
+    get() => id != 0 and __thread.isAlive(id)
 
   // Marks the thread as interrupted, and wakes it if it is waiting: the wait then throws
   // InterruptedException. A thread that is working sees the mark only by asking for it.
@@ -85,35 +108,13 @@ class Thread {
     if (id != 0) { __thread.interrupt(id) }
   }
 
-  get isInterrupted() : bool => id != 0 and __thread.isInterrupted(id)
+  val isInterrupted : bool
+    get() => id != 0 and __thread.isInterrupted(id)
 
   override fun toString() : string => "Thread($name)"
 
   // -- The thread that is running --
 
-  static fun currentThread() : Thread {
-    var current : Thread? = __thread.current()
-    if (current == null) {
-      // The main thread, which no program made.
-      val main = Thread(null, __thread.currentName())
-      main.id = __thread.currentId()
-      __thread.setCurrent(main)
-      return main
-    }
-    return current
-  }
-
-  static fun sleep(millis : Number) {
-    if (!__thread.sleep(millis)) { throw InterruptedException() }
-  }
-
-  // Whether the running thread has been interrupted. Asking clears the mark.
-  static fun interrupted() : bool => __thread.interrupted()
-
-  // Lets another thread run, if one is waiting to.
-  static fun yield() {
-    __thread.yield()
-  }
 }
 
 // Makes a thread for the lambda and starts it, as Kotlin's thread { ... } does.
@@ -157,7 +158,8 @@ class Lock {
   // Takes the lock if no other thread has it; false if one has.
   fun tryLock() : bool => __thread.tryEnter(this)
 
-  get isHeldByCurrentThread() : bool => __thread.holds(this)
+  val isHeldByCurrentThread : bool
+    get() => __thread.holds(this)
 
   fun <T> withLock(block : () -> T) : T {
     __thread.enter(this)
@@ -195,8 +197,9 @@ class ReentrantLock : Lock
 class AtomicInteger(private var held : int = 0) {
   fun get() : int => held
   fun set(value : int) { held = value }
-  get value() : int => held
-  set value(newValue) { held = newValue }
+  var value : int
+    get() => held
+    set(newValue) { held = newValue }
   fun incrementAndGet() : int { held += 1; return held }
   fun decrementAndGet() : int { held -= 1; return held }
   fun getAndIncrement() : int { val before = held; held += 1; return before }
@@ -216,8 +219,9 @@ class AtomicLong(initial : int = 0) : AtomicInteger(initial)
 class AtomicBoolean(private var held : bool = false) {
   fun get() : bool => held
   fun set(value : bool) { held = value }
-  get value() : bool => held
-  set value(newValue) { held = newValue }
+  var value : bool
+    get() => held
+    set(newValue) { held = newValue }
   fun getAndSet(value : bool) : bool { val before = held; held = value; return before }
   fun compareAndSet(expected : bool, value : bool) : bool {
     if (held === expected) { held = value; return true }
@@ -229,8 +233,9 @@ class AtomicBoolean(private var held : bool = false) {
 class AtomicReference<T>(private var held : T? = null) {
   fun get() : T? => held
   fun set(value : T?) { held = value }
-  get value() : T? => held
-  set value(newValue) { held = newValue }
+  var value : T?
+    get() => held
+    set(newValue) { held = newValue }
   fun getAndSet(value : T?) : T? { val before = held; held = value; return before }
   // Compares by identity: the very object that is expected.
   fun compareAndSet(expected : T?, value : T?) : bool {
@@ -256,7 +261,8 @@ class BlockingQueue<T> {
     this.capacity = capacity
   }
 
-  get size() : int => items.size
+  val size : int
+    get() => items.size
   fun isEmpty() : bool => items.isEmpty()
   fun isNotEmpty() : bool => items.isNotEmpty()
 
@@ -350,7 +356,8 @@ class BlockingQueue<T> {
 class CountDownLatch(private var remaining : int) {
   private val lock = Lock()
 
-  get count() : int => remaining
+  val count : int
+    get() => remaining
 
   fun countDown() {
     __thread.enter(lock)
@@ -401,9 +408,12 @@ class Future<T> {
   private val listeners : open List<(T?, any?) -> unit> = []
   var runner : Thread? = null  // the thread working on it, which cancel(true) interrupts
 
-  get isDone() : bool => state != 0
-  get isCancelled() : bool => state == 3
-  get isCompletedExceptionally() : bool => state >= 2
+  val isDone : bool
+    get() => state != 0
+  val isCancelled : bool
+    get() => state == 3
+  val isCompletedExceptionally : bool
+    get() => state >= 2
 
   private fun finish(newState : int, value : any?) : bool {
     var waiting : open List<(T?, any?) -> unit> = []
@@ -506,22 +516,24 @@ class Future<T> {
     throw failure()
   }
 
-  // Runs `supplier` on a thread of its own and gives a future for what it returns.
-  static fun <T> supplyAsync(supplier : suspend () -> T) : Future<T> {
-    val result = Future<T>()
-    // The thread may wait for what the supplier waits for.
-    val body : suspend () -> unit = {
-      try {
-        result.complete(supplier())
-      } catch (e) {
-        result.completeExceptionally(e)
+  static {
+    // Runs `supplier` on a thread of its own and gives a future for what it returns.
+    fun <T> supplyAsync(supplier : suspend () -> T) : Future<T> {
+      val result = Future<T>()
+      // The thread may wait for what the supplier waits for.
+      val body : suspend () -> unit = {
+        try {
+          result.complete(supplier())
+        } catch (e) {
+          result.completeExceptionally(e)
+        }
       }
+      val worker = Thread(body, "async")
+      worker.isDaemon = true
+      result.runner = worker
+      worker.start()
+      return result
     }
-    val worker = Thread(body, "async")
-    worker.isDaemon = true
-    result.runner = worker
-    worker.start()
-    return result
   }
 }
 
@@ -534,7 +546,9 @@ class Future<T> {
 //   print(total.get())
 //   pool.shutdown()          // its threads keep the program alive until then
 class Executor {
-  static var made = 0
+  static {
+    var made = 0
+  }
 
   // Each job is a task and the future for it; null tells a thread to end.
   private val queue : BlockingQueue<List<any?>?> = BlockingQueue()
@@ -656,8 +670,10 @@ class Executor {
     return waiting
   }
 
-  get isShutdown() : bool => stopped
-  get isTerminated() : bool => stopped and workers.isEmpty()
+  val isShutdown : bool
+    get() => stopped
+  val isTerminated : bool
+    get() => stopped and workers.isEmpty()
 
   // Waits for its threads to end after a shutdown. False if the time ran out first.
   fun awaitTermination() : bool {

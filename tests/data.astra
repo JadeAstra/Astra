@@ -1,5 +1,7 @@
 // data declarations, and taking values apart.
 
+val unknown = { value -> value }   // a value whose type the checker does not see
+
 data Point(val x : int, val y : int)
 
 val p = Point(1, 2)
@@ -47,7 +49,7 @@ fun spread(point : any) {
 }
 print(spread(Point(3, 4)), spread([5, 6]))  // expect: [4, 3, 7] [6, 5, 11]
 
-val pairs = [["one", 1], ["two", 2], ["three", 3]]
+val pairs = unknown([["one", 1], ["two", 2], ["three", 3]])   // what the checker cannot see into
 val seen = []
 for (name, number) in pairs { seen.add("$name=$number") }
 for ((name, number) in pairs) { if number > 1 { seen.add(name.upper()) } }
@@ -71,7 +73,9 @@ print(Plain(1, 2) == Plain(1, 2))           // expect: false
 // A data class is a class: a body, defaults, a superclass, interfaces, statics.
 interface Shape { fun area() }
 data Rect(val w : int, val h : int = 1, var label : string = "rect") : Shape {
-  static val UNIT = Rect(1)
+  static {
+    val UNIT = Rect(1)
+  }
   val made = "made"                           // not in the header: no part of equality or printing
   override fun area() => w * h
   fun scaled(by : int) => copy(w = w * by, h = h * by)
@@ -105,7 +109,9 @@ print(from, tx + ty)                        // expect: Point(x=0, y=0) 2
 // Inside a class, and in a function.
 class Shapes {
   data Size(val w : int, val h : int)
-  static fun square(n : int) => Size(n, n)
+  static {
+    fun square(n : int) => Size(n, n)
+  }
 }
 fun local() {
   data Pair(val left : any, val right : any)

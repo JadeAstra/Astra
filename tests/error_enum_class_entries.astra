@@ -1,0 +1,3 @@
+// Kotlin's enum class with entries is Astra's enum (D39).
+enum class Color { RED, GREEN, BLUE }
+// expect compile error: a list of entries is an enum: enum Color { RED, ... }; an enum class is a fixed set of kinds, the classes extending it (D39)

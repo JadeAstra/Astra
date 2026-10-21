@@ -1,0 +1,5 @@
+// Accessors are written under their property, as in Kotlin (D68).
+class Box(val w : int, val h : int) {
+  get area() : int => w * h
+}
+// expect compile error: a property's accessors are written under it, as in Kotlin: val area : Type, and on the next line get() => ... (D68)

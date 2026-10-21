@@ -77,7 +77,9 @@ class Animal {
     this.legs = legs
   }
   fun speak() : string => "${this.name} makes a sound"
-  static fun create(name : string) : Animal => Animal(name, 4)
+  static {
+    fun create(name : string) : Animal => Animal(name, 4)
+  }
 }
 class Dog : Animal {
   fun init(name : string) { super.init(name, 4) }

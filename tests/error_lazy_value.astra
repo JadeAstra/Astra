@@ -1,0 +1,5 @@
+// A value type keeps its fields in place (D37).
+value Pt(val x : int) {
+  lazy val twice = x * 2
+}
+// expect compile error: a value type keeps its fields in place, whole, so none is lazy: give 'twice' its value where the value is made

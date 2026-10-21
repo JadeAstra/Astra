@@ -1,0 +1,59 @@
+// Union types (D40) and names for types (D41).
+
+class TextModel(val text : string)
+type Source = string | TextModel
+type Grid = List<List<int>>
+type Table<T> = Map<string, List<T>>
+type Handler = (string) -> string
+type Json = int | float | string | bool | List<Json> | Map<string, Json>
+
+// A union is used after is narrows it; a when covers each of its types.
+fun show(source : Source) : string => when (source) {
+  is string -> "text: $source"
+  is TextModel -> "model: ${source.text}"
+}
+print(show("a"), show(TextModel("b")))   // expect: text: a model: b
+fun size(v : string | List<int>) : int {
+  if (v is string) { return v.size }
+  return v.size                          // only a List<int> is left
+}
+print(size("abc"), size([1, 2]))         // expect: 3 2
+
+// A name for a type is another way of writing it, here and when the program runs.
+val grid : Grid = [[1, 2], [3]]
+val table : Table<int> = {"a": [1, 2]}
+val shout : Handler = { it.upper() }
+print(grid[1], table["a"], grid is Grid, grid is List<List<int>>, shout("hey"))   // expect: [3] [1, 2] true true HEY
+
+// Inference gives the union; a member type goes where the union is asked for.
+val flag = true
+val mixed = flag ? 1 : "one"
+val also : int | string = mixed
+print(mixed, also, [mixed, 2])           // expect: 1 1 [1, 2]
+
+// A name may refer to itself inside another type.
+fun describe(j : Json) : string => when (j) {
+  is int, is float -> "number"
+  is string -> "text"
+  is bool -> "flag"
+  is List -> "a list of ${j.size}"
+  is Map -> "a map of ${j.size}"
+}
+print(describe(1), describe(2.5), describe("x"), describe(true), describe([1, "a"]), describe({"k": [1]}))
+// expect: number number text flag a list of 2 a map of 1
+
+// null among the types: the union may be null.
+val maybe : string | int | null = null
+fun orNone(v : string | int | null) : string => when (v) {
+  is string -> v
+  is int -> "#$v"
+  null -> "none"
+}
+print(maybe, orNone(maybe), orNone(3), orNone("s"))   // expect: null none #3 s
+
+// What every type of a union has: the class above them all.
+abstract class Shape(val name : string)
+class Circle : Shape("circle")
+class Square : Shape("square")
+fun named(s : Circle | Square) : string => s.name
+print(named(Circle()), named(Square()))   // expect: circle square

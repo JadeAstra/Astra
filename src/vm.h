@@ -635,6 +635,11 @@ public:
     // A frozen copy of a list, a map or a set (D26), which nobody may change; the lists, maps
     // and sets inside it are frozen copies too. One already frozen is itself.
     Value frozenCopy(Value v, int depth = 0);
+    // A lazy field's, static's or global's value (D37), worked out on this first read and given
+    // to `store` for its place; `what` names it for the errors.
+    Value forceLazy(Value marker, const std::function<void(Value)>& store, const std::string& what);
+    // A global's value where a read finds none: a lazy one's, worked out; an error otherwise.
+    Value globalOrLazy(size_t index);
     // Keys (D26): a class's own == and hashCode, called for a map or a set, and the error
     // for a key that can change.
     bool hashOf(const ObjClass* cls, const Value& v, size_t& out) override;
@@ -956,6 +961,7 @@ private:
     void collectGarbage();
     void markValue(const Value& v) {
         if (v.kind == ValueKind::Obj || v.kind == ValueKind::Ref) markObject(v.as.obj);  // a Small holds no object
+        else if (v.kind == ValueKind::Undefined && v.as.obj != nullptr) markObject(v.as.obj);  // a lazy one's ObjLazy
     }
     void markObject(Obj* obj);
     void markTable(const Table& table);

@@ -48,7 +48,9 @@ print(arrow(up), arrow(Way.down), arrow(left), arrow(right))   // expect: ^ v - 
 class Cell(val content : string, var fill : Fill = NONE, var anchor : Way = up) {
   var last : Fill = BOTH
   var stretch : Fill? = null
-  static var standard : Fill = HORIZONTAL
+  static {
+    var standard : Fill = HORIZONTAL
+  }
 
   fun widen() {
     last = fill
@@ -132,7 +134,9 @@ enum Light {
     green -> amber
     else -> red
   }
-  static fun first() => red
+  static {
+    fun first() => red
+  }
 }
 print(Light.first().next(), Light.green.next().next())   // expect: green red
 

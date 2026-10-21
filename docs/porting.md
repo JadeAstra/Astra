@@ -111,3 +111,37 @@ A ported line using a name that went is an error naming what to write: `length`,
 `lowercase`, `toDouble`, `toLong`, `toMutableList`, `push`, `pop`, `each`, `len`, `str`, `keys()`,
 `values()`, `entries()`, `MutableList`; and so is a change through a read-only name, a key that
 can change, and an `==` without a `hashCode`.
+
+## Types and declarations (M6.6 part 8, group 3)
+
+### What to write instead
+
+| Kotlin | Astra | |
+| --- | --- | --- |
+| `sealed class Event` | `enum class Event` | its kinds extend it, in its file (D39) |
+| `sealed interface Shape` | `enum interface Shape` | |
+| `enum class Color { RED, GREEN }` | `enum Color { red, green }` | the error says so |
+| `companion object { ... }` | `static { ... }` | one block a class (D67) |
+| `val x get() = ...` and `var x ... set(v) { }` under the property | the same | `get x()` as a member of its own is an error (D68) |
+| `lateinit var x : T` | the same | not for `int`, `bool` or a value type (D36) |
+| `val x by lazy { ... }` | `lazy val x = ...` | also `lazy var`; `by lazy` is not accepted (D37) |
+| `typealias Grid = List<List<Int>>` | `type Grid = List<List<int>>` | (D41) |
+| `object Registry { }` | the same | made when first used, as in Kotlin (D66) |
+| `class Car : Weighed` where `Car` is someone else's | `extend Car : Weighed { ... }` | getters bridge names that differ (D33) |
+| `data class Point3(...) : Point(...)` | `data Point3(val x, val y, val z) : Point(x, y)` | only a data class extends one, its header starting with the parent's fields (D65) |
+| `super.x = value` in an overriding setter | the same | |
+
+### What compiles but means something else
+
+- **A `when` covers every kind.** Over an enum, an enum class or interface, a bool or a union,
+  a `when` that leaves a kind out is an error even as a statement; Kotlin asks that only of a
+  `when` that gives a value. Add the kinds or an `else`.
+- **Two values of unrelated types make a union.** `flag ? 1 : "one"` is an `int | string`, and
+  so is the item type of `[1, "one"]`: what only one of them has needs an `is` first. Code that
+  used such lists as bags of anything writes `List<any>` and casts, as Kotlin's `List<Any>`.
+- **A property overridden in part.** A subclass that changed only the setter of a property now
+  writes the property whole, with `get() => super.name` for the half it keeps.
+- **A property that could only be set** has no Kotlin form; it becomes a function, or a
+  property with a getter too.
+- **Extension functions follow imports.** One declared in another folder is in reach only of
+  files importing that folder.

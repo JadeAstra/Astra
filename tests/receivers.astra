@@ -29,8 +29,9 @@ class Grid {
 
   // A property with a setter, to show that assignment through a block reaches it.
   var _id : string? = null
-  get viewId() => this._id
-  set viewId(value) { this._id = "view:" + value }
+  var viewId
+    get() => this._id
+    set(value) { this._id = "view:" + value }
 
   fun add(component : Component, row : int, col : int, fill : string, weightX : float) {
     this.cells.add("r${row}c${col} ${component} fill=${fill} weightX=${weightX}")

@@ -1,0 +1,11 @@
+// Declarations: data classes extended only by data classes (D65), lateinit (D36).
+
+data Point(val x : int, val y : int)
+class Plain(x : int) : Point(x, 0)                                  // check: Plain cannot extend data Point: a data class is extended only by a data class, whose header starts with Point's fields (D65)
+data Shifted(val y : int, val x : int, val z : int) : Point(x, y)   // check: data Shifted extends data Point, so its header starts with Point's fields, of the same types: data Shifted(x, y, ...) (D65)
+data Passed(val x : int, val y : int, val z : int) : Point(y, x)    // check: data Passed passes its first fields up to Point as they are: : Point(x, y) (D65)
+
+value Spot(val x : int)
+class Holder {
+  lateinit var spot : Spot   // check: lateinit var 'spot' is a Spot, a value type, which is kept whole where it is: give it a starting value; lateinit is for a field that holds an object (D36)
+}

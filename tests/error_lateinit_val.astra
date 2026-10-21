@@ -1,0 +1,5 @@
+// lateinit is for a var (D36).
+class Box {
+  lateinit val label : string
+}
+// expect compile error: lateinit is for a var, given its value after the object is made: lateinit var label

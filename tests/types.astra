@@ -88,9 +88,9 @@ for line in locals() { print(line) }
 
 // an initializer whose type is only known at run time is checked then
 fun make(kind : string) => kind == "n" ? 1 : "one"
-var parsed : int = make("n")
+var parsed : int = unknown(make("n"))
 print(parsed)                           // expect: 1
-print(attempt(fun() { var wrong : int = make("s") }))   // expect: cannot assign a value of type string to 'wrong', which is declared as int
+print(attempt(fun() { var wrong : int = unknown(make("s")) }))   // expect: cannot assign a value of type string to 'wrong', which is declared as int
 
 // a val fixes the variable, not the object it refers to
 val bag = []

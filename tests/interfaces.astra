@@ -92,20 +92,25 @@ print(button.activate(), button is Control, button is Clickable, button is Focus
 interface Sized {
   val width : int
   val height : int
-  get area() => width * height
-  get wide() => width > height
+  val area
+    get() => width * height
+  val wide
+    get() => width > height
 }
 class Rect(override val width : int, override val height : int) : Sized
 class Wide : Sized {
-  override get width() => 10                          // a getter satisfies a required property
+  override val width
+    get() => 10                          // a getter satisfies a required property
   override val height = 2
 }
 print(Rect(2, 5).area, Rect(2, 5).wide, Wide().area, Wide().wide)   // expect: 10 false 20 true
 
 // Static members, and an object that implements an interface.
 interface Codec {
-  static val VERSION = 3
-  static fun describe(codec : Codec) => "codec v$VERSION: " + codec.encode("x")
+  static {
+    val VERSION = 3
+    fun describe(codec : Codec) => "codec v$VERSION: " + codec.encode("x")
+  }
   fun encode(text : string)
 }
 object Upper : Codec {

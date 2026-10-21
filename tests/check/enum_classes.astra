@@ -1,0 +1,27 @@
+// Every when over an enum class, an enum interface, an enum or a bool covers every kind, or has
+// an else (D39).
+
+enum class Event {
+  class Click(val x : int) : Event()
+  class Key(val code : int) : Event()
+  object Close : Event()
+}
+enum Way { up, down }
+
+fun kinds(e : Event, w : Way, b : bool, maybe : Event?) {
+  val a = when (e) {          // check: this when does not cover is Event.Key and Event.Close; add them, or an else branch
+    is Click -> 1
+  }
+  when (w) {                  // check: this when does not cover Way.down; add it, or an else branch
+    up -> print("up")
+  }
+  when (b) {                  // check: this when does not cover false; add it, or an else branch
+    true -> print("yes")
+  }
+  when (maybe) {              // check: this when does not cover null; add it, or an else branch
+    is Click, is Key -> print(1)
+    Close -> print(2)
+  }
+  val made = Event()          // check: Event is an enum class: it is made only as one of its kinds (D39)
+  print(a, made)
+}

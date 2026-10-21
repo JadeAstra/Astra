@@ -44,6 +44,9 @@ struct TypeAnnotation : Node {
     // that takes a Button, the list holding Button or any type above it (D34).
     bool isOpen = false;
     bool accepts = false;
+    // `int | string` (D40): the types it may be, and `name` is "|". `null` among them makes it
+    // nullable.
+    std::vector<TypeAnnotation> unionOf;
 
     // `list<int>`, `map<string, Shape>`: the type arguments. `list<*>` has one star.
     std::vector<TypeAnnotation> args;
@@ -299,7 +302,7 @@ struct FunctionExpr : Expr {
 // ---- Statements ----
 
 enum class StmtKind {
-    Expr, Var, Block, If, While, ForIn, Return, Break, Continue, Throw, Try, Import, Function, Class,
+    Expr, Var, Block, If, While, ForIn, Return, Break, Continue, Throw, Try, Import, Function, Class, TypeAlias, Extend,
 };
 
 struct Stmt : Node {
@@ -323,6 +326,8 @@ struct VarStmt : Stmt {
 
     bool isOverride = false;  // a field written `override`, as for FunctionDecl
     bool isAbstract = false;  // `abstract val x`: for a subclass to supply
+    bool isLateinit = false;  // `lateinit var x : T`: given its value after the object is made (D36)
+    bool isLazy = false;      // `lazy val x = ...`: its value worked out when first read (D37)
     uint8_t access = 0;       // the access word in front of a field of a class, as for FunctionDecl
     uint8_t setAccess = 0;    // the one in front of `set` under it (`private set`): who may assign
 
@@ -508,12 +513,34 @@ struct EnumEntry : Node {
 };
 
 // class Name(val a : T, var b, c) : Super(args) { fields and methods }
+// `type Grid = List<List<int>>`, `type Table<T> = Map<string, List<T>>` (D41): another way of
+// writing a type, not a new one.
+struct TypeAliasStmt : Stmt {
+    std::string name;
+    std::vector<TypeParam> typeParams;
+    TypeAnnotation target;
+    TypeAliasStmt() : Stmt(StmtKind::TypeAlias) {}
+};
+
+// `extend Person, Car : Weighed { val name : string get() => model }` (D33): types someone else
+// wrote fit an interface of this program; names that differ are bridged by property getters.
+struct ExtendStmt : Stmt {
+    std::vector<TypeAnnotation> types;
+    TypeAnnotation interfaceType;
+    std::vector<std::unique_ptr<VarStmt>> bridges;  // each with a getter and nothing stored
+    ExtendStmt() : Stmt(StmtKind::Extend) {}
+};
+
 struct ClassStmt : Stmt {
     std::string name;
 
     // `external object Math { ... }`: an object the C++ provides, declared so that its
     // functions are checked and its constants known; nothing of it is compiled.
     bool isExternal = false;
+    bool hasStaticBlock = false;  // its one `static { }` block has been read (D67)
+    // `enum class Event` or `enum interface Shape` (D39): a fixed set of kinds, the classes and
+    // objects that extend it, all declared in its file (Kotlin's sealed class and interface).
+    bool isEnumClass = false;
 
     // The number the compiler knows the class by where private members are concerned
     // (0 until it is given one); see Op::MemberAccess.

@@ -3,12 +3,15 @@
 
 class Token(val class : string, var in : int = 0, val is : bool = false) {
   var null : string? = "not null"
-  static val import = "an import"
-  static fun for(n : int) => "for $n"
+  static {
+    val import = "an import"
+    fun for(n : int) => "for $n"
+  }
 
   fun if(flag : bool) => flag ? this.class : "else"
   fun return() => this.in + 1
-  get when() => "when " + this.class
+  val when
+    get() => "when " + this.class
   fun describe() => this.class + "/" + this.in + "/" + this.is + "/" + this.null
 }
 
@@ -43,7 +46,9 @@ var static = 0
 fun apply(op : string, a : int, b : int) => op == "+" ? a + b : a - b
 static += 5
 class Calc(val op : string) {
-  static val static = "a static named static"
+  static {
+    val static = "a static named static"
+  }
   op +(other : Calc) => Calc(op + other.op)
   fun run(a : int, b : int) => apply(op, a, b)
 }

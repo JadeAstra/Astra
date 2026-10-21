@@ -427,14 +427,38 @@ public:
         session_.pendingForms_.clear();
     }
 
-    // Extension functions are added once the classes they are for exist.
+    // Extension functions, and extends (D33), are added once the classes they are for exist.
     void hoistExtensions(const std::vector<StmtPtr>& statements) {
         for (const StmtPtr& stmt : statements) {
+            if (stmt->kind == StmtKind::Extend) {
+                compileExtend(static_cast<const ExtendStmt&>(*stmt));
+                hoisted_.insert(stmt.get());
+                continue;
+            }
             if (stmt->kind != StmtKind::Function || static_cast<const FunctionStmt&>(*stmt).receiver.empty()) continue;
             const int start = static_cast<int>(code().size());
             compileStmt(*stmt);
             noteDeclaration(start, extensionIn(start), DeclarationSpan::Extension);
             hoisted_.insert(stmt.get());
+        }
+    }
+
+    // `extend Person, Car : Weighed { val name : string get() => model }` (D33): each class is
+    // fitted to the interface, and given the getters that bridge its names.
+    void compileExtend(const ExtendStmt& s) {
+        for (const TypeAnnotation& type : s.types) {
+            line_ = s.line;
+            emitTypeName(type.name, type);
+            emitTypeName(s.interfaceType.name, s.interfaceType);
+            emit(Op::Extend);
+            for (const auto& bridge : s.bridges) {
+                nextIsExtension_ = true;
+                nextReceiverType_ = type.name;
+                compileFunction(*bridge->getter, FunctionKind::Method, type.name + "." + bridge->name);
+                line_ = bridge->line;
+                emit(Op::Bridge, stringConstant(bridge->name));
+            }
+            emit(Op::Pop);
         }
     }
 
@@ -639,6 +663,7 @@ private:
     InlineBlock* inline_ = nullptr;  // innermost block being compiled in place
     std::string nextProperty_, nextBackingField_;  // for the accessor about to be compiled
     bool nextIsExtension_ = false;                 // for the function about to be compiled
+    bool objectInClass_ = false;                   // an object declared inside a class, made when first used (D66)
     std::string nextReceiverType_;
     int anonymousClasses_ = 0;
     ObjectBuild* objectBuild_ = nullptr;  // the anonymous object being compiled, innermost
@@ -1139,7 +1164,16 @@ private:
 
     // The function a call names. Where the name has several forms and the checker could tell
     // which one the call means, that form is called directly, with nothing to choose when it runs.
+    // The full name of an enum class's kind written bare (D39), as the checker found it.
+    const std::string* kindName(const Node& at) const {
+        return session_.checker != nullptr ? session_.checker->kindName(at) : nullptr;
+    }
+
     void compileCallee(const CallExpr& e) {
+        if (const std::string* kind = kindName(*e.callee)) {
+            emitTypeName(*kind, *e.callee);  // Click(1, 2) where an Event goes (D39)
+            return;
+        }
         if (e.callee->kind == ExprKind::Name) {
             if (const FunctionDecl* form = session_.checker->chosenForm(e)) {
                 const auto& callee = static_cast<const NameExpr&>(*e.callee);
@@ -1509,7 +1543,7 @@ private:
     // Compiles an argument of a call. A bare name that means nothing here is passed on as a
     // name, for the parameter it reaches to settle.
     void compileArg(const Expr& expr) {
-        if (expr.kind != ExprKind::Name || isKnownName(static_cast<const NameExpr&>(expr).name)) return compileExpr(expr);
+        if (expr.kind != ExprKind::Name || kindName(expr) != nullptr || isKnownName(static_cast<const NameExpr&>(expr).name)) return compileExpr(expr);
         const std::string& name = static_cast<const NameExpr&>(expr).name;
         line_ = expr.line;
         int toEnd = -1;
@@ -1780,12 +1814,27 @@ private:
 
     // ---- Declared types ----
 
-    TypeSpec resolveType(const TypeAnnotation& s) {
+    // A type written with a name `type` gave it (D41): the type it names; otherwise as written.
+    const TypeAnnotation& written(const TypeAnnotation& t) const {
+        if (session_.checker != nullptr)
+            if (const TypeAnnotation* named = session_.checker->aliasExpansion(t)) return *named;
+        return t;
+    }
+
+    TypeSpec resolveType(const TypeAnnotation& written_) {
+        const TypeAnnotation& s = written(written_);
         TypeSpec type;
+        // A union (D40) is checked by the checker alone: nothing of it is kept when the program runs.
+        if (s.name == "|") return type;
         // `any` takes every value; `unit` is what a function that returns nothing is declared as.
         if (!s.present() || s.typeParam || s.name == "any" || s.name == "unit" || s.name == "nothing") return type;
 
         uint8_t id = builtinTypeId(s.name);
+        if (const std::string* kind = kindName(s)) {
+            type.className = *kind;  // `is Click` for an Event (D39)
+            type.flags = static_cast<uint8_t>(kTypeInstance | (s.nullable ? kTypeNullable : 0));
+            return type;
+        }
         // Kotlin's MutableList and the others: the checker says what to write (D32).
         if (s.name == "MutableList") id = kTypeList;
         else if (s.name == "MutableMap") id = kTypeMap;
@@ -2041,7 +2090,12 @@ private:
 
     // A type as written (`List<Point?>`, `T`), with its type arguments, pushed for IsFull or
     // CastFull: the classes it names found as any name of a type is.
-    void emitWrittenType(const TypeAnnotation& t, std::string& shape) {
+    void emitWrittenType(const TypeAnnotation& written_, std::string& shape) {
+        const TypeAnnotation& t = written(written_);
+        if (t.name == "|") {
+            shape += 'a';  // a union (D40): any, when the program runs
+            return;
+        }
         if (t.nullable) shape += '?';
         if (t.typeParam) {
             TypeParamPlace place;
@@ -2098,7 +2152,9 @@ private:
 
     // Whether a type as written says more than its class or kind: type arguments to check, or
     // a type parameter, whose value the code is given when it runs.
-    bool hasTypeArguments(const TypeAnnotation& t) const {
+    bool hasTypeArguments(const TypeAnnotation& written_) const {
+        const TypeAnnotation& t = written(written_);
+        if (t.name == "|") return false;
         TypeParamPlace place;
         if (t.typeParam) return findTypeParam(t.name, place);
         return !t.args.empty() && t.result.empty();
@@ -2320,6 +2376,16 @@ private:
                 TypeSpec type = resolveType(s.type);
                 bool checkAtRuntime = type.typed() && checkInitializer(s, type);
 
+                if (isGlobalScope() && s.isLazy) {
+                    // Worked out when first read (D37): its type is the checker's to see to.
+                    int global = declareGlobal(s.name, s.isVal, s);
+                    session_.globalClassTypes_.erase(global);
+                    compileLazy(*s.init, s.name);
+                    line_ = s.line;
+                    emit(Op::DefineGlobal, global);
+                    break;
+                }
+                if (s.isLazy) throw error(s, "lazy is for a field, a static or a top-level value; a local is worked out where it is");
                 if (isGlobalScope()) {
                     int global = declareGlobal(s.name, s.isVal, s);
                     if (type.id() == kTypeInstance) session_.globalClassTypes_[global] = type.className;
@@ -2558,6 +2624,13 @@ private:
 
             case StmtKind::Class:
                 compileClass(static_cast<const ClassStmt&>(stmt));
+                break;
+
+            case StmtKind::TypeAlias:
+                break;  // another way of writing a type (D41), for the checker
+
+            case StmtKind::Extend:
+                compileExtend(static_cast<const ExtendStmt&>(stmt));  // where an extend is not at the top
                 break;
         }
     }
@@ -3168,9 +3241,13 @@ private:
                 emit(Op::Require, stringConstant(field->name));
             }
         } else {
-            // What an abstract class leaves for its subclasses, and what is marked override.
-            for (const auto& field : s.fields) {
+            // What an abstract class leaves for its subclasses, and what is marked override. A data
+            // class's first fields are its parent's, passed up (D65).
+            const size_t inherited = session_.checker != nullptr ? session_.checker->inheritedDataFields(s) : 0;
+            for (size_t i = 0; i < s.fields.size(); i++) {
+                const auto& field = s.fields[i];
                 line_ = field->line;
+                if (i < inherited) continue;
                 if (field->isAbstract) {
                     if (!s.isAbstract)
                         throw error(*field, "'" + field->name + "' is abstract, which only a member of an abstract class can be");
@@ -3369,7 +3446,9 @@ private:
         for (const ClassStmt* inner : nestedInOrder(s)) {
             if (!inner->isObject) continue;
             const std::string innerBound = bound + "." + inner->name;
+            const bool wasInClass = std::exchange(objectInClass_, true);  // made when first used (D66)
             compileClass(*inner, innerBound, &cls, ClassPart::Values);
+            objectInClass_ = wasInClass;
             storeNested(s, storage, *inner, innerBound);
         }
         if (!s.staticFields.empty()) {
@@ -3404,9 +3483,16 @@ private:
 
         if (s.isObject) {
             line_ = s.line;
-            emitGet(storage, s);
-            emit(Op::Call);
-            emitByte(0);
+            // A named object is made when it is first used, as a lazy value is (D66): at the top
+            // level and inside a class. One inside a function is made where it is written.
+            const bool lazy = isGlobalScope() || objectInClass_;
+            auto make = [&] {
+                emitGet(storage, s);
+                emit(Op::Call);
+                emitByte(0);
+            };
+            if (lazy) compileLazyWith(make, bound, s.line);
+            else make();
             if (isGlobalScope()) emit(Op::DefineGlobal, declareGlobal(bound, true, s));
             else addLocal(bound, true, s, true);
         }
@@ -3425,9 +3511,9 @@ private:
             const char* form;
         };
         static const Given kGiven[] = {
-            {"entries", true, "List", "the list of its entries", "override static get entries() : List"},
-            {"name", false, "string", "each entry's name", "override get name() : string"},
-            {"ordinal", false, "int", "each entry's place in the list", "override get ordinal() : int"},
+            {"entries", true, "List", "the list of its entries", "override val entries : List get() => ..., in its static { } block"},
+            {"name", false, "string", "each entry's name", "override val name : string get() => ..."},
+            {"ordinal", false, "int", "each entry's place in the list", "override val ordinal : int get() => ..."},
         };
         for (const Given& given : kGiven) {
             auto clash = [&](const Node& at, bool isOverride) {
@@ -3450,7 +3536,8 @@ private:
             for (const auto& field : s.fields) {
                 if (field->name != given.name) continue;
                 clash(*field, field->isOverride);
-                shape(*field, false);  // an entry's name and ordinal are set for it: only a getter can stand in
+                // An entry's name and ordinal are set for it: only a getter can stand in.
+                shape(*field, !given.isStatic && field->getter && !field->setter && !field->init && typeFits(field->type));
             }
             for (const auto& field : s.staticFields) {
                 if (field->name != given.name) continue;
@@ -3519,6 +3606,14 @@ private:
             if (!f.init && type.typed() && !type.nullable())
                 throw error(f, "static field '" + f.name + "' of type " + type.text() + " must be given a value");
 
+            if (f.isLazy) {
+                compileLazy(*f.init, s.name + "." + f.name);
+                line_ = f.line;
+                emit(Op::StaticField);
+                emitU16(stringConstant(f.name));
+                emitU16(f.isVal ? kFieldVal : 0);
+                continue;
+            }
             if (type.id() == kTypeInstance) emitTypeThunk(type.className, f.type);
             if (f.init) compileExprFor(*f.init, type);
             else emit(Op::Null);
@@ -3629,9 +3724,15 @@ private:
             emit(Op::Pop);
         }
 
+        // A data class's first fields are set by its parent's init, which they are passed to (D65).
+        size_t inherited = session_.checker != nullptr ? session_.checker->inheritedDataFields(s) : 0;
         for (size_t i = 0; i < s.header.size(); i++) {
             const HeaderParam& param = s.header[i];
             if (!param.isField) continue;
+            if (inherited > 0) {
+                inherited--;
+                continue;
+            }
             line_ = param.line;
             emit(Op::GetLocal, 0);
             emit(Op::GetLocal, static_cast<int>(i + 1));
@@ -3652,7 +3753,8 @@ private:
             blocksBefore(class_->initializedIndex[k]);
             line_ = field->line;
             emit(Op::GetLocal, 0);
-            if (value != nullptr) compileExprFor(*value, resolveType(field->type));
+            if (field->isLazy) compileLazy(*value, s.name + "." + field->name);
+            else if (value != nullptr) compileExprFor(*value, resolveType(field->type));
             else emit(Op::Null);
             line_ = field->line;
             emit(Op::SetOwn, stringConstant(storedName(*field)));
@@ -3700,10 +3802,13 @@ private:
         std::unordered_set<std::string> seen;
         std::vector<size_t> initialized;  // fields that get a value when an instance is created
 
+        // A data class's first fields are its parent's (D65), which declares them.
+        const size_t inherited = session_.checker != nullptr ? session_.checker->inheritedDataFields(s) : 0;
         for (size_t i = 0; i < s.fields.size(); i++) {
             const VarStmt& f = *s.fields[i];
             const Expr* initialValue = initialValues[i];
             if (f.isAbstract) continue;  // not a field of this class: a subclass has it
+            if (i < inherited) continue;
             // A generated initializer assigns every header field from its arguments.
             bool setByGeneratedInit = generatedInit && i < s.headerFieldCount;
             line_ = f.line;
@@ -3722,17 +3827,24 @@ private:
             if (initialValue != nullptr && type.typed()) checkStaticFit(type, *initialValue, "field '" + f.name + "'");
 
             // With no initial value, a val, or a var whose type excludes null, is left for init to set.
-            bool required = !setByGeneratedInit && initialValue == nullptr && (f.isVal || (type.typed() && !type.nullable()));
+            if (f.isLateinit && (type.id() == kTypeInt || type.id() == kTypeFloat || type.id() == kTypeBool || type.id() == kTypeNumber ||
+                                 narrowOf(type.id()) != Narrow::None))
+                throw error(f, "lateinit var '" + f.name + "' is " + type.text() + ", which always has a value (0, false): give it " +
+                                   "a starting one; lateinit is for a field that holds an object (D36)");
+            // A lateinit field is given its value after the object is made (D36).
+            bool required = !f.isLateinit && !setByGeneratedInit && initialValue == nullptr && (f.isVal || (type.typed() && !type.nullable()));
             if (required && generatedInit)
                 throw error(f, "field '" + f.name + "' has no initial value and is not in the class header, so nothing " +
                                    "would set it; give it a value, move it into the header, or write an init");
             if (required && !explicitInit)
                 throw error(f, "field '" + f.name + "' has no initial value, so class '" + s.name +
                                    "' needs an init that sets it");
-            if (!required && !setByGeneratedInit) initialized.push_back(i);
+            if (!required && !setByGeneratedInit && !f.isLateinit) initialized.push_back(i);  // a lateinit one keeps none
 
             uint16_t flags = type.flags;
-            if (type.id() == kTypeInstance) {
+            if (f.isLazy) {
+                flags = 0;  // the slot holds what works its value out until it is first read (D37)
+            } else if (type.id() == kTypeInstance) {
                 emitTypeThunk(type.className, f.type);
             } else if (!type.typed() && initialValue != nullptr && initialValue->kind == ExprKind::Call && session_.checker != nullptr &&
                        session_.checker->constructsValue(static_cast<const CallExpr&>(*initialValue)) &&
@@ -3779,7 +3891,8 @@ private:
             const VarStmt& f = *s.fields[i];
             line_ = f.line;
             emit(Op::GetLocal, 0);
-            if (initialValues[i] != nullptr) compileExprFor(*initialValues[i], resolveType(f.type));
+            if (f.isLazy) compileLazy(*initialValues[i], s.name + "." + f.name);
+            else if (initialValues[i] != nullptr) compileExprFor(*initialValues[i], resolveType(f.type));
             else emit(Op::Null);
             line_ = f.line;
             emit(Op::SetOwn, stringConstant(storedName(f)));
@@ -3795,6 +3908,46 @@ private:
         fs_->proto->protos.push_back(state.proto);
         emit(Op::Closure, index);
         emit(Op::FieldInit);
+    }
+
+    // What works a lazy value out (D37): a function of no parameters giving `value`, written
+    // where the value is (so it reaches `this` and the names around it as a lambda does),
+    // wrapped by Op::Lazy.
+    void compileLazy(const Expr& value, const std::string& displayName) {
+        compileLazyWith([&] { compileExpr(value); }, displayName, value.line);
+    }
+
+    void compileLazyWith(const std::function<void()>& body, const std::string& displayName, int line) {
+        FunctionState state;
+        state.enclosing = fs_;
+        state.kind = FunctionKind::Function;
+        state.object = objectMember(state);
+        state.proto = newProto();
+        state.proto->name = displayName + " (lazy)";
+        state.proto->source = file_;
+        state.scopeDepth = 1;
+        state.isLambda = true;
+        state.add(Local{"", 1, VarInfo{}});
+        int levels = 1;
+        for (FunctionState* outer = state.enclosing; outer != nullptr; outer = outer->enclosing, levels++) {
+            if (outer->isLambda || kindHasThis(outer->kind)) {
+                const int receiver = captureReceiver(&state, levels);
+                state.proto->outerReceivers.push_back(
+                    static_cast<uint16_t>(isCaptureMark(receiver) ? kCapturedReceiver | (receiver - kCaptureMark) : receiver));
+            }
+            if (outer->kind != FunctionKind::Function) break;
+        }
+        fs_ = &state;
+        line_ = line;
+        body();
+        emit(Op::Return);
+        finish(state);
+        fs_ = state.enclosing;
+        line_ = line;
+        int index = static_cast<int>(fs_->proto->protos.size());
+        fs_->proto->protos.push_back(state.proto);
+        emit(Op::Closure, index);
+        emit(Op::Lazy);
     }
 
     // Emits a closure that returns the class called `className`. A field's class type is
@@ -4222,7 +4375,9 @@ private:
             }
 
             case ExprKind::Name:
-                emitGet(static_cast<const NameExpr&>(expr).name, expr);
+                // A kind of an enum class by its bare name (D39): by its full name.
+                if (const std::string* kind = kindName(expr)) emitTypeName(*kind, expr);
+                else emitGet(static_cast<const NameExpr&>(expr).name, expr);
                 break;
 
             case ExprKind::This:
@@ -4791,6 +4946,7 @@ private:
     // runs on; those are called directly, without making a function value of the method first.
     // Returns false when the name is to be called as an ordinary value.
     bool compileBareCall(const CallExpr& e) {
+        if (kindName(*e.callee) != nullptr) return false;  // an enum class's kind: compileCallee
         const auto& callee = static_cast<const NameExpr&>(*e.callee);
         const std::string& name = callee.name;
         VarInfo info;
@@ -5150,6 +5306,19 @@ private:
                 if (compound) emit(binaryOp(e.op));
                 emit(Op::SetIndex);
                 endNullSafe(skip, 2);
+                break;
+            }
+
+            case ExprKind::Super: {
+                // super.name = value: the superclass's setter, run on this object (D68).
+                const auto& target = static_cast<const SuperExpr&>(*e.target);
+                if (compound) throw error(e, "super." + target.method + " is given a value with = only");
+                requireSuper(target);
+                emitGet("this", target);
+                emitGet("super", target);
+                compileExpr(*e.value);
+                line_ = e.line;
+                emit(Op::SetSuper, stringConstant(target.method));
                 break;
             }
 

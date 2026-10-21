@@ -83,8 +83,8 @@ td.when { min-width: 9em; }
 <nav>
 <h2>Contents</h2>
 <ul>
-<li><a href="#choices">Choices to confirm</a> (nineteen from the first half; seven from part 8, group 1; twelve from group 2)</li>
-<li><a href="#gaps">Gaps left</a> (thirty-one)</li>
+<li><a href="#choices">Choices to confirm</a> (nineteen from the first half; seven from part 8, group 1; twelve from group 2; eleven from group 3)</li>
+<li><a href="#gaps">Gaps left</a> (thirty-five)</li>
 </ul>
 </nav>
 
@@ -382,6 +382,72 @@ td.when { min-width: 9em; }
 <div class="verdict"><span class="label">Your choice</span><span class="blank"></span></div>
 </section>
 
+<section class="decision" id="p8-lateinit">
+<h3><span class="code">8.3a</span>What may be <code>lateinit</code> (part 8, group 3)</h3>
+<p>As in Kotlin, a field that holds an object: not an <code>int</code>, <code>float</code>, <code>bool</code>, char, byte or storage width, which always has a value, nor a value type, kept whole where it is. Only a <code>var</code> of a class, its type written and not null; not a static, a top-level variable or a local. Reading it before it has a value is an error naming it. Kotlin's <code>::x.isInitialized</code> waits for reflection (group 6).</p>
+<div class="verdict"><span class="label">Your choice</span><span class="blank"></span></div>
+</section>
+
+<section class="decision" id="p8-lazy">
+<h3><span class="code">8.3b</span>How <code>lazy</code> is kept (part 8, group 3)</h3>
+<p>A lazy field, static or top-level value holds the "no value yet" mark every read already tests for, with what works its value out beside it; the first read puts the value in its place, so a read after that costs what any field read does: D37's "one test per read" at no added cost. Not for a local, nor in a value type. A thread that reads it while another is working it out waits by handing the lock over until the value is there. A lazy starting value may not wait, as nothing that starts a value does.</p>
+<div class="verdict"><span class="label">Your choice</span><span class="blank"></span></div>
+</section>
+
+<section class="decision" id="p8-object-first">
+<h3><span class="code">8.3c</span>Which objects are made when first used (part 8, group 3)</h3>
+<p>D66: a named <code>object</code> at the top level of a file, or inside a class, is made when first used, under <code>lazy val</code>'s rules. One declared inside a function is made where it is written, as a local is not kept lazily. No program in the suite relied on the old order.</p>
+<div class="verdict"><span class="label">Your choice</span><span class="blank"></span></div>
+</section>
+
+<section class="decision" id="p8-kind-names">
+<h3><span class="code">8.3d</span>Where a kind is written by its bare name (part 8, group 3)</h3>
+<p>D39: a kind of an enum class by its bare name wherever one is expected: a value given where the enum class is declared (a variable, an argument, a result, a list item), a <code>when</code>'s branches over one (<code>Close -&gt;</code>), and after <code>is</code> where the value is one (<code>is Click</code>). The kinds of a kind that is itself an enum class are found too. A name that already means something keeps that meaning. The checker settles it; nothing is left to the running program, unlike an enum's entries.</p>
+<div class="verdict"><span class="label">Your choice</span><span class="blank"></span></div>
+</section>
+
+<section class="decision" id="p8-union-infer">
+<h3><span class="code">8.3e</span>When inference gives a union (part 8, group 3)</h3>
+<p>D40: two types with a class or interface above both give that, as before; with none, the union (<code>flag ? 1 : "one"</code>, <code>[1, "one"]</code>), where they used to give an unknown type. Eight tests and one line of Jade had to say <code>any</code> or test the type. A union's members are those of the nearest type above all its types. A local is narrowed the other way too: after <code>if (v is string) return</code>, <code>v</code> is the rest. <code>is</code> and <code>as</code> on a whole union are errors, nothing of it being kept when running.</p>
+<div class="verdict"><span class="label">Your choice</span><span class="blank"></span></div>
+</section>
+
+<section class="decision" id="p8-alias-self">
+<h3><span class="code">8.3f</span>A name for a type that refers to itself (part 8, group 3)</h3>
+<p>D41 allows it inside another type (<code>type Json = ... | List&lt;Json&gt;</code>). Built so that inside it, it is <code>any</code>: a <code>List&lt;Json&gt;</code> is checked as a list of anything, the outer level as the union it is.</p>
+<div class="verdict"><span class="label">Your choice</span><span class="blank"></span></div>
+</section>
+
+<section class="decision" id="p8-accessor-types">
+<h3><span class="code">8.3g</span>Kotlin's accessors and what they take (part 8, group 3)</h3>
+<p>D68: the setter takes the property's type unless it says another (<code>set(text : any?)</code>, which Jade's <code>Native.clipboardText</code> keeps so that a number may be set); Kotlin allows no other type. A property that could only be set, and a subclass replacing only half of a property, have no Kotlin form: the tests that had them now write the whole property, reaching the one above with <code>super.name</code>, and <code>super.name = value</code> was added for that. A static property is written the same way, in the static block, and keeps nothing of its own.</p>
+<div class="verdict"><span class="label">Your choice</span><span class="blank"></span></div>
+</section>
+
+<section class="decision" id="p8-static-block">
+<h3><span class="code">8.3h</span>What goes in the one static block (part 8, group 3)</h3>
+<p>D67: every static member, <code>const</code> included, and static properties in Kotlin's form. The 163 prefixed statics of the standard library, Jade, the examples and the tests moved into their classes' blocks, keeping their order and comments. <code>companion object</code> is an error naming <code>static { }</code>.</p>
+<div class="verdict"><span class="label">Your choice</span><span class="blank"></span></div>
+</section>
+
+<section class="decision" id="p8-data-extend">
+<h3><span class="code">8.3i</span>How a data class passes its parent's fields up (part 8, group 3)</h3>
+<p>D65 says the child's header starts with the parent's fields. As built, of the same types, and they are passed up as they are, <code>: Point(x, y)</code>, written out; the alternative is to pass them without writing it.</p>
+<div class="verdict"><span class="label">Your choice</span><span class="blank"></span></div>
+</section>
+
+<section class="decision" id="p8-extend-scope">
+<h3><span class="code">8.3j</span>What <code>extend</code> covers (part 8, group 3)</h3>
+<p>D33 for classes and interfaces, of the program or a library. A built-in type (<code>extend string : Comparable</code>) is not yet: its values have no class to carry the interface. Two <code>extend</code>s of one class and interface are taken as the same when they bridge the same names. The checker holds an extend where it is in reach; when the program runs, an extend holds once its file is loaded, so <code>is</code> on a value of type <code>any</code> answers by every extend loaded.</p>
+<div class="verdict"><span class="label">Your choice</span><span class="blank"></span></div>
+</section>
+
+<section class="decision" id="p8-ext-reach">
+<h3><span class="code">8.3k</span>Which extension function a call finds (part 8, group 3)</h3>
+<p>D70: those in reach, the file's own folder's first, then what it imports, and the standard library's. When running, an extension function is still found by its type and name, so two libraries giving one type an extension of the same name with the same parameters would meet; with one library (Jade) this cannot happen yet.</p>
+<div class="verdict"><span class="label">Your choice</span><span class="blank"></span></div>
+</section>
+
 <h2 id="gaps">Gaps left</h2>
 <p class="note">Each is known, and the code around it is tested; none gives a wrong result. Most make something slower or leave a feature for a later part.</p>
 
@@ -418,6 +484,10 @@ td.when { min-width: 9em; }
 <tr><td class="part">8.2</td><td><code>frozen()</code> does not go into values: a frozen list of a value type whose field is a list leaves that list changeable (such a value type is no key, so keys are safe).</td><td class="when">Not placed yet</td></tr>
 <tr><td class="part">8.2</td><td>While a class's own <code>==</code> or <code>hashCode</code> runs for a map or a set, nothing is collected and no other thread is given the lock, since the C++ around it holds objects nothing roots (a map being built). One that makes much garbage, or waits, holds things up; the checker already refuses waiting in either.</td><td class="when">If it shows; roots for the map code</td></tr>
 <tr><td class="part">8.2</td><td>Through a read-only name, a standard-library function that changes its receiver gives D32's message only for names the checker knows to change a collection (<code>add</code>, <code>remove</code>, <code>sort</code>, <code>addFirst</code> and the like); for another it says no form of the function is for a read-only list.</td><td class="when">Not placed yet</td></tr>
+<tr><td class="part">8.3</td><td><code>extend</code> of a built-in type (<code>string</code>, <code>List</code>): a value of one has no class to carry the interface when the program runs.</td><td class="when">Not placed yet</td></tr>
+<tr><td class="part">8.3</td><td>Extension functions and <code>extend</code>s are in reach as imports say for the checker only: when running, one is found by its type and name, once its file is loaded, and <code>is</code> on a value of type <code>any</code> answers by every extend loaded. Two libraries giving one type an extension function of the same name and parameters would meet there.</td><td class="when">With a second library</td></tr>
+<tr><td class="part">8.3</td><td>Two extension functions of one name on one type from two imported folders are not reported where a call is ambiguous (D70); the one found first is taken.</td><td class="when">Not placed yet</td></tr>
+<tr><td class="part">8.3</td><td>A thread reading a lazy value another thread is working out waits by handing the lock over again and again, not by sleeping until it is told.</td><td class="when">Group 7, concurrency</td></tr>
 <tr><td class="part">All</td><td>Under MSVC, code placement alone moves the <code>fields</code> benchmark by 10 to 20% with the same loop. Not a gap in Astra, but a caution in reading timings: compare against a baseline built the same way, and count instructions, before calling a change slower.</td><td class="when">D160: the Clang build's dispatch, M6.7</td></tr>
 </tbody>
 </table></div>

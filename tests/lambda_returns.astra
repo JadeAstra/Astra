@@ -1,6 +1,8 @@
 // let, also and takeIf compiled in place; return and return@name in lambdas; parameters that
 // wrap over lines or come apart.
 
+val unknown = { value -> value }   // a value whose type the checker does not see
+
 class Node(val name : string, val children : List<Node> = []) {
   var hidden = false
 }
@@ -127,7 +129,7 @@ print(sum3(1, 2, 3), combine(10, 20) { x : int,
 })                                          // expect: 6 10+20=30
 
 // A parameter written (a, b) comes apart.
-val pairs = [["one", 1], ["two", 2]]
+val pairs = unknown([["one", 1], ["two", 2]])   // what the checker cannot see into
 data Point(val x : int, val y : int)
 print(pairs.map { (name, n) -> name + n }, pairs.filter { (_, n) -> n > 1 }, [Point(1, 2)].map { (x, y) -> x + y })   // expect: ["one1", "two2"] [["two", 2]] [3]
 fun <T, R> fold(items : List<T>, start : R, step : (R, T) -> R) : R {

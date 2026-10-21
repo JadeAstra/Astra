@@ -66,7 +66,8 @@ class InputStream {
     __io.close(handle)
   }
 
-  get isOpen() : bool => __io.isOpen(handle)
+  val isOpen : bool
+    get() => __io.isOpen(handle)
 
   // Runs the block on this stream and closes it afterwards, whatever happens.
   fun <R> use(block : (InputStream) -> R) : R {
@@ -121,7 +122,8 @@ class OutputStream {
     __io.close(handle)
   }
 
-  get isOpen() : bool => __io.isOpen(handle)
+  val isOpen : bool
+    get() => __io.isOpen(handle)
 
   fun <R> use(block : (OutputStream) -> R) : R {
     try {
@@ -172,7 +174,8 @@ class Process {
     return code
   }
 
-  get isAlive() : bool => __io.processAlive(handle)
+  val isAlive : bool
+    get() => __io.processAlive(handle)
   fun pid() : int => __io.processId(handle)
 
   // Ends the program now.
@@ -187,10 +190,12 @@ class Process {
 
   // -- This program --
 
-  // What started this program: the path of its executable and, when it is a script run by
-  // astra, the script. ProcessBuilder(Process.currentCommand() + ["--second"]) starts it again.
-  static fun currentCommand() : open List<string> => __io.selfCommand()
-  static fun currentPid() : int => __io.currentPid()
+  static {
+    // What started this program: the path of its executable and, when it is a script run by
+    // astra, the script. ProcessBuilder(Process.currentCommand() + ["--second"]) starts it again.
+    fun currentCommand() : open List<string> => __io.selfCommand()
+    fun currentPid() : int => __io.currentPid()
+  }
 }
 
 // Says how a program is to be started, then starts it.
@@ -303,23 +308,31 @@ class Socket {
     return held
   }
 
-  get inputStream() : InputStream { connected(); return input as InputStream }
-  get outputStream() : OutputStream { connected(); return output as OutputStream }
+  val inputStream : InputStream
+    get() { connected(); return input as InputStream }
+  val outputStream : OutputStream
+    get() { connected(); return output as OutputStream }
   fun getInputStream() : InputStream => inputStream
   fun getOutputStream() : OutputStream => outputStream
 
-  get isConnected() : bool => handle != null
-  get isClosed() : bool => handle != null and !__io.isOpen(handle)
-  get localPort() : int => __io.socketInfo(connected())[0]
-  get remoteAddress() : string => __io.socketInfo(connected())[1]
-  get port() : int => __io.socketInfo(connected())[2]
+  val isConnected : bool
+    get() => handle != null
+  val isClosed : bool
+    get() => handle != null and !__io.isOpen(handle)
+  val localPort : int
+    get() => __io.socketInfo(connected())[0]
+  val remoteAddress : string
+    get() => __io.socketInfo(connected())[1]
+  val port : int
+    get() => __io.socketInfo(connected())[2]
 
   // How long a read waits before it fails, in milliseconds; 0 for as long as it takes.
-  get soTimeout() : int => readLimit
-  set soTimeout(millis) {
-    readLimit = millis
-    if (handle != null) { __io.socketTimeout(handle, millis) }
-  }
+  var soTimeout : int
+    get() => readLimit
+    set(millis) {
+      readLimit = millis
+      if (handle != null) { __io.socketTimeout(handle, millis) }
+    }
 
   // Says that nothing more will be written: the other side reads the end.
   fun shutdownOutput() {
@@ -356,8 +369,10 @@ class ServerSocket {
     this.handle = __io.listen(port, bindAddress, backlog)
   }
 
-  get localPort() : int => __io.socketInfo(handle)[0]
-  get isClosed() : bool => !__io.isOpen(handle)
+  val localPort : int
+    get() => __io.socketInfo(handle)[0]
+  val isClosed : bool
+    get() => !__io.isOpen(handle)
 
   // Waits for a connection and gives it.
   fun accept() : Socket => Socket().adopt(__io.accept(handle))

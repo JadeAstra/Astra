@@ -22,8 +22,10 @@ class StringBuilder {
   }
 
   // In characters.
-  get size() : int => count
-  get lastIndex() : int => count - 1
+  val size : int
+    get() => count
+  val lastIndex : int
+    get() => count - 1
   fun isEmpty() : bool => count == 0
   fun isNotEmpty() : bool => count != 0
 

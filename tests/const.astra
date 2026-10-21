@@ -28,9 +28,9 @@ object Limits {
   fun describe() : string => "at most $most"
 }
 class Board {
-  static const cells = rows * cols
   static {
     const name = "board"
+    const cells = rows * cols
   }
   fun describe() : string => "$name of $cells cells"
 }

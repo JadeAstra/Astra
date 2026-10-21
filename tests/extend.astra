@@ -1,0 +1,29 @@
+// extend: a type someone else wrote fits an interface (D33); extension functions in reach as
+// names are (D70).
+import ExtLib.*
+
+interface Weighed {
+  val weight : int
+  val name : string
+  fun describe() : string => "$name weighs $weight"
+}
+class Person(val name : string, val weight : int)
+class Car(val model : string, val weight : int)
+class Student(name : string, weight : int) : Person(name, weight)
+extend Person : Weighed                 // Person has all Weighed asks for
+extend Car : Weighed {                  // Car's model is its name, by a getter
+  val name : string
+    get() => model
+}
+extend Person : Weighed                 // the same again is one
+
+fun heaviest(items : List<Weighed>) : string => items.maxBy { it.weight }.describe()
+val things : List<Weighed> = [Person("Ann", 60), Car("Mini", 1200), Student("Bo", 70)]
+print(heaviest(things), things.map { it.name })   // expect: Mini weighs 1200 ["Ann", "Mini", "Bo"]
+val c : any = Car("Golf", 1300)
+print(c is Weighed, Student("s", 2) is Weighed, (c as Weighed).describe(), Person("p", 1).describe())
+// expect: true true Golf weighs 1300 p weighs 1
+
+// From an imported folder: its extension function, and its extend.
+val sized : Sized = Crate(3)
+print("hey".shout(), sized.size)        // expect: HEY! 3

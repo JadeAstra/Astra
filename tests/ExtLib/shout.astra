@@ -1,0 +1,12 @@
+// A folder whose extension functions and extend are in reach of the files that import it (D70, D33).
+
+fun string.shout() : string => this.upper() + "!"
+
+interface Sized {
+  val size : int
+}
+class Crate(val items : int)
+extend Crate : Sized {
+  val size : int
+    get() => items
+}

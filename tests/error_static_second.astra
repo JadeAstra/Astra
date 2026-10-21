@@ -1,0 +1,10 @@
+// One static { } block a class (D67).
+class Counter {
+  static {
+    var count = 0
+  }
+  static {
+    fun bump() { count += 1 }
+  }
+}
+// expect compile error: a class has one static { } block, and this is a second: put its members in the first (D67)

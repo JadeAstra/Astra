@@ -32,7 +32,9 @@ class Timer {
   var ticks : int = 0
   fun init(start : int = 0) { this.ticks = start }
   fun advance(by : int = 1) : Timer { this.ticks += by; return this }
-  static fun starting(at : int = 100) : Timer => Timer(at)
+  static {
+    fun starting(at : int = 100) : Timer => Timer(at)
+  }
 }
 print(Timer().advance().advance(5).ticks, Timer(10).ticks, Timer.starting().ticks, Timer.starting(at = 7).ticks)   // expect: 6 10 100 7
 

@@ -124,9 +124,11 @@ var level = Level(1)
 level++
 print(level + 2, level + Level(5), level)        // expect: L4 L7 L2
 class Maker {
-  static fun of(x : int) => "made of an int"
-  static fun of(s : string) => "made of a string"
-  static fun both() => of(1) + ", " + of("a")
+  static {
+    fun of(x : int) => "made of an int"
+    fun of(s : string) => "made of a string"
+    fun both() => of(1) + ", " + of("a")
+  }
 }
 print(Maker.of(1), Maker.of("a"), Maker.both())  // expect: made of an int made of a string made of an int, made of a string
 

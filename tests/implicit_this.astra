@@ -9,8 +9,11 @@ class Account(val owner : string, var balance : int = 0) {
   var history = []
   val limit = 500
 
-  get rich() => balance > 100
-  set cash(amount) { balance = amount }
+  val rich
+    get() => balance > 100
+  var cash : int
+    get() => balance
+    set(amount) { balance = amount }
 
   fun deposit(amount : int) {
     balance += amount                 // a field
@@ -82,7 +85,8 @@ print(Crate(1).label, Crate(2, "big").label, Crate(3).size)   // expect: crate b
 class Shape(val name : string) {
   var visible = true
   var moves = 0
-  get title() => "<$name>"
+  val title
+    get() => "<$name>"
   fun hide() { visible = false }
   fun area() => 0
   fun describe() => "$name of area ${area()}"
@@ -108,7 +112,8 @@ class Grid {
     var made = 0
     fun key(row : int, col : int) => row * MAX + col
     fun both(n : int) => [key(n, 0), key(0, n)]
-    get count() => made
+    val count
+      get() => made
   }
   val id = key(1, made)
   fun init() { made += 1 }
@@ -121,12 +126,16 @@ print(first.id, second.id, first.cell(2, 3), Grid.both(4), Grid.count, Grid.made
 
 // A subclass of something with statics.
 class Base {
-  static val KIND = "base"
+  static {
+    val KIND = "base"
+  }
   var kind = "an object's kind"
 }
 class Derived : Base {
-  static val KIND = "derived"
-  static val kind = "a static"
+  static {
+    val KIND = "derived"
+    val kind = "a static"
+  }
   fun kinds() => [KIND, kind, Base.KIND]      // the inherited field comes before the static
 }
 print(Derived().kinds())                    // expect: ["derived", "an object's kind", "base"]

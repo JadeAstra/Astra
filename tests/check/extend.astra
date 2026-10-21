@@ -1,0 +1,19 @@
+// extend (D33) and extension functions in reach (D70).
+
+interface Weighed {
+  val weight : int
+  fun describe() : string => "weighs $weight"
+}
+class Box(val size : int)
+class Bag(val weight : int)
+class Item(val weight : int)
+
+extend Box : Weighed            // check: Box does not fit Weighed: it has no 'weight'; a get() in the extend can give it from what it has (D33)
+extend Bag : Item               // check: an extend fits types to an interface; Item is not one (D33)
+extend Bag : Weighed {
+  val weight : int              // check: 'weight' is Bag's own: an extend does not replace what a class has (D33)
+    get() => 1
+}
+
+// ExtLib is not imported here, so its extension functions are not in reach.
+fun quiet(text : string) : string => text.shout()   // check: a string has no method 'shout'

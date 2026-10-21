@@ -18,41 +18,49 @@ class File {
     this.path = child == null ? base : __file.join(base, child is File ? child.path : "$child")
   }
 
-  // By path, without making a File: File.read("a.txt")
-  static fun read(path : string) : string => __file.read(path)
-  static fun write(path : string, text : string) { __file.write(path, text) }
-  static fun append(path : string, text : string) { __file.append(path, text) }
-  static fun exists(path : string) : bool => __file.exists(path)
-  static val separator : string = __file.separator
-
+  static {
+    // By path, without making a File: File.read("a.txt")
+    fun read(path : string) : string => __file.read(path)
+    fun write(path : string, text : string) { __file.write(path, text) }
+    fun append(path : string, text : string) { __file.append(path, text) }
+    fun exists(path : string) : bool => __file.exists(path)
+    val separator : string = __file.separator
+  }
   // -- What the path says --
 
   // The last name in the path: File("a/b.txt").name is "b.txt".
-  get name() : string => __file.name(this.path)
+  val name : string
+    get() => __file.name(this.path)
 
   // What follows the last dot of the name, without the dot; "" if there is none.
-  get extension() : string {
-    val whole : string = __file.name(this.path)
-    val dot = whole.lastIndexOf(".")
-    return dot < 0 ? "" : whole[dot + 1..]
-  }
+  val extension : string
+    get() {
+      val whole : string = __file.name(this.path)
+      val dot = whole.lastIndexOf(".")
+      return dot < 0 ? "" : whole[dot + 1..]
+    }
 
-  get nameWithoutExtension() : string {
-    val whole : string = __file.name(this.path)
-    val dot = whole.lastIndexOf(".")
-    return dot < 0 ? whole : whole[0..<dot]
-  }
+  val nameWithoutExtension : string
+    get() {
+      val whole : string = __file.name(this.path)
+      val dot = whole.lastIndexOf(".")
+      return dot < 0 ? whole : whole[0..<dot]
+    }
 
   // The folder it is in, as a path and as a File; null if the path names none.
-  get parent() : string? => __file.parent(this.path)
+  val parent : string?
+    get() => __file.parent(this.path)
 
-  get parentFile() : File? {
-    val folder : string? = __file.parent(this.path)
-    return folder == null ? null : File(folder)
-  }
+  val parentFile : File?
+    get() {
+      val folder : string? = __file.parent(this.path)
+      return folder == null ? null : File(folder)
+    }
 
-  get absolutePath() : string => __file.absolute(this.path)
-  get absoluteFile() : File => File(__file.absolute(this.path))
+  val absolutePath : string
+    get() => __file.absolute(this.path)
+  val absoluteFile : File
+    get() => File(__file.absolute(this.path))
 
   // Something inside this folder: File("a").resolve("b.txt") is a/b.txt.
   fun resolve(child : any) : File => File(this.path, child)
@@ -60,8 +68,10 @@ class File {
   // -- What is on disk --
 
   fun exists() : bool => __file.exists(this.path)
-  get isFile() : bool => __file.isFile(this.path)
-  get isDirectory() : bool => __file.isDirectory(this.path)
+  val isFile : bool
+    get() => __file.isFile(this.path)
+  val isDirectory : bool
+    get() => __file.isDirectory(this.path)
 
   // The size in bytes, and when it was last written in milliseconds since the start of
   // 1970. Both are 0 for a file that is not there.

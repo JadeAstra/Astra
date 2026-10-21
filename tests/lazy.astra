@@ -1,0 +1,109 @@
+// lateinit (D36), lazy val and lazy var (D37), and a named object made when first used (D66).
+
+fun attempt(f : () -> any?) : string {
+  try { return "${f()}" } catch (e) { return e.message }
+}
+
+// lateinit: given its value after the object is made; read before that, an error.
+class Window {
+  lateinit var title : string
+  lateinit var parent : Window
+  fun titleSize() => title.size
+}
+val w = Window()
+print(attempt { w.title }, attempt { w.titleSize() })
+// expect: 'title' of Window is read before it is given a value (a lateinit field is read only once it has one) 'title' of Window is read before it is given a value (a lateinit field is read only once it has one)
+w.title = "main"
+w.parent = Window()
+print(w.title, w.titleSize(), w.parent is Window)   // expect: main 4 true
+
+// lazy: worked out at the first read, once, and kept.
+var worked = 0
+fun work(n : int) : int {
+  worked += 1
+  return n * 10
+}
+class Report(val n : int) {
+  lazy val total = work(n)
+  lazy var title = "report $n"
+  fun twice() => total * 2
+}
+val r = Report(4)
+print(worked, r.total, r.twice(), r.total, worked)   // expect: 0 40 80 40 1
+r.title = "named"                                    // assigned first: its starting value is never worked out
+print(r.title, Report(5).title)                      // expect: named report 5
+
+// Statics and the top level too.
+class Config {
+  static {
+    lazy val settings = work(7)
+  }
+}
+lazy val top = work(1)
+print(worked, Config.settings, top, Config.settings, top, worked)   // expect: 1 70 10 70 10 3
+lazy var counter = work(2)
+counter += 1
+print(counter, worked)                               // expect: 21 4
+
+// A starting value that needs itself is an error; one that fails is tried again at the next read.
+class Loop {
+  lazy val a : int = b + 1
+  lazy val b : int = a + 1
+}
+print(attempt { Loop().a })   // expect: 'a' of Loop is read while its value is being worked out: its starting value needs itself
+var tries = 0
+class Flaky {
+  lazy val value = tryIt()
+  fun tryIt() : int {
+    tries += 1
+    if (tries < 2) { throw Error("not yet") }
+    return 42
+  }
+}
+val flaky = Flaky()
+print(attempt { flaky.value }, attempt { flaky.value }, tries)   // expect: not yet 42 2
+
+// Threads read one value: the first works it out, the others wait for it.
+var made = 0
+class Shared {
+  lazy val value = slow()
+  fun slow() : int {
+    made += 1
+    Thread.sleep(20)
+    return 7
+  }
+}
+val shared = Shared()
+val readers = (1..4).map { Thread { print("read ${shared.value}") } }
+readers.forEach { it.start() }
+readers.forEach { it.join() }
+print(made)   // expect: read 7
+// expect: read 7
+// expect: read 7
+// expect: read 7
+// expect: 1
+
+// A named object is made when it is first used.
+print("before")
+object Registry {
+  val items : open List<string> = []
+  init { print("Registry made") }
+}
+print("after")
+Registry.items.add("x")
+print(Registry.items)
+// expect: before
+// expect: after
+// expect: Registry made
+// expect: ["x"]
+class Outer {
+  object Inner {
+    init { print("Inner made") }
+    val n = 5
+  }
+}
+print("outer declared")
+print(Outer.Inner.n)
+// expect: outer declared
+// expect: Inner made
+// expect: 5

@@ -21,17 +21,21 @@ fun go(way : Way = up) : string => way.name + "/" + Way.entries.size
 print(go(), go(down), Limits.MAX, Limits.describe())   // expect: up/2 down/2 100 0..100
 enum Way { up, down }
 class Limits {
-  static val MIN = 0
-  static val MAX = 100
-  static fun describe() => "$MIN..$MAX"
+  static {
+    val MIN = 0
+    val MAX = 100
+    fun describe() => "$MIN..$MAX"
+  }
 }
 
 // Asked for first where the class is written, they are worked out there, after what is above.
 val seed = 5
 val order = []
 class Config {
-  static val START = seed * 2
-  static val LOG = order.also { it.add("config") }
+  static {
+    val START = seed * 2
+    val LOG = order.also { it.add("config") }
+  }
 }
 enum Stage(val weight : int) {
   one(seed), two(seed + 1)

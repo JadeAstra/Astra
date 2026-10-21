@@ -9,8 +9,8 @@ class Node {
 var total = 0
 for i in 0..<300000 {
   var n = Node(i, null)
-  var pair = [i, "s" + i, {k: i}]
-  total += pair[0] - n.value + pair[2]["k"] - i
+  var pair : List<any> = [i, "s" + i, {k: i}]
+  total += (pair[0] as int) - n.value + (pair[2] as Map<string, int>)["k"]!! - i
 }
 print(total)                            // expect: 0
 

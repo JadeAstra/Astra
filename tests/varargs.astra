@@ -70,7 +70,9 @@ try { add3(*[1, 2]) } catch (e) { print(e.message) }   // expect: add3() expects
 class Vec(val x : int, val y : int) {
   fun plus(dx : int, dy : int) => Vec(this.x + dx, this.y + dy)
   fun all(vararg more : int) => [this.x, this.y] + more
-  static fun of(vararg parts : int) => Vec(*parts)
+  static {
+    fun of(vararg parts : int) => Vec(*parts)
+  }
   fun toString() => "(${this.x}, ${this.y})"
 }
 val v = Vec(*[1, 2])

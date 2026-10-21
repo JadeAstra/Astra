@@ -1,6 +1,7 @@
 // ... and its type.
 enum Bad {
   first, second
-  override get name() : int => 1
+  override val name : int
+    get() => 1
 }
-// expect compile error: an override of 'name' has to keep its shape: override get name() : string
+// expect compile error: an override of 'name' has to keep its shape: override val name : string get() => ...

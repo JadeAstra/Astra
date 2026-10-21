@@ -17,7 +17,9 @@ class Box(val items : List<int>) {
     for x in items { action(x, extra) }
   }
   fun twice(a : int, b : int = a, block : Function) => block(a, b)
-  static fun build(size : int = 2, make : Function) => Box(Range(size).toList().map(make))
+  static {
+    fun build(size : int = 2, make : Function) => Box(Range(size).toList().map(make))
+  }
 }
 
 val box = Box([1, 2, 3])

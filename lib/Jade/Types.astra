@@ -183,15 +183,24 @@ object Palette {
     return made
   }
 
-  get surface() : Color => bg(0xFFFFFF)
-  get border() : Color => line(0x808080)
-  get headerBg() : Color => bg(0xECECEC)
-  get ink() : Color => fg(0x1a2420)
-  get disabled() : Color => fg(0x909090)
-  get selection() : Color => bg(0xADD8E6)
-  get accent() : Color => fg(0x1565C0)
-  get selectBlue() : Color => fg(0x2D6CDF)
-  get positive() : Color => fg(0x0fa47f)
+  val surface : Color
+    get() => bg(0xFFFFFF)
+  val border : Color
+    get() => line(0x808080)
+  val headerBg : Color
+    get() => bg(0xECECEC)
+  val ink : Color
+    get() => fg(0x1a2420)
+  val disabled : Color
+    get() => fg(0x909090)
+  val selection : Color
+    get() => bg(0xADD8E6)
+  val accent : Color
+    get() => fg(0x1565C0)
+  val selectBlue : Color
+    get() => fg(0x2D6CDF)
+  val positive : Color
+    get() => fg(0x0fa47f)
 }
 
 // ---- Measuring text for layout ----

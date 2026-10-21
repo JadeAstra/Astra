@@ -28,8 +28,9 @@ print(level)                                     // expect: L4
 class Counter {
   var count : int = 0
   var hidden : int = 100
-  get shown() : int => this.hidden
-  set shown(value : int) { this.hidden = value }
+  var shown : int
+    get() => this.hidden
+    set(value : int) { this.hidden = value }
   fun bump() { this.count++ }
   fun drop() { this.count-- }
 }

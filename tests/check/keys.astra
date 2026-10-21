@@ -23,7 +23,8 @@ class Follows(val n : int, var seen : int) {
 class FollowsVar(var n : int) {
   op ==(other : any?) : bool => other is FollowsVar and other.doubled == doubled
   fun hashCode() : int => doubled
-  get doubled() : int => n * 2
+  val doubled : int
+    get() => n * 2
 }
 value Spot(var x : int, var y : int)
 

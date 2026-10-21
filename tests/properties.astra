@@ -1,10 +1,12 @@
 // Properties: `get name()` computes a value when it is read, `set name(value)` runs when it
 // is assigned. They are used like fields.
 class Temperature(var celsius : Number) {
-  get fahrenheit() : Number => this.celsius * 9 / 5 + 32
-  set fahrenheit(value : Number) { this.celsius = (value - 32) * 5 / 9 }
+  var fahrenheit : Number
+    get() => this.celsius * 9 / 5 + 32
+    set(value : Number) { this.celsius = (value - 32) * 5 / 9 }
 
-  get description() : string => "${this.celsius} C"
+  val description : string
+    get() => "${this.celsius} C"
 }
 val t = Temperature(100)
 print(t.fahrenheit, t.description)               // expect: 212 100 C
@@ -31,13 +33,14 @@ class Account {
   var stored : Number = 0
   val history : open List = []
 
-  get balance() : Number => this.stored
-  set balance(amount : Number) {
-    if amount < 0 { throw Error("balance cannot be negative") }
-    if amount == this.stored { return }
-    this.history.add(amount)
-    this.stored = amount
-  }
+  var balance : Number
+    get() => this.stored
+    set(amount : Number) {
+      if amount < 0 { throw Error("balance cannot be negative") }
+      if amount == this.stored { return }
+      this.history.add(amount)
+      this.stored = amount
+    }
 
   fun deposit(amount : Number) { this.balance += amount }
 }
@@ -48,28 +51,37 @@ account.deposit(25)
 print(account.balance, account.history)          // expect: 75 [50, 75]
 print(attempt(fun() { account.balance = -1 }), account.balance)   // expect: balance cannot be negative 75
 
-// only a setter: the property can be assigned but not read
+// a setter that keeps what it is given somewhere else, and a getter that reads it back (as in
+// Kotlin, a property is read as well as set)
 class Logger {
   val lines : open List = []
-  set message(text) { this.lines.add("log: $text") }
+  var message : any?
+    get() => lines.lastOrNull()
+    set(text) { this.lines.add("log: $text") }
 }
 val logger = Logger()
 logger.message = "started"
 logger.message = 42
 print(logger.lines)                              // expect: ["log: started", "log: 42"]
-print(attempt(fun() => logger.message))          // expect: property 'message' of Logger cannot be read: it has no getter
+print(attempt(fun() => logger.message))          // expect: log: 42
 
-// inheritance: properties are inherited, and a subclass can replace just one half
+// inheritance: properties are inherited, and a subclass replaces a whole one, reaching the one above
+// with super
 class Base {
   var raw = ""
-  get text() => this.raw
-  set text(value) { this.raw = "$value" }
+  var text
+    get() => this.raw
+    set(value) { this.raw = "$value" }
 }
 class Loud : Base {
-  override set text(value) { this.raw = "$value".upper() + "!" }
+  override var text
+    get() => super.text
+    set(value) { this.raw = "$value".upper() + "!" }
 }
 class Quiet : Base {
-  override get text() => "(" + this.raw + ")"
+  override var text
+    get() => "(" + this.raw + ")"
+    set(value) { super.text = value }
 }
 val loud = Loud()
 val quiet = Quiet()
@@ -82,9 +94,11 @@ class Open {
   val items : open List<any?> = []
   var extra = false
   fun init() { this.items.clear() }
-  get count() => this.items.size
-  get last() => this.items.size == 0 ? null : this.items[^1]
-  set last(value) { this.items.add(value) }
+  val count
+    get() => this.items.size
+  var last
+    get() => this.items.size == 0 ? null : this.items[^1]
+    set(value) { this.items.add(value) }
 }
 val open = Open()
 open.last = "a"
@@ -95,7 +109,8 @@ print(open.count, open.last, open.extra)         // expect: 2 b true
 // a property that holds a function can be called directly
 class Handlers {
   var count = 0
-  get increment() => fun(by) { this.count += by; return this.count }
+  val increment
+    get() => fun(by) { this.count += by; return this.count }
 }
 val handlers = Handlers()
 print(handlers.increment(5), handlers.increment(2))   // expect: 5 7
@@ -105,7 +120,8 @@ class Store {
   val data : open Map = {:}
   fun get(key : string) => this.data.get(key, "missing")
   fun set(key : string, value : int) { this.data[key] = value }
-  get size() : int => this.data.size
+  val size : int
+    get() => this.data.size
 }
 val store = Store()
 store.set("a", 1)
@@ -115,8 +131,10 @@ print(get, set, store.size)                      // expect: 1 missing 1
 
 // string interpolation and methods see properties as values
 class Circle(val radius : Number) {
-  get area() : Number => Math.pi * this.radius * this.radius
-  get diameter() : Number => this.radius * 2
+  val area : Number
+    get() => Math.pi * this.radius * this.radius
+  val diameter : Number
+    get() => this.radius * 2
   fun describe() : string => "circle of diameter ${this.diameter}"
 }
 val c = Circle(2)
@@ -124,8 +142,9 @@ print(c.describe(), "${c.diameter}", [Circle(1), Circle(3)].map(fun(x) => x.diam
 
 // errors inside a getter or setter show up where the property is used
 class Fragile {
-  get value() { throw Error("cannot read") }
-  set value(v) { throw Error("cannot write $v") }
+  var value
+    get() { throw Error("cannot read") }
+    set(v) { throw Error("cannot write $v") }
 }
 print(attempt(fun() => Fragile().value))         // expect: cannot read
 print(attempt(fun() { Fragile().value = 7 }))    // expect: cannot write 7

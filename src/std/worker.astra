@@ -18,8 +18,10 @@
 // Messages arrive on the event loop of the side they are sent to, one at a time.
 // The work is done by the built-in __worker (worker.cpp).
 class Worker {
-  // In a worker: the program that started it. Null in a program that is not a worker.
-  static val parent = __worker.inWorker() ? WorkerParent() : null
+  static {
+    // In a worker: the program that started it. Null in a program that is not a worker.
+    val parent = __worker.inWorker() ? WorkerParent() : null
+  }
 
   // Called with each message the worker sends, on this program's event loop.
   var onMessage : ((any?) -> unit)? = null
@@ -37,7 +39,8 @@ class Worker {
   }
 
   // The script it runs, as the call named it.
-  get path() : string => __worker.path(id)
+  val path : string
+    get() => __worker.path(id)
 
   // Sends a copy of the message. False if the worker has ended.
   fun post(message : any?) : bool => __worker.post(id, message)
@@ -47,7 +50,8 @@ class Worker {
     __worker.terminate(id)
   }
 
-  get isAlive() : bool => __worker.isAlive(id)
+  val isAlive : bool
+    get() => __worker.isAlive(id)
 }
 
 // What a worker sees of the program that started it.

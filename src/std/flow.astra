@@ -19,7 +19,8 @@ object EventLoop {
   fun every(millis : int, task : () -> unit) : Timer => Timer(__loop.timer(millis, task, millis))
 
   // Whether the code asking is running on the loop's thread.
-  get isLoopThread() : bool => __loop.isLoopThread()
+  val isLoopThread : bool
+    get() => __loop.isLoopThread()
 
   // Runs the loop here until there is nothing left for it to wait for. A program need not
   // call this: the loop runs by itself when the script ends. It is for a script that has
@@ -62,11 +63,14 @@ class Result<T> {
     this.held = held
   }
 
-  static fun <T> success(value : T) : Result<T> => Result<T>(true, value)
-  static fun <T> failure(error : any?) : Result<T> => Result<T>(false, error)
-
-  get isSuccess() : bool => ok
-  get isFailure() : bool => !ok
+  static {
+    fun <T> success(value : T) : Result<T> => Result<T>(true, value)
+    fun <T> failure(error : any?) : Result<T> => Result<T>(false, error)
+  }
+  val isSuccess : bool
+    get() => ok
+  val isFailure : bool
+    get() => !ok
   fun getOrNull() : T? => ok ? held as T : null
   fun exceptionOrNull() : any? => ok ? null : held
   fun getOrDefault(defaultValue : T) : T => ok ? held as T : defaultValue

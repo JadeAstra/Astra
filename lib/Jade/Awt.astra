@@ -37,13 +37,80 @@ class Color {
     }
   }
 
-  private static fun part(value : Number) : int {
-    val whole = Math.round(value).toInt()
-    return whole < 0 ? 0 : (whole > 255 ? 255 : whole)
+  static {
+    private fun part(value : Number) : int {
+      val whole = Math.round(value).toInt()
+      return whole < 0 ? 0 : (whole > 255 ? 255 : whole)
+    }
+    val white = Color(255, 255, 255)
+    val lightGray = Color(192, 192, 192)
+    val gray = Color(128, 128, 128)
+    val darkGray = Color(64, 64, 64)
+    val black = Color(0, 0, 0)
+    val red = Color(255, 0, 0)
+    val pink = Color(255, 175, 175)
+    val orange = Color(255, 200, 0)
+    val yellow = Color(255, 255, 0)
+    val green = Color(0, 255, 0)
+    val magenta = Color(255, 0, 255)
+    val cyan = Color(0, 255, 255)
+    val blue = Color(0, 0, 255)
+    // "#RRGGBB" or "0xRRGGBB".
+    fun decode(text : string) : Color {
+      val digits = text.startsWith("#") ? text[1..] : (text.startsWith("0x") or text.startsWith("0X") ? text[2..] : text)
+      return Color(digits.toInt(16))
+    }
+    // From hue, saturation and brightness, each from 0.0 to 1.0, as one number (0xFFRRGGBB).
+    fun HSBtoRGB(hue : float, saturation : float, brightness : float) : int {
+      var r = brightness
+      var g = brightness
+      var b = brightness
+      if (saturation != 0) {
+        val h = (hue - Math.floor(hue)) * 6.0
+        val f = h - Math.floor(h)
+        val p = brightness * (1.0 - saturation)
+        val q = brightness * (1.0 - saturation * f)
+        val t = brightness * (1.0 - saturation * (1.0 - f))
+        val sector = h.toInt()
+        if (sector == 0) { r = brightness; g = t; b = p }
+        else if (sector == 1) { r = q; g = brightness; b = p }
+        else if (sector == 2) { r = p; g = brightness; b = t }
+        else if (sector == 3) { r = p; g = q; b = brightness }
+        else if (sector == 4) { r = t; g = p; b = brightness }
+        else { r = brightness; g = p; b = q }
+      }
+      return 0xFF000000 | ((r * 255 + 0.5).toInt() << 16) | ((g * 255 + 0.5).toInt() << 8) | (b * 255 + 0.5).toInt()
+    }
+    fun getHSBColor(hue : float, saturation : float, brightness : float) : Color => Color(Color.HSBtoRGB(hue, saturation, brightness))
+    // The other way: [hue, saturation, brightness]. (Java fills an array given to it; here
+    // the list is the result, and a list given as the fourth argument is filled as well.)
+    fun RGBtoHSB(r : int, g : int, b : int, into : open List<float>? = null) : List<float> {
+      val most = Math.max(r, Math.max(g, b))
+      val least = Math.min(r, Math.min(g, b))
+      val brightness = most / 255.0
+      val saturation = most != 0 ? (most - least) / most.toFloat() : 0.0
+      var hue = 0.0
+      if (saturation != 0) {
+        val span = (most - least).toFloat()
+        val rc = (most - r) / span
+        val gc = (most - g) / span
+        val bc = (most - b) / span
+        if (r == most) { hue = bc - gc } else if (g == most) { hue = 2.0 + rc - bc } else { hue = 4.0 + gc - rc }
+        hue = hue / 6.0
+        if (hue < 0) { hue = hue + 1.0 }
+      }
+      val result = [hue, saturation, brightness]
+      if (into != null) {
+        for (i in 0..<3) {
+          if (i < into.size) { into[i] = result[i] } else { into.add(result[i]) }
+        }
+      }
+      return result
+    }
   }
-
   // The colour as one number, 0xAARRGGBB.
-  get rgb() => (alpha << 24) | (red << 16) | (green << 8) | blue
+  val rgb
+    get() => (alpha << 24) | (red << 16) | (green << 8) | blue
   fun getRGB() : int => rgb
   fun getRed() : int => red
   fun getGreen() : int => green
@@ -66,74 +133,6 @@ class Color {
   fun hashCode() : int => rgb
   override fun toString() : string => alpha == 255 ? "Color($red, $green, $blue)" : "Color($red, $green, $blue, $alpha)"
 
-  static val white = Color(255, 255, 255)
-  static val lightGray = Color(192, 192, 192)
-  static val gray = Color(128, 128, 128)
-  static val darkGray = Color(64, 64, 64)
-  static val black = Color(0, 0, 0)
-  static val red = Color(255, 0, 0)
-  static val pink = Color(255, 175, 175)
-  static val orange = Color(255, 200, 0)
-  static val yellow = Color(255, 255, 0)
-  static val green = Color(0, 255, 0)
-  static val magenta = Color(255, 0, 255)
-  static val cyan = Color(0, 255, 255)
-  static val blue = Color(0, 0, 255)
-
-  // "#RRGGBB" or "0xRRGGBB".
-  static fun decode(text : string) : Color {
-    val digits = text.startsWith("#") ? text[1..] : (text.startsWith("0x") or text.startsWith("0X") ? text[2..] : text)
-    return Color(digits.toInt(16))
-  }
-
-  // From hue, saturation and brightness, each from 0.0 to 1.0, as one number (0xFFRRGGBB).
-  static fun HSBtoRGB(hue : float, saturation : float, brightness : float) : int {
-    var r = brightness
-    var g = brightness
-    var b = brightness
-    if (saturation != 0) {
-      val h = (hue - Math.floor(hue)) * 6.0
-      val f = h - Math.floor(h)
-      val p = brightness * (1.0 - saturation)
-      val q = brightness * (1.0 - saturation * f)
-      val t = brightness * (1.0 - saturation * (1.0 - f))
-      val sector = h.toInt()
-      if (sector == 0) { r = brightness; g = t; b = p }
-      else if (sector == 1) { r = q; g = brightness; b = p }
-      else if (sector == 2) { r = p; g = brightness; b = t }
-      else if (sector == 3) { r = p; g = q; b = brightness }
-      else if (sector == 4) { r = t; g = p; b = brightness }
-      else { r = brightness; g = p; b = q }
-    }
-    return 0xFF000000 | ((r * 255 + 0.5).toInt() << 16) | ((g * 255 + 0.5).toInt() << 8) | (b * 255 + 0.5).toInt()
-  }
-  static fun getHSBColor(hue : float, saturation : float, brightness : float) : Color => Color(Color.HSBtoRGB(hue, saturation, brightness))
-
-  // The other way: [hue, saturation, brightness]. (Java fills an array given to it; here
-  // the list is the result, and a list given as the fourth argument is filled as well.)
-  static fun RGBtoHSB(r : int, g : int, b : int, into : open List<float>? = null) : List<float> {
-    val most = Math.max(r, Math.max(g, b))
-    val least = Math.min(r, Math.min(g, b))
-    val brightness = most / 255.0
-    val saturation = most != 0 ? (most - least) / most.toFloat() : 0.0
-    var hue = 0.0
-    if (saturation != 0) {
-      val span = (most - least).toFloat()
-      val rc = (most - r) / span
-      val gc = (most - g) / span
-      val bc = (most - b) / span
-      if (r == most) { hue = bc - gc } else if (g == most) { hue = 2.0 + rc - bc } else { hue = 4.0 + gc - rc }
-      hue = hue / 6.0
-      if (hue < 0) { hue = hue + 1.0 }
-    }
-    val result = [hue, saturation, brightness]
-    if (into != null) {
-      for (i in 0..<3) {
-        if (i < into.size) { into[i] = result[i] } else { into.add(result[i]) }
-      }
-    }
-    return result
-  }
 }
 
 // ---- Font ----
@@ -142,14 +141,18 @@ class Color {
 // of the names that mean the system's own: "Dialog", "SansSerif", "Serif", "Monospaced".
 // The size is the height of the font's em in layout units.
 class Font {
-  static const plain = 0
-  static const bold = 1
-  static const italic = 2
-  static const dialog = "Dialog"
-  static const dialogInput = "DialogInput"
-  static const sansSerif = "SansSerif"
-  static const serif = "Serif"
-  static const monospaced = "Monospaced"
+  static {
+    const plain = 0
+    const bold = 1
+    const italic = 2
+    const dialog = "Dialog"
+    const dialogInput = "DialogInput"
+    const sansSerif = "SansSerif"
+    const serif = "Serif"
+    const monospaced = "Monospaced"
+    // The engine's font for this one on a screen of some scale: what measures and draws it.
+    private val made = {:}
+  }
 
   val name : string
   val style : int
@@ -161,17 +164,23 @@ class Font {
     this.size = size
   }
 
-  get isPlain() : bool => style == 0
-  get isBold() : bool => style & 1 != 0
-  get isItalic() : bool => style & 2 != 0
-  get size2D() : float => size.toFloat()
+  val isPlain : bool
+    get() => style == 0
+  val isBold : bool
+    get() => style & 1 != 0
+  val isItalic : bool
+    get() => style & 2 != 0
+  val size2D : float
+    get() => size.toFloat()
   fun getSize() : Number => size
   fun getStyle() : int => style
   fun getName() : string => name
 
   // The family actually used: the one asked for if it is installed, the system's if not.
-  get family() : string => textFont(1).family
-  get fontName() : string => textFont(1).typeface.fullName
+  val family : string
+    get() => textFont(1).family
+  val fontName : string
+    get() => textFont(1).typeface.fullName
 
   // The same font in another style or size: deriveFont(Font.bold), deriveFont(14.0),
   // deriveFont(Font.bold, 14.0). A whole number alone is a style and a decimal one a size,
@@ -185,8 +194,6 @@ class Font {
   fun hashCode() : int => name.hashCode() * 31 + style * 7 + (size * 16).toInt()
   override fun toString() : string => "Font($name, ${isBold ? (isItalic ? "bolditalic" : "bold") : (isItalic ? "italic" : "plain")}, $size)"
 
-  // The engine's font for this one on a screen of some scale: what measures and draws it.
-  private static val made = {:}
   fun textFont(scale : Number = 1) : TextFont {
     val key = "$name|$style|$size|$scale"
     var found = Font.made[key]
@@ -214,12 +221,18 @@ class FontMetrics {
 
   private fun units(device : int) : int => scale == 1 ? device : Math.ceil(device / scale.toFloat()).toInt()
 
-  get ascent() : int => units(engine.ascent)
-  get descent() : int => units(engine.descent)
-  get leading() : int => units(engine.leading)
-  get height() : int => units(engine.ascent) + units(engine.descent) + units(engine.leading)
-  get maxAscent() : int => ascent
-  get maxDescent() : int => descent
+  val ascent : int
+    get() => units(engine.ascent)
+  val descent : int
+    get() => units(engine.descent)
+  val leading : int
+    get() => units(engine.leading)
+  val height : int
+    get() => units(engine.ascent) + units(engine.descent) + units(engine.leading)
+  val maxAscent : int
+    get() => ascent
+  val maxDescent : int
+    get() => descent
   fun stringWidth(text : string) : int => units(engine.width(text))
   fun charWidth(character : string) : int => units(engine.charWidth(character))
   fun getAscent() : int => ascent
@@ -271,16 +284,26 @@ value Insets(var top : int = 0, var left : int = 0, var bottom : int = 0, var ri
 // height). (Java's Rectangle(width, height) is Rectangle(0, 0, width, height); its copy,
 // Rectangle(other), is the value itself, which is copied wherever it is kept.)
 value Rectangle(var x : int, var y : int, var width : int, var height : int) {
-  get isEmpty() : bool => width <= 0 or height <= 0
-  get location() : Point => Point(x, y)
-  get size() : Dimension => Dimension(width, height)
-  get bounds() : Rectangle => this
-  get minX() : int => x
-  get minY() : int => y
-  get maxX() : int => x + width
-  get maxY() : int => y + height
-  get centerX() : float => x + width / 2.0
-  get centerY() : float => y + height / 2.0
+  val isEmpty : bool
+    get() => width <= 0 or height <= 0
+  val location : Point
+    get() => Point(x, y)
+  val size : Dimension
+    get() => Dimension(width, height)
+  val bounds : Rectangle
+    get() => this
+  val minX : int
+    get() => x
+  val minY : int
+    get() => y
+  val maxX : int
+    get() => x + width
+  val maxY : int
+    get() => y + height
+  val centerX : float
+    get() => x + width / 2.0
+  val centerY : float
+    get() => y + height / 2.0
 
   // Whether a point, or the whole of another rectangle, is inside.
   fun contains(px : any, py : int? = null, w : int? = null, h : int? = null) : bool {
@@ -352,8 +375,12 @@ value Rectangle(var x : int, var y : int, var width : int, var height : int) {
 // other only when it is asked for after the other has changed, so a picture that is only
 // ever drawn is sent to the card once.
 class BufferedImage {
-  static const typeIntRgb = 1       // no alpha: every pixel solid
-  static const typeIntArgb = 2
+  static {
+    const typeIntRgb = 1       // no alpha: every pixel solid
+    const typeIntArgb = 2
+    // From and to the engine's own kind of picture (a PNG file read with Picture.load, say).
+    fun fromPicture(picture : Picture) : BufferedImage => BufferedImage(picture.width, picture.height, 2, picture.copy())
+  }
 
   val width : int
   val height : int
@@ -371,8 +398,6 @@ class BufferedImage {
     this.held = picture ?: Picture(width, height, type == 1 ? 0xFF000000 : 0)
   }
 
-  // From and to the engine's own kind of picture (a PNG file read with Picture.load, say).
-  static fun fromPicture(picture : Picture) : BufferedImage => BufferedImage(picture.width, picture.height, 2, picture.copy())
   fun toPicture() : Picture => memory().copy()
 
   fun getWidth() : int => width

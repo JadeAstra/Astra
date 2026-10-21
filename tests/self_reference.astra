@@ -57,9 +57,9 @@ print(attempt(callsItselfAtOnce))                // expect: 'value' is used befo
 
 // the function may keep the variable for later, or pass it on through further functions
 fun deferred() {
-  val box = {get: fun() => box["label"], label: "kept"}
+  val box : Map<string, any> = {get: fun() => box["label"], label: "kept"}
   val nested = fun() => fun() => nested
-  return [box["get"](), nested()() == nested]
+  return [(box["get"] as () -> any?)(), nested()() == nested]
 }
 print(deferred())                                // expect: ["kept", true]
 

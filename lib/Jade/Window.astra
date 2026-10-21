@@ -79,22 +79,25 @@ class Window {
     this.keyFilter = keyFilter
   }
 
-  get root() : Component => currentRoot
-  set root(value) {
-    currentRoot = value
-    handle?.rootChanged(value)
-  }
+  var root : Component
+    get() => currentRoot
+    set(value) {
+      currentRoot = value
+      handle?.rootChanged(value)
+    }
 
-  get title() : string => currentTitle
-  set title(text) {
-    currentTitle = text
-    handle?.setTitle(text)
-  }
+  var title : string
+    get() => currentTitle
+    set(text) {
+      currentTitle = text
+      handle?.setTitle(text)
+    }
   fun setTitle(text : string) {
     title = text
   }
 
-  get isShowing() : bool => handle != null
+  val isShowing : bool
+    get() => handle != null
 
   // Opens the window, or brings it to the front if it is open already.
   fun show() {
@@ -321,9 +324,12 @@ class WindowHost : WindowHandle {
     (window.onFront)()
   }
 
-  get focused() : Component? => focusedComponent
-  get cursor() : CursorKind => currentCursor
-  get shownTree() : Component => tree
+  val focused : Component?
+    get() => focusedComponent
+  val cursor : CursorKind
+    get() => currentCursor
+  val shownTree : Component
+    get() => tree
 
   // ---- The handle ----
 
@@ -619,44 +625,41 @@ class WindowHost : WindowHandle {
 
   // ---- Keys ----
 
-  private static val modifierKeys = [KeyCode.shiftLeft, KeyCode.shiftRight, KeyCode.controlLeft, KeyCode.controlRight,
-                                     KeyCode.altLeft, KeyCode.altRight, KeyCode.metaLeft, KeyCode.metaRight]
-  private static fun isModifier(key : KeyCode) : bool => WindowHost.modifierKeys.contains(key)
-
-  // The keys a widget is told of by name.
-  private static val namedKeys = {
-    "left": Key.left, "right": Key.right, "up": Key.up, "down": Key.down, "pageUp": Key.pageUp, "pageDown": Key.pageDown,
-    "home": Key.home, "end": Key.end, "backspace": Key.backspace, "delete": Key.delete, "enter": Key.enter,
-    "numpadEnter": Key.enter, "escape": Key.escape, "tab": Key.tab, "f2": Key.f2, "f5": Key.f5, "f10": Key.f10, "f11": Key.f11
-  }
-  private static fun keyFor(key : KeyCode) : Key? => WindowHost.namedKeys[key.name]
-
-  private static val navKeys = [KeyCode.left, KeyCode.right, KeyCode.up, KeyCode.down, KeyCode.home, KeyCode.end, KeyCode.pageUp, KeyCode.pageDown]
-  private static fun isNavKey(key : KeyCode) : bool => WindowHost.navKeys.contains(key)
-
-  // What a key does with Ctrl held: by the letter the keyboard's layout gives it.
-  private static val editCommands = {
-    "Y": EditCommand.redo, "C": EditCommand.copy, "X": EditCommand.cut, "V": EditCommand.paste,
-    "A": EditCommand.selectAll, "D": EditCommand.fillDown, "R": EditCommand.fillRight
-  }
-  private static fun editCommandFor(key : KeyCode, letter : string?, shift : bool) : EditCommand? {
-    if (key == KeyCode.space) { return EditCommand.complete }
-    if (letter == "Z") { return shift ? EditCommand.redo : EditCommand.undo }
-    return letter == null ? null : WindowHost.editCommands[letter]
-  }
-
-  // The letter or digit of a key: what the layout says, or failing that where the key is.
-  private static fun letterFor(event : RawInput.KeyDown) : string? {
-    if (event.letter != null) { return event.letter }
-    val name = event.key.name
-    if (name.size == 1) { return name.upper() }
-    if (name.startsWith("digit") or name.startsWith("numpad")) {
-      val last = name[name.size - 1..]
-      if (last >= "0" and last <= "9") { return last }
+  static {
+    private val modifierKeys = [KeyCode.shiftLeft, KeyCode.shiftRight, KeyCode.controlLeft, KeyCode.controlRight,
+                                       KeyCode.altLeft, KeyCode.altRight, KeyCode.metaLeft, KeyCode.metaRight]
+    private fun isModifier(key : KeyCode) : bool => WindowHost.modifierKeys.contains(key)
+    // The keys a widget is told of by name.
+    private val namedKeys = {
+      "left": Key.left, "right": Key.right, "up": Key.up, "down": Key.down, "pageUp": Key.pageUp, "pageDown": Key.pageDown,
+      "home": Key.home, "end": Key.end, "backspace": Key.backspace, "delete": Key.delete, "enter": Key.enter,
+      "numpadEnter": Key.enter, "escape": Key.escape, "tab": Key.tab, "f2": Key.f2, "f5": Key.f5, "f10": Key.f10, "f11": Key.f11
     }
-    return null
+    private fun keyFor(key : KeyCode) : Key? => WindowHost.namedKeys[key.name]
+    private val navKeys = [KeyCode.left, KeyCode.right, KeyCode.up, KeyCode.down, KeyCode.home, KeyCode.end, KeyCode.pageUp, KeyCode.pageDown]
+    private fun isNavKey(key : KeyCode) : bool => WindowHost.navKeys.contains(key)
+    // What a key does with Ctrl held: by the letter the keyboard's layout gives it.
+    private val editCommands = {
+      "Y": EditCommand.redo, "C": EditCommand.copy, "X": EditCommand.cut, "V": EditCommand.paste,
+      "A": EditCommand.selectAll, "D": EditCommand.fillDown, "R": EditCommand.fillRight
+    }
+    private fun editCommandFor(key : KeyCode, letter : string?, shift : bool) : EditCommand? {
+      if (key == KeyCode.space) { return EditCommand.complete }
+      if (letter == "Z") { return shift ? EditCommand.redo : EditCommand.undo }
+      return letter == null ? null : WindowHost.editCommands[letter]
+    }
+    // The letter or digit of a key: what the layout says, or failing that where the key is.
+    private fun letterFor(event : RawInput.KeyDown) : string? {
+      if (event.letter != null) { return event.letter }
+      val name = event.key.name
+      if (name.size == 1) { return name.upper() }
+      if (name.startsWith("digit") or name.startsWith("numpad")) {
+        val last = name[name.size - 1..]
+        if (last >= "0" and last <= "9") { return last }
+      }
+      return null
+    }
   }
-
   private fun keyDown(event : RawInput.KeyDown) {
     val key = event.key
     val m = event.mods

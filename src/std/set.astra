@@ -122,9 +122,12 @@ class Deque<T> {
     if (from != null) { items.addAll(from) }
   }
 
-  get size() : int => items.size - head
-  get lastIndex() : int => items.size - head - 1
-  get indices() : Range => 0..<(items.size - head)
+  val size : int
+    get() => items.size - head
+  val lastIndex : int
+    get() => items.size - head - 1
+  val indices : Range
+    get() => 0..<(items.size - head)
   fun isEmpty() : bool => items.size == head
   fun isNotEmpty() : bool => items.size != head
 

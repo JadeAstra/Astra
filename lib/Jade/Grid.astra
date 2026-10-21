@@ -50,8 +50,10 @@ class Grid : Content, OwnedContent {
     this.vgap = vgap
   }
 
-  get cells() : List<Cell> => cellList
-  get children() : List<Component> => cellList.map { it.component }
+  val cells : List<Cell>
+    get() => cellList
+  val children : List<Component>
+    get() => cellList.map { it.component }
 
   // Puts a component at a row and a column, counted from 0.
   fun add(component : Component, row : int, col : int, rowSpan : int = 1, colSpan : int = 1, fill : Fill = Fill.none, anchor : Anchor = Anchor.center, weightX : float = 0.0, weightY : float = 0.0) : Component {
@@ -239,131 +241,125 @@ class Grid : Content, OwnedContent {
     val rowWt = List(nr) { 0.0 }
   }
 
-  static fun key(row : int, col : int) : int => row * 100000 + col
-  static fun numCols(cells : List<Cell>) : int => cells.maxOfOrNull { it.col + it.colSpan } ?: 0
-  static fun numRows(cells : List<Cell>) : int => cells.maxOfOrNull { it.row + it.rowSpan } ?: 0
-
-  // The most the tracks may be together; no limit if any of them has none.
-  static fun trackMaxSum(maxes : List<int>, gap : int, edge : int) : int {
-    var sum = edge + gap * Math.max(maxes.size - 1, 0)
-    for (m in maxes) {
-      if (m <= 0 or m >= int.maxValue - sum) { return int.maxValue }
-      sum += m
-    }
-    return sum
-  }
-
-  static fun positions(sizes : List<int>, start : int, gap : int) : List<int> {
-    val pos : open List<int> = []
-    var x = start
-    for (size in sizes) {
-      pos.add(x)
-      x += size + gap
-    }
-    return pos
-  }
-
-  static fun spanSize(sizes : List<int>, start : int, span : int, gap : int) : int {
-    var s = gap * (span - 1)
-    for (i in start..<start + span) { s += sizes[i] }
-    return s
-  }
-
-  static fun distributeDeficit(arr : open List<int>, start : int, span : int, gap : int, need : int, weight : open List<float>) {
-    var cur = gap * (span - 1)
-    for (i in start..<start + span) { cur += arr[i] }
-    if (need > cur) { Grid.distribute(arr, start, span, need - cur, weight) }
-  }
-
-  // Shares an amount among some tracks: by weight if any has one, evenly if none has.
-  static fun distribute(arr : open List<int>, start : int, span : int, amount : int, weight : open List<float>) {
-    var wsum = 0.0
-    for (i in start..<start + span) { wsum += weight[i] }
-    if (wsum > 0.0) {
-      var used = 0
-      var last = start
-      for (i in start..<start + span) {
-        if (weight[i] > 0.0) {
-          val add = (amount * (weight[i] / wsum)).toInt()
-          arr[i] += add
-          used += add
-          last = i
-        }
+  static {
+    fun key(row : int, col : int) : int => row * 100000 + col
+    fun numCols(cells : List<Cell>) : int => cells.maxOfOrNull { it.col + it.colSpan } ?: 0
+    fun numRows(cells : List<Cell>) : int => cells.maxOfOrNull { it.row + it.rowSpan } ?: 0
+    // The most the tracks may be together; no limit if any of them has none.
+    fun trackMaxSum(maxes : List<int>, gap : int, edge : int) : int {
+      var sum = edge + gap * Math.max(maxes.size - 1, 0)
+      for (m in maxes) {
+        if (m <= 0 or m >= int.maxValue - sum) { return int.maxValue }
+        sum += m
       }
-      arr[last] += amount - used
-    } else {
-      val each = amount / span
-      for (i in start..<start + span) { arr[i] += each }
-      arr[start + span - 1] += amount % span
+      return sum
     }
-  }
-
-  // A weight given to a cell that spans tracks none of which has one is shared among them.
-  static fun spreadWeight(weight : open List<float>, start : int, span : int, w : float) {
-    if (w <= 0.0) { return }
-    for (i in start..<start + span) {
-      if (weight[i] > 0.0) { return }
+    fun positions(sizes : List<int>, start : int, gap : int) : List<int> {
+      val pos : open List<int> = []
+      var x = start
+      for (size in sizes) {
+        pos.add(x)
+        x += size + gap
+      }
+      return pos
     }
-    val per = w / span
-    for (i in start..<start + span) { weight[i] = per }
-  }
-
-  // The size of each track for the room there is: room to spare goes to the weighted
-  // ones, and too little is taken from each by how much it can give up.
-  static fun resolveSizes(pref : List<int>, min : List<int>, weight : open List<float>, available : int) : List<int> {
-    val n = pref.size
-    val sizes = pref.toList()
-    val extra = available - pref.sum()
-    if (extra > 0) {
-      val wsum = weight.sum()
+    fun spanSize(sizes : List<int>, start : int, span : int, gap : int) : int {
+      var s = gap * (span - 1)
+      for (i in start..<start + span) { s += sizes[i] }
+      return s
+    }
+    fun distributeDeficit(arr : open List<int>, start : int, span : int, gap : int, need : int, weight : open List<float>) {
+      var cur = gap * (span - 1)
+      for (i in start..<start + span) { cur += arr[i] }
+      if (need > cur) { Grid.distribute(arr, start, span, need - cur, weight) }
+    }
+    // Shares an amount among some tracks: by weight if any has one, evenly if none has.
+    fun distribute(arr : open List<int>, start : int, span : int, amount : int, weight : open List<float>) {
+      var wsum = 0.0
+      for (i in start..<start + span) { wsum += weight[i] }
       if (wsum > 0.0) {
         var used = 0
-        var last = -1
-        for (i in 0..<n) {
+        var last = start
+        for (i in start..<start + span) {
           if (weight[i] > 0.0) {
-            val add = (extra * (weight[i] / wsum)).toInt()
-            sizes[i] += add
+            val add = (amount * (weight[i] / wsum)).toInt()
+            arr[i] += add
             used += add
             last = i
           }
         }
-        if (last >= 0) { sizes[last] += extra - used }
-      }
-    } else if (extra < 0) {
-      var deficit = -extra
-      val slack = List(n) { pref[it] - min[it] }
-      val slackSum = slack.sum()
-      if (slackSum > 0) {
-        var used = 0
-        for (i in 0..<n) {
-          val take = Math.min(slack[i], (deficit * slack[i]) / slackSum)
-          sizes[i] -= take
-          used += take
-        }
-        deficit -= used
-        var i = 0
-        while (deficit > 0 and i < n) {
-          val take = Math.min(deficit, sizes[i] - min[i])
-          if (take > 0) {
-            sizes[i] -= take
-            deficit -= take
-          }
-          i += 1
-        }
+        arr[last] += amount - used
+      } else {
+        val each = amount / span
+        for (i in start..<start + span) { arr[i] += each }
+        arr[start + span - 1] += amount % span
       }
     }
-    return sizes
-  }
-
-  static fun anchorOffsetX(anchor : Anchor, extra : int) : int {
-    if (anchor == Anchor.west or anchor == Anchor.northwest or anchor == Anchor.southwest) { return 0 }
-    if (anchor == Anchor.east or anchor == Anchor.northeast or anchor == Anchor.southeast) { return extra }
-    return extra / 2
-  }
-  static fun anchorOffsetY(anchor : Anchor, extra : int) : int {
-    if (anchor == Anchor.north or anchor == Anchor.northwest or anchor == Anchor.northeast) { return 0 }
-    if (anchor == Anchor.south or anchor == Anchor.southwest or anchor == Anchor.southeast) { return extra }
-    return extra / 2
+    // A weight given to a cell that spans tracks none of which has one is shared among them.
+    fun spreadWeight(weight : open List<float>, start : int, span : int, w : float) {
+      if (w <= 0.0) { return }
+      for (i in start..<start + span) {
+        if (weight[i] > 0.0) { return }
+      }
+      val per = w / span
+      for (i in start..<start + span) { weight[i] = per }
+    }
+    // The size of each track for the room there is: room to spare goes to the weighted
+    // ones, and too little is taken from each by how much it can give up.
+    fun resolveSizes(pref : List<int>, min : List<int>, weight : open List<float>, available : int) : List<int> {
+      val n = pref.size
+      val sizes = pref.toList()
+      val extra = available - pref.sum()
+      if (extra > 0) {
+        val wsum = weight.sum()
+        if (wsum > 0.0) {
+          var used = 0
+          var last = -1
+          for (i in 0..<n) {
+            if (weight[i] > 0.0) {
+              val add = (extra * (weight[i] / wsum)).toInt()
+              sizes[i] += add
+              used += add
+              last = i
+            }
+          }
+          if (last >= 0) { sizes[last] += extra - used }
+        }
+      } else if (extra < 0) {
+        var deficit = -extra
+        val slack = List(n) { pref[it] - min[it] }
+        val slackSum = slack.sum()
+        if (slackSum > 0) {
+          var used = 0
+          for (i in 0..<n) {
+            val take = Math.min(slack[i], (deficit * slack[i]) / slackSum)
+            sizes[i] -= take
+            used += take
+          }
+          deficit -= used
+          var i = 0
+          while (deficit > 0 and i < n) {
+            val take = Math.min(deficit, sizes[i] - min[i])
+            if (take > 0) {
+              sizes[i] -= take
+              deficit -= take
+            }
+            i += 1
+          }
+        }
+      }
+      return sizes
+    }
+    fun anchorOffsetX(anchor : Anchor, extra : int) : int {
+      if (anchor == Anchor.west or anchor == Anchor.northwest or anchor == Anchor.southwest) { return 0 }
+      if (anchor == Anchor.east or anchor == Anchor.northeast or anchor == Anchor.southeast) { return extra }
+      return extra / 2
+    }
+    fun anchorOffsetY(anchor : Anchor, extra : int) : int {
+      if (anchor == Anchor.north or anchor == Anchor.northwest or anchor == Anchor.northeast) { return 0 }
+      if (anchor == Anchor.south or anchor == Anchor.southwest or anchor == Anchor.southeast) { return extra }
+      return extra / 2
+    }
   }
 }
 

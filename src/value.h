@@ -23,6 +23,7 @@ enum class ObjType : uint8_t {
     TypeInfo,  // a type, as the program has it when it runs (ObjTypeInfo)
     Value,     // a value of a value type, in a box (ObjValue)
     Set,       // a set, or a live view of a map's keys or entries (ObjSet)
+    Lazy,      // what a lazy field, static or global works its value out with (ObjLazy, D37)
 };
 
 // Header shared by every garbage-collected object.
@@ -104,6 +105,15 @@ struct Value {
         v.kind = ValueKind::Undefined;
         return v;
     }
+    // A lazy field, static or global with no value yet (D37): "no value" as every read tests
+    // for, with what works it out (an ObjLazy). The first read puts the value in its place.
+    static Value lazy(Obj* how) {
+        Value v;
+        v.kind = ValueKind::Undefined;
+        v.as.obj = how;
+        return v;
+    }
+    bool isLazy() const { return kind == ValueKind::Undefined && as.obj != nullptr; }
     static Value boolean(bool b) {
         Value v;
         v.kind = ValueKind::Bool;
@@ -453,6 +463,17 @@ private:
 
 struct ObjTypeInfo;
 struct ObjClass;
+struct ObjClosure;
+
+// How a lazy value is worked out (D37): the function giving it, and whether a thread is at it.
+// Kept by a Value::lazy in the place the value goes, until the first read puts it there.
+struct ObjLazy final : Obj {
+    ObjClosure* init = nullptr;
+    uint8_t state = 0;     // 0 not worked out, 1 being worked out, 2 known
+    uintptr_t owner = 0;   // state 1: the thread working it out
+    Value value;           // state 2: what it gave, for a thread that waited for it
+    ObjLazy() : Obj(ObjType::Lazy) {}
+};
 
 // A byte, a char or a number at a storage width (D19, D24, D148), kept narrower than a value
 // is: in a packed list or a value type's field. Read, a storage width is an int (a float for
@@ -913,17 +934,38 @@ struct ObjClass final : Obj {
     bool isAbstract = false;  // never created itself; what it leaves unwritten its subclasses supply
     bool isInterface = false;
     std::vector<ObjClass*> interfaces;
+    // `extend Person : Weighed` (D33): the interfaces an extend fitted this class to, with the
+    // ones above them; and what came with them: the interfaces' own methods and getters, and
+    // the extend's getters bridging names. Found from the class and the classes below it.
+    std::vector<ObjClass*> extendedTo;
+    Table extendMethods;
+    Table extendGetters;
     std::vector<std::pair<ObjString*, ObjClass*>> required;
 
     explicit ObjClass(ObjString* n) : Obj(ObjType::Class), name(n) {}
 
     bool isSubclassOf(const ObjClass* other) const {
-        for (const ObjClass* k = this; k != nullptr; k = k->super)
+        for (const ObjClass* k = this; k != nullptr; k = k->super) {
             if (k == other) return true;
+            for (const ObjClass* fitted : k->extendedTo)  // by an extend (D33)
+                if (fitted == other) return true;
+        }
         if (other != nullptr && other->isInterface)
             for (const ObjClass* implemented : interfaces)
                 if (implemented == other) return true;
         return false;
+    }
+
+    // A method or getter an extend brought to this class or one above it (D33).
+    const Value* extendMethod(const ObjString* key) const {
+        for (const ObjClass* k = this; k != nullptr; k = k->super)
+            if (const Value* v = k->extendMethods.find(key)) return v;
+        return nullptr;
+    }
+    const Value* extendGetter(const ObjString* key) const {
+        for (const ObjClass* k = this; k != nullptr; k = k->super)
+            if (const Value* v = k->extendGetters.find(key)) return v;
+        return nullptr;
     }
 
     const Value* findStatic(const ObjString* key) const {

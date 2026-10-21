@@ -1,0 +1,14 @@
+// A data class is extended only by a data class, whose header starts with its parent's
+// fields and passes them up (D65). Each has its own ==, hashCode, toString, copy and parts.
+
+data Point(val x : int, val y : int)
+data Point3(val x : int, val y : int, val z : int) : Point(x, y)
+
+val p = Point3(1, 2, 3)
+print(p, p is Point, p.x + p.y + p.z)                          // expect: Point3(x=1, y=2, z=3) true 6
+print(p == Point3(1, 2, 3), p == Point(1, 2), Point(1, 2) == p)   // expect: true false false
+print(p.copy(z = 9), p.copy(z = 9) is Point3, p.hashCode() == Point3(1, 2, 3).hashCode())   // expect: Point3(x=1, y=2, z=9) true true
+val (a, b, c) = p
+print(a, b, c)                                                 // expect: 1 2 3
+val asPoint : Point = p
+print(asPoint, {[p]: "found"}[Point3(1, 2, 3)])                  // expect: Point3(x=1, y=2, z=3) found

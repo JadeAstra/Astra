@@ -4,11 +4,13 @@
 value Point(val x : int, val y : int) {
     op +(o : Point) : Point => Point(x + o.x, y + o.y)
     fun scaled(by : int) : Point => Point(x * by, y * by)
-    get length2() : int => x * x + y * y
+    val length2 : int
+      get() => x * x + y * y
 }
 value Size(val width : float, val height : float)
 value Rect(val origin : Point, val size : Size, val name : string = "r") {
-    get area() : float => size.width * size.height
+    val area : float
+      get() => size.width * size.height
 }
 
 val a = Point(1, 2)

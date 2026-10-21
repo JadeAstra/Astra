@@ -1,0 +1,5 @@
+// A static member goes in the class's one static { } block (D67).
+class Counter {
+  static var count = 0
+}
+// expect compile error: a static member goes in the class's one static { } block, as Kotlin's go in its companion object: static { var ... } (D67)

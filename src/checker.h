@@ -120,6 +120,18 @@ public:
     // made when the program runs.
     bool unstableKey(const ClassStmt& cls);
 
+    // A kind of an enum class named bare where one is expected (D39): `Click(1, 2)` for an Event,
+    // `is Click`. For such a name or type, the class's full name (`Event.Click`); null otherwise.
+    const std::string* kindName(const Node& at) const;
+
+    // A type written with a name `type` gave it (D41): the type it names, written out, for the
+    // checks made when the program runs; null for any other.
+    const TypeAnnotation* aliasExpansion(const TypeAnnotation& use) const;
+
+    // A data class extending a data class (D65): how many of its header's fields are its
+    // parent's, which it starts with; 0 for any other class.
+    size_t inheritedDataFields(const ClassStmt& cls);
+
     // For a method whose name has several forms among the classes it is related to: the
     // declaration, as high up as it goes, of the form it is (the one it overrides, or itself),
     // whose signature it is known by when the program runs. Null where the name has one form.

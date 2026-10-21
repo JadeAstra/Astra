@@ -1,0 +1,16 @@
+// Union types (D40) and names for types (D41).
+
+class TextModel(val text : string)
+type Source = string | TextModel
+type Table<T> = Map<string, List<T>>
+
+fun use(source : Source, n : int | string, flag : bool) {
+  print(source.size)              // check: 'size' is not something every type of string | TextModel has: test which it is first, with is or a when (D40)
+  val k = when (n) {              // check: this when does not cover is string; add it, or an else branch
+    is int -> 1
+  }
+  print(n is Source)              // check: a union is not tested as a whole: nothing of it is kept when the program runs; test its types one by one, with is or a when (D40)
+  val wrong : int | string = flag // check: 'wrong' is an int | string; it cannot start as a bool
+  val t : Table<int, string> = {:}   // check: Table takes 1 type argument, not 2
+  print(k, wrong, t)
+}

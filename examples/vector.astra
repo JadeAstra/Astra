@@ -2,7 +2,9 @@
 // extension functions.
 
 data Vec2(val x : Number, val y : Number) {
-  static val zero = Vec2(0, 0)
+  static {
+    val zero = Vec2(0, 0)
+  }
 
   op +(other : Vec2) => Vec2(x + other.x, y + other.y)
   op -(other : Vec2) => Vec2(x - other.x, y - other.y)
@@ -11,7 +13,8 @@ data Vec2(val x : Number, val y : Number) {
   op <(other : Vec2) => length < other.length
   op [](i : int) => i == 0 ? x : y
 
-  get length() => Math.sqrt(x * x + y * y)
+  val length
+    get() => Math.sqrt(x * x + y * y)
   override fun toString() => "($x, $y)"
 }
 

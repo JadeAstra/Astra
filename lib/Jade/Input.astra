@@ -21,11 +21,13 @@ class Modifiers {
     this.shortcut = shortcut ?: ctrl
   }
 
-  static val none = Modifiers()
-
-  // As the native layer counts them: 1 shift, 2 ctrl, 4 alt, 8 meta.
-  static fun ofBits(bits : int) : Modifiers => bits == 0 ? Modifiers.none : Modifiers(bits & 1 != 0, bits & 2 != 0, bits & 4 != 0, bits & 8 != 0)
-  get bits() : int => (shift ? 1 : 0) | (ctrl ? 2 : 0) | (alt ? 4 : 0) | (meta ? 8 : 0)
+  static {
+    val none = Modifiers()
+    // As the native layer counts them: 1 shift, 2 ctrl, 4 alt, 8 meta.
+    fun ofBits(bits : int) : Modifiers => bits == 0 ? Modifiers.none : Modifiers(bits & 1 != 0, bits & 2 != 0, bits & 4 != 0, bits & 8 != 0)
+  }
+  val bits : int
+    get() => (shift ? 1 : 0) | (ctrl ? 2 : 0) | (alt ? 4 : 0) | (meta ? 8 : 0)
 
   op ==(other : any?) : bool => other is Modifiers and other.bits == bits and other.shortcut == shortcut
   fun hashCode() : int => bits
@@ -54,13 +56,15 @@ enum KeyCode {
   shiftLeft, controlLeft, altLeft, metaLeft, shiftRight, controlRight, altRight, metaRight,
   unknown;
 
-  private static val byName = {:}
-  // The key the native layer calls by this name.
-  static fun named(name : string) : KeyCode {
-    if (KeyCode.byName.isEmpty()) {
-      for (key in KeyCode.entries) { KeyCode.byName[key.name] = key }
+  static {
+    private val byName = {:}
+    // The key the native layer calls by this name.
+    fun named(name : string) : KeyCode {
+      if (KeyCode.byName.isEmpty()) {
+        for (key in KeyCode.entries) { KeyCode.byName[key.name] = key }
+      }
+      return KeyCode.byName[name] ?: KeyCode.unknown
     }
-    return KeyCode.byName[name] ?: KeyCode.unknown
   }
 }
 

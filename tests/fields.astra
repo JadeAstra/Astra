@@ -110,7 +110,7 @@ print(d.a, d.b, d.c, d.made)            // expect: 20 21 20/21 ["a=20"]
 // an initial value of the wrong type that is only known at run time
 fun pick(kind : string) => kind == "n" ? 1 : "one"
 class Lazy {
-  var n : int = pick(mode)
+  var n : int = unknown(pick(mode))
 }
 var mode = "n"
 print(Lazy().n)                         // expect: 1

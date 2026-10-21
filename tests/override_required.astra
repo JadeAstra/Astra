@@ -3,7 +3,8 @@
 
 class Base(val id : int) {
   var size = 1
-  get label() => "base $id"
+  val label
+    get() => "base $id"
   fun greet() => "hello"
   fun toString() => "Base#$id"
 }
@@ -30,9 +31,9 @@ print(attempt(fun() { class A : Base(1) { fun wave() => "new, so no word" } })) 
 // Fields and properties, the header's fields included.
 print(attempt(fun() { class B : Base(1) { var size = 2 } }))
 // expect: 'size' in class B takes the place of the one it inherits; write override in front of it
-print(attempt(fun() { class B : Base(1) { get label() => "b" } }))
+print(attempt(fun() { class B : Base(1) { val label get() => "b" } }))
 // expect: 'label' in class B takes the place of the one it inherits; write override in front of it
-print(attempt(fun() { class B(override var size : int) : Base(1) { override get label() => "b $size" } }))   // expect: ok
+print(attempt(fun() { class B(override var size : int) : Base(1) { override val label get() => "b $size" } }))   // expect: ok
 print(attempt(fun() { class B(override val weight : int) : Base(1) }))
 // expect: 'weight' in class B is marked override, but there is nothing of that name for it to replace
 
@@ -75,7 +76,7 @@ class Named : Base {
 print(Point(1, 2), Point(1, 2) == Point(1, 2), Named(7, "x"), Named(7, "x").size(5).size)   // expect: (1, 2) true Named Base#7 5
 
 // Static members and the members of an enum that every enum is given follow their own rules.
-class Counter { static var count = 0; static fun bump() { count += 1 } }
-class Sub : Counter { static fun bump() { Counter.count += 10 } }
+class Counter { static { var count = 0; fun bump() { count += 1 } } }
+class Sub : Counter { static { fun bump() { Counter.count += 10 } } }
 Sub.bump()
 print(Counter.count)                        // expect: 10

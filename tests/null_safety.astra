@@ -41,7 +41,7 @@ calls = 0
 print("kept" ?: counted(), calls)           // expect: kept 0
 
 // It binds more loosely than arithmetic and more tightly than comparisons.
-print(none ?: 2 * 5, 5 ?: 0 > 3, none ?: 0 == 0, (none ?: 1) + 2)   // expect: 10 true true 3
+print(none ?: 2 * 5, 5 ?: 0 > 3, none ?: 0 == 0, (unknown(none) ?: 1) + 2)   // expect: 10 true true 3
 print(none == null ? none ?: "inner" : "outer")   // expect: inner
 
 // On the next line, as Kotlin code is usually laid out.

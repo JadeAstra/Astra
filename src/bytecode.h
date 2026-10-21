@@ -36,6 +36,7 @@ enum class Op : uint8_t {
     GetIndex,      //                               obj index -> value
     SetIndex,      //                               obj index value -> value
     GetSuper,      // u16 name                      this superclass -> bound method
+    SetSuper,      // u16 name                      this superclass value -> what the setter gave: super.name = value
 
     Add, Sub, Mul, Div, Mod, Neg, Not,
     Eq, Lt, Le, Gt, Ge,
@@ -161,6 +162,9 @@ enum class Op : uint8_t {
     // data class; Component gives part `index` of a list or of a data object.
     DataField,          // u16 name                        class -> class
     UnstableKey,        //                                 class -> class: its objects can change in what == sees (D26)
+    Lazy,               //                                 closure -> a lazy value, worked out when first read (D37)
+    Extend,             //                                 class interface -> class: fitted to the interface (D33)
+    Bridge,             // u16 name                        class getter -> class: a getter an extend gives it (D33)
     Component,          // u8 index                        value -> part
 
     MissingArg,         // u16 parameter name              throws: the call left out an argument that has no default

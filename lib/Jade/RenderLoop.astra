@@ -12,7 +12,8 @@ class RenderLoop {
   // One frame's plan: whether the tree is laid out first, and the part to draw (null: all).
   class Frame(val layout : bool, val partial : Rectangle?)
 
-  get isDirty() : bool => dirty
+  val isDirty : bool
+    get() => dirty
 
   fun requestLayout() {
     needsLayout = true

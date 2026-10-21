@@ -4,13 +4,15 @@
 val unknown = { value -> value }
 
 class Color(val r : int, val g : int, val b : int) {
-  static val BLACK = Color(0, 0, 0)          // an instance of the class itself
-  static val WHITE : Color = Color(255, 255, 255)
-  static var made = 0
-  static var last : Color? = null
-  static var label : string = "colour"
+  static {
+    val BLACK = Color(0, 0, 0)          // an instance of the class itself
+    val WHITE : Color = Color(255, 255, 255)
+    var made = 0
+    var last : Color? = null
+    var label : string = "colour"
+    fun gray(level : int) => Color(level, level, level)
+  }
 
-  static fun gray(level : int) => Color(level, level, level)
   fun toString() => "#${this.r},${this.g},${this.b}"
 }
 print(Color.BLACK, Color.WHITE, Color.gray(7), Color.made, Color.last, Color.label)   // expect: #0,0,0 #255,255,255 #7,7,7 0 null colour
@@ -35,10 +37,12 @@ fun <T> note(label : string, value : T) : T {
   return value
 }
 class Sizes {
-  static val SMALL = note("small", 10)
-  static val LARGE = note("large", Sizes.SMALL * 4)
-  static val ALL = note("all", [Sizes.SMALL, Sizes.LARGE, Sizes.half(Sizes.LARGE)])
-  static fun half(n : int) => n / 2
+  static {
+    val SMALL = note("small", 10)
+    val LARGE = note("large", Sizes.SMALL * 4)
+    val ALL = note("all", [Sizes.SMALL, Sizes.LARGE, Sizes.half(Sizes.LARGE)])
+    fun half(n : int) => n / 2
+  }
 }
 print(order, Sizes.ALL, Sizes.LARGE)        // expect: ["small", "large", "all"] [10, 40, 20] 40
 Sizes(); Sizes()
@@ -50,7 +54,8 @@ class Grid {
     val MAX_TRACK = 100000
     var created = 0
     fun key(row : int, col : int) : int => row * Grid.MAX_TRACK + col
-    get description() => "grid of up to ${Grid.MAX_TRACK} tracks"
+    val description
+      get() => "grid of up to ${Grid.MAX_TRACK} tracks"
   }
   val cells = {:}
   fun init() { Grid.created += 1 }
@@ -65,14 +70,18 @@ try { Grid.MAX_TRACK = 1 } catch (e) { print(e.message) }   // expect: cannot as
 
 // Static properties.
 class Theme {
-  static var current = "light"
-  static var changes = 0
-  static get dark() => Theme.current == "dark"
-  static set dark(on) {
-    Theme.current = on ? "dark" : "light"
-    Theme.changes += 1
+  static {
+    var current = "light"
+    var changes = 0
+    var dark
+      get() => Theme.current == "dark"
+      set(on) {
+        Theme.current = on ? "dark" : "light"
+        Theme.changes += 1
+      }
+    val name
+      get() => "theme:" + Theme.current
   }
-  static get name() => "theme:" + Theme.current
 }
 print(Theme.dark, Theme.name)               // expect: false theme:light
 Theme.dark = true
@@ -81,12 +90,16 @@ try { Theme.name = "x" } catch (e) { print(e.message) }   // expect: static prop
 
 // A subclass sees its superclass's statics, and assigning through it changes the one value.
 class Base {
-  static var count = 0
-  static val KIND = "base"
-  static fun describe() => "a " + Base.KIND
+  static {
+    var count = 0
+    val KIND = "base"
+    fun describe() => "a " + Base.KIND
+  }
 }
 class Derived : Base {
-  static val EXTRA = "extra"
+  static {
+    val EXTRA = "extra"
+  }
 }
 Derived.count = 5
 print(Base.count, Derived.count, Derived.KIND, Derived.describe(), Derived.EXTRA)   // expect: 5 5 base a base extra
@@ -95,7 +108,9 @@ try { print(Base.EXTRA) } catch (e) { print(e.message) }    // expect: undefined
 
 // A static and an instance member may share a name; they are different things.
 class Counter {
-  static var count = 100
+  static {
+    var count = 100
+  }
   var count = 0
   fun bump() {
     this.count += 1
@@ -113,9 +128,11 @@ print(Counter.note)                         // expect: kept
 // In a function, with a captured variable.
 fun makeClass(start : int) {
   class Local {
-    static val START = start
-    static var seen = [start]
-    static fun add(n : int) { Local.seen.add(n + Local.START) }
+    static {
+      val START = start
+      var seen = [start]
+      fun add(n : int) { Local.seen.add(n + Local.START) }
+    }
   }
   return Local
 }
@@ -129,11 +146,14 @@ object Settings {
   var volume = 5
   val limits = [0, 10]
   var changes = 0
-  get loud() => this.volume > 7
-  set level(n) {
-    this.volume = n
-    this.changes += 1
-  }
+  val loud
+    get() => this.volume > 7
+  var level : int
+    get() => this.volume
+    set(n) {
+      this.volume = n
+      this.changes += 1
+    }
   fun raise(by : int = 1) {
     this.volume += by
     return this

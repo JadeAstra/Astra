@@ -45,7 +45,9 @@ print(order)                                     // expect: ["city", "name", "ag
 // methods, static methods, initializers and super calls
 class Shape(val name : string, val sides : int = 4) {
   fun scaled(factor : Number, label : string) : string => "${this.name} x$factor ($label)"
-  static fun make(name : string, sides : int) : Shape => Shape(sides = sides, name = name)
+  static {
+    fun make(name : string, sides : int) : Shape => Shape(sides = sides, name = name)
+  }
 }
 class Triangle : Shape {
   fun init(label : string) { super.init(sides = 3, name = label) }

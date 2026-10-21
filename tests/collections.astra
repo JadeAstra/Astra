@@ -26,7 +26,7 @@ nums.forEach(fun(n) { seen.add(n * 10) })
 print(seen)                                      // expect: [10, 20, 30, 40, 50, 60]
 
 // sort is stable
-var people = [{name: "Ann", age: 30}, {name: "Bob", age: 25}, {name: "Cy", age: 30}]
+var people = unknown([{name: "Ann", age: 30}, {name: "Bob", age: 25}, {name: "Cy", age: 30}])
 people.sort(fun(a, b) => a["age"] - b["age"])
 print(people.map(fun(p) => p["name"]))            // expect: ["Bob", "Ann", "Cy"]
 
@@ -35,10 +35,10 @@ grid[1][0] += 10
 print(grid, grid[^1][^1])                        // expect: [[1, 2], [13, 4]] 4
 
 // Maps
-var m = {a: 1, "b c": 2, 3: "three", [1 + 1]: "two"}
+var m : open Map<any, any> = {a: 1, "b c": 2, 3: "three", [1 + 1]: "two"}
 print(m)                                         // expect: {"a": 1, "b c": 2, 3: "three", 2: "two"}
 print(m["a"], m["missing"], m[3], m[3.0], m.size)   // expect: 1 null three three 4
-m["a"] += 41
+m["a"] = (m["a"] as int) + 41
 m["new"] = true
 print(m.keys.contains("a"), m.keys.contains("zzz"), m.get("zzz", "fallback"), m["a"])   // expect: true false fallback 42
 print(m.remove("b c"), m.remove("b c"), m.keys)    // expect: 2 null {"a", 3, 2, "new"}

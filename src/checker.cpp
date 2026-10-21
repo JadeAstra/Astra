@@ -58,6 +58,7 @@ struct Type {
         Byte,       // 0 to 255 (D19)
         Index,      // a position: an int, or ^k from the end (D146)
         Set,        // Set [T] (M6.6 part 8)
+        Union,      // `int | string` (D40): the types it may be in args; `nullable` for null among them
     };
     Kind kind = Unknown;
     bool nullable = false;
@@ -192,6 +193,7 @@ struct FieldInfo {
     bool typeWritten = false;
     Type type;
     int state = 0;  // as FuncInfo::resultState
+    FuncInfo* getterFn = nullptr;  // the accessor written under it, once its class is checked
 };
 
 struct ClassInfo {
@@ -201,6 +203,7 @@ struct ClassInfo {
     ClassInfo* outer = nullptr;
     bool isInterface = false, isObject = false, isEnum = false, isData = false, isAbstract = false;
     bool isValue = false;  // `value Point(...)` (M6.6 part 2)
+    bool isEnumClass = false;  // `enum class Event`, `enum interface Shape` (D39)
     std::vector<std::string> typeParams;
     // Declared at the top of a file, or inside a class that is: its class is a global, which the
     // compiler can name in a type it writes for when the program runs (M6.6 part 1).
@@ -236,6 +239,8 @@ struct GlobalSym {
     FieldInfo* var = nullptr;            // a val or var
     std::vector<FuncInfo*> funcs;        // a function
     ClassInfo* cls = nullptr;            // a class, interface, enum or object
+    const TypeAliasStmt* alias = nullptr;  // `type Grid = ...` (D41)
+    Unit* aliasUnit = nullptr;
 };
 
 struct Unit {
@@ -275,7 +280,7 @@ struct Local {
 };
 
 // Why nothing may wait in some code, whatever the function around it says (R1).
-enum NoWait : uint8_t { CanWait, Getter, Setter, ToString, Equals, HashCode, ObjectMade, StaticValue, SortComparison, ParallelSection };
+enum NoWait : uint8_t { CanWait, Getter, Setter, ToString, Equals, HashCode, ObjectMade, StaticValue, SortComparison, ParallelSection, LazyValue };
 
 // One function, lambda or file top level being checked.
 struct FnCtx {
@@ -430,6 +435,10 @@ struct Checker::Impl {
                 }
                 break;
             case Type::TypeParam: s = t.name; break;
+            case Type::Union:
+                for (size_t i = 0; i < t.args.size(); i++) s += (i ? " | " : "") + argText(t.args[i]);
+                if (t.nullable) s += " | null";
+                return s;
         }
         if (t.open) s = "open " + s;
         if (t.accepts) s = "accepts " + s;
@@ -457,9 +466,114 @@ struct Checker::Impl {
             if (walk(c->superclass)) return true;
             for (ClassInfo* i : c->interfaces)
                 if (walk(i)) return true;
+            // An interface an extend in reach fits the class to (D33).
+            if (sup->isInterface && !extendsDeclared.empty())
+                for (ExtendInfo& e : extendsDeclared)
+                    if (extendInReach(e) && resolveExtend(e) &&
+                        std::find(e.types.begin(), e.types.end(), c) != e.types.end() && walk(e.iface))
+                        return true;
             return false;
         };
         return walk(sub);
+    }
+
+    // ---- extend (D33) ----
+
+    struct ExtendInfo {
+        const ExtendStmt* stmt = nullptr;
+        Unit* unit = nullptr;
+        int resolved = 0;  // 0 not yet, 1 resolved, 2 being resolved
+        std::vector<ClassInfo*> types;
+        ClassInfo* iface = nullptr;
+    };
+    std::vector<ExtendInfo> extendsDeclared;
+
+    bool resolveExtend(ExtendInfo& e) {
+        if (e.resolved == 1) return e.iface != nullptr;
+        if (e.resolved == 2) return false;
+        e.resolved = 2;
+        e.iface = findClass(*e.unit, e.stmt->interfaceType.name, nullptr);
+        for (const TypeAnnotation& t : e.stmt->types) e.types.push_back(findClass(*e.unit, t.name, nullptr));
+        e.resolved = 1;
+        return e.iface != nullptr && e.iface->isInterface;
+    }
+
+    // Whether an extend holds where the code being checked is: in its folder and the files
+    // importing it, with its access word; the standard library's everywhere.
+    bool extendInReach(const ExtendInfo& e) const { return declarationInReach(e.unit, e.stmt->visibility); }
+
+    bool declarationInReach(const Unit* from, uint8_t visibility) const {
+        if (from == nullptr || from->prelude || unit == nullptr) return true;
+        if (visibility == 2) return from->fileKey == unit->fileKey;
+        if (from->ns == unit->ns) return true;
+        for (const ImportInfo& imp : unit->imports)
+            if (imp.ns == from->ns) return visibility == 0 || (imp.ns != nullptr && unit->ns != nullptr && imp.ns->library == unit->ns->library);
+        return false;
+    }
+
+    // Each extend: an interface, classes, and what the classes lack bridged by its getters.
+    std::map<std::pair<ClassInfo*, ClassInfo*>, const ExtendStmt*> extendsSeen;
+
+    void checkExtend(const ExtendStmt& s) {
+        ExtendInfo* info = nullptr;
+        for (ExtendInfo& e : extendsDeclared)
+            if (e.stmt == &s) info = &e;
+        if (info == nullptr) return;
+        resolveExtend(*info);
+        if (info->iface == nullptr || !info->iface->isInterface) {
+            report(s.interfaceType, "an extend fits types to an interface; " + s.interfaceType.name + " is not one (D33)");
+            return;
+        }
+        ClassInfo* iface = info->iface;
+        std::set<std::string> bridged;
+        for (const auto& b : s.bridges) bridged.insert(b->name);
+        for (size_t t = 0; t < s.types.size(); t++) {
+            ClassInfo* k = info->types[t];
+            if (k == nullptr) {
+                report(s.types[t], "an extend fits a class to an interface; " + s.types[t].name + " is not a class of the program or a library " +
+                                       "(a built-in type is not yet) (D33)");
+                continue;
+            }
+            // Two of the same class and interface are one when they say the same, an error otherwise.
+            auto [seenAt, first] = extendsSeen.emplace(std::make_pair(k, iface), &s);
+            if (!first && seenAt->second != &s) {
+                std::set<std::string> other;
+                for (const auto& b : seenAt->second->bridges) other.insert(b->name);
+                if (other != bridged)
+                    report(s, "a second extend of " + k->name + " : " + iface->name + ", with other getters than the one on line " +
+                                  std::to_string(seenAt->second->line) + ": there is one way a class fits an interface (D33)");
+            }
+            // What the interface leaves for the class: it has it, or a getter here gives it.
+            const bool wasOwn = std::exchange(ownMembersOnly, true);
+            std::unordered_set<ClassInfo*> visited;
+            std::function<void(ClassInfo*)> need = [&](ClassInfo* i) {
+                if (i == nullptr || !visited.insert(i).second) return;
+                resolveSupers(i);
+                const Type self = classType(k);
+                for (const auto& [name, field] : i->fields) {
+                    if (field->decl != nullptr && (field->decl->getter || field->decl->init)) continue;  // comes with the interface
+                    if (!lookupMember(self, name).found() && !bridged.count(name))
+                        report(s.types[t], k->name + " does not fit " + iface->name + ": it has no '" + name + "'; a get() in the extend " +
+                                               "can give it from what it has (D33)");
+                }
+                for (const auto& [name, forms] : i->methods)
+                    for (FuncInfo* f : forms)
+                        if (f->decl != nullptr && f->decl->isAbstract && !lookupMember(self, name, true).found())
+                            report(s.types[t], k->name + " does not fit " + iface->name + ": it has no " + name + "() (D33)");
+                for (ClassInfo* above : i->interfaces) need(above);
+            };
+            need(iface);
+            // A getter here bridges a name the class lacks; it replaces nothing of the class's.
+            for (const auto& b : s.bridges) {
+                if (lookupMember(classType(k), b->name).found())
+                    report(*b, "'" + b->name + "' is " + k->name + "'s own: an extend does not replace what a class has (D33)");
+            }
+            ownMembersOnly = wasOwn;
+            for (const auto& b : s.bridges) {
+                FuncInfo* getter = newFunc(*b->getter, info->unit, k);
+                checkFunctionBody(getter, nullptr);
+            }
+        }
     }
 
     bool hasUnknownSuper(ClassInfo* c) {
@@ -518,6 +632,18 @@ struct Checker::Impl {
         if (from.nullable && !to.nullable) return false;
         if (to.kind == Type::Any) return true;
         if (to.kind == Type::Unit) return true;  // a value nobody looks at
+        // A union goes where each of its types does; a value goes where a union is asked for
+        // when it fits one of its types (D40).
+        if (from.kind == Type::Union) {
+            for (const Type& m : from.args)
+                if (!fits(m, to)) return false;
+            return true;
+        }
+        if (to.kind == Type::Union) {
+            for (const Type& m : to.args)
+                if (fits(withNull(from, false), m)) return true;
+            return false;
+        }
         switch (to.kind) {
             case Type::Number:
                 return from.kind == Type::Int || from.kind == Type::Float || from.kind == Type::Number;
@@ -618,7 +744,133 @@ struct Checker::Impl {
             for (ClassInfo* c : above)
                 if (c->typeParams.empty() && isSubclass(plainB.cls, c)) return withNull(classType(c), nullable);
         }
-        return unknownType();
+        // Otherwise the union of the two (D40): `flag ? 1 : "one"` is an int | string.
+        if (plainA.kind == Type::Any || plainB.kind == Type::Any || plainA.kind == Type::TypeParam || plainB.kind == Type::TypeParam ||
+            plainA.kind == Type::Unit || plainB.kind == Type::Unit)
+            return unknownType();
+        return makeUnion({plainA, plainB}, nullable);
+    }
+
+    // The union of `members` (D40): unions inside it opened up, each type once, `null` as the
+    // union's being nullable. One type left is that type.
+    Type makeUnion(const std::vector<Type>& members, bool nullable) {
+        std::vector<Type> flat;
+        std::unordered_set<std::string> seenTypes;
+        std::function<void(const Type&)> add = [&](const Type& m) {
+            if (m.kind == Type::Union) {
+                nullable = nullable || m.nullable;
+                for (const Type& inner : m.args) add(inner);
+                return;
+            }
+            if (m.kind == Type::Null) {
+                nullable = true;
+                return;
+            }
+            if (m.kind == Type::Nothing) return;
+            nullable = nullable || m.nullable;
+            const Type plain = withNull(m, false);
+            if (seenTypes.insert(text(plain)).second) flat.push_back(plain);
+        };
+        for (const Type& m : members) add(m);
+        for (const Type& m : flat)
+            if (m.unknown()) return unknownType();
+        for (const Type& m : flat)
+            if (m.kind == Type::Any) return withNull(Type::of(Type::Any), nullable);
+        if (flat.empty()) return nullable ? Type::of(Type::Null) : Type::of(Type::Nothing);
+        if (flat.size() == 1) return withNull(flat[0], nullable);
+        // A type that another one takes in says nothing more: int | Number is a Number.
+        std::vector<Type> kept;
+        for (size_t i = 0; i < flat.size(); i++) {
+            bool inOther = false;
+            for (size_t j = 0; j < flat.size() && !inOther; j++)
+                if (i != j && flat[i].kind != Type::TypeParam && flat[j].kind != Type::TypeParam && fits(flat[i], flat[j]) &&
+                    !(fits(flat[j], flat[i]) && j > i))
+                    inOther = true;
+            if (!inOther) kept.push_back(flat[i]);
+        }
+        if (kept.size() == 1) return withNull(kept[0], nullable);
+        Type u = Type::of(Type::Union);
+        u.args = kept;
+        u.nullable = nullable;
+        return u;
+    }
+
+    // What every type of a union has (D40): the nearest type above all of them; unknown when
+    // there is none.
+    Type unionCommon(const Type& u) {
+        Type all;
+        bool first = true;
+        for (const Type& m : u.args) {
+            Type joined = first ? m : common(all, m);
+            if (joined.kind == Type::Union || joined.unknown()) return unknownType();
+            all = joined;
+            first = false;
+        }
+        return withNull(all, u.nullable);
+    }
+
+    // A name `type` gave a type to (D41), where `a` is written: what it names, with the type
+    // arguments written there, and the type it names written out for the compiler.
+    std::unordered_map<const TypeAnnotation*, std::unique_ptr<TypeAnnotation>> aliasExpansions;
+    std::unordered_set<const TypeAliasStmt*> aliasBusy;
+
+    Type expandAlias(const GlobalSym& g, const TypeAnnotation& a, Unit& u) {
+        const TypeAliasStmt& alias = *g.alias;
+        // A name that refers to itself, inside another type (`List<Json>`), is any there.
+        if (aliasBusy.count(&alias)) return unknownType();
+        aliasBusy.insert(&alias);
+        Env env;
+        for (size_t i = 0; i < alias.typeParams.size(); i++)
+            env[alias.typeParams[i].name] = i < a.args.size() ? resolve(a.args[i], u) : unknownType();
+        if (a.args.size() != alias.typeParams.size())
+            report(a, alias.name + " takes " + std::to_string(alias.typeParams.size()) + " type argument" +
+                          (alias.typeParams.size() == 1 ? "" : "s") + ", not " + std::to_string(a.args.size()));
+        Type t = subst(resolve(alias.target, *g.aliasUnit), env);
+        if (aliasExpansions.find(&a) == aliasExpansions.end()) {
+            auto expanded = std::make_unique<TypeAnnotation>(writtenOut(alias.target, alias, a.args, *g.aliasUnit));
+            expanded->nullable = expanded->nullable || a.nullable;
+            aliasExpansions[&a] = std::move(expanded);
+        }
+        aliasBusy.erase(&alias);
+        return a.nullable ? withNull(t) : t;
+    }
+
+    // The type an alias names, written out: its type parameters replaced by what is written
+    // where it is used, and names of other aliases written out in turn ("any" for one that
+    // refers to itself).
+    TypeAnnotation writtenOut(const TypeAnnotation& t, const TypeAliasStmt& alias, const std::vector<TypeAnnotation>& given, Unit& u) {
+        if (t.typeParam) {
+            for (size_t i = 0; i < alias.typeParams.size() && i < given.size(); i++)
+                if (alias.typeParams[i].name == t.name) {
+                    TypeAnnotation r = given[i];
+                    r.nullable = r.nullable || t.nullable;
+                    return r;
+                }
+        }
+        TypeAnnotation r = t;
+        if (!t.typeParam && t.name.find('.') == std::string::npos && t.name != "|")
+            if (const GlobalSym* g = findGlobal(u, t.name); g != nullptr && g->alias != nullptr) {
+                if (aliasBusy.count(g->alias) && g->alias != &alias) {
+                    r = TypeAnnotation{};
+                    r.name = "any";
+                    return r;
+                }
+                if (g->alias == &alias) {
+                    r = TypeAnnotation{};
+                    r.name = "any";
+                    return r;
+                }
+                aliasBusy.insert(g->alias);
+                TypeAnnotation inner = writtenOut(g->alias->target, *g->alias, t.args, *g->aliasUnit);
+                aliasBusy.erase(g->alias);
+                inner.nullable = inner.nullable || t.nullable;
+                return inner;
+            }
+        for (TypeAnnotation& arg : r.args) arg = writtenOut(arg, alias, given, u);
+        for (TypeAnnotation& m : r.unionOf) m = writtenOut(m, alias, given, u);
+        for (TypeAnnotation& p : r.params) p = writtenOut(p, alias, given, u);
+        for (TypeAnnotation& res : r.result) res = writtenOut(res, alias, given, u);
+        return r;
     }
 
     bool isNumeric(const Type& t) const {
@@ -742,6 +994,7 @@ struct Checker::Impl {
         k->isEnum = c.isEnum;
         k->isData = c.isData;
         k->isValue = c.isValue;
+        k->isEnumClass = c.isEnumClass;
         k->isAbstract = c.isAbstract;
         for (const TypeParam& t : c.typeParams) k->typeParams.push_back(t.name);
         classOf[&c] = k;
@@ -839,6 +1092,16 @@ struct Checker::Impl {
                 case StmtKind::Class: {
                     const auto& c = static_cast<const ClassStmt&>(*stmt);
                     declared(u, stmt->visibility, c.name).cls = gatherClass(c, &u, nullptr, true);
+                    break;
+                }
+                case StmtKind::Extend:
+                    extendsDeclared.push_back(ExtendInfo{static_cast<const ExtendStmt*>(stmt.get()), &u});
+                    break;
+                case StmtKind::TypeAlias: {
+                    const auto& a = static_cast<const TypeAliasStmt&>(*stmt);
+                    GlobalSym& g = declared(u, stmt->visibility, a.name);
+                    g.alias = &a;
+                    g.aliasUnit = &u;
                     break;
                 }
                 default:
@@ -972,6 +1235,7 @@ struct Checker::Impl {
 
     Type resolve(const TypeAnnotation& a, Unit& u) {
         if (!a.present() || a.star) return unknownType();
+        if (auto kind = kindClasses.find(&a); kind != kindClasses.end()) return withNull(classType(kind->second), a.nullable);
         Type t;
         if (a.isFunction()) {
             t.kind = Type::Function;
@@ -982,6 +1246,10 @@ struct Checker::Impl {
             t.suspend = a.isSuspend;
         } else if (a.typeParam) {
             t = typeParamType(a.name);
+        } else if (a.name == "|") {
+            std::vector<Type> members;
+            for (const TypeAnnotation& m : a.unionOf) members.push_back(resolve(m, u));
+            return makeUnion(members, a.nullable);
         } else {
             const std::string& n = a.name;
             if (n == "int") t.kind = Type::Int;
@@ -1025,6 +1293,9 @@ struct Checker::Impl {
                 t.frozen = n == "FrozenMap";
                 t.args.push_back(a.args.size() < 2 ? unknownType() : resolve(a.args[0], u));
                 t.args.push_back(a.args.size() < 2 ? unknownType() : resolve(a.args[1], u));
+            } else if (const GlobalSym* g = n.find('.') == std::string::npos && localClass(n) == nullptr ? findGlobal(u, n) : nullptr;
+                       g != nullptr && g->alias != nullptr) {
+                return expandAlias(*g, a, u);  // D41
             } else if (ClassInfo* k = findClass(u, n, classAround()); k != nullptr) {
                 t.kind = Type::Class;
                 t.cls = k;
@@ -1226,6 +1497,9 @@ struct Checker::Impl {
             if (c->superclass != nullptr && walk(c->superclass, envFor(c->superclass, c->superArgs))) return true;
             for (size_t i = 0; i < c->interfaces.size(); i++)
                 if (walk(c->interfaces[i], envFor(c->interfaces[i], c->interfaceArgs[i]))) return true;
+            // What an extend in reach brings to the class (D33).
+            for (ClassInfo* fitted : extendedTo(c))
+                if (walk(fitted, Env{})) return true;
             return false;
         };
         walk(obj.cls, envOf(obj));
@@ -1274,11 +1548,25 @@ struct Checker::Impl {
             if (c->superclass != nullptr && walk(c->superclass, envFor(c->superclass, c->superArgs))) return true;
             for (size_t i = 0; i < c->interfaces.size(); i++)
                 if (walk(c->interfaces[i], envFor(c->interfaces[i], c->interfaceArgs[i]))) return true;
+            for (ClassInfo* fitted : extendedTo(c))  // D33
+                if (walk(fitted, Env{})) return true;
             return false;
         };
         walk(obj.cls, envOf(obj));
         if (!m.methods.empty()) addInheritedForms(obj, name, m);
         return m;
+    }
+
+    // The interfaces extends in reach fit a class to (D33); none while an extend is checked
+    // against the class's own members.
+    bool ownMembersOnly = false;
+    std::vector<ClassInfo*> extendedTo(ClassInfo* c) {
+        std::vector<ClassInfo*> fitted;
+        if (ownMembersOnly || c == nullptr) return fitted;
+        for (ExtendInfo& e : extendsDeclared)
+            if (extendInReach(e) && resolveExtend(e) && std::find(e.types.begin(), e.types.end(), c) != e.types.end())
+                fitted.push_back(e.iface);
+        return fitted;
     }
 
     // The forms of a method a class has: its own and those of the classes and interfaces
@@ -1308,6 +1596,7 @@ struct Checker::Impl {
             };
             if (c->superclass != nullptr) walk(c->superclass, envFor(c->superclass, c->superArgs));
             for (size_t i = 0; i < c->interfaces.size(); i++) walk(c->interfaces[i], envFor(c->interfaces[i], c->interfaceArgs[i]));
+            for (ClassInfo* fitted : extendedTo(c)) walk(fitted, Env{});  // D33
         };
         walk(obj.cls, envOf(obj));
         if (!m.methodEnvs.empty()) m.env = m.methodEnvs[0];
@@ -1600,8 +1889,19 @@ struct Checker::Impl {
         keys.push_back("any");
         keys.push_back("<T>");
         for (const std::string& key : keys) {
-            const auto* found = in(key);
-            if (found == nullptr) continue;
+            const auto* all = in(key);
+            if (all == nullptr) continue;
+            // In reach as names are: the file's own folder first, then what it imports, and the
+            // standard library's everywhere (D70).
+            std::vector<FuncInfo*> reached, ownFolder;
+            for (FuncInfo* f : *all) {
+                if (!declarationInReach(f->unit, f->stmt != nullptr ? f->stmt->visibility : 0)) continue;
+                reached.push_back(f);
+                if (unit != nullptr && f->unit != nullptr && !f->unit->prelude && f->unit->ns == unit->ns) ownFolder.push_back(f);
+            }
+            if (reached.empty()) continue;
+            const std::vector<FuncInfo*> reachable = ownFolder.empty() ? reached : ownFolder;
+            const auto* found = &reachable;
             // A built-in type's own methods (in C++) come before extensions for every type when
             // the program runs, and the checker does not know them yet (part 3): the standard
             // library's `any?.equals` is not what `"a".equals("A", ignoreCase = true)` calls.
@@ -1853,7 +2153,21 @@ struct Checker::Impl {
             }
             case ExprKind::Is: {
                 const auto& i = static_cast<const IsExpr&>(cond);
-                if (i.negated == whenTrue) return;
+                if (i.negated == whenTrue) {
+                    // Not of that type: a local that is a union loses it (D40).
+                    if (i.value->kind != ExprKind::Name || findLocal(static_cast<const NameExpr&>(*i.value).name) == nullptr) return;
+                    silent++;
+                    const Type now = expr(*i.value);
+                    silent--;
+                    if (now.kind != Type::Union) return;
+                    const Type gone = resolve(i.type, *unit);
+                    if (!gone.known()) return;
+                    std::vector<Type> rest;
+                    for (const Type& m : now.args)
+                        if (!fits(m, gone)) rest.push_back(m);
+                    into[static_cast<const NameExpr&>(*i.value).name] = makeUnion(rest, now.nullable && !gone.nullable);
+                    return;
+                }
                 if (i.value->kind == ExprKind::This) {
                     if (!thisType().known()) return;
                     Type t = resolve(i.type, *unit);
@@ -2128,6 +2442,9 @@ struct Checker::Impl {
                 checkFunctionBody(f, nullptr);
                 break;
             }
+            case StmtKind::Extend:
+                checkExtend(static_cast<const ExtendStmt&>(s));
+                break;
             case StmtKind::Class: {
                 if (ctx != nullptr && ctx->topLevel && scopes.size() <= 1) break;  // a file's class: already gathered
                 const auto& cs = static_cast<const ClassStmt&>(s);
@@ -2153,7 +2470,11 @@ struct Checker::Impl {
         }
         Type declared = v.type.present() ? resolve(v.type, *unit) : unknownType();
         if (!v.type.present() && v.init) keptLambda(*v.init);
+        // A lazy starting value is worked out by whoever first reads it, which does not wait (D37).
+        const NoWait wasWait = ctx != nullptr ? ctx->noWait : CanWait;
+        if (v.isLazy && ctx != nullptr) ctx->noWait = LazyValue;
         Type value = v.init ? exprExpected(*v.init, declared) : unknownType();
+        if (v.isLazy && ctx != nullptr) ctx->noWait = wasWait;
         if (!v.pattern.empty()) {
             std::vector<Type> parts = partsOf(value, v.pattern.size());
             for (size_t i = 0; i < v.pattern.size(); i++) declareLocal(v.pattern[i], parts[i], v.isVal);
@@ -2373,6 +2694,8 @@ struct Checker::Impl {
     // or not, except where the field may be null, which keeps it in a box (M6.6 part 2).
     bool holdsValue(ClassInfo* holder, const ClassInfo* held, std::vector<ClassInfo*>& visited) {
         for (const auto& [name, field] : holder->fields) {
+            // A property worked out by its getter keeps nothing.
+            if (field->decl != nullptr && field->decl->getter && !field->decl->init) continue;
             const Type t = fieldType(field);
             if (t.kind != Type::Class || t.nullable || t.cls == nullptr || !t.cls->isValue) continue;
             if (t.cls == held) return true;
@@ -2383,8 +2706,139 @@ struct Checker::Impl {
         return false;
     }
 
+    // Kinds of an enum class named bare (D39), for the compiler: the node, the full name.
+    std::unordered_map<const Node*, std::string> kindNames;
+    std::unordered_map<const Node*, ClassInfo*> kindClasses;
+
+    // The kind of the enum class `e` (or of one of its kinds that is one) called `name`.
+    ClassInfo* kindNamed(ClassInfo* e, const std::string& name, int depth = 0) {
+        if (depth > 8) return nullptr;
+        for (ClassInfo* k : kindsOf(e)) {
+            if (k->decl->name == name) return k;
+            if (k->isEnumClass)
+                if (ClassInfo* inner = kindNamed(k, name, depth + 1)) return inner;
+        }
+        return nullptr;
+    }
+
+    // `is Click` where the value is an Event: the type, with Click found among Event's kinds when
+    // the name means no class of its own.
+    Type resolveAgainst(const TypeAnnotation& a, const Type& against) {
+        const Type plain = withNull(against, false);
+        if (plain.kind == Type::Class && plain.cls != nullptr && plain.cls->isEnumClass && !a.typeParam && !a.isFunction() &&
+            a.args.empty() && a.name.find('.') == std::string::npos && unit != nullptr &&
+            findClass(*unit, a.name, classAround()) == nullptr) {
+            if (ClassInfo* kind = kindNamed(plain.cls, a.name)) {
+                kindNames[&a] = kind->name;
+                kindClasses[&a] = kind;
+            }
+        }
+        return resolve(a, *unit);
+    }
+
+    // `Click(1, 2)` or `Close` where an Event is expected: the kind's object or a new one, when
+    // the name means nothing else here. Null when it is not that.
+    std::unique_ptr<Type> bareKind(const Expr& e, ClassInfo* enumClass) {
+        const NameExpr* n = nullptr;
+        const CallExpr* call = nullptr;
+        if (e.kind == ExprKind::Name) {
+            n = static_cast<const NameExpr*>(&e);
+        } else if (e.kind == ExprKind::Call && static_cast<const CallExpr&>(e).callee->kind == ExprKind::Name) {
+            call = static_cast<const CallExpr*>(&e);
+            n = static_cast<const NameExpr*>(call->callee.get());
+        }
+        if (n == nullptr || unit == nullptr || !meansGlobal(*n) || findGlobal(*unit, n->name) != nullptr ||
+            findClass(*unit, n->name, classAround()) != nullptr)
+            return nullptr;
+        ClassInfo* kind = kindNamed(enumClass, n->name);
+        if (kind == nullptr) return nullptr;
+        kindNames[n] = kind->name;
+        if (call == nullptr) {
+            if (!kind->isObject) return nullptr;  // a class's name is not a value
+            return std::make_unique<Type>(classType(kind));
+        }
+        Args args{call->args, call->names, call->trailingLambda, call->hasSpread};
+        return std::make_unique<Type>(constructorCall(kind, args, call->typeArgs, *call));
+    }
+
+    // The kinds of an enum class or enum interface (D39): the classes and objects that extend it
+    // directly, in the order they are written.
+    std::vector<ClassInfo*> kindsOf(ClassInfo* e) {
+        std::vector<ClassInfo*> kinds;
+        for (const auto& [stmt, k] : classOf) {
+            resolveSupers(k);
+            bool extends = k->superclass == e;
+            for (ClassInfo* i : k->interfaces) extends = extends || i == e;
+            if (extends) kinds.push_back(k);
+        }
+        std::sort(kinds.begin(), kinds.end(), [](const ClassInfo* a, const ClassInfo* b) {
+            return a->decl->line != b->decl->line ? a->decl->line < b->decl->line : a->decl->col < b->decl->col;
+        });
+        return kinds;
+    }
+
+    // The fields of a data class's header, in order (D65).
+    static std::vector<const HeaderParam*> headerFields(const ClassStmt& c) {
+        std::vector<const HeaderParam*> fields;
+        for (const HeaderParam& p : c.header)
+            if (p.isField) fields.push_back(&p);
+        return fields;
+    }
+
+    size_t inheritedDataFields(ClassInfo* k) {
+        resolveSupers(k);
+        if (!k->isData || k->superclass == nullptr || !k->superclass->isData || k->superclass->decl == nullptr) return 0;
+        return headerFields(*k->superclass->decl).size();
+    }
+
+    // A data class is extended only by a data class, whose header starts with its fields and
+    // passes them up as they are (D65).
+    void checkDataExtension(ClassInfo* k) {
+        const ClassStmt& c = *k->decl;
+        resolveSupers(k);
+        ClassInfo* parent = k->superclass;
+        if (parent == nullptr || !parent->isData || parent->decl == nullptr || parent->isValue) return;
+        if (!k->isData) {
+            report(c, k->name + " cannot extend data " + parent->name + ": a data class is extended only by a data class, whose " +
+                          "header starts with " + parent->name + "'s fields (D65)");
+            return;
+        }
+        const std::vector<const HeaderParam*> above = headerFields(*parent->decl);
+        std::string wanted;
+        for (const HeaderParam* p : above) wanted += (wanted.empty() ? "" : ", ") + p->name;
+        const std::vector<const HeaderParam*> own = headerFields(c);
+        bool starts = own.size() >= above.size();
+        for (size_t i = 0; starts && i < above.size(); i++) {
+            starts = own[i]->name == above[i]->name;
+            if (starts && own[i]->type.present() && above[i]->type.present())
+                starts = text(resolve(own[i]->type, *k->unit)) == text(resolve(above[i]->type, *parent->unit));
+        }
+        if (!starts) {
+            report(c, "data " + k->name + " extends data " + parent->name + ", so its header starts with " + parent->name +
+                          "'s fields, of the same types: data " + k->decl->name + "(" + wanted + ", ...) (D65)");
+            return;
+        }
+        bool passed = c.superArgs.size() == above.size();
+        for (size_t i = 0; passed && i < above.size(); i++)
+            passed = c.superArgs[i]->kind == ExprKind::Name && static_cast<const NameExpr&>(*c.superArgs[i]).name == above[i]->name;
+        if (!passed)
+            report(c, "data " + k->name + " passes its first fields up to " + parent->name + " as they are: : " + parent->decl->name +
+                          "(" + wanted + ") (D65)");
+    }
+
     void checkClass(ClassInfo* k) {
         const ClassStmt& c = *k->decl;
+        checkDataExtension(k);
+        // The kinds of an enum class are all declared in its file (D39).
+        resolveSupers(k);
+        {
+            std::vector<ClassInfo*> above = k->interfaces;
+            if (k->superclass != nullptr) above.push_back(k->superclass);
+            for (ClassInfo* e : above)
+                if (e != nullptr && e->isEnumClass && e->unit != k->unit)
+                    report(c, k->name + " cannot extend " + e->name + ", an enum " + (e->isInterface ? "interface" : "class") +
+                                  ": its kinds are all declared in its file, so a when can know them all (D39)");
+        }
         // == and hashCode go together, so that equal objects hash alike (D26).
         const FunctionDecl* ownEquals = nullptr;
         const FunctionDecl* ownHash = nullptr;
@@ -2449,6 +2903,9 @@ struct Checker::Impl {
             FieldInfo* f = k->fields[field->name];
             if (field->isConst) constantOf(f);
             Type declared = fieldType(f);
+            if (field->isLateinit && declared.kind == Type::Class && declared.cls != nullptr && declared.cls->isValue)
+                report(*field, "lateinit var '" + field->name + "' is " + describe(declared) + ", a value type, which is kept whole " +
+                                   "where it is: give it a starting value; lateinit is for a field that holds an object (D36)");
             if (requireTypes && !field->type.present() && !field->init && field->getter == nullptr && f->header == nullptr)
                 report(*field, "'" + field->name + "' has no value to take its type from; write one, as in " +
                                    (field->isVal ? "val " : "var ") + field->name + " : Type");
@@ -2470,6 +2927,7 @@ struct Checker::Impl {
             for (const auto* acc : {field->getter.get(), field->setter.get()}) {
                 if (acc == nullptr) continue;
                 FuncInfo* fn = newFunc(*acc, k->unit, k);
+                if (acc == field->getter.get()) f->getterFn = fn;
                 if (acc == field->getter.get() && !acc->returnType.present()) {
                     fn->resolved = true;
                     fn->resultWritten = declared.known();
@@ -2528,6 +2986,7 @@ struct Checker::Impl {
                 // The header's parameters are in reach of the superclass's arguments.
                 for (const HeaderParam& h : c.header) declareLocal(h.name, resolve(h.type, *k->unit), true);
                 Args args{c.superArgs, noNames(), false, false};
+                superCall = true;
                 Type made = constructorCall(k->superclass, args, {}, c);
                 (void)made;
             });
@@ -2600,6 +3059,9 @@ struct Checker::Impl {
     std::unordered_map<const Expr*, Type> literalTypes;
 
     Type exprExpected(const Expr& e, const Type& expected) {
+        // A kind of an enum class by its bare name, where one is expected (D39).
+        if (const Type plain = withNull(expected, false); plain.kind == Type::Class && plain.cls != nullptr && plain.cls->isEnumClass)
+            if (std::unique_ptr<Type> kind = bareKind(e, plain.cls)) return *kind;
         if (e.kind == ExprKind::List || e.kind == ExprKind::Map) {
             const Type made = exprExpectedLiteral(e, expected);
             literalTypes[&e] = made;
@@ -2820,6 +3282,7 @@ struct Checker::Impl {
             case ExprKind::Is: {
                 const auto& i = static_cast<const IsExpr&>(e);
                 const Type value = expr(*i.value);
+                if (resolveAgainst(i.type, value).kind == Type::Union) report(i.type, unionTested());  // `x is Click` for an Event (D39)
                 if (i.type.isOpen) notMadeOpen(value, resolve(i.type, *unit), i, "is");
                 return Type::of(Type::Bool);
             }
@@ -2827,6 +3290,7 @@ struct Checker::Impl {
                 const auto& c = static_cast<const CastExpr&>(e);
                 const Type value = expr(*c.value);
                 Type t = resolve(c.type, *unit);
+                if (t.kind == Type::Union) report(c.type, unionTested());
                 if (c.type.isOpen) notMadeOpen(value, t, c, "as");
                 return c.safe ? withNull(t) : t;
             }
@@ -2979,11 +3443,21 @@ struct Checker::Impl {
         bool first = true;
         bool hasElse = false;
         std::unordered_set<std::string> covered;  // enum entries, true/false, null
+        std::vector<ClassInfo*> coveredKinds;      // `is Kind` over an enum class (D39)
+        std::vector<Type> coveredTypes;            // `is T`, for a union (D40)
         for (const WhenBranch& b : w.branches) {
             if (b.isElse) hasElse = true;
             std::unordered_map<std::string, Type> narrow;
             for (const WhenCondition& c : b.conditions) {
                 if (c.kind == WhenCondition::Kind::Is) {
+                    if (w.subject) resolveAgainst(c.type, subject);  // `is Click` over an Event (D39)
+                    if (w.subject && !c.negated) {
+                        const Type kind = resolve(c.type, *unit);
+                        if (kind.kind == Type::Class && kind.cls != nullptr && !kind.nullable) coveredKinds.push_back(kind.cls);
+                        if (kind.known()) coveredTypes.push_back(withNull(kind, false));
+                        if (kind.kind == Type::Union) report(c.type, unionTested());
+                        if (kind.kind == Type::Null || (kind.nullable && kind.kind == Type::Null)) covered.insert("null");
+                    }
                     if (w.subject && w.subject->kind == ExprKind::Name && !c.negated && b.conditions.size() == 1) {
                         Type t = resolve(c.type, *unit);
                         if (t.known()) narrow[static_cast<const NameExpr&>(*w.subject).name] = t;
@@ -2993,6 +3467,9 @@ struct Checker::Impl {
                     Type t = w.subject && c.kind == WhenCondition::Kind::Value && subject.kind == Type::Class && subject.cls &&
                                      subject.cls->isEnum && c.value->kind == ExprKind::Name
                                  ? enumEntry(subject, static_cast<const NameExpr&>(*c.value).name, *c.value)
+                             : w.subject && c.kind == WhenCondition::Kind::Value && subject.kind == Type::Class && subject.cls &&
+                                     subject.cls->isEnumClass
+                                 ? exprExpected(*c.value, subject)  // `Close ->` over an Event (D39)
                                  : expr(*c.value);
                     if (!w.subject && c.kind == WhenCondition::Kind::Value && t.known() &&
                         !(t.kind == Type::Bool && !t.nullable) && t.kind != Type::Nothing)
@@ -3014,11 +3491,34 @@ struct Checker::Impl {
             if (subject.kind == Type::Class && subject.cls != nullptr && subject.cls->isEnum) {
                 for (const EnumEntry& entry : subject.cls->decl->entries)
                     if (!covered.count(entry.name)) missing.push_back(subject.cls->name + "." + entry.name);
+            } else if (subject.kind == Type::Class && subject.cls != nullptr && subject.cls->isEnumClass) {
+                // Each kind: by `is` it or a class above it, an object kind also by its name (D39).
+                std::function<bool(ClassInfo*)> isCovered = [&](ClassInfo* kind) {
+                    for (ClassInfo* by : coveredKinds)
+                        if (isSubclass(kind, by)) return true;
+                    if (kind->isObject && covered.count(kind->decl->name)) return true;
+                    if (!kind->isEnumClass) return false;
+                    const std::vector<ClassInfo*> inner = kindsOf(kind);
+                    if (inner.empty()) return false;
+                    for (ClassInfo* k : inner)
+                        if (!isCovered(k)) return false;
+                    return true;
+                };
+                for (ClassInfo* kind : kindsOf(subject.cls))
+                    if (!isCovered(kind)) missing.push_back(kind->isObject ? kind->name : "is " + kind->name);
             } else if (subject.kind == Type::Bool) {
                 for (const char* v : {"true", "false"})
                     if (!covered.count(v)) missing.push_back(v);
+            } else if (subject.kind == Type::Union) {
+                // Each of its types (D40).
+                for (const Type& m : subject.args) {
+                    bool done = false;
+                    for (const Type& by : coveredTypes) done = done || fits(m, by);
+                    if (!done) missing.push_back("is " + text(m));
+                }
             }
-            if (!missing.empty() || (subject.kind == Type::Class && subject.cls && subject.cls->isEnum) || subject.kind == Type::Bool) {
+            if (!missing.empty() || (subject.kind == Type::Class && subject.cls && (subject.cls->isEnum || subject.cls->isEnumClass)) ||
+                subject.kind == Type::Bool || subject.kind == Type::Union) {
                 if (subject.nullable && !covered.count("null")) missing.push_back("null");
                 if (!missing.empty()) {
                     std::string list;
@@ -3038,7 +3538,7 @@ struct Checker::Impl {
             covered.insert("null");
         } else if (v.kind == ExprKind::Literal && static_cast<const LiteralExpr&>(v).type == LiteralExpr::Type::Bool) {
             covered.insert(static_cast<const LiteralExpr&>(v).boolValue ? "true" : "false");
-        } else if (subject.kind == Type::Class && subject.cls != nullptr && subject.cls->isEnum) {
+        } else if (subject.kind == Type::Class && subject.cls != nullptr && (subject.cls->isEnum || subject.cls->isEnumClass)) {
             if (v.kind == ExprKind::Name) covered.insert(static_cast<const NameExpr&>(v).name);
             else if (v.kind == ExprKind::Member) covered.insert(static_cast<const MemberExpr&>(v).name);
         }
@@ -4130,8 +4630,27 @@ struct Checker::Impl {
         return true;
     }
 
+    // A union's members are those every type of it has (D40): the union as the nearest type
+    // above all of them, with an error where there is none.
+    bool unionMember(Type& obj, const std::string& name, const Node& at) {
+        if (obj.kind != Type::Union) return true;
+        Type all = unionCommon(withNull(obj, false));
+        if (all.unknown() || all.kind == Type::Union) {
+            if (builtinMember(name)) {
+                obj = withNull(Type::of(Type::Any), obj.nullable);
+                return true;
+            }
+            report(at, "'" + name + "' is not something every type of " + text(withNull(obj, false)) + " has: test which it is first, " +
+                           "with is or a when (D40)");
+            return false;
+        }
+        obj = withNull(all, obj.nullable);
+        return true;
+    }
+
     Type memberOf(const Type& objIn, const std::string& name, const MemberExpr& at, bool safe) {
         Type obj = objIn;
+        if (!unionMember(obj, name, at)) return unknownType();
         if (obj.unknown()) return unknownType();
         if (obj.kind == Type::Nothing) return Type::of(Type::Nothing);
         if (obj.kind == Type::Null) return safe ? Type::of(Type::Null) : unknownType();
@@ -4504,8 +5023,13 @@ struct Checker::Impl {
         return subst(result, env);
     }
 
+    bool superCall = false;  // the next constructorCall is a subclass's of its superclass
+
     Type constructorCall(ClassInfo* k, const Args& args, const std::vector<TypeAnnotation>& typeArgs, const Node& at) {
         const std::string what = k->name + "(...)";
+        if (k->isEnumClass && silent == 0 && !std::exchange(superCall, false))
+            report(at, k->name + " is an enum class: it is made only as one of its kinds (D39)");
+        superCall = false;
         Env env;
         for (size_t i = 0; i < typeArgs.size() && i < k->typeParams.size(); i++) env[k->typeParams[i]] = resolve(typeArgs[i], *unit);
         FuncInfo* init = k->inits.size() == 1 ? k->inits[0] : (k->headerInit ? headerFunc(k) : nullptr);
@@ -4775,6 +5299,7 @@ struct Checker::Impl {
         std::string varRead;  // the first var field read
         std::vector<std::pair<std::string, Type>> valReads;
         std::vector<std::pair<std::string, FuncInfo*>> calls;  // methods and getters called
+        std::vector<std::pair<std::string, FieldInfo*>> properties;  // properties worked out by a getter, read
     };
     std::unordered_map<FuncInfo*, KeyFacts> keyFacts;
     struct PendingKey {
@@ -4801,7 +5326,10 @@ struct Checker::Impl {
         FuncInfo* f = keyFactsFn();
         if (f == nullptr) return;
         KeyFacts& facts = keyFacts[f];
-        if (m.field != nullptr) {
+        if (m.field != nullptr && m.field->decl != nullptr && m.field->decl->getter && !m.field->decl->init) {
+            // A property worked out by its getter: what the getter reads, followed when judged (D26).
+            facts.properties.emplace_back(name, m.field);
+        } else if (m.field != nullptr) {
             if (!m.field->isVal) {
                 if (facts.varRead.empty()) facts.varRead = name;
             } else if (facts.valReads.size() < 64) {
@@ -4837,11 +5365,11 @@ struct Checker::Impl {
             for (const char* name : {"==", "hashCode"})
                 if (auto found = own->methods.find(name); found != own->methods.end())
                     for (FuncInfo* f : found->second) todo.emplace_back(name, f);
-            std::unordered_set<FuncInfo*> seen;
+            std::unordered_set<FuncInfo*> followed;
             while (!todo.empty() && why.empty()) {
                 const auto [name, f] = todo.back();
                 todo.pop_back();
-                if (!seen.insert(f).second) continue;
+                if (!followed.insert(f).second) continue;
                 if (f->decl == nullptr || f->isExternal || f->decl->isAbstract) {
                     why = "its == or hashCode calls '" + name + "', which the checker cannot follow";
                     break;
@@ -4857,6 +5385,8 @@ struct Checker::Impl {
                         break;
                     }
                 for (const auto& call : facts.calls) todo.push_back(call);
+                for (const auto& [read, property] : facts.properties)
+                    if (property->getterFn != nullptr) todo.emplace_back(read, property->getterFn);
             }
         } else if ((k->isData || k->isValue) && k->decl != nullptr) {
             // A data class by its header; a value type by all it holds, which goes in a map as a copy.
@@ -4939,6 +5469,12 @@ struct Checker::Impl {
                ", or toOpen" + kind + "() makes a copy that can be (D32)";
     }
 
+    // A union has nothing of its own when the program runs (D40).
+    static std::string unionTested() {
+        return "a union is not tested as a whole: nothing of it is kept when the program runs; test its types one by one, " +
+               std::string("with is or a when (D40)");
+    }
+
     // `x is open List<int>`, `x as open List<int>` where x may only be read (D46).
     void notMadeOpen(const Type& value, const Type& to, const Expr& at, const char* how) {
         const Type v = withNull(value, false);
@@ -4958,6 +5494,10 @@ struct Checker::Impl {
     // A method of a value: declared on its class or above, or an extension.
     Type callMethod(const Type& objIn, const CallExpr& c, const MemberExpr& m) {
         Type obj = objIn;
+        if (!unionMember(obj, m.name, m)) {
+            for (const ExprPtr& a : c.args) expr(*a);
+            return unknownType();
+        }
         // What nobody may change, and keys that cannot change (D26).
         if (obj.kind == Type::List || obj.kind == Type::Map || obj.kind == Type::Set) {
             static const std::unordered_set<std::string> changing = {"add", "addAll", "put", "putAll", "getOrPut", "update", "putIfAbsent"};
@@ -5259,6 +5799,7 @@ struct Checker::Impl {
                     Type sup = selfTypeArgs(ctx->cls->superclass, ctx->cls->superArgs);
                     if (s.method == "init") {
                         Args args{c.args, c.names, c.trailingLambda, c.hasSpread};
+                        superCall = true;
                         return constructorCall(ctx->cls->superclass, args, {}, c);
                     }
                     Member mem = lookupMember(sup, s.method);
@@ -5890,6 +6431,7 @@ struct Checker::Impl {
             case HashCode: return "hashCode must give its answer at once: every map and set holding the object would be held up";
             case ObjectMade: return "an object is made at once: whoever makes it would be held up";
             case StaticValue: return "a static value must be there at once: the class is being set up";
+            case LazyValue: return "a lazy starting value must be there at once: whoever first reads it would be held up";
             case SortComparison: return "a sort's comparison must give its answer at once: the sort cannot wait in the middle";
             case ParallelSection: return "nothing waits in a parallel section: its work runs straight through on several cores";
             default: return "";
@@ -6355,6 +6897,21 @@ bool Checker::literalType(const Expr& literal, RuntimeType& out) const {
 bool Checker::unstableKey(const ClassStmt& cls) {
     auto found = impl_->classOf.find(&cls);
     return found != impl_->classOf.end() && !impl_->keyTrouble(found->second).empty();
+}
+
+size_t Checker::inheritedDataFields(const ClassStmt& cls) {
+    auto found = impl_->classOf.find(&cls);
+    return found == impl_->classOf.end() ? 0 : impl_->inheritedDataFields(found->second);
+}
+
+const TypeAnnotation* Checker::aliasExpansion(const TypeAnnotation& use) const {
+    auto found = impl_->aliasExpansions.find(&use);
+    return found == impl_->aliasExpansions.end() ? nullptr : found->second.get();
+}
+
+const std::string* Checker::kindName(const Node& at) const {
+    auto found = impl_->kindNames.find(&at);
+    return found == impl_->kindNames.end() ? nullptr : &found->second;
 }
 
 const FunctionDecl* Checker::chosenForm(const CallExpr& call) const {

@@ -1707,6 +1707,17 @@ bool VM::invoke(ObjString* name, int argc, bool trailing) {
                     return trailing ? callValueTrailing(callee, argc) : callValue(callee, argc);
                 }
             }
+            // What an extend brought to the class (D33).
+            if (const Value* method = instance->cls->extendMethod(name)) {
+                if (trailing) callTrailing(asClosure(*method), argc);
+                else callClosure(asClosure(*method), argc);
+                return true;
+            }
+            if (const Value* getter = instance->cls->extendGetter(name)) {
+                Value callee = callWithReceiver(receiver, asClosure(*getter));
+                sp_[-argc - 1] = callee;
+                return trailing ? callValueTrailing(callee, argc) : callValue(callee, argc);
+            }
             if (const Value* extension = findExtension(receiver, name)) {
                 if (trailing) callTrailing(asClosure(*extension), argc);
                 else callClosure(asClosure(*extension), argc);
@@ -1997,6 +2008,16 @@ Value VM::getProperty(Value obj, ObjString* name) {
                                        " cannot be read: it has no getter");
                 if (const Value* extension = findExtension(obj, name))
                     return Value::object(alloc<ObjBoundMethod>(obj, asClosure(*extension)));
+                if (const Value* getter = instance->cls->extendGetter(name)) return callWithReceiver(obj, asClosure(*getter));  // D33
+                if (const Value* method = instance->cls->extendMethod(name))
+                    return Value::object(alloc<ObjBoundMethod>(obj, asClosure(*method)));
+                if (const FieldDecl* decl = instance->declOf(name)) {
+                    if (decl->payload == FieldDecl::NoPayload && instance->fields()[decl->slot].isLazy())
+                        return forceLazy(instance->fields()[decl->slot], [&](Value v) { instance->fields()[decl->slot] = v; },
+                                         "'" + name->utf8() + "' of " + instance->cls->name->utf8());
+                    throw runtimeError("'" + name->utf8() + "' of " + instance->cls->name->utf8() + " is read before it is given a value " +
+                                       "(a lateinit field is read only once it has one)");
+                }
                 throw runtimeError("undefined property '" + name->utf8() + "' on " + instance->cls->name->utf8());
             }
             case ObjType::Value: {
@@ -2012,7 +2033,12 @@ Value VM::getProperty(Value obj, ObjString* name) {
             case ObjType::Class: {
                 ObjClass* cls = asClass(obj);
                 if (cls->staticInit != nullptr || (cls->super != nullptr && cls->super->staticInit != nullptr)) ensureClassInit(cls);
-                if (const Value* member = cls->findStatic(name)) return *member;
+                if (const Value* member = cls->findStatic(name)) {
+                    if (!member->isLazy()) return *member;
+                    for (ObjClass* k = cls; k != nullptr; k = k->super)
+                        if (k->statics.find(name) != nullptr)
+                            return forceLazy(*member, [&](Value v) { k->statics.set(name, v); }, cls->name->utf8() + "." + name->utf8());
+                }
                 for (const ObjClass* k = cls; k != nullptr; k = k->super) {
                     if (const Value* getter = k->staticGetters.find(name)) return call(*getter, 0, nullptr);
                     if (k->staticSetters.find(name) != nullptr)
@@ -3989,6 +4015,47 @@ Value VM::frozenCopy(Value v, int depth) {
     return keep.get();
 }
 
+// ---- Lazy values (D37) ----
+
+Value VM::forceLazy(Value marker, const std::function<void(Value)>& store, const std::string& what) {
+    static thread_local char here;
+    const uintptr_t me = reinterpret_cast<uintptr_t>(&here);
+    ObjLazy* lazy = static_cast<ObjLazy*>(marker.as.obj);
+    TempRoot keep(*this, Value::object(lazy));
+    for (;;) {
+        if (lazy->state == 2) {
+            store(lazy->value);
+            return lazy->value;
+        }
+        if (lazy->state == 1) {
+            if (lazy->owner == me) throw runtimeError(what + " is read while its value is being worked out: its starting value needs itself");
+            yieldLock();  // another thread is working it out: let it finish
+            continue;
+        }
+        lazy->state = 1;
+        lazy->owner = me;
+        Value result;
+        try {
+            result = call(Value::object(lazy->init), 0, nullptr);
+        } catch (...) {
+            // A starting value that fails leaves it unset, for the next read to try again.
+            lazy->state = 0;
+            lazy->owner = 0;
+            throw;
+        }
+        lazy->value = own(result);
+        lazy->state = 2;
+        store(lazy->value);
+        return lazy->value;
+    }
+}
+
+Value VM::globalOrLazy(size_t index) {
+    const Value value = globals_[index];
+    if (!value.isLazy()) throw runtimeError("undefined variable '" + program_->globalNames[index] + "'");
+    return forceLazy(value, [&](Value v) { globals_[index] = v; }, "'" + program_->globalNames[index] + "'");
+}
+
 std::vector<Value> VM::setItems(const ObjSet* set) {
     std::vector<Value> out;
     const ValueMap& from = set->view() ? set->viewOf->map : set->items;
@@ -4470,8 +4537,10 @@ void VM::run(int baseFrame) {
                         }
                         int index = READ_U16();
                         Value value = globals_[static_cast<size_t>(index)];
-                        if (value.kind == ValueKind::Undefined)
-                            throw runtimeError("undefined variable '" + program_->globalNames[static_cast<size_t>(index)] + "'");
+                        if (value.kind == ValueKind::Undefined) {
+                            SAVE_IP();
+                            value = globalOrLazy(static_cast<size_t>(index));  // a lazy one's (D37)
+                        }
                         *sp_++ = value;
                         break;
                     }
@@ -4479,7 +4548,7 @@ void VM::run(int baseFrame) {
                         int index = READ_U16();
                         if (coreId_ != 0) throw notOwned("the variable '" + program_->globalNames[static_cast<size_t>(index)] + "' is shared");
                         Value& slot = globals_[static_cast<size_t>(index)];
-                        if (slot.kind == ValueKind::Undefined)
+                        if (slot.kind == ValueKind::Undefined && !slot.isLazy())  // a lazy var may be given one first (D37)
                             throw runtimeError("undefined variable '" + program_->globalNames[static_cast<size_t>(index)] + "'");
                         const TypeConstraint& declared = globalTypes_[static_cast<size_t>(index)];
                         if (declared.type != 0 && !matchesType(sp_[-1], declared.type, declared.cls))
@@ -4502,6 +4571,10 @@ void VM::run(int baseFrame) {
                         Value receiver = implicitReceiver(frame, base, name);
                         if (receiver.kind == ValueKind::Undefined) {
                             Value value = globals_[index];
+                            if (value.isLazy()) {
+                                SAVE_IP();
+                                value = globalOrLazy(index);
+                            }
                             if (value.kind == ValueKind::Undefined) throw undefinedName(frame, base, name, index);
                             *sp_++ = value;
                             break;
@@ -4568,6 +4641,7 @@ void VM::run(int baseFrame) {
                         Value receiver = implicitReceiver(frame, base, name);
                         if (receiver.kind == ValueKind::Undefined) {
                             Value callee = globals_[index];
+                            if (callee.isLazy()) callee = globalOrLazy(index);
                             if (callee.kind == ValueKind::Undefined) throw undefinedName(frame, base, name, index);
                             sp_[-argc - 1] = callee;
                             if (callValue(callee, argc)) LOAD_FRAME();
@@ -4584,7 +4658,7 @@ void VM::run(int baseFrame) {
                         if (receiver.kind == ValueKind::Undefined) {
                             if (coreId_ != 0) throw notOwned("the variable '" + program_->globalNames[index] + "' is shared");
                             Value& slot = globals_[index];
-                            if (slot.kind == ValueKind::Undefined) throw undefinedName(frame, base, name, index);
+                            if (slot.kind == ValueKind::Undefined && !slot.isLazy()) throw undefinedName(frame, base, name, index);
                             const TypeConstraint& declared = globalTypes_[index];
                             if (declared.type != 0 && !matchesType(sp_[-1], declared.type, declared.cls))
                                 throw typeMismatch(program_->globalNames[index], declared.type, declared.cls, sp_[-1]);
@@ -5182,6 +5256,31 @@ void VM::run(int baseFrame) {
                         break;
                     }
 
+                    case Op::SetSuper: {
+                        ObjString* name = asString(consts[READ_U16()]);
+                        const Value super = sp_[-2];
+                        CHECK_ACCESS(sp_[-3], 1, false, true);
+                        if (!super.isObjType(ObjType::Class))
+                            throw runtimeError("there is no '" + name->utf8() + "' for super to mean: this class has no superclass");
+                        if (const Value* setter = asClass(super)->setters.find(name)) {
+                            // The setter, run on this object with the value.
+                            sp_[-2] = sp_[-1];
+                            sp_--;
+                            SAVE_IP();
+                            callClosure(asClosure(*setter), 1);
+                            LOAD_FRAME();
+                            break;
+                        }
+                        // A field the superclass declares, which the object has: written as it is.
+                        if (asClass(super)->declaredIndex.find(name) == nullptr)
+                            throw runtimeError("undefined property '" + name->utf8() + "' in superclass " + asClass(super)->name->utf8());
+                        SAVE_IP();
+                        const Value value = sp_[-1];
+                        setProperty(sp_[-3], name, value);
+                        sp_ -= 2;
+                        sp_[-1] = value;
+                        break;
+                    }
                     case Op::GetSuper: {
                         ObjString* name = asString(consts[READ_U16()]);
                         Value super = *--sp_;
@@ -5975,6 +6074,45 @@ void VM::run(int baseFrame) {
                         asClass(sp_[-1])->components.push_back(name);
                         break;
                     }
+                    case Op::Extend: {
+                        // extend Person : Weighed (D33): the class fits the interface, and the
+                        // ones above it, and has what they bring that it has not.
+                        if (!sp_[-1].isObjType(ObjType::Class) || !asClass(sp_[-1])->isInterface)
+                            throw runtimeError("an extend fits a class to an interface");
+                        if (!sp_[-2].isObjType(ObjType::Class)) throw runtimeError("an extend fits a class to an interface");
+                        ObjClass* iface = asClass(sp_[-1]);
+                        ObjClass* cls = asClass(sp_[-2]);
+                        auto fit = [&](ObjClass* to) {
+                            if (std::find(cls->extendedTo.begin(), cls->extendedTo.end(), to) == cls->extendedTo.end())
+                                cls->extendedTo.push_back(to);
+                        };
+                        fit(iface);
+                        for (ObjClass* above : iface->interfaces) fit(above);
+                        for (uint32_t i = 0; i < iface->methods.capacity(); i++) {
+                            const Table::Entry& e = iface->methods.entries()[i];
+                            if (e.key != nullptr && cls->methods.find(e.key) == nullptr) cls->extendMethods.set(e.key, e.value);
+                        }
+                        for (uint32_t i = 0; i < iface->getters.capacity(); i++) {
+                            const Table::Entry& e = iface->getters.entries()[i];
+                            if (e.key != nullptr && cls->getters.find(e.key) == nullptr) cls->extendGetters.set(e.key, e.value);
+                        }
+                        sp_--;
+                        break;
+                    }
+                    case Op::Bridge: {
+                        ObjString* name = asString(consts[READ_U16()]);
+                        if (!sp_[-2].isObjType(ObjType::Class)) throw runtimeError("invalid extend");
+                        asClass(sp_[-2])->extendGetters.set(name, sp_[-1]);
+                        sp_--;
+                        break;
+                    }
+                    case Op::Lazy: {
+                        if (!sp_[-1].isObjType(ObjType::Closure)) throw runtimeError("invalid lazy value");
+                        ObjLazy* lazy = alloc<ObjLazy>();
+                        lazy->init = asClosure(sp_[-1]);
+                        sp_[-1] = Value::lazy(lazy);
+                        break;
+                    }
                     case Op::UnstableKey:
                         if (!sp_[-1].isObjType(ObjType::Class)) throw runtimeError("invalid class declaration");
                         asClass(sp_[-1])->unstableKey = true;
@@ -6722,6 +6860,7 @@ const uint8_t* VM::placeInstruction(Op op, const uint8_t* ip, CallFrame* frame) 
         case Op::PlaceGlobal: {
             const int index = (ip += 2, operandU16(ip - 2));
             if (coreId_ != 0) throw notOwned("the variable '" + program_->globalNames[static_cast<size_t>(index)] + "' is shared");
+            if (globals_[static_cast<size_t>(index)].isLazy()) globalOrLazy(static_cast<size_t>(index));
             const Value place = placeIn(globals_[static_cast<size_t>(index)]);
             *sp_++ = place;
             break;
@@ -7225,6 +7364,13 @@ void VM::blacken(Obj* obj) {
             markItems(list);
             break;
         }
+        case ObjType::Lazy: {
+            ObjLazy* lazy = static_cast<ObjLazy*>(obj);
+            liveBytes_ += sizeof(ObjLazy);
+            markObject(lazy->init);
+            markValue(lazy->value);
+            break;
+        }
         case ObjType::Set: {
             ObjSet* set = static_cast<ObjSet*>(obj);
             liveBytes_ += sizeof(ObjSet) + set->items.entries().size() * 64;
@@ -7314,6 +7460,9 @@ void VM::blacken(Obj* obj) {
             markTable(cls->extensions);
             markObject(cls->nextEntry);
             for (ObjClass* implemented : cls->interfaces) markObject(implemented);
+            for (ObjClass* fitted : cls->extendedTo) markObject(fitted);
+            markTable(cls->extendMethods);
+            markTable(cls->extendGetters);
             for (ObjString* part : cls->components) markObject(part);
             for (const auto& [name, interface] : cls->required) {
                 markObject(name);

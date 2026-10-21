@@ -71,16 +71,17 @@ object Jade {
   // What turns a Window into a window on the screen when it is shown. A test puts another
   // here: HiddenWindowOpener, or one of its own that makes nothing and records what it was asked.
   private var opener : WindowOpener? = null
-  get windowOpener() : WindowOpener {
-    val kept = opener
-    if (kept != null) { return kept }
-    val made = NativeWindowOpener()
-    opener = made
-    return made
-  }
-  set windowOpener(value) {
-    opener = value
-  }
+  var windowOpener : WindowOpener
+    get() {
+      val kept = opener
+      if (kept != null) { return kept }
+      val made = NativeWindowOpener()
+      opener = made
+      return made
+    }
+    set(value) {
+      opener = value
+    }
 
   // ---- Something to do every frame ----
 
@@ -108,7 +109,8 @@ object Jade {
   fun removeFrameHook(hook : (FrameTime) -> unit) {
     frameHooks.remove(hook)
   }
-  get wantsFrames() : bool => !frameHooks.isEmpty()
+  val wantsFrames : bool
+    get() => !frameHooks.isEmpty()
 
   fun runFrameHooks(nowNanos : int) {
     if (frameHooks.isEmpty()) { return }

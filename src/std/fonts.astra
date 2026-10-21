@@ -55,7 +55,8 @@ class Typeface {
   }
 
   // The axes of a variable font; none for any other.
-  get axes() : List<FontAxis> => __text.faceAxes(handle).map { FontAxis(it[0], it[1], it[2], it[3]) }
+  val axes : List<FontAxis>
+    get() => __text.faceAxes(handle).map { FontAxis(it[0], it[1], it[2], it[3]) }
 
   // Whether the font has a character: a one-character string, or its number.
   fun has(character : any) : bool => __text.faceGlyph(handle, character) != 0
@@ -169,10 +170,12 @@ class TextFont {
     this.isItalic = typeface.isItalic or fakeItalic
   }
 
-  get family() : string => typeface.family
+  val family : string
+    get() => typeface.family
 
   // The height of a line: ascent, descent and leading.
-  get height() : int => ascent + descent + leading
+  val height : int
+    get() => ascent + descent + leading
 
   // A text's width: the sum of its characters' widths, and where it ends when drawn.
   fun width(text : any?) : int => __text.width(handle, text)
@@ -211,12 +214,18 @@ class Picture {
   val height : int
   val pixels : Bytes
 
-  static const black = 0xFF000000
-  static const white = 0xFFFFFFFF
-  static const clear = 0
-
-  static fun rgb(red : int, green : int, blue : int, alpha : int = 255) : int => (alpha << 24) | (red << 16) | (green << 8) | blue
-
+  static {
+    const black = 0xFF000000
+    const white = 0xFFFFFFFF
+    const clear = 0
+    fun rgb(red : int, green : int, blue : int, alpha : int = 255) : int => (alpha << 24) | (red << 16) | (green << 8) | blue
+    // Reads a PNG file, or the bytes of one.
+    fun load(source : any) : Picture {
+      val data = source is Bytes ? source : (source is File ? source : File(source)).readBytes()
+      val read = __text.decodePng(data)
+      return Picture(read[0], read[1], 0, read[2])
+    }
+  }
   // A picture of one colour: clear, unless another is given.
   fun init(width : int, height : int, color : int = 0, pixels : Bytes? = null) {
     if (width < 0 or height < 0 or width > 32768 or height > 32768) { throw Error("a picture is from 0 to 32768 pixels each way, not $width by $height") }
@@ -229,13 +238,6 @@ class Picture {
       this.pixels = Bytes(width * height * 4)
       if (color != 0) { __text.fill(this.pixels, width, height, 0, 0, width, height, color) }
     }
-  }
-
-  // Reads a PNG file, or the bytes of one.
-  static fun load(source : any) : Picture {
-    val data = source is Bytes ? source : (source is File ? source : File(source)).readBytes()
-    val read = __text.decodePng(data)
-    return Picture(read[0], read[1], 0, read[2])
   }
 
   // Writes the picture as a PNG file. Nothing is lost: loading it gives the same pixels.

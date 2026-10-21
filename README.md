@@ -308,6 +308,28 @@ fun build(block : Grid.() -> unit) { ... }         // a function run on a Grid
 These are checked when compiling: `names.add(1)` is an error. When the program runs, only the
 outer type is checked: that `names` is a list, that `action` is a function.
 
+**Union types.** `string | TextModel` takes either. It is used after `is` (or a `when`) says
+which it is; without that, only what every one of its types has. A `when` over it covers each
+type or has an `else`. `null` among them makes it nullable, and a union is what two values of
+unrelated types have in common: `flag ? 1 : "one"` is an `int | string`. Nothing of a union is
+kept when the program runs, so it is not tested as a whole with `is`.
+
+```astra
+fun length(source : string | TextModel) : int => when (source) {
+  is string -> source.size
+  is TextModel -> source.text.size
+}
+```
+
+**Names for types.** `type` gives a type a name, another way of writing it and not a new
+type; it may have type parameters, and may refer to itself inside another type:
+
+```astra
+type Grid = List<List<int>>
+type Table<T> = Map<string, List<T>>
+type Json = int | float | string | bool | List<Json> | Map<string, Json>
+```
+
 A `val` fixes the variable, not the object: a list held in a `val` can still be changed.
 
 **Read-only and open collections.** A list, map or set is read only through a name whose type
@@ -764,7 +786,9 @@ class Shape(val name : string) {             // header: a field, set when the ob
 
   fun area() : Number { return 0 }
   fun describe() : string => "${this.name}: ${this.area()}"
-  static fun unit() : Shape => Square(1)     // called as Shape.unit()
+  static {
+    fun unit() : Shape => Square(1)          // called as Shape.unit()
+  }
 }
 
 class Square(val side : Number) : Shape("square") {    // single inheritance
@@ -843,6 +867,15 @@ account.owner = "eve"      // error when it runs: cannot assign to val field 'ow
 - A field with no initial value that is a `val`, or whose type excludes null, must be assigned
   by `init` or be listed in the class header; leaving such a field unset is an error.
 - A subclass cannot redeclare a field of its superclass.
+- `lateinit var parent : Window` is given its value after the object is made. Its type is
+  written and is not null, so it is used with no `!!`; reading it before it has a value is an
+  error. It is for a field that holds an object: an `int`, a `bool` or a value type always has
+  a value.
+- `lazy val total = compute()` works its value out when it is first read, once, and keeps it;
+  `lazy var` likewise, and may be given a value first, in which case its starting value is
+  never worked out. For fields, statics and top-level values. A starting value that fails is
+  tried again at the next read; one that needs itself is an error; threads reading it at once
+  wait for the one value. A read after the first costs what reading a field does.
 
 Every field is declared, in the header or the body (R24). A class has exactly the fields it
 and its superclasses declare, and assigning to any other name is an error, reported when the
@@ -900,13 +933,15 @@ the same as `==`.
 
 #### Properties
 
-A property looks like a field from outside but runs code: `get name()` when it is read,
-`set name(value)` when it is assigned.
+A property looks like a field from outside but runs code: its `get()` when it is read, its
+`set(value)` when it is assigned, written under it as Kotlin writes them (`get name()` as a
+member of its own is an error showing this form):
 
 ```astra
 class Temperature(var celsius : Number) {
-  get fahrenheit() : Number => this.celsius * 9 / 5 + 32
-  set fahrenheit(value : Number) { this.celsius = (value - 32) * 5 / 9 }
+  var fahrenheit : Number
+    get() => this.celsius * 9 / 5 + 32
+    set(value) { this.celsius = (value - 32) * 5 / 9 }
 }
 
 val t = Temperature(100)
@@ -915,11 +950,11 @@ t.fahrenheit = 32        // runs the setter; t.celsius is now 0
 t.fahrenheit += 18       // reads, adds, assigns
 ```
 
-A property can have just a getter (assigning it is then an error) or just a setter. Getters
-and setters take types like any function, are inherited, and a subclass can replace either
-one. A setter is the place to check a value or react to a change before storing it; the value
-itself lives in an ordinary field with a different name. `get` and `set` are only special at
-the start of a class member, so they remain usable as names (`map.get(key)`).
+A property can have just a getter (a `val`, which cannot be assigned). Getters and setters
+take the property's type, are inherited, and a subclass replaces a property
+whole, reaching the one above with `super.name` and `super.name = value`. A setter is the
+place to check a value or react to a change before storing it. `get` and `set` are only
+special under a property, so they remain usable as names (`map.get(key)`).
 
 #### Names inside a class
 
@@ -972,10 +1007,9 @@ Component().tooltip("Save")       // the method
 component.tooltip                 // the field
 ```
 
-#### Accessors under a property
+#### A property that keeps a value
 
-A getter and a setter can also be written under the field they belong to. In them `field` is
-the stored value:
+A property given an initial value keeps one, and its accessors reach it as `field`:
 
 ```astra
 class Panel {
@@ -1018,7 +1052,7 @@ class Square(val side : int) : Shape("square") {
 
 - An abstract class is never created itself, and a class that extends it has to supply what
   it left `abstract`, or be abstract too. `sealed` is not a keyword: a fixed set of kinds is an
-  `enum class` (from M6.6).
+  `enum class` (see Enum classes).
 - `override` says that a member takes the place of one the class would otherwise have: a
   method, field or property of its superclass, one that comes with an interface, or one that
   an interface or abstract class asks for. The word is required for all of these, and it is
@@ -1073,18 +1107,20 @@ class Square(val side : int) : Shape("square") {
 #### Static members
 
 A static member belongs to the class rather than to each object, and is reached through the
-class. `static` goes in front of a single member, or a `static { }` block holds several:
+class. A class's static members are all in its one `static { }` block, as a Kotlin class's are
+in its companion object (`static` in front of a member, a second block or a `companion object`
+is an error saying so):
 
 ```astra
 class Color(val r : int, val g : int, val b : int) {
-  static val black = Color(0, 0, 0)        // may be an instance of the class itself
-  static var created : int = 0
-  static fun gray(level : int) : Color => Color(level, level, level)
-
-  static {                                  // the same, without the word on each line
+  static {
+    val black = Color(0, 0, 0)              // may be an instance of the class itself
+    var created : int = 0
     val max = 255
+    fun gray(level : int) : Color => Color(level, level, level)
     fun clamp(n : int) : int => n < 0 ? 0 : n > max ? max : n
-    get count() => Color.created            // a static property
+    val count : int                         // a static property
+      get() => created
   }
 }
 
@@ -1096,8 +1132,8 @@ written. A `static val` cannot be assigned again and a typed static field only t
 of its type. Inside the class a static member is reached by its bare name (`clamp(n)`,
 `max`), from methods and from other static members alike; elsewhere through the class. A
 subclass sees its superclass's static members through its own name (`Sub.max`), though not
-by a bare name. The block holds declarations
-only (`val`, `var`, `fun`, `get`, `set`); it is not code that runs.
+by a bare name. The block holds declarations only (`val`, `var`, `fun`, `const`, and
+properties); it is not code that runs.
 
 #### Objects
 
@@ -1107,7 +1143,8 @@ instance:
 ```astra
 object Settings {
   var volume = 5
-  get loud() => this.volume > 7
+  val loud : bool
+    get() => this.volume > 7
   fun raise(by : int = 1) { this.volume += by }
 }
 
@@ -1117,7 +1154,9 @@ print(Settings.volume, Settings.loud)     // 8 true
 
 An object has fields, properties and methods like any class, may extend one
 (`object Origin : Shape("point") { ... }`) and may have an `init`, which takes no arguments.
-It is created where it is declared.
+It is made when it is first used, as in Kotlin, with a `lazy val`'s rules: one object for all
+threads, and a failure leaves it unmade for the next use to try again. One declared inside a
+function is made where it is written.
 
 An object can also be made on the spot, with no name, where a value is expected. It sees the
 variables around it, and inside a method the members of that method's object as well:
@@ -1200,6 +1239,15 @@ can have a body, default values, a superclass, interfaces and static members, an
 `toString` or `copy` written in the body replaces the one it would be given. Fields declared
 in the body take no part in equality or printing. Objects of an ordinary class are only equal
 to themselves.
+
+A data class is extended only by a data class, whose header starts with its parent's fields
+and passes them up; each has its own `==`, `hashCode`, `toString`, `copy` and parts, and `==`
+needs the same class on both sides:
+
+```astra
+data Point3(val x : int, val y : int, val z : int) : Point(x, y)
+Point3(1, 2, 3) == Point(1, 2)          // false: another class
+```
 
 #### Value types
 
@@ -1333,9 +1381,13 @@ one of those names clashes with what the enum is given and is an error, unless i
 ```astra
 enum Level {
   low, mid, high, hidden
-  override static get entries() : List => super.entries.filter { it != hidden }
-  override get name() : string => "level " + super.name
-  static fun all() => super.entries
+  override val name : string
+    get() => "level " + super.name
+  static {
+    override val entries : List
+      get() => super.entries.filter { it != hidden }
+    fun all() => super.entries
+  }
 }
 ```
 
@@ -1350,7 +1402,8 @@ enum Planet(val mass : float, val radius : float) {
   mercury(3.303e23, 2.4397e6),
   earth(5.976e24, 6.37814e6);
 
-  get gravity() => 6.673e-11 * mass / (radius * radius)
+  val gravity : float
+    get() => 6.673e-11 * mass / (radius * radius)
   fun heavierThan(other : Planet) : bool => mass > other.mass
 }
 ```
@@ -1379,6 +1432,34 @@ of an entry is only ever tried last. The destination decides, so two enums may s
 names. For an argument, the name is settled as it reaches the parameter, and a name that is
 not an entry of the parameter's enum is an error there.
 
+**Every `when` over an enum, an enum class, an enum interface or a bool covers every kind**
+(and `null`, for one that may be null) or has an `else`, whether it gives a value or not.
+
+#### Enum classes
+
+`enum class` is a fixed set of kinds, Kotlin's `sealed class`: the classes and objects that
+extend it, in its braces or outside them in the same file only. `enum interface` is the same
+for an interface. A kind can be written by its bare name wherever the enum class is expected,
+as an enum's entries can:
+
+```astra
+enum class Event {
+  class Click(val x : int, val y : int) : Event()
+  class Key(val code : int) : Event()
+  object Close : Event()
+}
+
+fun describe(e : Event) : string => when (e) {     // every kind, or an else
+  is Click -> "click at ${e.x},${e.y}"
+  is Key -> "key ${e.code}"
+  Close -> "close"
+}
+val first : Event = Click(1, 2)
+```
+
+An enum class is only made as one of its kinds. Kotlin's `enum class Color { RED, GREEN }`, a
+list of entries, is an `enum` here, and the error says so; `sealed` is not a word.
+
 ### Extension functions
 
 A function can be added to a type from outside, to a class of your own or to a built-in
@@ -1398,8 +1479,27 @@ Shape("dot", 1, 1).describe()        "hi".shout()        4.isEven()        null.
 Inside, `this` is the value the function was called on. The types are a class, an interface,
 an enum, or `int`, `float`, `Number`, `string`, `bool`, `List`, `Map`, `Range`, `Function`,
 `Bytes` and `any`. A member of the same name always comes first, so an extension cannot change what
-a type already does. An extension function belongs to the type, not to a file: once the file
-that declares it has been loaded, every value of that type has it.
+a type already does. An extension function is in reach where a name of its folder is: in its
+folder and in the files that import it, with the access words; the standard library's are
+everywhere. The file's own folder's comes first.
+
+**`extend`** fits a class someone else wrote to an interface of yours. Names that differ are
+bridged by getters in it; nothing is stored, and nothing the class has is replaced. A class
+that lacks something the interface asks for is an error at the `extend`.
+
+```astra
+interface Weighed { val weight : int; val name : string }
+extend Person : Weighed                  // Person has both already
+extend Car, Truck : Weighed {            // several in one line
+  val name : string
+    get() => model
+}
+val loads : List<Weighed> = [Person("Ann", 60), Car("Mini", 1200)]
+```
+
+An `extend` holds where its folder's names do, as an extension function does. The same one
+twice is one; two that say different things are an error. A class written in the program
+itself implements the interface instead.
 
 ### Errors
 

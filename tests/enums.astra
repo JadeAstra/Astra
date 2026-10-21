@@ -44,15 +44,17 @@ enum Planet(val mass : float, val radius : float) {
   EARTH(5.976e24, 6.37814e6),
   JUPITER(1.9e27, 7.1492e7);
 
-  static val G = 6.67300e-11
-  static fun heaviest() {
-    var best = MERCURY
-    for planet in entries { if planet.mass > best.mass { best = planet } }
-    return best
+  static {
+    val G = 6.67300e-11
+    fun heaviest() {
+      var best = MERCURY
+      for planet in entries { if planet.mass > best.mass { best = planet } }
+      return best
+    }
   }
-
   var visits = 0
-  get gravity() => G * mass / (radius * radius)
+  val gravity
+    get() => G * mass / (radius * radius)
   fun heavierThan(other : Planet) => mass > other.mass
   fun visit() {
     visits += 1
@@ -70,9 +72,11 @@ enum Level(val label : string, val weight : int = 1) {
   HIGH("high", 10),
 
   fun describe() => "$label ($weight)"
-  static fun of(weight : int) {
-    for level in entries { if level.weight >= weight { return level } }
-    return HIGH
+  static {
+    fun of(weight : int) {
+      for level in entries { if level.weight >= weight { return level } }
+      return HIGH
+    }
   }
 }
 print(Level.LOW.describe(), Level.MID.describe(), Level.of(3), Level.of(99), Level.HIGH.ordinal)   // expect: low (1) mid (5) MID HIGH 2
@@ -108,7 +112,9 @@ print(enum)                                 // expect: a name
 enum SortKey {
   name, size, ordinal
   fun label() => "by " + name               // inside, the bare name is the entry's property
-  static fun first() => SortKey.name
+  static {
+    fun first() => SortKey.name
+  }
 }
 print(SortKey.className, SortKey.name, SortKey.name.name, SortKey.name.ordinal, SortKey.ordinal.ordinal)   // expect: SortKey name name 0 2
 print(SortKey.size.label(), SortKey.name.label(), SortKey.first() === SortKey.name, SortKey.entries)   // expect: by size by name true [name, size, ordinal]
@@ -123,23 +129,32 @@ try { print(Plain.name) } catch (e) { print(e.message) }   // expect: undefined 
 // override, as long as it is still a property of the same type.
 enum Rank {
   low, mid, high, hidden
-  override static get entries() : List => [low, mid, high]      // leaves one out
-  static fun all() => [low, mid, high, hidden]
+  static {
+    override val entries : List
+      get() => [low, mid, high]      // leaves one out
+    fun all() => [low, mid, high, hidden]
+  }
 }
 print(Rank.entries, Rank.all().size, Rank.hidden.ordinal, Rank.hidden.name)   // expect: [low, mid, high] 4 3 hidden
 
 enum Shown {
   first, second
-  override static val entries = ["just", "these"]
-  override get name() : string => "<" + ordinal + ">"
-  override get ordinal() => 10
+  static {
+    override val entries = ["just", "these"]
+  }
+  override val name : string
+    get() => "<" + ordinal + ">"
+  override val ordinal
+    get() => 10
 }
 print(Shown.entries, Shown.first.name, Shown.second.ordinal, Shown.first)   // expect: ["just", "these"] <10> 10 first
 
 // Outside an enum `entries` is a name like any other.
 class Journal {
   val entries = []
-  static val ordinal = 1
+  static {
+    val ordinal = 1
+  }
   fun add(entry : string) {
     entries.add(entry)
     return this
@@ -151,10 +166,15 @@ print(entries, Journal.ordinal)             // expect: ["a", "b"] 1
 // super reaches what was replaced: the full list, an entry's own name and place.
 enum Stage {
   draft, review, done, archived
-  override static get entries() : List => super.entries.filter { it != archived }
-  override get name() : string => "stage " + super.name
-  override get ordinal() : int => super.ordinal + 1
-  static fun all() => super.entries
+  static {
+    override val entries : List
+      get() => super.entries.filter { it != archived }
+    fun all() => super.entries
+  }
+  override val name : string
+    get() => "stage " + super.name
+  override val ordinal : int
+    get() => super.ordinal + 1
   fun plain() => super.name + "#" + super.ordinal
 }
 print(Stage.entries.size, Stage.all().size, Stage.review.name, Stage.review.ordinal, Stage.archived.plain())   // expect: 3 4 stage review 2 archived#3
@@ -162,7 +182,9 @@ print(Stage.entries.map { it.plain() }, Stage.all()[3] === Stage.archived, Stage
 
 // Without an override super gives the same as the plain name.
 enum Mark { tick, cross
-  static fun same() => super.entries === entries
+  static {
+    fun same() => super.entries === entries
+  }
   fun both() => [name == super.name, ordinal == super.ordinal]
 }
 print(Mark.same(), Mark.cross.both())       // expect: true [true, true]

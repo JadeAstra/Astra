@@ -1,6 +1,8 @@
 // An entry's own name belongs to an entry: there is none in a static member.
 enum Bad {
   first
-  static fun label() => super.name
+  static {
+    fun label() => super.name
+  }
 }
 // expect compile error: super.name is that of one entry, so it belongs in a method or property of the enum's entries

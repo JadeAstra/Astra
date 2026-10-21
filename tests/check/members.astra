@@ -4,9 +4,12 @@
 class Box(val item : int) {
   var label : string = "box"
   fun twice() : int => item * 2
-  get doubled() => item * 2
-  static val empty = 0
-  static fun make(n : int) => Box(n)
+  val doubled
+    get() => item * 2
+  static {
+    val empty = 0
+    fun make(n : int) => Box(n)
+  }
 }
 
 val box = Box(3)

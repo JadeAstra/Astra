@@ -42,6 +42,7 @@ const OpInfo kOps[] = {
     {"GET_INDEX", Operand::None},
     {"SET_INDEX", Operand::None},
     {"GET_SUPER", Operand::U16},
+    {"SET_SUPER", Operand::U16},
     {"ADD", Operand::None},
     {"SUB", Operand::None},
     {"MUL", Operand::None},
@@ -128,6 +129,9 @@ const OpInfo kOps[] = {
     {"FINISH_CLASS", Operand::None},
     {"DATA_FIELD", Operand::U16},
     {"UNSTABLE_KEY", Operand::None},
+    {"LAZY", Operand::None},
+    {"EXTEND", Operand::None},
+    {"BRIDGE", Operand::U16},
     {"COMPONENT", Operand::U8},
     {"MISSING_ARG", Operand::U16},
     {"CLASS_INIT", Operand::None},
@@ -533,6 +537,20 @@ static int analyzeStack(FunctionProto& f, const Program& program, bool partial) 
                     pops = 2;
                     pushes = 1;
                     break;
+                case Op::SetSuper:
+                    requireName(a);
+                    pops = 3;
+                    pushes = 1;
+                    break;
+                case Op::Extend:
+                    pops = 2;
+                    pushes = 1;
+                    break;
+                case Op::Bridge:
+                    requireName(a);
+                    pops = 2;
+                    pushes = 1;
+                    break;
                 case Op::GetIndex:
                 case Op::Add:
                 case Op::Sub:
@@ -625,6 +643,7 @@ static int analyzeStack(FunctionProto& f, const Program& program, bool partial) 
                     pops = pushes = 1;
                     break;
                 case Op::Component:
+                case Op::Lazy:
                     pops = pushes = 1;
                     break;
                 case Op::ObjectClass:
@@ -1063,6 +1082,7 @@ void disassembleFunction(const FunctionProto& f, const Program& program, std::os
             case Op::GetOwnRef:
             case Op::FieldDestination:
             case Op::GetSuper:
+            case Op::SetSuper:
             case Op::Class:
             case Op::Method:
             case Op::StaticMethod:
@@ -1208,7 +1228,7 @@ void disassemble(const Program& program, std::ostream& out) {
 namespace {
 
 const char kMagic[4] = {'A', 'S', 'T', 'R'};
-const uint8_t kFormatVersion = 18;
+const uint8_t kFormatVersion = 19;
 const int kMaxProtoNesting = 200;
 
 enum ConstantTag : uint8_t { TagInt = 0, TagFloat = 1, TagString = 2, TagChar = 3, TagByte = 4 };
@@ -1655,6 +1675,7 @@ bool usesMemberName(Op op) {
         case Op::SuperInvoke:
         case Op::SuperInvokeTrailing:
         case Op::GetSuper:
+        case Op::SetSuper:
         case Op::GetImplicit:
         case Op::SetImplicit:
         case Op::TryImplicit:

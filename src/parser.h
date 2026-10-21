@@ -54,6 +54,7 @@ private:
     StmtPtr externalDeclaration();
     TypeAnnotation optionalType();
     TypeAnnotation typeExpression();
+    bool inUnion_ = false;  // reading the types of a union after the first: each stops at '|'
     TypeAnnotation checkedType();
     bool tightNullable_ = false;     // after `is` and `as`, the '?' of a nullable type must touch the type
     bool adjacentToPrevious() const;

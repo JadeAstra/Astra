@@ -1,0 +1,6 @@
+// An int always has a value, so it is not lateinit (D36).
+class Box {
+  lateinit var count : int
+}
+Box()
+// expect compile error: lateinit var 'count' is int, which always has a value (0, false): give it a starting one; lateinit is for a field that holds an object (D36)

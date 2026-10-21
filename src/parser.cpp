@@ -179,6 +179,57 @@ StmtPtr Parser::declaration() {
             if (word.text == "const" && !after.newlineBefore &&
                 (after.type == TokenType::Identifier || after.type == TokenType::Val || after.type == TokenType::Var))
                 return constDeclaration(false);
+            // `extend Person, Car : Weighed { ... }` (D33): only special here.
+            if (word.text == "extend" && after.type == TokenType::Identifier && !after.newlineBefore) {
+                advance();
+                auto s = node<ExtendStmt>(word);
+                do {
+                    s->types.push_back(typeExpression());
+                } while (match(TokenType::Comma));
+                expect(TokenType::Colon, "':' and the interface the types fit");
+                s->interfaceType = typeExpression();
+                if (match(TokenType::LBrace)) {
+                    for (;;) {
+                        skipSemicolons();
+                        if (check(TokenType::RBrace) || check(TokenType::Eof)) break;
+                        const Token& at = peek();
+                        if (!check(TokenType::Val))
+                            throw error(at, "an extend holds property getters that bridge the interface's names, as in val name : string get() => model (D33)");
+                        auto bridge = varDeclaration(true);
+                        fieldAccessors(*bridge);
+                        if (bridge->init || !bridge->getter || bridge->setter)
+                            throw error(at, "'" + bridge->name + "' in an extend keeps nothing: it is a get() of the type's own members (D33)");
+                        s->bridges.push_back(std::move(bridge));
+                    }
+                    expect(TokenType::RBrace, "'}' to end the extend");
+                }
+                return s;
+            }
+            // `type Grid = List<List<int>>` (D41): only special here, so `type` stays a name elsewhere.
+            if (word.text == "type" && after.type == TokenType::Identifier && !after.newlineBefore && p_ + 2 < toks_.size() &&
+                (toks_[p_ + 2].type == TokenType::Eq || toks_[p_ + 2].type == TokenType::Lt)) {
+                advance();
+                const Token& name = advance();
+                auto s = node<TypeAliasStmt>(name);
+                s->name = name.text;
+                if (check(TokenType::Lt)) s->typeParams = typeParameters();
+                TypeParamScope typeParamsInReach(*this, s->typeParams);
+                expect(TokenType::Eq, "'=' and the type it names");
+                s->target = typeExpression();
+                return s;
+            }
+            // `lazy val x = ...` (D37); `lateinit` is for a class's fields (D36).
+            if ((word.text == "lazy" || word.text == "lateinit") && !after.newlineBefore &&
+                (after.type == TokenType::Val || after.type == TokenType::Var)) {
+                if (word.text == "lateinit")
+                    throw error(word, "lateinit is for a field of a class, given its value after the object is made; a variable here is given one where it is declared");
+                advance();
+                auto declared = varDeclaration(false);
+                if (!declared->init || !declared->pattern.empty())
+                    throw error(word, "lazy " + std::string(declared->isVal ? "val" : "var") + " '" + declared->name + "' is given its starting value here, worked out when it is first read");
+                declared->isLazy = true;
+                return declared;
+            }
             if (word.text == "fn" && after.type == TokenType::Identifier && !after.newlineBefore)
                 throw error(word, "'fn' is not a keyword; declare functions with 'fun'");
             // Who may see a declaration: `private` its file, `internal` its library, and
@@ -212,6 +263,38 @@ StmtPtr Parser::declaration() {
                 }
                 if (word.text == "private") declared->visibility = 2;
                 else if (word.text == "internal" && declared->visibility == 0) declared->visibility = 1;
+                return declared;
+            }
+            if (word.text == "enum" && !after.newlineBefore &&
+                (after.type == TokenType::Class ||
+                 (after.type == TokenType::Identifier && after.text == "interface" && p_ + 2 < toks_.size() &&
+                  toks_[p_ + 2].type == TokenType::Identifier))) {
+                // `enum class Event { ... }`, `enum interface Shape` (D39): a fixed set of kinds.
+                const bool isInterface = after.type != TokenType::Class;
+                // Kotlin's `enum class Color { RED, GREEN }` is Astra's enum.
+                size_t at = p_ + 3;
+                int depth = 0;
+                for (; at < toks_.size(); at++) {
+                    const TokenType t = toks_[at].type;
+                    if (t == TokenType::LParen || t == TokenType::Lt) depth++;
+                    else if (t == TokenType::RParen || t == TokenType::Gt) depth--;
+                    else if (t == TokenType::LBrace && depth <= 0) break;
+                    else if (t == TokenType::Eof || (t == TokenType::Semicolon && depth <= 0)) break;
+                }
+                if (!isInterface && at + 2 < toks_.size() && toks_[at].type == TokenType::LBrace &&
+                    toks_[at + 1].type == TokenType::Identifier &&
+                    (toks_[at + 2].type == TokenType::Comma || toks_[at + 2].type == TokenType::RBrace ||
+                     toks_[at + 2].type == TokenType::Semicolon ||
+                     (toks_[at + 2].type == TokenType::LParen && toks_[at + 1].text != "init"))) {
+                    const std::string kotlinName = toks_[p_ + 2].text;
+                    throw error(word, "a list of entries is an enum: enum " + kotlinName + " { " + toks_[at + 1].text +
+                                          ", ... }; an enum class is a fixed set of kinds, the classes extending it (D39)");
+                }
+                advance();
+                StmtPtr declared = classDeclaration(false, isInterface);
+                auto& cls = static_cast<ClassStmt&>(*declared);
+                cls.isEnumClass = true;
+                if (!isInterface) cls.isAbstract = true;  // made only as one of its kinds
                 return declared;
             }
             if (word.text == "enum" && after.type == TokenType::Identifier && !after.newlineBefore) {
@@ -253,6 +336,12 @@ StmtPtr Parser::declaration() {
                         throw CompileError(file_, field->line, field->col,
                                            "'" + field->name + "' of value '" + cls.name +
                                                "' needs its value where it is declared, or a place in the header");
+                for (const auto& field : cls.fields)
+                    if (field->isLazy || field->isLateinit)
+                        throw CompileError(file_, field->line, field->col,
+                                           std::string("a value type keeps its fields in place, whole, so none is ") +
+                                               (field->isLazy ? "lazy" : "lateinit") + ": give '" + field->name +
+                                               "' its value where the value is made");
                 cls.isData = true;
                 cls.isValue = true;
                 addDataMembers(cls, word);
@@ -482,6 +571,25 @@ TypeAnnotation Parser::typeExpression() {
     while (check(TokenType::Question) && (!tightNullable_ || adjacentToPrevious())) {
         advance();
         type.nullable = true;
+    }
+    // `int | string` (D40), where a type is declared; after `is` and `as`, '|' is bitwise or.
+    if (!tightNullable_ && !inUnion_ && check(TokenType::Pipe)) {
+        TypeAnnotation u;
+        u.line = type.line;
+        u.col = type.col;
+        u.name = "|";
+        u.unionOf.push_back(std::move(type));
+        const bool saved = inUnion_;
+        inUnion_ = true;
+        while (match(TokenType::Pipe)) {
+            if (match(TokenType::Null)) {
+                u.nullable = true;  // `string | null`
+                continue;
+            }
+            u.unionOf.push_back(typeExpression());
+        }
+        inUnion_ = saved;
+        return u;
     }
     return type;
 }
@@ -1014,7 +1122,12 @@ void Parser::fieldAccessors(VarStmt& field) {
 // every declaration is a static member.
 void Parser::classMember(ClassStmt& s, bool inStatic) {
     skipAnnotations();
+    if (word("companion") && nextWord("object"))
+        throw error(peek(), "Kotlin's companion object is written static { } in Astra, holding the same members (D67)");
     if (!inStatic && word("static") && peekNext().type == TokenType::LBrace) {
+        if (s.hasStaticBlock)
+            throw error(peek(), "a class has one static { } block, and this is a second: put its members in the first (D67)");
+        s.hasStaticBlock = true;
         advance();
         advance();
         for (;;) {
@@ -1032,11 +1145,15 @@ void Parser::classMember(ClassStmt& s, bool inStatic) {
     bool suspends = false;
     bool abstracts = false;
     bool mutates = false;
+    bool lateinit = false;
+    bool lazy = false;
     uint8_t access = 0;
     for (; check(TokenType::Identifier) && !peekNext().newlineBefore &&
            (peek().text == "private" || peek().text == "internal" || peek().text == "public" || peek().text == "protected" ||
             peek().text == "override" || kotlinOnlyWord(peek().text) || peek().text == "abstract" ||
-            peek().text == "suspend" || peek().text == "mutating") &&
+            peek().text == "suspend" || peek().text == "mutating" ||
+            ((peek().text == "lateinit" || peek().text == "lazy") &&
+             (peekNext().type == TokenType::Val || peekNext().type == TokenType::Var))) &&
            (peekNext().type == TokenType::Val || peekNext().type == TokenType::Var || peekNext().type == TokenType::Fun ||
             peekNext().type == TokenType::Class || peekNext().type == TokenType::Identifier);
          advance()) {
@@ -1045,6 +1162,8 @@ void Parser::classMember(ClassStmt& s, bool inStatic) {
         suspends = suspends || peek().text == "suspend";
         abstracts = abstracts || peek().text == "abstract";
         mutates = mutates || peek().text == "mutating";
+        lateinit = lateinit || peek().text == "lateinit";
+        lazy = lazy || peek().text == "lazy";
         if (accessWord(peek().text) != 0) access = accessWord(peek().text);
     }
     struct AbstractMember {
@@ -1063,9 +1182,10 @@ void Parser::classMember(ClassStmt& s, bool inStatic) {
     }
 
     // A class, enum, interface or object declared inside this one.
-    const bool wordDeclares = check(TokenType::Identifier) && peekNext().type == TokenType::Identifier &&
-                              !peekNext().newlineBefore &&
-                              (peek().text == "enum" || peek().text == "interface" || peek().text == "object" || peek().text == "data");
+    const bool wordDeclares = check(TokenType::Identifier) && !peekNext().newlineBefore &&
+                              ((peekNext().type == TokenType::Identifier &&
+                                (peek().text == "enum" || peek().text == "interface" || peek().text == "object" || peek().text == "data")) ||
+                               (peek().text == "enum" && peekNext().type == TokenType::Class));
     if (check(TokenType::Class) || wordDeclares) {
         AbstractMember body(abstractMember_, false);
         StmtPtr declared = declaration();
@@ -1084,11 +1204,13 @@ void Parser::classMember(ClassStmt& s, bool inStatic) {
     };
 
     bool isStatic = inStatic;
-    if (word("static") &&
-        (peekNext().type == TokenType::Val || peekNext().type == TokenType::Var || accessorAt(p_ + 1) ||
-         (peekNext().type == TokenType::Identifier && peekNext().text == "const"))) {
-        advance();
-        isStatic = true;
+    if (word("static") && !peekNext().newlineBefore &&
+        (peekNext().type == TokenType::Val || peekNext().type == TokenType::Var || peekNext().type == TokenType::Fun ||
+         accessorAt(p_ + 1) || (peekNext().type == TokenType::Identifier && peekNext().text == "const"))) {
+        const Token& word = peekNext();
+        throw error(peek(), "a static member goes in the class's one static { } block, as Kotlin's go in its companion " +
+                                std::string("object: static { ") + (word.type == TokenType::Fun ? "fun" : word.text) +
+                                " ... } (D67)");
     }
 
     // A constant belongs to an object or to the class's static code: one value for all.
@@ -1116,16 +1238,56 @@ void Parser::classMember(ClassStmt& s, bool inStatic) {
         field->isOverride = overrides;
         field->isAbstract = abstracts;
         field->access = access;
+        field->isLateinit = lateinit;
+        field->isLazy = lazy;
+        if (lateinit) {
+            // Given its value after the object is made, and never null (D36).
+            if (field->isVal) throw error(keyword, "lateinit is for a var, given its value after the object is made: lateinit var " + field->name);
+            if (!field->type.present() || field->type.nullable)
+                throw error(keyword, "lateinit var '" + field->name + "' has its type written, one that is not null: lateinit var " + field->name + " : Type");
+            if (field->init) throw error(keyword, "lateinit var '" + field->name + "' is given its value later, so it has none here");
+            if (field->getter || field->setter) throw error(keyword, "lateinit var '" + field->name + "' keeps its value, so it has no accessors");
+            if (isStatic) throw error(keyword, "lateinit is for a field of an object; a static var is given its value where it is declared");
+        }
+        if (lazy) {
+            // Worked out when first read (D37).
+            if (!field->init) throw error(keyword, "lazy " + std::string(field->isVal ? "val" : "var") + " '" + field->name + "' is given its starting value here, worked out when it is first read");
+            if (field->getter || field->setter) throw error(keyword, "lazy '" + field->name + "' keeps its value, so it has no accessors");
+            if (abstracts) throw error(keyword, "lazy '" + field->name + "' has its value here, so it is not abstract");
+        }
         if (abstracts && field->init) throw error(keyword, "'" + field->name + "' is abstract, so it has no value here");
         fieldAccessors(*field);
         if (!isStatic) {
             s.fields.push_back(std::move(field));
             return;
         }
+        if ((field->getter || field->setter) && !field->init) {
+            // A static property with nothing stored: its accessors are the class's static getter
+            // and setter (D68).
+            if (!field->getter)
+                throw error(keyword, "'" + field->name + "' has a setter but nothing to read: give it a get()");
+            for (std::unique_ptr<FunctionDecl>* part : {&field->getter, &field->setter}) {
+                if (!*part) continue;
+                (*part)->isStatic = true;
+                (*part)->isOverride = overrides;
+                (*part)->access = part == &field->setter && field->setAccess != 0 ? field->setAccess : access;
+                s.methods.push_back(std::move(*part));
+            }
+            return;
+        }
+        if (field->getter || field->setter)
+            throw error(keyword, "static '" + field->name + "' has accessors and a value of its own: a static property keeps " +
+                                 "nothing, so it is worked out by its get() from other static fields");
         if (field->isVal && !field->init)
             throw error(keyword, "static val '" + field->name + "' must be given its value where it is declared");
         s.staticFields.push_back(std::move(field));
     } else if (accessorAt(p_)) {
+        const bool getter = word("get");
+        const std::string name = peekNext().text;
+        throw error(peek(), std::string("a property's accessors are written under it, as in Kotlin: ") +
+                                (getter ? "val " + name + " : Type, and on the next line get() => ..."
+                                        : "var " + name + " : Type, and under it set(value) { ... }") +
+                                " (D68)");
         auto property = accessor();
         property->isStatic = isStatic;
         property->isOverride = overrides;
@@ -1583,7 +1745,7 @@ ExprPtr Parser::assignment() {
         case TokenType::PipeEq:
         case TokenType::CaretEq: {
             const Token& op = advance();
-            if (left->kind != ExprKind::Name && left->kind != ExprKind::Member && left->kind != ExprKind::Index)
+            if (left->kind != ExprKind::Name && left->kind != ExprKind::Member && left->kind != ExprKind::Index && left->kind != ExprKind::Super)
                 throw error(op, "invalid assignment target");
             auto e = node<AssignExpr>(op);
             e->op = op.type;

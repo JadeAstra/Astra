@@ -29,8 +29,9 @@ print(c.tooltip, c.tooltip("Again").tooltip, c.changes)   // expect: Changed Aga
 class Label {
   var text = "label"
   var colours = []
-  get foreground() => colours.size > 0 ? colours[colours.size - 1] : "black"
-  set foreground(colour) { colours.add(colour) }
+  var foreground
+    get() => colours.size > 0 ? colours[colours.size - 1] : "black"
+    set(colour) { colours.add(colour) }
   fun foreground(colour : string) {
     foreground = colour
     return this
@@ -77,11 +78,13 @@ try { unknown(holder).label(1) } catch (e) { print(e.message) }   // expect: can
 // super reaches a superclass's property as well as its methods.
 class Base(val id : int) {
   var label = "base"
-  get title() => "<" + label + " " + id + ">"
+  val title
+    get() => "<" + label + " " + id + ">"
   fun describe() => "base " + id
 }
 class Derived(id : int) : Base(id) {
-  override get title() => super.title + "!"
+  override val title
+    get() => super.title + "!"
   override fun describe() => super.describe() + ", " + super.title + ", " + super.label + ", " + super.id
 }
 val derived = Derived(7)

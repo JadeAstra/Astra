@@ -29,7 +29,8 @@ interface Canvas {
   fun drawImage(image : any, x : Number, y : Number, w : Number? = null, h : Number? = null, alpha : Number = 1.0)
 
   // The part of the canvas that can be drawn on: the rest is clipped away.
-  get visibleBounds() : Rectangle => Rectangle(0, 0, width, height)
+  val visibleBounds : Rectangle
+    get() => Rectangle(0, 0, width, height)
 
   // Through the points of two lists, the first `n` of them.
   fun drawPolyline(xs : List<Number>, ys : List<Number>, n : int? = null) {
@@ -47,8 +48,10 @@ interface Canvas {
   }
 
   // How many of the screen's pixels there are to a unit.
-  get deviceScaleX() : float => 1.0
-  get deviceScaleY() : float => 1.0
+  val deviceScaleX : float
+    get() => 1.0
+  val deviceScaleY : float
+    get() => 1.0
 
   // What a text takes up in a font, on this canvas.
   fun measure(text : string, font : Font) : TextMetrics
@@ -94,10 +97,11 @@ class RecordingCanvas : Canvas {
     this.clip = clip
   }
 
-  override get visibleBounds() : Rectangle {
-    val all = Rectangle(0, 0, width, height)
-    return clip?.intersection(all) ?: all
-  }
+  override val visibleBounds : Rectangle
+    get() {
+      val all = Rectangle(0, 0, width, height)
+      return clip?.intersection(all) ?: all
+    }
 
   override fun fillRect(x : Number, y : Number, w : Number, h : Number) {
     ops.add(DrawOp.Rect(x + ox, y + oy, w, h, true, color))
@@ -144,8 +148,9 @@ class RecordingCanvas : Canvas {
   }
   // The alpha is not recorded yet (D123, M6.6).
   override fun drawImage(image : any, x : Number, y : Number, w : Number? = null, h : Number? = null, alpha : Number = 1.0) {
-    val source = image is Surface ? image : image as BufferedImage
-    ops.add(DrawOp.Image(x + ox, y + oy, w ?: source.width, h ?: source.height))
+    val width = image is Surface ? image.width : (image as BufferedImage).width
+    val height = image is Surface ? image.height : (image as BufferedImage).height
+    ops.add(DrawOp.Image(x + ox, y + oy, w ?: width, h ?: height))
   }
 
   override fun measure(text : string, font : Font) : TextMetrics {

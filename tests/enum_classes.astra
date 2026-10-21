@@ -1,0 +1,58 @@
+// enum class and enum interface: a fixed set of kinds, Kotlin's sealed class and interface (D39).
+
+enum class Event {
+  class Click(val x : int, val y : int) : Event()
+  class Key(val code : int) : Event()
+  object Close : Event()
+  class Note(val text : string)            // no `: Event()`: an ordinary class inside it
+
+  fun isInput() : bool => when (this) {
+    is Click, is Key -> true
+    Close, is Scroll -> false
+  }
+}
+class Scroll(val by : int) : Event()       // a kind outside the braces, in the same file
+
+// A kind by its bare name wherever an Event is expected, as an enum's entries are.
+fun describe(e : Event) : string => when (e) {
+  is Click -> "click at ${e.x},${e.y}"
+  is Key -> "key ${e.code}"
+  Close -> "close"
+  is Scroll -> "scroll ${e.by}"
+}
+val events : List<Event> = [Click(1, 2), Key(13), Close, Scroll(3)]
+print(events.map { describe(it) })   // expect: ["click at 1,2", "key 13", "close", "scroll 3"]
+val one : Event = Click(5, 6)
+fun make(code : int) : Event => Key(code)
+print(one is Click, one is Key, describe(Close), describe(make(9)), events.map { it.isInput() })
+// expect: true false close key 9 [true, true, false, false]
+print(Event.Note("x").text, Event.Click(0, 0) is Event, Event.Note("y") is Event)   // expect: x true false
+
+// An enum interface, and an enum class among the kinds of another.
+enum interface Shape
+class Circle(val r : int) : Shape
+class Square(val side : int) : Shape
+enum class Line : Shape {
+  class Straight(val length : int) : Line()
+  class Curved(val bend : int) : Line()
+}
+fun area(s : Shape) : int => when (s) {
+  is Circle -> 3 * s.r * s.r
+  is Square -> s.side * s.side
+  is Straight -> 0
+  is Curved -> 0
+}
+fun kind(s : Shape) : string => when (s) {
+  is Circle, is Square -> "closed"
+  is Line -> "open"
+}
+print(area(Circle(2)), area(Square(3)), area(Straight(4)), kind(Curved(1)), kind(Square(1)))   // expect: 12 9 0 open closed
+
+// A when statement covers every kind too, or has an else.
+fun log(e : Event) {
+  when (e) {
+    is Click -> print("click")
+    else -> print("other")
+  }
+}
+log(Close)   // expect: other

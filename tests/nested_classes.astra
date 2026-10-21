@@ -25,7 +25,9 @@ class Event(val source : string) {
   var phase : Phase = target                 // an enum declared here, by its short name
   fun describe() => "event from $source"
   fun isClick() => this is Click              // a nested class by its bare name
-  static fun click(x : int, y : int) => Click("factory", x, y)
+  static {
+    fun click(x : int, y : int) => Click("factory", x, y)
+  }
 }
 
 // From outside, through the outer class.
@@ -71,7 +73,9 @@ print(attempt(fun() { throw Failure.Missing("key") }), attempt(fun() { throw Fai
 class DrawOp {
   class Text(val content : string) { fun kind() => "draw text " + content }
   class Line(val length : int) { fun kind() => "draw line " + length }
-  static fun both() => [Text("a").kind(), Line(2).kind()]
+  static {
+    fun both() => [Text("a").kind(), Line(2).kind()]
+  }
 }
 class Doc {
   class Text(val words : List<string>) { fun kind() => "doc text of ${words.size} words" }
@@ -84,8 +88,10 @@ print(DrawOp.Text("x") is DrawOp.Text, DrawOp.Text("x") is Doc.Text, DrawOp.Text
 
 // A nested class sees the outer class's static members and its other nested classes.
 class Grid {
-  static val GAP = 4
-  static fun key(row : int, col : int) => row * 100 + col
+  static {
+    val GAP = 4
+    fun key(row : int, col : int) => row * 100 + col
+  }
 
   class Cell(val row : int, val col : int, var fill : Fill = NONE) {
     val id = key(row, col)                    // the outer class's static function
@@ -114,12 +120,18 @@ print(cell.id, cell.span().describe(), cell.widen().span().describe(), Grid.Cell
 class A {
   class B {
     class C {
-      static val NAME = "A.B.C"
+      static {
+        val NAME = "A.B.C"
+      }
       fun where() => NAME + " in " + LEVEL    // a static of the class two levels out
     }
-    static fun make() => C()
+    static {
+      fun make() => C()
+    }
   }
-  static val LEVEL = "A"
+  static {
+    val LEVEL = "A"
+  }
 }
 print(A.B.C.NAME, A.B.C().where(), A.B.make() is A.B.C)   // expect: A.B.C A.B.C in A true
 
@@ -131,7 +143,9 @@ try { print(Event.Nothing) } catch (e) { print(e.message) }   // expect: undefin
 fun local() {
   class Outer {
     class Inner(val n : int) { fun twice() => n * 2 }
-    static fun make(n : int) => Inner(n)
+    static {
+      fun make(n : int) => Inner(n)
+    }
   }
   return [Outer.Inner(4).twice(), Outer.make(5).twice()]
 }

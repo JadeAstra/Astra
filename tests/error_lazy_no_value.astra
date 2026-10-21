@@ -1,0 +1,5 @@
+// A lazy value has its starting value written (D37).
+class Box {
+  lazy val size : int
+}
+// expect compile error: lazy val 'size' is given its starting value here, worked out when it is first read

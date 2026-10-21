@@ -57,17 +57,19 @@ print(e.tag, e)                         // expect: 1 <Empty instance>
 
 // static members
 class Counter {
-  static fun create() {
-    Counter.made += 1
-    return Counter()
+  static {
+    fun create() {
+      Counter.made += 1
+      return Counter()
+    }
+    fun describe() { return "made ${Counter.made}" }
   }
-  static fun describe() { return "made ${Counter.made}" }
 }
 Counter.made = 0
 Counter.create(); Counter.create()
 print(Counter.describe(), Counter.className) // expect: made 2 Counter
 
-class Parent { static fun make() { return "parent-made" } }
+class Parent { static { fun make() { return "parent-made" } } }
 class Child : Parent { }
 print(Child.make())                     // expect: parent-made
 
