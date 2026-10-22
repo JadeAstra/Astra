@@ -7,7 +7,7 @@
 //
 //   @Test fun adds() { assertEquals(4, 2 + 2) }
 //   @Test @Timeout(500) fun quick() { ... }
-//   @Test fun writes(@TempDir dir : File) { File(dir, "a.txt").writeText("hi") }
+//   @Test fun writes(@TempDir dir : Path) { Path(dir, "a.txt").writeText("hi") }
 
 annotation Test
 annotation BeforeTest
@@ -16,7 +16,7 @@ annotation BeforeAll
 annotation AfterAll
 // The longest the test may run, in milliseconds: once that is past it fails, stopped where it is.
 annotation Timeout(val millis : int)
-// A test's parameter that is given a File naming a new, empty directory of its own, deleted
+// A test's parameter that is given a Path naming a new, empty directory of its own, deleted
 // with what it holds once the test is over.
 annotation TempDir
 

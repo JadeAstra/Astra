@@ -79,7 +79,7 @@ external fun string.parseUnsigned(radix : int = 10) : int
 external fun string.toFloat() : float
 external fun string.toFloatOrNull() : float?
 external fun string.format(vararg values : any?) : string
-external fun string.toBytes() : Bytes
+external fun string.toBytes(charset : Charset = Charset.utf8) : Bytes
 
 // -- List --
 
@@ -192,7 +192,7 @@ external fun Range.isEmpty() : bool
 
 external val Bytes.size : int
 external fun Bytes.toList() : open List<byte>
-external fun Bytes.decodeToString() : string
+external fun Bytes.decodeToString(charset : Charset = Charset.utf8) : string
 external fun Bytes.fill(value : byte) : Bytes
 external fun Bytes.indexOf(value : byte) : int
 external fun Bytes.contains(value : any?) : bool

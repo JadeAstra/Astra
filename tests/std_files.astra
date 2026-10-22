@@ -1,61 +1,98 @@
-// File objects. The test works in a folder of its own, which it removes at the end.
+// Paths (D107, D150). The test works in a directory of its own, which it removes at the end.
 
 // A value whose type the checker does not see, for testing the checks made when running.
 val unknown = { value -> value }
 
-val root = File("astra-files-test")
+val root = Path("astra-files-test")
 root.deleteRecursively()
-print(root.exists(), root.mkdirs(), root.exists(), root.isDirectory, root.isFile, root.mkdirs())   // expect: false true true true false true
+print(root.exists(), root.isDirectory(), root.isFile())    // expect: false false false
+root.mkdir()
+root.mkdir()                                                 // there already: no failure
+print(root.exists(), root.isDirectory(), root.isFile())    // expect: true true false
 
 // What a path says, without looking at the disk.
-val f = File(root, "notes.txt")
-print(f.name, f.extension, f.nameWithoutExtension, f.parent, f.parentFile!!.name, f.path == root.path + File.separator + "notes.txt")   // expect: notes.txt txt notes astra-files-test astra-files-test true
-print(File("a/b/c.tar.gz").name, File("a/b/c.tar.gz").extension, File("a/b/c.tar.gz").nameWithoutExtension, File("a/b/").name, File("plain").extension, File(".hidden").nameWithoutExtension == "")   // expect: c.tar.gz gz c.tar b  true
-print(File("a/b/c").parent, File("a").parent, File("a/b").parentFile!!.parentFile, File("a", "b").name, File(File("a"), "b") == File("a").resolve("b"))   // expect: a/b null null b true
-print(f, "$f" == f.path, f == File(root, "notes.txt"), f == File("other"), f == f.path, f.absolutePath.endsWith("notes.txt"), f.absoluteFile.name)   // expect: astra-files-test\notes.txt true true false false true notes.txt
+val f = Path(root, "notes.txt")
+print(f.name, f.extension, f.nameWithoutExtension, f.parent, f.parent!!.name, f.text == root.text + Path.separator + "notes.txt")   // expect: notes.txt txt notes astra-files-test astra-files-test true
+print(Path("a/b/c.tar.gz").name, Path("a/b/c.tar.gz").extension, Path("a/b/c.tar.gz").nameWithoutExtension, Path("a/b/").name, Path("plain").extension, Path(".hidden").nameWithoutExtension == "")   // expect: c.tar.gz gz c.tar b  true
+print(Path("a/b/c").parent, Path("a").parent, Path("a/b").parent!!.parent, Path("a", "b").name, Path(Path("a"), "b") == Path("a").resolve("b"))   // expect: a/b null null b true
+print(f, "$f" == f.text, f == Path(root, "notes.txt"), f == Path("other"), f == unknown(f.text), f.absolute.text.endsWith("notes.txt"), f.absolute.name)   // expect: astra-files-test\notes.txt true true false false true notes.txt
 
 // Text.
 print(f.exists(), f.size(), f.lastModified())              // expect: false 0 0
 f.writeText("first line\nsecond line\n")
-print(f.exists(), f.isFile, f.isDirectory, f.size(), f.lastModified() > 1600000000000)   // expect: true true false 23 true
+print(f.exists(), f.isFile(), f.isDirectory(), f.size(), f.lastModified() > 1600000000000)   // expect: true true false 23 true
 print(f.readText().size, f.readLines(), f.readText().lines().size)   // expect: 23 ["first line", "second line"] 3
 f.appendText("naïve café")
 print(f.readLines(), f.size(), f.readText().size)        // expect: ["first line", "second line", "naïve café"] 35 33
-val lines = []
+val lines : open List<string> = []
 f.forEachLine { lines.add(it.upper()) }
 print(lines)                                                 // expect: ["FIRST LINE", "SECOND LINE", "NAÏVE CAFÉ"]
+print(f.useLines { it.filter { line -> line.contains("line") }.count() })   // expect: 2
+
+// Character sets (D127).
+val latin = Path(root, "latin.txt")
+latin.writeText("café ☕", Charset.latin1)
+print(latin.size(), latin.readBytes(), latin.readText(latin1))   // expect: 6 Bytes[99, 97, 102, 233, 32, 63] café ?
+val wide = Path(root, "wide.txt")
+wide.writeText("a\né\n𝄞", Charset.utf16le)
+print(wide.size(), wide.readLines(Charset.utf16le), wide.readText(Charset.utf16be).size)   // expect: 12 ["a", "é", "𝄞"] 6
+wide.reader(Charset.utf16le).use { print(it.readLine(), it.readLine(), it.readLine(), it.readLine()) }   // expect: a é 𝄞 null
+print("é𝄞".toBytes(Charset.utf16be), Bytes([0, 104, 0, 105]).decodeToString(Charset.utf16be), "aé".toBytes(Charset.ascii), Bytes([104, 200]).decodeToString(Charset.ascii))   // expect: Bytes[0, 233, 216, 52, 221, 30] hi Bytes[97, 63] h�
 
 // Bytes: what is on disk, exactly.
-val b = File(root, "data.bin")
+val b = Path(root, "data.bin")
 b.writeBytes(Bytes([0, 1, 255, 10, 13]))
 print(b.readBytes(), b.size(), b.readBytes() == Bytes([0, 1, 255, 10, 13]))   // expect: Bytes[0, 1, 255, 10, 13] 5 true
 b.appendBytes(Bytes([7]))
-print(b.readBytes().size, b.readBytes()[5], f.readBytes()[0..<5].decodeToString(), "é".toBytes() == File(root, "e").also { it.writeText("é") }.readBytes())   // expect: 6 7 first true
-try { b.writeBytes(unknown("text")) } catch (e) { print(e.message) }  // expect: argument 'data' of File.writeBytes() must be Bytes, got string
+print(b.readBytes().size, b.readBytes()[5], f.readBytes()[0..<5].decodeToString(), "é".toBytes() == Path(root, "e").also { it.writeText("é") }.readBytes())   // expect: 6 7 first true
+try { b.writeBytes(unknown("text")) } catch (e) { print(e.message) }  // expect: argument 'data' of Path.writeBytes() must be Bytes, got string
 
 // A name that is not ASCII.
-val accented = File(root, "café ☕.txt")
+val accented = Path(root, "café ☕.txt")
 accented.writeText("ok")
 print(accented.exists(), accented.readText(), accented.name, accented.extension)   // expect: true ok café ☕.txt txt
 
-// Folders.
-val sub = File(root, "sub/deeper")
-print(sub.mkdirs(), sub.isDirectory, File(root, "sub").list(), root.list())   // expect: true true ["deeper"] ["café ☕.txt", "data.bin", "e", "notes.txt", "sub"]
-print(root.listFiles()!!.map { it.name }, root.listFiles()!![1] == b, f.list(), File("no-such-folder").listFiles())   // expect: ["café ☕.txt", "data.bin", "e", "notes.txt", "sub"] true null null
+// Directories, and what is in them (D126, D138).
+val sub = Path(root, "sub/deeper")
+sub.mkdir()
+print(sub.isDirectory(), Path(root, "sub").list(), root.list().map { it.name })   // expect: true [astra-files-test\sub\deeper] ["café ☕.txt", "data.bin", "e", "latin.txt", "notes.txt", "sub", "wide.txt"]
+print(root.list()[1] == b, root.walk().map { it.name }.toList())   // expect: true ["café ☕.txt", "data.bin", "e", "latin.txt", "notes.txt", "sub", "deeper", "wide.txt"]
+try { f.list() } catch (e : IOException) { print(e.message!!.startsWith("cannot list the directory")) }   // expect: true
+try { Path(root, "no/such").mkdir(parents = false) } catch (e : IOException) { print(e.message!!.startsWith("cannot make the directory")) }   // expect: true
+print(Path(root, "one").also { it.mkdir(parents = false) }.isDirectory())   // expect: true
 
-// Copying, renaming, deleting.
-val copy = f.copyTo(File(sub, "copy.txt"))
-print(copy.readText() == f.readText(), copy.name, copy.parentFile == sub)   // expect: true copy.txt true
+// Copying, moving, deleting (D129, D131).
+val copy = f.copyTo(Path(sub, "copy.txt"))
+print(copy.readText() == f.readText(), copy.name, copy.parent == sub)   // expect: true copy.txt true
 try { f.copyTo(copy) } catch (e) { print(e.message!!.startsWith("cannot copy")) }   // expect: true
 b.writeText("short")
-print(b.copyTo(copy, overwrite = true).readText(), b.renameTo(File(root, "moved.bin")), b.exists(), File(root, "moved.bin").exists())   // expect: short true false true
-print(File(root, "sub").delete(), copy.delete(), copy.delete(), copy.exists(), sub.delete(), File(root, "sub").delete())   // expect: false true false false true true
-try { File(root, "missing.txt").readText() } catch (e) { print(e.message!!.startsWith("cannot read file"), e is Exception) }   // expect: true true
+print(b.copyTo(copy, overwrite = true).readText())             // expect: short
+val moved = b.moveTo(Path(root, "moved.bin"))
+print(moved.name, b.exists(), moved.exists())               // expect: moved.bin false true
+try { f.moveTo(moved) } catch (e : IOException) { print(e.message!!.endsWith("it is already there")) }   // expect: true
+print(f.moveTo(moved, overwrite = true).readText().startsWith("first"), f.exists())   // expect: true false
+try { Path(root, "sub").delete() } catch (e : IOException) { print("not empty") }   // expect: not empty
+try { Path(root, "sub").deleteIfExists() } catch (e : IOException) { print("still not empty") }   // expect: still not empty
+copy.delete()
+print(copy.exists(), copy.deleteIfExists(), sub.deleteIfExists(), Path(root, "sub").deleteIfExists())   // expect: false false true true
+try { copy.delete() } catch (e : IOException) { print(e.message!!.endsWith("there is nothing there")) }   // expect: true
+try { Path(root, "missing.txt").readText() } catch (e) { print(e.message!!.startsWith("cannot read file"), e is Exception) }   // expect: true true
 
-// By path, without a File.
-val path = root.path + "/direct.txt"
-File.write(path, "direct")
-File.append(path, " and more")
-print(File.exists(path), File.read(path), File.exists(root.path + "/nothing"))   // expect: true direct and more false
+// What else the disk says (D131, D135).
+print(root.canonical() == root.absolute, moved.isReadable(), moved.isWritable(), moved.isExecutable(), Path(root, "run.cmd").also { it.writeText("") }.isExecutable())   // expect: true true true false true
+moved.setWritable(false)
+print(moved.isWritable())                                    // expect: false
+try { moved.writeText("no") } catch (e : IOException) { print("refused") }   // expect: refused
+moved.setWritable(true)
+moved.setLastModified(1700000000000)
+print(moved.lastModified())                                  // expect: 1700000000000
+try { Path(root, "nothing").canonical() } catch (e : IOException) { print("not there") }   // expect: not there
+
+// Temporary directories and files (D131).
+val temp = Path.createTempDirectory("astra-test-")
+val tempFile = Path.createTempFile("astra-", ".txt")
+print(temp.isDirectory(), temp.name.startsWith("astra-test-"), tempFile.isFile(), tempFile.extension, tempFile.size(), temp != Path.createTempDirectory("astra-test-").also { it.delete() })   // expect: true true true txt 0 true
+temp.delete()
+tempFile.delete()
 
 print(root.deleteRecursively(), root.exists(), root.deleteRecursively())   // expect: true false false

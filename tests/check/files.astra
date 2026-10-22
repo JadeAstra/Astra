@@ -1,0 +1,42 @@
+// Files and input and output (M6.6 part 8, group 8): what Java and Kotlin write is named in
+// Astra's terms.
+
+// The types.
+val file = File("a.txt")                    // check: a file or directory is a Path in Astra: Path("notes.txt"), Path(directory, name); Path(p).readText(), writeText(text), appendText(text) and exists() in place of File.read, write, append and exists (D107, D136)
+val input : InputStream? = null             // check: something to read from is a Reader in Astra, bytes and text alike: path.reader(), process.output, socket.reader (D119)
+val output : OutputStream? = null           // check: something to write to is a Writer in Astra, bytes and text alike: path.writer(append = ...), process.input, socket.writer (D119)
+val builder = ProcessBuilder("git")         // check: a program is started with Process(command..., directory = ..., environment = {...}, input = ..., output = ..., error = ...) in Astra, or run to its end with Process.run(...) (D91)
+val kotlins = Charsets.UTF_8                // check: a character set is a Charset in Astra: Charset.utf8, latin1, ascii, utf16le, utf16be (D127)
+val javas = StandardCharsets.UTF_8          // check: a character set is a Charset in Astra: Charset.utf8, latin1, ascii, utf16le, utf16be (D127)
+fun readAll() => Files.readAllBytes(Path("a"))  // check: Files.x(p) is p.x() in Astra, on the Path: p.readText(), p.readBytes(), p.mkdir(), a.moveTo(b), p.list(), p.walk() (D131)
+val got = Paths.get("a")                    // check: Paths.get(s) is Path(s) in Astra (D131)
+
+// A path's members.
+val p = Path("a")
+val t1 = p.parentFile                       // check: parentFile is written parent, a Path: path.parent?.name, path.parent?.text (D128)
+val t2 = p.absolutePath                     // check: absolutePath is written absolute, a Path: path.absolute.text for the text (D135)
+val t3 = p.canonicalPath                    // check: canonicalPath is written canonical(), a Path: path.canonical().text for the text (D135)
+val t4 = p.path                             // check: the text of a Path is written text: path.text, or "$path" (D137)
+val t5 = p.listFiles()                      // check: listFiles() is written list(), which gives Paths: dir.list() (D138)
+val t6 = p.mkdirs()                         // check: mkdirs() is written mkdir(), which makes any missing directories above too (D126)
+val t7 = p.renameTo(Path("b"))              // check: renameTo is written moveTo(target), which throws an IOException where it cannot move (D129)
+val t8 = p.toFile()                         // check: there is one type for a path in Astra, Path: the call goes (D131)
+val t9 = p.inputStream()                    // check: a file is read with path.reader() (D119)
+val t10 = p.bufferedReader()                // check: a file is read with path.reader(), which reads ahead already (D119)
+val t11 = p.fileName                        // check: fileName is written name (D131)
+
+// A reader's, a process's and a socket's.
+fun wraps(reader : Reader) {
+  reader.bufferedReader()                   // check: a Reader reads ahead already: the call goes (D119)
+}
+fun ends(process : Process) {
+  process.inputStream                       // check: what a program writes is process.output, a Reader (D91)
+  process.destroy()                         // check: a program is ended with kill() (D91)
+}
+fun limits(socket : Socket) {
+  socket.soTimeout = 5                      // check: a read's time limit is readTimeout, a Duration: socket.readTimeout = 5.seconds (D120)
+  socket.getInputStream()                   // check: what comes from the other side is socket.reader (D120)
+}
+
+// Text and bytes.
+val bytes = "x".toByteArray()               // check: toByteArray(charset) is written toBytes(charset), and String(bytes, charset) bytes.decodeToString(charset) (D127)

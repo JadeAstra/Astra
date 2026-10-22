@@ -40,6 +40,7 @@ add_library(astra_core OBJECT
   src/reflect.cpp
   src/threads.cpp
   src/io.cpp
+  src/charset.cpp
   src/worker.cpp
   src/parallel.cpp
   src/run.cpp

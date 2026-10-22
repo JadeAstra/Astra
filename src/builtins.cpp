@@ -18,6 +18,7 @@
 #include <iostream>
 
 #include "builtins.h"
+#include "charset.h"
 #include "run.h"
 #include "vm.h"
 
@@ -823,10 +824,12 @@ void registerBytes(VM& vm) {
         return Value::object(newList(vm, std::move(items)));
     });
 
-    // The text these bytes spell in UTF-8.
-    vm.defineMethod(T, "decodeToString", 0, 0, [](VM& vm, Value self, int, Value*) -> Value {
+    // The text these bytes spell, in UTF-8 or the character set given (D127).
+    vm.defineMethod(T, "decodeToString", 0, 1, [](VM& vm, Value self, int argc, Value* args) -> Value {
         const std::vector<uint8_t>& data = asBytes(self)->data;
-        return vm.str(std::string(data.begin(), data.end()));
+        const Charset cs = charsetOf(vm, argc > 0 ? args[0] : Value::null());
+        const std::string_view raw(reinterpret_cast<const char*>(data.data()), data.size());
+        return vm.str(cs == Charset::Utf8 ? std::string(raw) : decodeText(raw, cs));
     });
 
     vm.defineMethod(T, "fill", 1, 1, [](VM& vm, Value self, int, Value* args) -> Value {
@@ -863,9 +866,11 @@ void registerBytes(VM& vm) {
     vm.defineMethod(T, "putUint32", 2, 3, writeNumber<4, Kind::Unsigned>);
     vm.defineMethod(T, "putFloat32", 2, 3, writeNumber<4, Kind::Float>);
 
-    // Text as bytes, in UTF-8.
-    vm.defineMethod(BuiltinType::String, "toBytes", 0, 0, [](VM& vm, Value self, int, Value*) -> Value {
-        const std::string& s = asString(self)->utf8();
+    // Text as bytes, in UTF-8 or the character set given (D127).
+    vm.defineMethod(BuiltinType::String, "toBytes", 0, 1, [](VM& vm, Value self, int argc, Value* args) -> Value {
+        const Charset cs = charsetOf(vm, argc > 0 ? args[0] : Value::null());
+        const std::string& utf8 = asString(self)->utf8();
+        const std::string s = cs == Charset::Utf8 ? utf8 : encodeText(utf8, cs);
         ObjBytes* made = vm.alloc<ObjBytes>();
         made->data.assign(s.begin(), s.end());
         vm.account(made->data.size());

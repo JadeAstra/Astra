@@ -9,6 +9,8 @@
 #endif
 
 #include <algorithm>
+#include <atomic>
+#include <cctype>
 #include <charconv>
 #include <chrono>
 #include <cmath>
@@ -19,6 +21,7 @@
 #include <memory>
 
 #include "builtins.h"
+#include "charset.h"
 #include "vm.h"
 
 namespace astra {
@@ -1234,6 +1237,7 @@ struct FileJob {
     std::string path;
     std::string data;
     std::string error;
+    Charset charset = Charset::Utf8;  // what text read is in (D127)
 };
 
 void readWhole(FileJob& job) {
@@ -1250,10 +1254,14 @@ void writeWhole(FileJob& job, bool append) {
     if (!out || !out.write(job.data.data(), static_cast<std::streamsize>(job.data.size())).flush()) job.error = "cannot write file '" + job.path + "'";
 }
 
-Value readFile(VM& vm, Value path, bool asBytes) {
+Value readFile(VM& vm, Value path, bool asBytes, Value charset = Value::null()) {
     auto job = std::make_shared<FileJob>();
     job->path = vm.toStr(path, "file path");
-    return vm.blocking([job] { readWhole(*job); }, [job, asBytes](VM& vm) -> Value {
+    job->charset = charsetOf(vm, charset);
+    return vm.blocking([job, asBytes] {
+        readWhole(*job);
+        if (!asBytes && job->error.empty() && job->charset != Charset::Utf8) job->data = decodeText(job->data, job->charset);
+    }, [job, asBytes](VM& vm) -> Value {
         if (!job->error.empty()) throw vm.errorOf("IOException", job->error);
         if (!asBytes) return vm.str(std::move(job->data));
         ObjBytes* made = vm.alloc<ObjBytes>();
@@ -1263,7 +1271,7 @@ Value readFile(VM& vm, Value path, bool asBytes) {
     });
 }
 
-Value writeFile(VM& vm, Value path, Value content, bool bytesOnly, bool append) {
+Value writeFile(VM& vm, Value path, Value content, bool bytesOnly, bool append, Value charset = Value::null()) {
     auto job = std::make_shared<FileJob>();
     job->path = vm.toStr(path, "file path");
     if (content.isObjType(ObjType::Bytes)) {
@@ -1271,7 +1279,7 @@ Value writeFile(VM& vm, Value path, Value content, bool bytesOnly, bool append) 
     } else if (bytesOnly) {
         throw vm.runtimeError(Thrown::ClassCastException, "writeBytes takes bytes, not a value of type " + vm.typeName(content) + (content.isString() ? "; text is written with writeText" : ""));
     } else {
-        job->data = vm.stringify(content);
+        job->data = encodeText(vm.stringify(content), charsetOf(vm, charset));
     }
     return vm.blocking([job, append] { writeWhole(*job, append); }, [job](VM& vm) -> Value {
         if (!job->error.empty()) throw vm.errorOf("IOException", job->error);
@@ -1279,17 +1287,22 @@ Value writeFile(VM& vm, Value path, Value content, bool bytesOnly, bool append) 
     });
 }
 
-// What the File class (src/std/file.astra) is built on. The name starts with two
+// An IOException for something done to a path, with what the system said.
+AstraThrow pathError(VM& vm, const std::string& what, const std::string& path, const std::error_code& ec) {
+    return vm.errorOf("IOException", "cannot " + what + " '" + path + "'" + (ec ? ": " + ec.message() : ""));
+}
+
+// What the Path class (src/std/file.astra) is built on. The name starts with two
 // underscores, which only the standard library's own source can use.
 void registerFiles(VM& vm) {
-    ObjClass* file = vm.alloc<ObjClass>(vm.intern("File"));
+    ObjClass* file = vm.alloc<ObjClass>(vm.intern("Path"));
     auto def = [&](const char* name, int minArgs, int maxArgs, NativeFn fn) {
-        file->statics.set(vm.intern(name), Value::object(vm.alloc<ObjNative>(std::string("File.") + name, minArgs, maxArgs, fn)));
+        file->statics.set(vm.intern(name), Value::object(vm.alloc<ObjNative>(std::string("Path.") + name, minArgs, maxArgs, fn)));
     };
 
-    def("read", 1, 1, [](VM& vm, int, Value* args) -> Value { return readFile(vm, args[0], false); });
-    def("write", 2, 2, [](VM& vm, int, Value* args) -> Value { return writeFile(vm, args[0], args[1], false, false); });
-    def("append", 2, 2, [](VM& vm, int, Value* args) -> Value { return writeFile(vm, args[0], args[1], false, true); });
+    def("read", 1, 2, [](VM& vm, int argc, Value* args) -> Value { return readFile(vm, args[0], false, argc > 1 ? args[1] : Value::null()); });
+    def("write", 2, 3, [](VM& vm, int argc, Value* args) -> Value { return writeFile(vm, args[0], args[1], false, false, argc > 2 ? args[2] : Value::null()); });
+    def("append", 2, 3, [](VM& vm, int argc, Value* args) -> Value { return writeFile(vm, args[0], args[1], false, true, argc > 2 ? args[2] : Value::null()); });
     def("readBytes", 1, 1, [](VM& vm, int, Value* args) -> Value { return readFile(vm, args[0], true); });
     def("writeBytes", 2, 2, [](VM& vm, int, Value* args) -> Value { return writeFile(vm, args[0], args[1], true, false); });
     def("appendBytes", 2, 2, [](VM& vm, int, Value* args) -> Value { return writeFile(vm, args[0], args[1], true, true); });
@@ -1320,27 +1333,44 @@ void registerFiles(VM& vm) {
         const auto system = std::chrono::clock_cast<std::chrono::system_clock>(time);
         return Value::integer(std::chrono::duration_cast<std::chrono::milliseconds>(system.time_since_epoch()).count());
     });
-    // A file, or a folder with nothing in it. True if it was there and is gone.
-    def("delete", 1, 1, [](VM& vm, int, Value* args) -> Value {
+    // A file, or a directory with nothing in it. True if it was there and is gone; with
+    // `mustExist`, an IOException where it was not there or could not go.
+    def("delete", 2, 2, [](VM& vm, int, Value* args) -> Value {
         std::error_code ec;
-        return Value::boolean(fs::remove(toPath(vm.toStr(args[0], "file path")), ec) && !ec);
+        const std::string& path = vm.toStr(args[0], "file path");
+        const bool removed = fs::remove(toPath(path), ec) && !ec;
+        if (ec) throw pathError(vm, "delete", path, ec);
+        if (!removed && args[1].truthy()) throw vm.errorOf("IOException", "cannot delete '" + path + "': there is nothing there");
+        return Value::boolean(removed);
     });
     def("deleteRecursively", 1, 1, [](VM& vm, int, Value* args) -> Value {
         std::error_code ec;
         const auto removed = fs::remove_all(toPath(vm.toStr(args[0], "file path")), ec);
         return Value::boolean(!ec && removed > 0);
     });
-    // True if the folder is there afterwards.
-    def("mkdirs", 1, 1, [](VM& vm, int, Value* args) -> Value {
+    // mkdir(path, parents): the directory, and with `parents` any missing above it (D126). One
+    // there already is no failure; one that cannot be made is an IOException.
+    def("mkdir", 2, 2, [](VM& vm, int, Value* args) -> Value {
         std::error_code ec;
-        const fs::path path = toPath(vm.toStr(args[0], "file path"));
-        fs::create_directories(path, ec);
-        return Value::boolean(fs::is_directory(path, ec));
+        const std::string& text = vm.toStr(args[0], "file path");
+        const fs::path path = toPath(text);
+        if (args[1].truthy()) fs::create_directories(path, ec);
+        else fs::create_directory(path, ec);
+        std::error_code there;
+        if (!fs::is_directory(path, there)) throw pathError(vm, "make the directory", text, ec);
+        return Value::null();
     });
-    def("rename", 2, 2, [](VM& vm, int, Value* args) -> Value {
+    // move(from, to, overwrite) (D129): an IOException where it cannot be moved, or where
+    // something is at `to` already and `overwrite` is false.
+    def("move", 3, 3, [](VM& vm, int, Value* args) -> Value {
         std::error_code ec;
-        fs::rename(toPath(vm.toStr(args[0], "file path")), toPath(vm.toStr(args[1], "new path")), ec);
-        return Value::boolean(!ec);
+        const std::string& from = vm.toStr(args[0], "file path");
+        const std::string& to = vm.toStr(args[1], "new path");
+        if (!args[2].truthy() && fs::exists(toPath(to), ec))
+            throw vm.errorOf("IOException", "cannot move '" + from + "' to '" + to + "': it is already there");
+        fs::rename(toPath(from), toPath(to), ec);
+        if (ec) throw vm.errorOf("IOException", "cannot move '" + from + "' to '" + to + "': " + ec.message());
+        return Value::null();
     });
     def("copy", 3, 3, [](VM& vm, int, Value* args) -> Value {
         std::error_code ec;
@@ -1352,12 +1382,13 @@ void registerFiles(VM& vm) {
             throw vm.runtimeError(Thrown::IOException, "cannot copy '" + from + "' to '" + to + "'" + (ec ? ": " + ec.message() : ": it is already there"));
         return Value::null();
     });
-    // The names in a folder, in order, or null if it is not a folder.
+    // The names in a directory, in order; an IOException if it is not one.
     def("list", 1, 1, [](VM& vm, int, Value* args) -> Value {
         std::error_code ec;
         std::vector<std::string> names;
-        fs::directory_iterator it(toPath(vm.toStr(args[0], "file path")), ec);
-        if (ec) return Value::null();
+        const std::string& path = vm.toStr(args[0], "file path");
+        fs::directory_iterator it(toPath(path), ec);
+        if (ec) throw pathError(vm, "list the directory", path, ec);
         for (const fs::directory_iterator end; it != end; it.increment(ec)) {
             if (ec) break;
             names.push_back(fromPath(it->path().filename()));
@@ -1368,6 +1399,86 @@ void registerFiles(VM& vm) {
         for (std::string& name : names) list->values().push_back(vm.str(std::move(name)));
         vm.account(list->values().size() * sizeof(Value));
         return Value::object(list);
+    });
+    // With `.`, `..` and links worked out (D135); an IOException if it is not there.
+    def("canonical", 1, 1, [](VM& vm, int, Value* args) -> Value {
+        std::error_code ec;
+        const std::string& path = vm.toStr(args[0], "file path");
+        const fs::path made = fs::canonical(toPath(path), ec);
+        if (ec) throw pathError(vm, "find", path, ec);
+        return vm.str(fromPath(made));
+    });
+    // Who may do what to it, as bits: 4 read, 2 write, 1 run; 0 if it is not there.
+    def("permissions", 1, 1, [](VM& vm, int, Value* args) -> Value {
+        std::error_code ec;
+        const fs::path path = toPath(vm.toStr(args[0], "file path"));
+        const fs::file_status status = fs::status(path, ec);
+        if (ec || !fs::exists(status)) return Value::integer(0);
+        const fs::perms p = status.permissions();
+        int64_t bits = (p & fs::perms::owner_read) != fs::perms::none ? 4 : 0;
+        if ((p & fs::perms::owner_write) != fs::perms::none) bits |= 2;
+#ifdef _WIN32
+        // Windows runs a file by its extension, which PATHEXT lists.
+        std::string ext = fromPath(path.extension());
+        for (char& c : ext) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+        const char* runnable = std::getenv("PATHEXT");
+        const std::string list = runnable != nullptr ? runnable : ".COM;.EXE;.BAT;.CMD";
+        if (fs::is_regular_file(status) && !ext.empty() && (";" + list + ";").find(";" + ext + ";") != std::string::npos) bits |= 1;
+#else
+        if ((p & fs::perms::owner_exec) != fs::perms::none) bits |= 1;
+#endif
+        return Value::integer(bits);
+    });
+    // Lets it be written, or not (on Windows, its read-only flag).
+    def("setWritable", 2, 2, [](VM& vm, int, Value* args) -> Value {
+        std::error_code ec;
+        const std::string& path = vm.toStr(args[0], "file path");
+        fs::permissions(toPath(path), fs::perms::owner_write | fs::perms::group_write | fs::perms::others_write,
+                        args[1].truthy() ? fs::perm_options::add : fs::perm_options::remove, ec);
+        if (ec) throw pathError(vm, "change who may write", path, ec);
+        return Value::null();
+    });
+    // setLastModified(path, ms since the start of 1970).
+    def("setLastModified", 2, 2, [](VM& vm, int, Value* args) -> Value {
+        std::error_code ec;
+        const std::string& path = vm.toStr(args[0], "file path");
+        const auto system = std::chrono::system_clock::time_point(std::chrono::milliseconds(vm.toInt(args[1], "time")));
+        fs::last_write_time(toPath(path), std::chrono::clock_cast<fs::file_time_type::clock>(system), ec);
+        if (ec) throw pathError(vm, "set the time of", path, ec);
+        return Value::null();
+    });
+    // A new empty directory, or file, in the system's temporary directory, its name starting
+    // with `prefix` (and a file's ending with `suffix`).
+    def("createTemp", 3, 3, [](VM& vm, int, Value* args) -> Value {
+        std::error_code ec;
+        const fs::path base = fs::temp_directory_path(ec);
+        if (ec) throw pathError(vm, "find", "the temporary directory", ec);
+        const std::string& prefix = vm.toStr(args[0], "prefix");
+        const bool directory = args[2].truthy();
+        const std::string suffix = directory ? "" : vm.toStr(args[1], "suffix");
+        static std::atomic<uint64_t> counter{0};
+        for (int tries = 0; tries < 100; tries++) {
+            const uint64_t mixed = (static_cast<uint64_t>(std::chrono::steady_clock::now().time_since_epoch().count()) * 6364136223846793005ULL) + (++counter * 1442695040888963407ULL);
+            const fs::path made = base / toPath(prefix + std::to_string(mixed % 1000000000000ULL) + suffix);
+            if (directory) {
+                if (fs::create_directory(made, ec)) return vm.str(fromPath(made));
+            } else {
+                // Made only if nothing is there: two programs never get the same file.
+#ifdef _WIN32
+                HANDLE h = CreateFileW(made.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
+                if (h != INVALID_HANDLE_VALUE) {
+                    CloseHandle(h);
+                    return vm.str(fromPath(made));
+                }
+#else
+                if (!fs::exists(made, ec)) {
+                    std::ofstream(made).close();
+                    return vm.str(fromPath(made));
+                }
+#endif
+            }
+        }
+        throw vm.errorOf("IOException", std::string("cannot make a temporary ") + (directory ? "directory" : "file") + " in '" + fromPath(base) + "'");
     });
     def("absolute", 1, 1, [](VM& vm, int, Value* args) -> Value {
         std::error_code ec;

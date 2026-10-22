@@ -268,7 +268,7 @@ val loaded = Surface.of(from)
 print(loaded, loaded.toPicture() == from)   // expect: Surface(5 x 4) true
 loaded.save("jade_canvas_out.png")
 print(Picture.load("jade_canvas_out.png") == from)   // expect: true
-File("jade_canvas_out.png").delete()
+Path("jade_canvas_out.png").delete()
 print(attempt { loaded.upload(Picture(3, 3)) })   // expect: a picture of 3 by 3 does not fit a surface of 5 by 4 pixels
 print(attempt { Surface(0, 4) }, "|", attempt { Surface(100000, 4) }.startsWith("a picture on the graphics card is from 1 to "))   // expect: a Surface is at least 1 unit each way, not 0 by 4 | true
 loaded.dispose()

@@ -1100,7 +1100,7 @@ const std::vector<std::string>& VM::globalsFoundByName() {
         "RuntimeException", "ArithmeticException", "IndexOutOfBoundsException", "NullPointerException", "ClassCastException",
         "IllegalArgumentException", "NumberFormatException", "IllegalStateException", "UnsupportedOperationException",
         "NoSuchElementException", "ConcurrentModificationException", "AssertionError", "StackOverflowError", "OutOfMemoryError",
-        "InternalError", "IOException", "Throwable", "MapEntry"};
+        "InternalError", "IOException", "Throwable", "SocketTimeoutException", "MapEntry"};
     return names;
 }
 
@@ -4946,6 +4946,11 @@ void VM::run(int baseFrame) {
                         if (coreId_ != 0) throw notOwned("'" + program_->globalNames[index] + "' is declared for the whole program");
                         globals_[index] = own(value);
                         globalTypes_[index] = TypeConstraint{type, cls};
+                        break;
+                    }
+                    case Op::SettleEnum: {
+                        ObjClass* cls = popTypeClass(kTypeInstance);
+                        if (sp_[-1].kind == ValueKind::EnumName) sp_[-1] = settleEnumName(sp_[-1], cls);
                         break;
                     }
                     case Op::CheckParam: {

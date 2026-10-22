@@ -274,5 +274,5 @@ fun string.ifBlank(defaultValue : () -> string) : string => this.isBlank() ? def
 // numbers, 64 bits, and one for fractions, so Kotlin's toLong and toDouble are written so (D74).
 
 fun string.toBoolean() : bool => this.lower() == "true"
-fun string.encodeToByteArray() : Bytes => this.toBytes()
+fun string.encodeToByteArray(charset : Charset = Charset.utf8) : Bytes => this.toBytes(charset)
 fun string.plus(other : any?) : string => this + "$other"

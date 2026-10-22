@@ -19,9 +19,9 @@ val log : open List<string> = []
   var n = 0
   while (true) { n++ }
 }
-@Test fun writes(@TempDir dir : File) {
-  assertTrue(dir.isDirectory)
-  val file = File(dir, "a.txt")
+@Test fun writes(@TempDir dir : Path) {
+  assertTrue(dir.isDirectory())
+  val file = Path(dir, "a.txt")
   file.writeText("hi")
   assertEquals("hi", file.readText())
 }

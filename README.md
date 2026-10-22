@@ -222,7 +222,7 @@ c.size        c + b        c[1..<3]        c.toList()        c.fill(0)
 "héllo".toBytes()                    // the text as UTF-8: 6 bytes
 c.decodeToString()                   // and back
 for byte in c { ... }
-File("photo.png").readBytes()        // files give and take bytes (see File)
+Path("photo.png").readBytes()        // files give and take bytes (see Files)
 ```
 
 Two `Bytes` are `==` if they hold the same bytes. In a type it is written `Bytes`.
@@ -1682,7 +1682,7 @@ val onSave : () -> unit throws IOException = { file.writeText(text) }
 ```
 
 **`use { }`** runs its block on something to close, and closes it afterwards, however the block
-ends: `File(p).reader().use { it.readText() }` (D113). It is for an `AutoCloseable`, which the
+ends: `Path(p).reader().use { it.readText() }` (D113). It is for an `AutoCloseable`, which the
 standard library's streams and sockets are; a class of someone else's that has a `close()` is
 fitted to it with `extend`. Like the other functions taking a lambda, it is copied in where it
 is called.
@@ -1762,7 +1762,7 @@ that say what Astra writes in their place: `@Synchronized` a `Lock`, `@JvmStatic
 ```astra
 @Test fun adds() { assertEquals(4, 2 + 2) }
 @Test @Timeout(500) fun quick() { ... }                   // fails, stopped, after half a second
-@Test fun writes(@TempDir dir : File) { File(dir, "a.txt").writeText("hi") }
+@Test fun writes(@TempDir dir : Path) { Path(dir, "a.txt").writeText("hi") }
 ```
 
 Around each test run the functions written `@BeforeTest` and `@AfterTest`, and around all of a
@@ -2322,34 +2322,47 @@ that go through it: `forEach`, `map`, `filter`, `any`, `all`, `none`, `count`, `
 
 ### Files
 
-A **`File`** stands for a file or folder by its path. Making one touches nothing; the disk is
-looked at when something is asked of it.
+A **`Path`** stands for a file or directory by its path, Java's `File` and `java.nio.file.Path`
+in one (D107). Making one touches nothing. What is in the path itself is a property; what asks
+the disk is a function, so a property never fails (D150).
 
 ```astra
-val notes = File("notes.txt")
+val notes = Path("notes.txt")
 if (notes.exists()) { print(notes.readText()) }
 notes.writeText("first\n")
 notes.appendText("second\n")
 for line in notes.readLines() { ... }
 
-val folder = File("out")
-folder.mkdirs()
-File(folder, "data.bin").writeBytes(Bytes([1, 2, 3]))    // a file inside a folder
-for file in folder.listFiles() { print(file.name, file.size()) }
+val out = Path("out")
+out.mkdir()                                               // and any directories above it
+Path(out, "data.bin").writeBytes(Bytes([1, 2, 3]))       // a file inside a directory
+for file in out.list() { print(file.name, file.size()) }
+for file in Path("src").walk() { if (file.extension == "astra") { print(file.text) } }
 ```
 
 | | |
 | --- | --- |
-| The path | `path`, `name`, `extension`, `nameWithoutExtension`, `parent`, `parentFile`, `absolutePath`, `absoluteFile`, `resolve(child)` |
-| On disk | `exists()`, `isFile`, `isDirectory`, `size()`, `lastModified()`, `list()`, `listFiles()` |
-| Text | `readText()`, `readLines()`, `forEachLine { }`, `writeText(s)`, `appendText(s)` |
+| The path | `text` (also `toString()`, so `"$path"` works), `name`, `extension`, `nameWithoutExtension`, `parent` (a `Path`, null at the top), `absolute`, `resolve(child)` |
+| On disk | `exists()`, `isFile()`, `isDirectory()`, `isReadable()`, `isWritable()`, `isExecutable()`, `size()`, `lastModified()`, `canonical()`, `list()` (the `Path`s in a directory), `walk()` (every path below, as a sequence) |
+| Text | `readText()`, `readLines()`, `forEachLine { }`, `useLines { lines -> }` (a sequence, read as it goes), `writeText(s)`, `appendText(s)` |
 | Bytes | `readBytes()`, `writeBytes(b)`, `appendBytes(b)` |
-| Changing | `delete()`, `deleteRecursively()`, `mkdirs()`, `renameTo(file)`, `copyTo(file, overwrite?)` |
+| A piece at a time | `reader()`, `writer(append?)` |
+| Changing | `mkdir(parents = true)`, `delete()`, `deleteIfExists()`, `deleteRecursively()`, `moveTo(path, overwrite?)`, `copyTo(path, overwrite?)`, `setWritable(b)`, `setLastModified(ms)` |
+| New | `Path.createTempDirectory(prefix)`, `Path.createTempFile(prefix, suffix)` |
 
-Text is read and written as UTF-8, and a path may hold any characters. Each call reads or
-writes the whole file. Two Files are `==` if their paths are the same text. The shorter
-`File.read(path)`, `File.write(path, text)`, `File.append(path, text)` and
-`File.exists(path)` work on a path without making a File.
+Each text call reads and writes UTF-8, or the character set given: `Charset.utf8`, `latin1`,
+`ascii`, `utf16le` or `utf16be` (`path.readText(Charset.latin1)`, D127), and so do
+`string.toBytes(charset)` and `bytes.decodeToString(charset)`. A character a set has no place
+for is written as `?`, and bytes that spell no character are read as U+FFFD. A path may hold
+any characters. Each of `readText`, `writeText` and the like reads or writes the whole file.
+Failing to read, write, make, move, copy, delete or list is an `IOException` saying why; a
+directory already there is no failure for `mkdir`. Two Paths are `==` if their text is the
+same.
+
+Java's and Kotlin's names say what to write: `File` is `Path`, `Files.x(p)` is `p.x()`,
+`parentFile` is `parent`, `absolutePath` is `absolute.text`, `listFiles()` is `list()`,
+`mkdirs()` is `mkdir()`, `renameTo` is `moveTo`, `Charsets.UTF_8` is `Charset.utf8`, each as a
+compile error.
 
 ### Every value
 
@@ -2714,7 +2727,7 @@ core gets the positions of one part, and may write those and no others.
 pixels.parallelChunks { positions -> for i in positions { pixels[i] = shade(i) } }
 ```
 
-### Streams, processes and sockets
+### Readers, writers, processes and sockets
 
 Anything here that waits is an ordinary call, and the same one everywhere:
 
@@ -2722,55 +2735,61 @@ Anything here that waits is an ordinary call, and the same one everywhere:
 - in a task on the main thread it sets the task aside, and the event loop goes on;
 - on the main thread outside a task it blocks the main thread.
 
-That holds for a `File`'s `readText`, `writeText` and the like as well.
+That holds for a `Path`'s `readText`, `writeText` and the like as well. (A socket's reads and
+writes block their thread wherever they run.)
 
-**Streams** read and write a piece at a time. Text is UTF-8.
+**A `Reader`** reads, and **a `Writer`** writes, a piece at a time, bytes and text alike (D119).
+Each reads ahead or writes through a buffer of its own, so there is nothing to wrap it in.
 
 ```astra
-File("log.txt").inputStream().use { input ->          // use closes it afterwards
+Path("log.txt").reader().use { input ->              // use closes it afterwards
   while (true) { val line = input.readLine(); if (line == null) { break }; handle(line) }
 }
-File("out.txt").outputStream(append = true).use { it.println("one more line") }
+Path("out.txt").writer(append = true).use { it.println("one more line") }
+Path("big.csv").useLines { lines -> lines.filter { it.startsWith("2026") }.count() }
 ```
 
 | | |
 | --- | --- |
-| `InputStream` | `readLine()` (null at the end), `readLines()`, `forEachLine { }`, `readText()`, `read(count?)` (bytes; null at the end), `readBytes()`, `close()`, `use { }` |
-| `OutputStream` | `write(text or bytes)`, `print(x)`, `println(x)`, `newLine()`, `flush()`, `close()`, `use { }` |
-| `File` | `inputStream()`, `outputStream(append?)`, and under Kotlin's other names `bufferedReader()`, `bufferedWriter()`, `printWriter()` |
+| `Reader` | `readLine()` (null at the end), `readLines()`, `forEachLine { }`, `lineSequence()`, `useLines { }`, `readText()`, `read(count?)` (bytes; null at the end), `readBytes()`, `close()`, `use { }` |
+| `Writer` | `write(text or bytes)`, `print(x)`, `println(x)`, `newLine()`, `append(x)`, `flush()`, `close()`, `use { }` |
 
-`print` to another program or to a file is sent on in pieces; `flush()` sends what has been
-printed so far.
+Both take a `Charset` (`path.reader(Charset.utf16le)`), UTF-8 if none is given. A line read
+lazily, through `lineSequence()` or `useLines`, that fails throws an `UncheckedIOException`,
+its `cause` the `IOException`, since a sequence's lambda cannot throw a checked one.
 
-**A process** is another program started from this one:
+**A process** is another program started from this one (D91):
 
 ```astra
-val git = ProcessBuilder("git", "status", "--short").directory(project).start()
-for line in git.inputStream.readLines() { print(line) }     // what it writes
-print("exit code", git.waitFor())
+val result = Process.run("git", "status", "--short", directory = project)   // to its end
+if (result.exitCode == 0) { print(result.output) } else { print(result.error) }
 
-val python = ProcessBuilder("python", "-u", "server.py").redirectErrorStream().start()
-python.outputStream.println("{\"cmd\": \"ping\"}")          // what it reads
-print(python.inputStream.readLine())
-python.destroy()
+val python = Process("python", "-u", "server.py", error = toOutput)
+python.input.println("{\"cmd\": \"ping\"}")                 // what it reads
+print(python.output.readLine())                             // what it writes
+python.kill()
 ```
 
-`inputStream` is what the program writes, `errorStream` what it writes as errors, and
-`outputStream` what it reads. Before `start()`: `directory(folder)`, `environment()` (a map of
-changes), `redirectErrorStream()` (errors go with the ordinary output), and
-`redirectInput`, `redirectOutput`, `redirectError`, each taking a `File` or
-`ProcessBuilder.pipe`, `.inherit` or `.discard`; `inheritIO()` for all three. After:
-`waitFor()` (the exit code), `waitFor(timeout)` (true if it ended in time), `isAlive`,
-`exitValue()`, `pid()`, `destroy()`. `Process.currentCommand()` is what started this program,
-so that it can start another of itself.
+`Process(command..., directory, environment, input, output, error, charset)` starts one: the
+command as separate words or one list; `environment` a map of variables added to this
+program's own (null takes one out); `input`, `output` and `error` each `pipe` (the default),
+`inherit` (the same place as this program's own), `discard`, or a `Path` to read from or
+write to, and for `error` also `toOutput`, into the output. Written bare, they need no
+`Stream.` in front. A started program has `input` (a `Writer`), `output` and `error`
+(`Reader`s), each there when it is a pipe; `waitFor()` (the exit code), `waitFor(timeout)`
+(null if it is still running), `exitCode` (null while it runs), `isAlive`, `pid`, `kill()`.
+`Process.run(...)` takes the same arguments, runs the program to its end, reading its output
+and errors at the same time, and gives a `ProcessResult`: `exitCode`, `output` and `error` as
+text. Its input is `discard` unless another is given. `Process.currentCommand()` is what
+started this program, so that it can start another of itself.
 
-**Sockets** are TCP connections:
+**Sockets** are TCP connections (D120):
 
 ```astra
-val socket = Socket("example.org", 80)                     // or Socket().connect(host, port, timeout = 5.seconds)
-socket.outputStream.write("GET / HTTP/1.0\r\nHost: example.org\r\n\r\n")
-print(socket.inputStream.readLine())
-socket.close()
+Socket("example.org", 80).use { socket ->                  // or Socket().connect(host, port, timeout = 5.seconds)
+  socket.writer.write("GET / HTTP/1.0\r\nHost: example.org\r\n\r\n")
+  print(socket.reader.readLine())
+}
 
 val server = ServerSocket(8080, bindAddress = "127.0.0.1")   // port 0: the system picks one, see localPort
 while (true) {
@@ -2779,10 +2798,11 @@ while (true) {
 }
 ```
 
-`inputStream`, `outputStream`, `close()`, `isClosed`, `localPort`, `remoteAddress`, `port`,
-`soTimeout` (how long a read waits, in milliseconds), `shutdownOutput()`. Closing a socket or
-a stream that a thread is waiting on gets that thread out, with an `IOException`, which is
-what every failure to read, write, connect or start a program is.
+`reader`, `writer`, `close()`, `isClosed`, `localPort`, `remoteAddress`, `port`,
+`readTimeout` (how long a read waits, a `Duration`; past it the read throws a
+`SocketTimeoutException`), `shutdownOutput()`. Closing a socket, reader or writer that a
+thread is waiting on gets that thread out, with an `IOException`, which is what every failure
+to read, write, connect or start a program is.
 
 ## Fonts, text and pictures
 

@@ -124,7 +124,7 @@ class Surface {
     __jade.surfaceUpload(handle, picture.pixels)
   }
 
-  fun save(path : any) throws IOException {
+  fun save(path : Path | string) throws IOException {
     toPicture().save(path)
   }
 

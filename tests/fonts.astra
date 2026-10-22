@@ -55,8 +55,8 @@ print(Fonts.find("Segoe UI") == regular, regular == bold, regular != bold, [regu
 
 // -- Font files --
 val again = Fonts.load(regular.path, regular.index)
-print(again.fullName, again.glyphCount == regular.glyphCount, Fonts.count(regular.path), Fonts.load(File(regular.path)).family)   // expect: Segoe UI true 1 Segoe UI
-val fromBytes = Fonts.load(File(Fonts.find("Consolas")!!.path).readBytes())
+print(again.fullName, again.glyphCount == regular.glyphCount, Fonts.count(regular.path), Fonts.load(Path(regular.path)).family)   // expect: Segoe UI true 1 Segoe UI
+val fromBytes = Fonts.load(Path(Fonts.find("Consolas")!!.path).readBytes())
 print(fromBytes.family, fromBytes.isMonospace, fromBytes.has("a"))   // expect: Consolas true true
 // A collection holds several fonts.
 val math = Fonts.find("Cambria Math")!!
@@ -66,7 +66,7 @@ print(attempt { Fonts.load("no_such_font.ttf") })       // expect: IOException: 
 print(attempt { Fonts.load(Bytes(100)) })               // expect: IOException: <bytes>: not a TrueType or OpenType font
 print(Fonts.count("no_such_font.ttf"))                  // expect: 0
 // A font file cut short is refused or read as far as it goes: it never crashes.
-val whole = File(regular.path).readBytes()
+val whole = Path(regular.path).readBytes()
 var survived = 0
 for (keep in [12, 100, 1000, 5000, 20000, 100000]) {
   try {

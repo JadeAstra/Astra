@@ -13,8 +13,8 @@ val label = "x" + clock()
 @Named(3) class E                           // check: Named(...) takes a string for 'name', not an int
 @Named("a") @Named("b") class F             // check: @Named is written twice here
 @Test class G                               // check: @Test goes on a function, for astra test (D153)
-@Test fun t(@TempDir dir : File, @Named("p") n : int) { }
-@TempDir fun u() { }                        // check: @TempDir goes on a test's parameter, a File given a directory of its own (D153)
+@Test fun t(@TempDir dir : Path, @Named("p") n : int) { }
+@TempDir fun u() { }                        // check: @TempDir goes on a test's parameter, a Path given a directory of its own (D153)
 
 fun classes(p : Plain?, q : Plain) {
   print(p#)                                 // check: p may be null, which is of no class: write p!!#, or test it first (D48)

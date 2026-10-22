@@ -220,6 +220,7 @@ const OpInfo kOps[] = {
     {"CLASS_OF", Operand::U8},
     {"CLASS_META", Operand::U16U8},
     {"ATOMIC_FIELD", Operand::U16U8},
+    {"SETTLE_ENUM", Operand::None},
 };
 
 const char* const kTypeNames[] = {"", "int", "float", "Number", "string", "bool", "List", "Map", "Range", "Function", "Bytes", "Type", "",
@@ -905,6 +906,10 @@ static int analyzeStack(FunctionProto& f, const Program& program, bool partial) 
                     requireName(a);
                     if (b > 4) fail("bad atomic operation");
                     pops = b == 4 ? 3 : 2;
+                    pushes = 1;
+                    break;
+                case Op::SettleEnum:
+                    pops = 2;
                     pushes = 1;
                     break;
                 case Op::ClassMeta:

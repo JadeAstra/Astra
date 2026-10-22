@@ -34,12 +34,12 @@ val ticker = EventLoop.every(50.milliseconds) { ticks += 1 }
 task {
   val started = clock()
   try {
-    val worker = ProcessBuilder(Process.currentCommand() + ["work"]).start()
-    print("started process", worker.pid())
+    val worker = Process(Process.currentCommand() + ["work"])
+    print("started process", worker.pid)
 
     // readLine() sets this task aside until a line arrives. The loop and the thread go on.
     while (true) {
-      val line = worker.inputStream!!.readLine()
+      val line = worker.output.readLine()
       if (line == null) { break }
       val soFar = lock.useKey { checks }
       print("  %-12s (%d ticks, %d checks so far)".format(line, ticks, soFar))

@@ -32,8 +32,8 @@ class Window {
   val exitOnClose : bool
   val menuBar : any?
   val onClose : () -> unit
-  val onFilesDropped : (List<File>) -> unit
-  val onFilesDroppedAt : ((List<File>, int, int) -> bool)?
+  val onFilesDropped : (List<Path>) -> unit
+  val onFilesDroppedAt : ((List<Path>, int, int) -> bool)?
   val icons : List<BufferedImage>
   val onFront : () -> unit
   val owner : Window?
@@ -56,7 +56,7 @@ class Window {
   // A window with no owner ends the program when it is closed, and one with an owner does
   // not, unless `exitOnClose` says otherwise.
   fun init(root : Component, title : string = "Jade", initialWidth : int = 900, initialHeight : int = 640, exitOnClose : bool? = null, menuBar : any? = null,
-           onClose : () -> unit = {}, onFilesDropped : (List<File>) -> unit = {}, onFilesDroppedAt : ((List<File>, int, int) -> bool)? = null,
+           onClose : () -> unit = {}, onFilesDropped : (List<Path>) -> unit = {}, onFilesDroppedAt : ((List<Path>, int, int) -> bool)? = null,
            icons : List<BufferedImage>? = null, onFront : () -> unit = {}, owner : Window? = null, focus : Component? = null, dialog : bool = false,
            sizeToContent : bool = false, centerOnOwner : bool = false, resizable : bool = true, keyFilter : ((Event.KeyPress, Component?) -> bool)? = null) {
     this.currentRoot = root
@@ -293,7 +293,7 @@ class WindowHost : WindowHandle {
     }
     native.onCloseRequest = { close() }
     native.onFilesDropped = { paths, x, y ->
-      val files = paths.map { File(it) }
+      val files = paths.map { Path(it) }
       val at = window.onFilesDroppedAt
       if (at == null or !at(files, x, y)) { (window.onFilesDropped)(files) }
     }

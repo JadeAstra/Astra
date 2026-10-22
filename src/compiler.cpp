@@ -4722,7 +4722,29 @@ private:
         // Typed parameters are checked on entry: slot 0 is the callee or receiver, then the parameters.
         for (size_t i = 0; i < decl.params.size(); i++) {
             TypeSpec type = state.locals[i + 1].info.type;
-            if (!type.typed()) continue;
+            if (!type.typed()) {
+                // A union holding one enum takes that enum's entries by their bare names.
+                if (i < decl.paramTypes.size()) {
+                    std::string onlyEnum;
+                    int enums = 0;
+                    for (const TypeAnnotation& part : decl.paramTypes[i].unionOf) {
+                        const TypeSpec spec = resolveType(part);
+                        if (spec.id() == kTypeInstance && enumEntries(spec) != nullptr) {
+                            enums++;
+                            onlyEnum = spec.className;
+                        }
+                    }
+                    if (enums == 1) {
+                        emit(Op::GetLocal, static_cast<int>(i + 1));
+                        emitTypeName(onlyEnum, decl.paramTypes[i]);
+                        emit(Op::SettleEnum);
+                        if (i < 64) state.proto->classParams |= uint64_t{1} << i;
+                        emit(Op::SetLocal, static_cast<int>(i + 1));
+                        emit(Op::Pop);
+                    }
+                }
+                continue;
+            }
             if (type.id() != kTypeInstance) {
                 // Checked where it is, without being pushed and popped (M6.5 part 4).
                 emit(Op::CheckLocal, static_cast<int>(i + 1));

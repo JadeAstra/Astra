@@ -110,8 +110,8 @@ object Fonts {
 
   // A font from a file that is not installed, or from the bytes of one. A collection
   // (.ttc) holds several: `count` says how many, `index` picks one.
-  fun load(path : any, index : int = 0) : Typeface => Typeface(path is Bytes ? __text.fromBytes(path, index) : __text.load(path is File ? path.path : "$path", index))
-  fun count(path : any) : int => __text.countIn(path is File ? path.path : "$path")
+  fun load(path : Path | string | Bytes, index : int = 0) : Typeface => Typeface(path is Bytes ? __text.fromBytes(path, index) : __text.load("$path", index))
+  fun count(path : Path | string) : int => __text.countIn("$path")
 }
 
 // A typeface at a size: what text is measured and drawn with.
@@ -220,8 +220,8 @@ class Picture {
     const clear = 0
     fun rgb(red : int, green : int, blue : int, alpha : int = 255) : int => (alpha << 24) | (red << 16) | (green << 8) | blue
     // Reads a PNG file, or the bytes of one.
-    fun load(source : any) : Picture throws IOException {
-      val data = source is Bytes ? source : (source is File ? source : File(source)).readBytes()
+    fun load(source : Path | string | Bytes) : Picture throws IOException {
+      val data = source is Bytes ? source : (source is Path ? source : Path(source as string)).readBytes()
       val read = __text.decodePng(data)
       return Picture(read[0], read[1], 0, read[2])
     }
@@ -241,8 +241,8 @@ class Picture {
   }
 
   // Writes the picture as a PNG file. Nothing is lost: loading it gives the same pixels.
-  fun save(path : any) throws IOException {
-    (path is File ? path : File(path)).writeBytes(__text.encodePng(pixels, width, height))
+  fun save(path : Path | string) throws IOException {
+    (path is Path ? path : Path(path as string)).writeBytes(__text.encodePng(pixels, width, height))
   }
 
   // The bytes of the PNG file that save() would write.

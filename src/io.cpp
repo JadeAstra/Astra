@@ -18,20 +18,26 @@
 #endif
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <memory>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <unordered_map>
 
 #include "builtins.h"
+#include "charset.h"
 #include "vm.h"
 
 namespace astra {
 
 namespace {
 
-AstraThrow ioError(VM& vm, const std::string& message) { return vm.errorOf("IOException", message); }
+// A read that ran past a socket's readTimeout is a SocketTimeoutException, an IOException as in Java (D120).
+AstraThrow ioError(VM& vm, const std::string& message) {
+    return vm.errorOf(message == "the read timed out" ? "SocketTimeoutException" : "IOException", message);
+}
 
 #ifdef _WIN32
 
@@ -430,22 +436,45 @@ void registerIo(VM& vm) {
             });
     });
 
-    // The next line, without its line end; null at the end.
-    def("readLine", 1, 1, [](VM& vm, int, Value* args) -> Value {
+    // Everything up to the end, as text in the character set (D127).
+    def("readText", 1, 2, [](VM& vm, int argc, Value* args) -> Value {
         auto s = streamOf(vm, args[0]);
+        const Charset cs = charsetOf(vm, argc > 1 ? args[1] : Value::null());
+        auto out = std::make_shared<Outcome>();
+        return vm.blocking(
+            [=] {
+                std::lock_guard<std::mutex> hold(s->readMutex);
+                while (fill(*s, *out)) {}
+                if (!out->error.empty()) return;
+                out->data = decodeText(std::string_view(s->buffer).substr(s->position), cs);
+                s->buffer.clear();
+                s->position = 0;
+            },
+            [out](VM& vm) -> Value {
+                if (!out->error.empty()) throw ioError(vm, out->error);
+                return vm.str(std::move(out->data));
+            });
+    });
+
+    // The next line, without its line end, in the character set (D127); null at the end.
+    def("readLine", 1, 2, [](VM& vm, int argc, Value* args) -> Value {
+        auto s = streamOf(vm, args[0]);
+        const Charset cs = charsetOf(vm, argc > 1 ? args[1] : Value::null());
         auto out = std::make_shared<Outcome>();
         return vm.blocking(
             [=] {
                 std::lock_guard<std::mutex> hold(s->readMutex);
                 size_t searched = 0;  // how much of what is waiting has been looked through
+                const size_t unit = cs == Charset::Utf16Le || cs == Charset::Utf16Be ? 2 : 1;
                 for (;;) {
-                    const size_t at = s->buffer.find('\n', s->position + searched);
+                    size_t endSize = 1;
+                    const size_t at = lineEnd(s->buffer, s->position + searched, cs, endSize);
                     if (at != std::string::npos) {
                         out->data.assign(s->buffer, s->position, at - s->position);
-                        s->position = at + 1;
+                        s->position = at + endSize;
                         break;
                     }
-                    searched = s->buffer.size() - s->position;
+                    searched = (s->buffer.size() - s->position) / unit * unit;
                     if (!fill(*s, *out)) {
                         if (!out->error.empty()) return;
                         // The end: what is left is the last line, if anything is.
@@ -458,7 +487,7 @@ void registerIo(VM& vm) {
                         break;
                     }
                 }
-                if (!out->data.empty() && out->data.back() == '\r') out->data.pop_back();
+                out->data = decodeText(withoutCarriageReturn(std::move(out->data), cs), cs);
             },
             [out](VM& vm) -> Value {
                 if (!out->error.empty()) throw ioError(vm, out->error);
@@ -466,12 +495,13 @@ void registerIo(VM& vm) {
             });
     });
 
-    // Text (as UTF-8) or bytes. Returns when all of it has been handed to the system.
-    def("write", 2, 2, [](VM& vm, int, Value* args) -> Value {
+    // Text (in the character set, D127) or bytes. Returns when all of it has been handed to
+    // the system.
+    def("write", 2, 3, [](VM& vm, int argc, Value* args) -> Value {
         auto s = streamOf(vm, args[0]);
         std::string data;
         if (args[1].isObjType(ObjType::Bytes)) data.assign(asBytes(args[1])->data.begin(), asBytes(args[1])->data.end());
-        else data = vm.stringify(args[1]);
+        else data = encodeText(vm.stringify(args[1]), charsetOf(vm, argc > 2 ? args[2] : Value::null()));
         auto out = std::make_shared<Outcome>();
         return vm.blocking(
             [s, out, data = std::move(data)] {
@@ -588,6 +618,53 @@ void registerIo(VM& vm) {
                 out->number = s->exitCode.load();
             },
             [out](VM&) -> Value { return out->end ? Value::null() : Value::integer(out->number); });
+    });
+
+    // collect(process, output, error, charset): reads what a process writes to its output and
+    // its error output, each to its end, at the same time (so that neither fills up while the
+    // other is read), and waits for it to end. Gives [exit code, output, error], the text in
+    // the character set; either stream may be null, giving "".
+    def("collect", 4, 4, [](VM& vm, int, Value* args) -> Value {
+        auto process = streamOf(vm, args[0]);
+        std::shared_ptr<Stream> pipes[2] = {args[1].isNull() ? nullptr : streamOf(vm, args[1]), args[2].isNull() ? nullptr : streamOf(vm, args[2])};
+        const Charset cs = charsetOf(vm, args[3]);
+        auto out = std::make_shared<Outcome>();
+        auto texts = std::make_shared<std::array<std::string, 2>>();
+        return vm.blocking(
+            [=] {
+                std::string errors[2];
+                auto drain = [&](int k) {
+                    if (pipes[k] == nullptr) return;
+                    Stream& s = *pipes[k];
+                    std::lock_guard<std::mutex> hold(s.readMutex);
+                    Outcome mine;
+                    while (fill(s, mine)) {}
+                    errors[k] = mine.error;
+                    (*texts)[k] = decodeText(std::string_view(s.buffer).substr(s.position), cs);
+                    s.buffer.clear();
+                    s.position = 0;
+                };
+                std::thread second(drain, 1);
+                drain(0);
+                second.join();
+                out->error = !errors[0].empty() ? errors[0] : errors[1];
+                if (!process->exited.load()) {
+                    WaitForSingleObject(process->handle, INFINITE);
+                    DWORD code = 0;
+                    GetExitCodeProcess(process->handle, &code);
+                    process->exitCode = static_cast<int>(code);
+                    process->exited = true;
+                }
+                out->number = process->exitCode.load();
+            },
+            [out, texts](VM& vm) -> Value {
+                if (!out->error.empty()) throw ioError(vm, out->error);
+                ObjList* result = newList(vm);
+                TempRoot keepResult(vm, Value::object(result));
+                result->values().push_back(Value::integer(out->number));
+                for (std::string& text : *texts) result->values().push_back(vm.str(std::move(text)));
+                return Value::object(result);
+            });
     });
 
     def("processAlive", 1, 1, [](VM&, int, Value* args) -> Value {

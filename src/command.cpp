@@ -867,9 +867,9 @@ private:
             made.push_back(dir);
             const Value text = vm_.str(dir.string());
             TempRoot keepText(vm_, text);
-            const Value fileClass = vm_.globalAt(session_.globalOf(path_, "File"));
+            const Value pathClass = vm_.globalAt(session_.globalOf(path_, "Path"));
             try {
-                args.push_back(vm_.call(fileClass, 1, &text));
+                args.push_back(vm_.call(pathClass, 1, &text));
             } catch (AstraThrow& thrown) {
                 failure = describe(thrown);
                 ok = false;

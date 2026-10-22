@@ -83,8 +83,8 @@ td.when { min-width: 9em; }
 <nav>
 <h2>Contents</h2>
 <ul>
-<li><a href="#choices">Choices to confirm</a> (nineteen from the first half; seven from part 8, group 1; twelve from group 2; eleven from group 3; eleven from group 4; eleven from group 5; eleven from group 6; thirteen from group 7)</li>
-<li><a href="#gaps">Gaps left</a> (fifty-five)</li>
+<li><a href="#choices">Choices to confirm</a> (nineteen from the first half; seven from part 8, group 1; twelve from group 2; eleven from group 3; eleven from group 4; eleven from group 5; eleven from group 6; thirteen from group 7; eleven from group 8)</li>
+<li><a href="#gaps">Gaps left</a> (fifty-eight)</li>
 </ul>
 </nav>
 
@@ -724,6 +724,72 @@ td.when { min-width: 9em; }
 <div class="verdict"><span class="label">Your choice</span><span class="blank"></span></div>
 </section>
 
+<section class="decision" id="p8-walk-list">
+<h3><span class="code">8.8a</span>What list() and walk() give (part 8, group 8)</h3>
+<p>D138 has <code>list()</code> give Paths and <code>walk()</code> every path below, as a sequence. As built, both go in order of name; <code>list()</code> throws an IOException for something that is not a directory, where Java&#39;s <code>list()</code> gave null; <code>walk()</code> gives each directory before what is in it, not the directory it starts from (Kotlin&#39;s <code>walkTopDown</code> and Java&#39;s <code>Files.walk</code> give that too), and goes past a directory it cannot read without a word.</p>
+<div class="verdict"><span class="label">Your choice</span><span class="blank"></span></div>
+</section>
+
+<section class="decision" id="p8-delete">
+<h3><span class="code">8.8b</span>Deleting, and what fails (part 8, group 8)</h3>
+<p>D131 maps <code>Files.delete</code> to <code>delete()</code> and adds <code>deleteIfExists()</code>. As built, <code>delete()</code> throws an IOException where nothing is there or it cannot go (a directory not empty), as <code>Files.delete</code> does; <code>deleteIfExists()</code> gives whether it was there, and throws only where it could not go; <code>deleteRecursively()</code>, Kotlin&#39;s, gives whether anything went and does not throw. <code>mkdir</code>, <code>moveTo</code>, <code>copyTo</code>, <code>list</code>, <code>canonical</code> and the setters throw an IOException saying why.</p>
+<div class="verdict"><span class="label">Your choice</span><span class="blank"></span></div>
+</section>
+
+<section class="decision" id="p8-permissions">
+<h3><span class="code">8.8c</span>Permissions (part 8, group 8)</h3>
+<p>D131 adds <code>isExecutable</code> and the permission calls. As built: <code>isReadable()</code>, <code>isWritable()</code> and <code>isExecutable()</code>, and <code>setWritable(b)</code>. On Windows a file is writable unless its read-only flag is set, and runnable when its extension is one PATHEXT lists (<code>.exe</code>, <code>.cmd</code> and the rest), as <code>where</code> and the shell decide; there is no <code>setExecutable</code>, which Windows has nothing for. <code>lastModified()</code> and <code>setLastModified(ms)</code> keep Java&#39;s milliseconds since the start of 1970, Astra having no type for a moment in time yet.</p>
+<div class="verdict"><span class="label">Your choice</span><span class="blank"></span></div>
+</section>
+
+<section class="decision" id="p8-charset">
+<h3><span class="code">8.8d</span>What a Charset is (part 8, group 8)</h3>
+<p>D127 names the five sets. As built, <code>Charset</code> is an enum, so its entries go bare where a Charset is wanted (<code>path.readText(latin1)</code>). A character a set has no place for is written as <code>?</code>, as Java writes it, and bytes that spell no character in the set are read as U+FFFD, as for UTF-8. A Reader&#39;s and a Writer&#39;s <code>charset</code> may be changed as they go, for protocols that switch (a mail header, then a body), which is also how a socket&#39;s are set. UTF-16 is read and written without a byte order mark.</p>
+<div class="verdict"><span class="label">Your choice</span><span class="blank"></span></div>
+</section>
+
+<section class="decision" id="p8-unchecked-io">
+<h3><span class="code">8.8e</span>A line read lazily that fails (part 8, group 8)</h3>
+<p>D127 and L105 make <code>useLines</code> give the lines as they are read. A sequence&#39;s lambda cannot throw a checked exception (D35), so a read that fails there throws an <code>UncheckedIOException</code>, Java&#39;s name for the same thing (<code>Files.lines</code> does it), with the IOException as its <code>cause</code>. <code>useLines</code> itself still says <code>throws IOException</code>, for opening the file.</p>
+<div class="verdict"><span class="label">Your choice</span><span class="blank"></span></div>
+</section>
+
+<section class="decision" id="p8-socket-timeout">
+<h3><span class="code">8.8f</span>What a read past readTimeout throws (part 8, group 8)</h3>
+<p>D120 says a read past <code>readTimeout</code> throws a TimeoutException. As built it throws a <code>SocketTimeoutException</code>, Java&#39;s name, which is an IOException: every read says <code>throws IOException</code>, and a TimeoutException, which is not one, would have to be named on every read as well, or would escape what catches an IOException. <code>catch (e : SocketTimeoutException)</code> tells it from other failures.</p>
+<div class="verdict"><span class="label">Your choice</span><span class="blank"></span></div>
+</section>
+
+<section class="decision" id="p8-process-shape">
+<h3><span class="code">8.8g</span>A started program&#39;s members (part 8, group 8)</h3>
+<p>D91 and L70 give a started Process <code>input</code>, <code>output</code>, <code>error</code>, <code>waitFor(timeout)</code>, <code>isAlive</code> and <code>kill()</code>. As built, <code>input</code>, <code>output</code> and <code>error</code> are a Writer and Readers that are always there to read, so no <code>!!</code> is needed, and reading one that was sent elsewhere throws an IllegalStateException saying so. <code>waitFor()</code> gives the exit code; <code>waitFor(timeout)</code> gives it too, or null if the program is still running when the time is up (Java gave true or false). Besides: <code>exitCode</code> (null while it runs), <code>pid</code> as a property, a <code>charset</code> argument for the text of its streams, and <code>Process.currentCommand()</code> and <code>currentPid()</code>.</p>
+<div class="verdict"><span class="label">Your choice</span><span class="blank"></span></div>
+</section>
+
+<section class="decision" id="p8-process-run">
+<h3><span class="code">8.8h</span>What Process.run does (part 8, group 8)</h3>
+<p>L70 has <code>Process.run</code> take Process&#39;s arguments and give the exit code, output and error. As built, its output is always captured (there is no <code>output</code> argument); its errors are captured unless <code>error</code> says otherwise (<code>toOutput</code> puts them in the output); its input is <code>discard</code> unless given, so a program that asks for input gets none at once rather than waiting for typing nobody will do. Output and errors are read at the same time, so neither fills up while the other is read. It gives a <code>ProcessResult</code>, a data class of <code>exitCode</code>, <code>output</code> and <code>error</code>.</p>
+<div class="verdict"><span class="label">Your choice</span><span class="blank"></span></div>
+</section>
+
+<section class="decision" id="p8-stream-enum">
+<h3><span class="code">8.8i</span>Bare entries where a parameter is a union (part 8, group 8)</h3>
+<p>L70 writes a stream&#39;s target bare: <code>error = toOutput</code>. The parameter is <code>Stream | Path</code>, and bare entries reached only parameters declared as the enum itself. As built, a parameter declared as a union holding exactly one enum takes that enum&#39;s entries by their bare names too, in any program, not only the standard library&#39;s. The enum is named <code>Stream</code>, as L70 calls it.</p>
+<div class="verdict"><span class="label">Your choice</span><span class="blank"></span></div>
+</section>
+
+<section class="decision" id="p8-native-declared">
+<h3><span class="code">8.8j</span>What the C++ that reads and writes throws (part 8, group 8)</h3>
+<p>Gap 8.5f: the checker knew which of the C++ functions under <code>Path</code>, the readers and writers, processes and sockets throw an IOException from a table of its own. As built, those functions are declared in the standard library as <code>external object __file</code> and <code>external object __io</code>, each with its types and <code>throws IOException</code>, as <code>Math</code> is declared, and the checker reads them as it reads any declaration; the table is gone. The standard library&#39;s own calls of them are now checked for their types as well.</p>
+<div class="verdict"><span class="label">Your choice</span><span class="blank"></span></div>
+</section>
+
+<section class="decision" id="p8-jade-paths">
+<h3><span class="code">8.8k</span>Paths in Jade and in pictures and fonts (part 8, group 8)</h3>
+<p>D107 replaces <code>File</code> everywhere. As built, a window&#39;s <code>onFilesDropped</code> and <code>onFilesDroppedAt</code> give a <code>List&lt;Path&gt;</code> where they gave a <code>List&lt;File&gt;</code>; <code>Picture.load</code>, <code>save</code>, <code>Fonts.load</code> and <code>count</code>, and a surface&#39;s <code>save</code>, take a <code>Path</code> or its text (and <code>load</code> bytes too), where they took anything. <code>@TempDir</code> gives a Path. Nothing else of Jade&#39;s changed.</p>
+<div class="verdict"><span class="label">Your choice</span><span class="blank"></span></div>
+</section>
+
 <h2 id="gaps">Gaps left</h2>
 <p class="note">Each is known, and the code around it is tested; none gives a wrong result. Most make something slower or leave a feature for a later part.</p>
 
@@ -770,7 +836,6 @@ td.when { min-width: 9em; }
 <tr><td class="part">8.4</td><td>Where the checker cannot tell the type of a block run on an object, <code>this</code> in it is the method&#39;s object, as before (D58).</td><td class="when">Not placed yet</td></tr>
 <tr><td class="part">8.5</td><td>A getter or setter cannot write <code>throws</code>, and a setter&#39;s exceptions are not followed to the assignment; a getter&#39;s are (D35).</td><td class="when">Not placed yet</td></tr>
 <tr><td class="part">8.5</td><td>An <code>extend</code>&#39;s bridging getters are not checked against what the interface&#39;s members may throw (D53).</td><td class="when">Not placed yet</td></tr>
-<tr><td class="part">8.5</td><td>The C++ functions that throw IOException are known by a table in the checker, not by declarations of their own (8.5f).</td><td class="when">Group 8, files</td></tr>
 <tr><td class="part">8.5</td><td>An error from <code>close()</code> after one from the block of <code>use { }</code> replaces it, where Java keeps it as suppressed (8.5i).</td><td class="when">Not placed yet</td></tr>
 <tr><td class="part">8.5</td><td>Working out what is thrown costs about half a millisecond more at every start, and checking Jade whole 25% more (13.5 ms against 10.8).</td><td class="when">With the next measurements</td></tr>
 <tr><td class="part">8.6</td><td>D50&#39;s following of which classes&#39; objects reach each <code>x#</code> is done by a simpler rule that keeps more (8.6g).</td><td class="when">Not placed yet</td></tr>
@@ -784,6 +849,10 @@ td.when { min-width: 9em; }
 <tr><td class="part">8.7</td><td>A sequence&#39;s block may go 4,000 calls deep, as a task may, where a thread may go 20,000.</td><td class="when">Not placed yet</td></tr>
 <tr><td class="part">8.7</td><td><code>yieldAll</code> takes a sequence or a list, and a map has no <code>asSequence()</code> (its <code>entries.toList()</code> has).</td><td class="when">Not placed yet</td></tr>
 <tr><td class="part">8.7</td><td><code>@Timeout</code> and Jade&#39;s <code>scheduler</code> take int milliseconds, not a Duration (8.7e).</td><td class="when">Your choice on 8.7e</td></tr>
+<tr><td class="part">8.8</td><td>Five character sets only; Windows-1252, which old mail uses, and others can be added without changing a call (D127). UTF-16 is read without looking for a byte order mark.</td><td class="when">Not placed yet</td></tr>
+<tr><td class="part">8.8</td><td>A file's times are int milliseconds since 1970, and there is no type for a moment in time (8.8c).</td><td class="when">Not placed yet</td></tr>
+<tr><td class="part">8.8</td><td><code>walk()</code> goes past a directory it cannot read without a word (8.8a).</td><td class="when">Not placed yet</td></tr>
+<tr><td class="part">8.8</td><td>Processes and sockets are there on Windows only, as before; <code>Path</code> works everywhere.</td><td class="when">Not placed yet</td></tr>
 <tr><td class="part">All</td><td>Under MSVC, code placement alone moves the <code>fields</code> benchmark by 10 to 20% with the same loop. Not a gap in Astra, but a caution in reading timings: compare against a baseline built the same way, and count instructions, before calling a change slower.</td><td class="when">D160: the Clang build's dispatch, M6.7</td></tr>
 </tbody>
 </table></div>

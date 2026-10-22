@@ -292,3 +292,63 @@ can change, and an `==` without a `hashCode`.
 error that names what Astra has in their place. A wait given a bare number (`Thread.sleep(100)`)
 says to write `100.milliseconds`; a `Channel<T>()` without a capacity says to choose one; and
 `lock.lock()` or `lock.withLock { }` says to use `useKey`.
+
+## Files and input and output (M6.6 part 8, group 8)
+
+### What to write instead
+
+| Kotlin | Astra | |
+| --- | --- | --- |
+| `File(p)`, `Paths.get(p)`, `Path.of(p)` | `Path(p)` | one type for a path (D107) |
+| `File(dir, name)`, `dir.resolve(name)` | `Path(dir, name)`, `dir.resolve(name)` | |
+| `Files.readAllBytes(p)`, `Files.exists(p)` and the rest | `p.readBytes()`, `p.exists()` | `Files.x(p)` is `p.x()` (D131) |
+| `file.path`, `file.toString()` | `path.text`, `"$path"` | (D137) |
+| `file.parentFile`, `file.parent` as text | `path.parent`, `path.parent?.text` | null at the top (D128) |
+| `file.absolutePath`, `absoluteFile` | `path.absolute.text`, `path.absolute` | (D135) |
+| `file.canonicalFile`, `toRealPath()` | `path.canonical()` | an `IOException` if it is not there |
+| `file.isFile`, `isDirectory` | `path.isFile()`, `path.isDirectory()` | what asks the disk is a function (D150) |
+| `file.length()` | `path.size()` | |
+| `file.list()`, `listFiles()` | `dir.list()` | gives `Path`s; `.map { it.name }` for names (D138) |
+| `walkTopDown()`, `Files.walk(p)` | `dir.walk()` | a sequence of every path below |
+| `mkdirs()`, `Files.createDirectories(p)` | `mkdir()` | `mkdir(parents = false)` for just one (D126) |
+| `renameTo(b)`, `Files.move(a, b)` | `a.moveTo(b)` | throws where it cannot (D129) |
+| `Files.createTempDirectory(prefix)` | `Path.createTempDirectory(prefix)` | and `createTempFile(prefix, suffix)` |
+| `file.inputStream()`, `bufferedReader()` | `path.reader()` | a `Reader`, bytes and text (D119) |
+| `file.outputStream()`, `bufferedWriter()`, `printWriter()` | `path.writer(append = ...)` | a `Writer` |
+| `InputStream`, `OutputStream` | `Reader`, `Writer` | |
+| `Charsets.UTF_8`, `StandardCharsets.ISO_8859_1` | `Charset.utf8`, `Charset.latin1` | also `ascii`, `utf16le`, `utf16be` (D127) |
+| `s.toByteArray(cs)`, `String(bytes, cs)` | `s.toBytes(cs)`, `bytes.decodeToString(cs)` | |
+| `ProcessBuilder(cmd).directory(d).start()` | `Process(cmd..., directory = d)` | `input`, `output`, `error` as named arguments (D91) |
+| `redirectErrorStream(true)` | `error = toOutput` | |
+| `redirectOutput(file)` | `output = path` | |
+| `process.inputStream`, `outputStream`, `errorStream` | `process.output`, `process.input`, `process.error` | named for what the program does |
+| `process.destroy()`, `exitValue()` | `process.kill()`, `process.exitCode` | |
+| run, read the output, wait | `Process.run(cmd...)` | gives `exitCode`, `output` and `error` as text |
+| `socket.getInputStream()`, `getOutputStream()` | `socket.reader`, `socket.writer` | (D120) |
+| `socket.soTimeout = 5000` | `socket.readTimeout = 5.seconds` | past it a `SocketTimeoutException` |
+
+### What compiles but means something else
+
+- **What asks the disk is a function**: `path.isDirectory()`, `path.size()`, so a property never
+  throws or touches the disk. Ported `file.isDirectory` without parentheses is the function, an
+  error wherever a bool is wanted.
+- **Failing throws.** `mkdir`, `delete`, `moveTo` and `list` throw an `IOException` saying why,
+  where Java's `File` gave false or null; `deleteIfExists()` gives whether it was there.
+- **`list()` gives Paths**, not names.
+- **Text is UTF-8 unless a Charset says otherwise**, and a charset argument does what it says:
+  ported `Charsets.UTF_8` is deleted or written `Charset.utf8`, and `ISO_8859_1` really reads
+  Latin-1.
+- **A Reader and a Writer carry bytes and text alike**, unlike Java's, and read ahead already.
+- **A line read lazily** (`lineSequence()`, `useLines`) that fails throws an
+  `UncheckedIOException`, as Java's `Files.lines` does.
+- **`Process.run` gives the program nothing to read** unless `input` says otherwise.
+- **A socket's reads block their thread**, even in a task: a server serves each connection from
+  a thread or a pool's job.
+
+### What the compiler says
+
+`File`, `Files`, `Paths`, `InputStream`, `OutputStream`, `BufferedReader`, `BufferedWriter`,
+`PrintWriter`, `ProcessBuilder`, `Charsets` and `StandardCharsets` are each an error naming what
+to write, and so are Java's members of a file, a stream, a process and a socket that Astra
+names otherwise (`parentFile`, `absolutePath`, `listFiles`, `mkdirs`, `renameTo`, `toFile`,
+`inputStream`, `destroy`, `soTimeout` and the rest) and `toByteArray`.

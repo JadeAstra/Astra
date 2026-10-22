@@ -425,7 +425,7 @@ class BufferedImage {
   // pixels to the unit: what a window's picture is on a dense screen.
   fun canvasAt(width : int, height : int, scale : Number) => onCard().canvasAt(width, height, scale, this)
 
-  fun save(path : any) throws IOException {
+  fun save(path : Path | string) throws IOException {
     memory().save(path)
   }
 

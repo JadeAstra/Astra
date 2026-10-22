@@ -130,8 +130,8 @@ try { [one, Ball(1, 1, 1, 1), one].parallelStream().forEach { it.move(9, 9, 1) }
 val lock = Lock()
 refused { lock.useKey { it.x } }
 // expect: thread.enter() cannot be used in a parallel section: nothing waits there, and what the whole program has one of is left alone
-refused { try { File("x").readText() } catch (e : IOException) { } }
-// expect: File.read() cannot be used in a parallel section: nothing waits there, and what the whole program has one of is left alone
+refused { try { Path("x").readText() } catch (e : IOException) { } }
+// expect: Path.read() cannot be used in a parallel section: nothing waits there, and what the whole program has one of is left alone
 // A section may start another inside it, its items dealt out from what its core has.
 print(rows.parallelStream().map { row -> row.parallelStream().map { it * 2 }.toList() }.toList()[3])   // expect: [-6, 12]
 refused { task { 1 } }

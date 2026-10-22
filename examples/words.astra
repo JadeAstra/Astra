@@ -60,8 +60,8 @@ val report = StringBuilder()
 report.appendLine("word,count")
 ranked.forEach { report.append(it.key).append(",").appendLine(it.value) }
 
-// A File is a path; the disk is touched when something is asked of it.
-val file = File("words-report.csv")
+// A Path names a file; the disk is touched when something is asked of it.
+val file = Path("words-report.csv")
 file.writeText(report.toString())
 val rows = file.readLines().drop(1).map { it.split(",") }
 print()

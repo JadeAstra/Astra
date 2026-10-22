@@ -61,6 +61,11 @@ class CancellationException(message : string? = "the task was cancelled") : Ille
 
 // Reading, writing, connecting or starting a program went wrong.
 class IOException(message : string? = null, cause : Throwable? = null) : Exception(message, cause)
+// A socket's read that waited longer than its readTimeout (D120), an IOException as in Java.
+class SocketTimeoutException(message : string? = "the read timed out") : IOException(message)
+// An IOException where nothing checked can be thrown: a line read lazily by a sequence. `cause`
+// is the IOException, as in Java.
+class UncheckedIOException(cause : IOException) : RuntimeException(cause.message, cause)
 // A wait with a time limit ran out of time.
 class TimeoutException(message : string? = "the time ran out") : Exception(message)
 // What a task threw, given by what waited for its result: `cause` is that.

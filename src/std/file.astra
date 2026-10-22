@@ -1,149 +1,210 @@
-// ---- Files ----
+// ---- Paths ----
 
-// A file or folder on disk, by its path. Making a File touches nothing: the disk is only
-// looked at when something is asked of it.
+// A file or directory on disk, by its path (D107): Java's File and java.nio.file.Path in one.
+// Making a Path touches nothing; what is in the path (name, parent, extension) is a property,
+// and what asks the disk (exists(), size(), list()) is a function (D150).
 //
-//   val notes = File("notes.txt")
+//   val notes = Path("notes.txt")
 //   if (notes.exists()) { print(notes.readText()) }
-//   File(folder, "out.bin").writeBytes(data)
+//   Path(directory, "out.bin").writeBytes(data)
+//   for file in Path("src").walk() { if (file.extension == "astra") { print(file.name) } }
 //
-// The work itself is done by the built-in __file, which only the standard library can name.
-class File {
-  val path : string
+// Text is UTF-8 unless a Charset says otherwise (D127). The work itself is done by the
+// built-in __file, which only the standard library can name.
+class Path {
+  // The path as it was made (D137).
+  val text : string
 
-  // File(path), or File(folder, name) for something inside a folder. The folder may be a
-  // File or a path.
-  fun init(path : any, child : any? = null) {
-    val base = path is File ? path.path : "$path"
-    this.path = child == null ? base : __file.join(base, child is File ? child.path : "$child")
+  // Path(text), or Path(directory, name) for something inside a directory, the directory a
+  // Path or text.
+  fun init(path : Path | string, child : (Path | string)? = null) {
+    val base = path is Path ? path.text : path as string
+    this.text = child == null ? base : __file.join(base, child is Path ? child.text : child as string)
   }
 
   static {
-    // By path, without making a File: File.read("a.txt")
-    fun read(path : string) : string throws IOException => __file.read(path)
-    fun write(path : string, text : string) throws IOException { __file.write(path, text) }
-    fun append(path : string, text : string) throws IOException { __file.append(path, text) }
-    fun exists(path : string) : bool => __file.exists(path)
+    // What separates the names in a path on this system: "\" on Windows.
     val separator : string = __file.separator
+
+    // A new, empty directory or file in the system's temporary directory, its name starting with
+    // `prefix` (D131).
+    fun createTempDirectory(prefix : string = "astra") : Path throws IOException => Path(__file.createTemp(prefix, "", true))
+    fun createTempFile(prefix : string = "astra", suffix : string = ".tmp") : Path throws IOException => Path(__file.createTemp(prefix, suffix, false))
   }
+
   // -- What the path says --
 
-  // The last name in the path: File("a/b.txt").name is "b.txt".
+  // The last name in the path: Path("a/b.txt").name is "b.txt".
   val name : string
-    get() => __file.name(this.path)
+    get() => __file.name(text)
 
   // What follows the last dot of the name, without the dot; "" if there is none.
   val extension : string
     get() {
-      val whole : string = __file.name(this.path)
+      val whole : string = __file.name(text)
       val dot = whole.lastIndexOf(".")
       return dot < 0 ? "" : whole[dot + 1..]
     }
 
   val nameWithoutExtension : string
     get() {
-      val whole : string = __file.name(this.path)
+      val whole : string = __file.name(text)
       val dot = whole.lastIndexOf(".")
       return dot < 0 ? whole : whole[0..<dot]
     }
 
-  // The folder it is in, as a path and as a File; null if the path names none.
-  val parent : string?
-    get() => __file.parent(this.path)
-
-  val parentFile : File?
+  // The directory it is in; null at the top (C:\, /) and for a bare name (D128).
+  val parent : Path?
     get() {
-      val folder : string? = __file.parent(this.path)
-      return folder == null ? null : File(folder)
+      val directory : string? = __file.parent(text)
+      return directory == null ? null : Path(directory)
     }
 
-  val absolutePath : string
-    get() => __file.absolute(this.path)
-  val absoluteFile : File
-    get() => File(__file.absolute(this.path))
+  // Made whole from the current directory; it need not exist (D135).
+  val absolute : Path
+    get() => Path(__file.absolute(text))
 
-  // Something inside this folder: File("a").resolve("b.txt") is a/b.txt.
-  fun resolve(child : any) : File => File(this.path, child)
+  // Something inside this directory: Path("a").resolve("b.txt") is a/b.txt.
+  fun resolve(child : Path | string) : Path => Path(this, child)
 
   // -- What is on disk --
 
-  fun exists() : bool => __file.exists(this.path)
-  val isFile : bool
-    get() => __file.isFile(this.path)
-  val isDirectory : bool
-    get() => __file.isDirectory(this.path)
+  fun exists() : bool => __file.exists(text)
+  fun isFile() : bool => __file.isFile(text)
+  fun isDirectory() : bool => __file.isDirectory(text)
+  fun isReadable() : bool => (__file.permissions(text) & 4) != 0
+  fun isWritable() : bool => (__file.permissions(text) & 2) != 0
+  // Whether it can be run as a program: on Windows, a file whose extension PATHEXT lists.
+  fun isExecutable() : bool => (__file.permissions(text) & 1) != 0
 
-  // The size in bytes, and when it was last written in milliseconds since the start of
-  // 1970. Both are 0 for a file that is not there.
-  fun size() : int => __file.size(this.path)
-  fun lastModified() : int => __file.lastModified(this.path)
+  // The size in bytes, and when it was last written in milliseconds since the start of 1970.
+  // Both are 0 for a file that is not there.
+  fun size() : int => __file.size(text)
+  fun lastModified() : int => __file.lastModified(text)
 
-  // The names in a folder, in order, and the same as Files. Null if it is not a folder.
-  fun list() : open List<string>? => __file.list(this.path)
+  // With `.`, `..` and links worked out; an IOException if it is not there (D135).
+  fun canonical() : Path throws IOException => Path(__file.canonical(text))
 
-  fun listFiles() : open List<File>? {
-    val names : open List<string>? = __file.list(this.path)
-    if (names == null) { return null }
-    val folder = this.path
-    return names.map { File(folder, it) }
+  // What is directly in this directory, in order of name; an IOException if it is not a
+  // directory (D138).
+  fun list() : open List<Path> throws IOException {
+    val names : List<string> = __file.list(text)
+    val directory = this
+    return names.map { Path(directory, it) }
+  }
+
+  // Every path below this directory, each directory before what is in it, read as it goes.
+  fun walk() : Sequence<Path> {
+    val top = this
+    return sequence { __walkBelow(top) }
   }
 
   // -- Reading and writing --
-  // Text is UTF-8. Each call reads or writes the whole file.
+  // Each call reads or writes the whole file.
 
-  fun readText() : string throws IOException => __file.read(this.path)
+  fun readText(charset : Charset = Charset.utf8) : string throws IOException => __file.read(text, charset)
+  fun readBytes() : Bytes throws IOException => __file.readBytes(text)
 
   // The lines of the file, without their line ends.
-  fun readLines() : open List<string> throws IOException {
-    val text : string = __file.read(this.path)
-    val lines = text.lines()
+  fun readLines(charset : Charset = Charset.utf8) : open List<string> throws IOException {
+    val lines = readText(charset).lines()
     // A file that ends in a line end has no empty last line.
     if (lines.size > 0 and lines[lines.size - 1] == "") { lines.removeLast() }
     return lines
   }
 
-  fun forEachLine(action : (string) -> unit) throws IOException {
-    for line in readLines() { action(line) }
+  // The lines one at a time, as they are read.
+  fun forEachLine(charset : Charset = Charset.utf8, action : (string) -> unit) throws IOException {
+    reader(charset).use { it.forEachLine(action) }
   }
 
-  fun readBytes() : Bytes throws IOException => __file.readBytes(this.path)
+  // The block given the lines as a sequence, read as it goes; the file is closed afterwards.
+  fun <R> useLines(charset : Charset = Charset.utf8, block : (Sequence<string>) -> R) : R throws IOException {
+    return reader(charset).use { block(it.lineSequence()) }
+  }
 
-  // A piece at a time: a stream to read the file from, and one to write it to. Close each
-  // when it is done with, or let use { } do it: file.inputStream().use { it.readLine() }
-  fun inputStream() : InputStream throws IOException => InputStream(__io.open(this.path, "r"))
-  fun outputStream(append : bool = false) : OutputStream throws IOException => OutputStream(__io.open(this.path, append ? "a" : "w"))
-  fun bufferedReader(charset : any? = null) : InputStream throws IOException => inputStream()
-  fun reader(charset : any? = null) : InputStream throws IOException => inputStream()
-  fun bufferedWriter(charset : any? = null) : OutputStream throws IOException => outputStream()
-  fun writer(charset : any? = null) : OutputStream throws IOException => outputStream()
-  fun printWriter(charset : any? = null) : OutputStream throws IOException => outputStream()
+  fun writeText(text : string, charset : Charset = Charset.utf8) throws IOException { __file.write(this.text, text, charset) }
+  fun appendText(text : string, charset : Charset = Charset.utf8) throws IOException { __file.append(this.text, text, charset) }
+  fun writeBytes(data : Bytes) throws IOException { __file.writeBytes(text, data) }
+  fun appendBytes(data : Bytes) throws IOException { __file.appendBytes(text, data) }
 
-  // Runs the block on the file's lines.
-  fun <R> useLines(block : (List<string>) -> R) : R throws IOException => block(readLines())
-
-  fun writeText(text : string) throws IOException { __file.write(this.path, text) }
-  fun appendText(text : string) throws IOException { __file.append(this.path, text) }
-  fun writeBytes(data : Bytes) throws IOException { __file.writeBytes(this.path, data) }
-  fun appendBytes(data : Bytes) throws IOException { __file.appendBytes(this.path, data) }
+  // A piece at a time (D119): close each when it is done with, or let use { } do it.
+  //   path.reader().use { it.readLine() }
+  fun reader(charset : Charset = Charset.utf8) : Reader throws IOException => Reader(__io.open(text, "r"), charset)
+  fun writer(append : bool = false, charset : Charset = Charset.utf8) : Writer throws IOException =>
+    Writer(__io.open(text, append ? "a" : "w"), charset)
 
   // -- Changing what is on disk --
 
-  // Each gives true if it did what was asked. delete() takes a file or an empty folder.
-  fun delete() : bool => __file.delete(this.path)
-  fun deleteRecursively() : bool => __file.deleteRecursively(this.path)
-  fun mkdirs() : bool => __file.mkdirs(this.path)
-  fun mkdir() : bool => __file.mkdirs(this.path)
-  fun renameTo(target : any) : bool => __file.rename(this.path, target is File ? target.path : "$target")
+  // The directory, and any missing above it unless `parents` is false (D126). One there already
+  // is no failure.
+  fun mkdir(parents : bool = true) throws IOException { __file.mkdir(text, parents) }
 
-  // Gives the File it was copied to. It is an error if that is there already, unless
-  // `overwrite` is true.
-  fun copyTo(target : any, overwrite : bool = false) : File throws IOException {
-    val to = target is File ? target : File(target)
-    __file.copy(this.path, to.path, overwrite)
+  // A file or an empty directory: an IOException if it is not there or cannot go (D131).
+  fun delete() throws IOException { __file.delete(text, true) }
+  // The same, giving whether it was there to delete; an IOException only where it could not go.
+  fun deleteIfExists() : bool throws IOException => __file.delete(text, false)
+  // Everything below it too; whether anything was deleted.
+  fun deleteRecursively() : bool => __file.deleteRecursively(text)
+
+  // Each gives the Path it went to; an IOException if something is there and `overwrite` is
+  // false, or it cannot be done (D129).
+  fun moveTo(target : Path | string, overwrite : bool = false) : Path throws IOException {
+    val to = target is Path ? target : Path(target as string)
+    __file.move(text, to.text, overwrite)
     return to
   }
 
-  op ==(other : any?) : bool => other is File and other.path == this.path
-  fun hashCode() : int => path.hashCode()
-  fun toString() : string => this.path
+  fun copyTo(target : Path | string, overwrite : bool = false) : Path throws IOException {
+    val to = target is Path ? target : Path(target as string)
+    __file.copy(text, to.text, overwrite)
+    return to
+  }
+
+  fun setWritable(writable : bool) throws IOException { __file.setWritable(text, writable) }
+  fun setLastModified(millis : int) throws IOException { __file.setLastModified(text, millis) }
+
+  op ==(other : any?) : bool => other is Path and other.text == this.text
+  fun hashCode() : int => text.hashCode()
+  override fun toString() : string => text
+}
+
+// The paths below `directory`, for walk(): each, and below each directory what is in it.
+suspend fun SequenceScope<Path>.__walkBelow(directory : Path) {
+  val inside = try { directory.list() } catch (e : IOException) { listOf<Path>() }
+  for path in inside {
+    yield(path)
+    if (path.isDirectory()) { __walkBelow(path) }
+  }
+}
+
+// What Path is built on (stdlib.cpp), declared with its types and what it throws.
+external object __file {
+  val separator : string
+  fun read(path : string, charset : Charset = Charset.utf8) : string throws IOException
+  fun write(path : string, text : string, charset : Charset = Charset.utf8) throws IOException
+  fun append(path : string, text : string, charset : Charset = Charset.utf8) throws IOException
+  fun readBytes(path : string) : Bytes throws IOException
+  fun writeBytes(path : string, data : Bytes) throws IOException
+  fun appendBytes(path : string, data : Bytes) throws IOException
+  fun exists(path : string) : bool
+  fun isFile(path : string) : bool
+  fun isDirectory(path : string) : bool
+  fun permissions(path : string) : int
+  fun size(path : string) : int
+  fun lastModified(path : string) : int
+  fun delete(path : string, mustExist : bool) : bool throws IOException
+  fun deleteRecursively(path : string) : bool
+  fun mkdir(path : string, parents : bool) throws IOException
+  fun move(from : string, to : string, overwrite : bool) throws IOException
+  fun copy(from : string, to : string, overwrite : bool) throws IOException
+  fun list(path : string) : open List<string> throws IOException
+  fun canonical(path : string) : string throws IOException
+  fun absolute(path : string) : string
+  fun setWritable(path : string, writable : bool) throws IOException
+  fun setLastModified(path : string, millis : int) throws IOException
+  fun createTemp(prefix : string, suffix : string, directory : bool) : string throws IOException
+  fun name(path : string) : string
+  fun parent(path : string) : string?
+  fun join(base : string, child : string) : string
 }

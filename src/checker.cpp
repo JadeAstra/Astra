@@ -1992,6 +1992,7 @@ struct Checker::Impl {
     static std::string goneAdvice(const std::string& name) {
         static const std::unordered_map<std::string, std::string> gone = {
             {"length", "'length' is written 'size': every count of things is size (D130)"},
+            {"toByteArray", "toByteArray(charset) is written toBytes(charset), and String(bytes, charset) bytes.decodeToString(charset) (D127)"},
             {"push", "push() is written add(), or addAll() for several: one name for each thing (D74)"},
             {"pop", "pop() is written removeLast(): one name for each thing (D74)"},
             {"uppercase", "uppercase() is written upper(): one name for each thing (D74)"},
@@ -2050,10 +2051,90 @@ struct Checker::Impl {
             {"suspendCoroutine", "suspendCoroutine is suspendTask { resume -> ... } in Astra: resume(value) takes the task up again, resume.fail(e) throws e there (D81)"},
             {"Continuation", "a Continuation is suspendTask's resume in Astra, a plain function: resume(value), resume.fail(e) (D81)"},
             {"EmptyCoroutineContext", "a task needs no context in Astra: task { ... } (D81)"},
+            // Files and input and output (D91, D107, D119, D127, D131, D136).
+            {"File", "a file or directory is a Path in Astra: Path(\"notes.txt\"), Path(directory, name); Path(p).readText(), writeText(text), appendText(text) and exists() in place of File.read, write, append and exists (D107, D136)"},
+            {"Files", "Files.x(p) is p.x() in Astra, on the Path: p.readText(), p.readBytes(), p.mkdir(), a.moveTo(b), p.list(), p.walk() (D131)"},
+            {"Paths", "Paths.get(s) is Path(s) in Astra (D131)"},
+            {"InputStream", "something to read from is a Reader in Astra, bytes and text alike: path.reader(), process.output, socket.reader (D119)"},
+            {"OutputStream", "something to write to is a Writer in Astra, bytes and text alike: path.writer(append = ...), process.input, socket.writer (D119)"},
+            {"BufferedReader", "a Reader in Astra reads ahead already: path.reader() (D119)"},
+            {"BufferedWriter", "a Writer in Astra: path.writer() (D119)"},
+            {"PrintWriter", "a Writer in Astra has print and println: path.writer() (D119)"},
+            {"ProcessBuilder", "a program is started with Process(command..., directory = ..., environment = {...}, input = ..., output = ..., error = ...) in Astra, or run to its end with Process.run(...) (D91)"},
+            {"Charsets", "a character set is a Charset in Astra: Charset.utf8, latin1, ascii, utf16le, utf16be (D127)"},
+            {"StandardCharsets", "a character set is a Charset in Astra: Charset.utf8, latin1, ascii, utf16le, utf16be (D127)"},
         };
         auto found = gone.find(name);
         return found == gone.end() ? std::string() : found->second;
     }
+    // What Java's members of a file, a stream, a process or a socket are in Astra (D91, D107,
+    // D119, D120, D126, D128 to D131, D135, D137, D138), by the class of the standard library
+    // they were asked of.
+    static std::string ioAdvice(const std::string& cls, const std::string& name) {
+        static const std::unordered_map<std::string, std::string> path = {
+            {"parentFile", "parentFile is written parent, a Path: path.parent?.name, path.parent?.text (D128)"},
+            {"absolutePath", "absolutePath is written absolute, a Path: path.absolute.text for the text (D135)"},
+            {"absoluteFile", "absoluteFile is written absolute, a Path (D135)"},
+            {"canonicalPath", "canonicalPath is written canonical(), a Path: path.canonical().text for the text (D135)"},
+            {"canonicalFile", "canonicalFile is written canonical(), a Path (D135)"},
+            {"toAbsolutePath", "toAbsolutePath() is written absolute, a Path (D135)"},
+            {"toRealPath", "toRealPath() is written canonical() (D135)"},
+            {"path", "the text of a Path is written text: path.text, or \"$path\" (D137)"},
+            {"getPath", "the text of a Path is written text: path.text, or \"$path\" (D137)"},
+            {"fileName", "fileName is written name (D131)"},
+            {"listFiles", "listFiles() is written list(), which gives Paths: dir.list() (D138)"},
+            {"walkTopDown", "walkTopDown() is written walk(): every path below, as a sequence (D138)"},
+            {"mkdirs", "mkdirs() is written mkdir(), which makes any missing directories above too (D126)"},
+            {"renameTo", "renameTo is written moveTo(target), which throws an IOException where it cannot move (D129)"},
+            {"toPath", "there is one type for a path in Astra, Path: the call goes (D131)"},
+            {"toFile", "there is one type for a path in Astra, Path: the call goes (D131)"},
+            {"inputStream", "a file is read with path.reader() (D119)"},
+            {"bufferedReader", "a file is read with path.reader(), which reads ahead already (D119)"},
+            {"outputStream", "a file is written with path.writer(append = ...) (D119)"},
+            {"bufferedWriter", "a file is written with path.writer(append = ...) (D119)"},
+            {"printWriter", "a file is written with path.writer(append = ...), which has print and println (D119)"},
+            {"isAbsolute", "a path made whole is path.absolute (D135)"},
+        };
+        static const std::unordered_map<std::string, std::string> stream = {
+            {"bufferedReader", "a Reader reads ahead already: the call goes (D119)"},
+            {"buffered", "a Reader or Writer is buffered already: the call goes (D119)"},
+            {"reader", "this is a Reader already: the call goes (D119)"},
+            {"bufferedWriter", "a Writer is buffered already: the call goes (D119)"},
+            {"writer", "this is a Writer already: the call goes (D119)"},
+            {"printWriter", "a Writer has print and println: the call goes (D119)"},
+            {"readAllBytes", "readAllBytes() is written readBytes() (D119)"},
+            {"lines", "the lines as a sequence are lineSequence(), and all of them readLines() (D119)"},
+        };
+        static const std::unordered_map<std::string, std::string> process = {
+            {"inputStream", "what a program writes is process.output, a Reader (D91)"},
+            {"errorStream", "what a program writes as errors is process.error, a Reader (D91)"},
+            {"outputStream", "what a program reads is process.input, a Writer (D91)"},
+            {"getInputStream", "what a program writes is process.output, a Reader (D91)"},
+            {"getOutputStream", "what a program reads is process.input, a Writer (D91)"},
+            {"getErrorStream", "what a program writes as errors is process.error, a Reader (D91)"},
+            {"destroy", "a program is ended with kill() (D91)"},
+            {"destroyForcibly", "a program is ended with kill() (D91)"},
+            {"exitValue", "the exit code is exitCode, null while the program runs, or waitFor() (D91)"},
+            {"pid", "a program's number is pid, a property (D91)"},
+        };
+        static const std::unordered_map<std::string, std::string> socket = {
+            {"inputStream", "what comes from the other side is socket.reader (D120)"},
+            {"outputStream", "what goes to the other side is socket.writer (D120)"},
+            {"getInputStream", "what comes from the other side is socket.reader (D120)"},
+            {"getOutputStream", "what goes to the other side is socket.writer (D120)"},
+            {"soTimeout", "a read's time limit is readTimeout, a Duration: socket.readTimeout = 5.seconds (D120)"},
+            {"setSoTimeout", "a read's time limit is readTimeout, a Duration: socket.readTimeout = 5.seconds (D120)"},
+            {"getSoTimeout", "a read's time limit is readTimeout, a Duration (D120)"},
+        };
+        const std::unordered_map<std::string, std::string>* table = cls == "Path" ? &path
+                                                                 : cls == "Reader" || cls == "Writer" ? &stream
+                                                                 : cls == "Process" ? &process
+                                                                 : cls == "Socket" ? &socket : nullptr;
+        if (table == nullptr) return "";
+        auto found = table->find(name);
+        return found == table->end() ? std::string() : found->second;
+    }
+
     static std::string lockAdvice(const std::string& name) {
         if (name == "lock" || name == "unlock" || name == "tryLock" || name == "withLock")
             return "a Lock is used with useKey { }: lock.useKey { ... } takes the key, and gives it back however the block ends (D86)";
@@ -4806,7 +4887,8 @@ struct Checker::Impl {
             if (plain.kind == Type::Class && plain.cls != nullptr && !lookupMember(plain, m.name).found() &&
                 findExtensions(plain, m.name).empty() && reportMissing(plain.cls, m.name)) {
                 expr(*m.object);
-                report(m, plain.cls->name + " has no field '" + m.name + "'; fields must be declared in the class with val or var");
+                const std::string io = plain.cls->unit != nullptr && plain.cls->unit->prelude ? ioAdvice(plain.cls->name, m.name) : std::string();
+                report(m, !io.empty() ? io : plain.cls->name + " has no field '" + m.name + "'; fields must be declared in the class with val or var");
                 return unknownType();
             }
         }
@@ -5217,10 +5299,13 @@ struct Checker::Impl {
                 else if (k->isEnum && name == "ordinal") result = Type::of(Type::Int);
                 else if (k->isEnum && name == "name") result = Type::of(Type::String);
                 else if (extensionProperty(plain, name, at, result)) {}
-                else if (findExtensions(plain, name).empty() && reportMissing(k, name))
-                    report(at, name == "length" && (k->unit != nullptr && k->unit->prelude) ? goneAdvice(name)
+                else if (findExtensions(plain, name).empty() && reportMissing(k, name)) {
+                    const std::string io = k->unit != nullptr && k->unit->prelude ? ioAdvice(k->name, name) : std::string();
+                    report(at, !io.empty() ? io
+                               : name == "length" && (k->unit != nullptr && k->unit->prelude) ? goneAdvice(name)
                                : name == "class" ? k->name + " has no member 'class'; the class of an object is written x# (D48)"
                                                  : k->name + " has no member '" + name + "'");
+                }
             }
         } else if (!builtinProperty(obj, name, result) && !extensionProperty(plain, name, at, result)) {
             if (name == "length" && builtinDeclared(plain))
@@ -5874,19 +5959,6 @@ struct Checker::Impl {
             }
         }
         scope->calls.push_back(std::move(r));
-    }
-
-    // The standard library's own objects of the C++ that read, write and connect: what of them
-    // throws an IOException (io.cpp, stdlib.cpp).
-    void noteNativeThrows(const MemberExpr& m, const CallExpr& c) {
-        if (m.object->kind != ExprKind::Name) return;
-        const std::string& object = static_cast<const NameExpr&>(*m.object).name;
-        static const std::unordered_set<std::string> file = {"read", "readBytes", "write", "append", "writeBytes", "appendBytes", "copy"};
-        static const std::unordered_set<std::string> io = {"open", "read", "readAll", "readLine", "write", "spawn", "connect", "listen", "accept", "shutdownOutput"};
-        if (!((object == "__file" && file.count(m.name) != 0) || (object == "__io" && io.count(m.name) != 0))) return;
-        if (findLocal(object) != nullptr) return;
-        ThrowScope* scope = throwHere(c);
-        if (ClassInfo* k = stdClass("IOException"); scope != nullptr && k != nullptr) scope->direct.push_back(k);
     }
 
     void noteFunctionValue(FuncInfo* f, const Node& at) {
@@ -6790,6 +6862,7 @@ struct Checker::Impl {
             if (reportMissing(k, m.name)) {
                 std::string advice = (k->unit != nullptr && k->unit->prelude) ? goneAdvice(m.name) : std::string();
                 if (k->unit != nullptr && k->unit->prelude && k->name == "Lock") advice = lockAdvice(m.name);
+                if (k->unit != nullptr && k->unit->prelude && advice.empty()) advice = ioAdvice(k->name, m.name);
                 report(m, advice.empty() ? k->name + " has no method '" + m.name + "'" : advice);
             }
             return unknownType();
@@ -6932,7 +7005,6 @@ struct Checker::Impl {
         }
         if (c.callee->kind == ExprKind::Member) {
             const auto& m = static_cast<const MemberExpr&>(*c.callee);
-            noteNativeThrows(m, c);
             if (m.object->kind == ExprKind::Name) {
                 const std::string& base = static_cast<const NameExpr&>(*m.object).name;
                 if (findLocal(base) == nullptr && !nameIsMember(base)) {
@@ -7236,7 +7308,7 @@ struct Checker::Impl {
                 const bool onFunction = n == "Test" || n == "BeforeTest" || n == "AfterTest" || n == "BeforeAll" || n == "AfterAll" || n == "Timeout";
                 if (onFunction && place != AnnotationPlace::Function) report(a, "@" + n + " goes on a function, for astra test (D153)");
                 if (n == "TempDir" && place != AnnotationPlace::Parameter)
-                    report(a, "@TempDir goes on a test's parameter, a File given a directory of its own (D153)");
+                    report(a, "@TempDir goes on a test's parameter, a Path given a directory of its own (D153)");
             }
         }
     }

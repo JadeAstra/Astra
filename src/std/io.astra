@@ -1,6 +1,6 @@
-// ---- Streams, processes and sockets ----
+// ---- Readers, writers, processes and sockets ----
 // Reading and writing a piece at a time, programs started from this one, and connections
-// over the network. The names are Java's, which is what Kotlin code uses.
+// over the network.
 //
 // Anything here that waits (a read, an accept, waitFor) is written as an ordinary call:
 //   - on a thread it blocks that thread, and the other threads go on;
@@ -10,12 +10,24 @@
 // The work is done by the built-in __io (io.cpp). What it hands out to stand for an open
 // file, process or socket is a handle of the C++'s own, an `any` to Astra.
 
-// Something to read from: a file, what a process writes, a socket. Text is UTF-8.
-class InputStream : AutoCloseable {
-  private val handle : any
+// ---- Character sets (D127) ----
+// What text is read and written in. Astra's own text is UTF-8, the default everywhere; the
+// others are for files, programs and protocols that use them (mail's Latin-1, Windows'
+// UTF-16). A character the set has no place for is written as '?', and bytes that spell no
+// character are read as U+FFFD.
+enum Charset { utf8, latin1, ascii, utf16le, utf16be }
 
-  fun init(handle : any) {
+// ---- Reader and Writer (D119) ----
+
+// Something to read from, bytes or text: a file, what a program writes, a socket. It reads
+// ahead into a buffer of its own, so there is nothing to wrap it in.
+class Reader : AutoCloseable {
+  private val handle : any
+  var charset : Charset         // what text is read or written in; it may change as the reading goes on
+
+  fun init(handle : any, charset : Charset = Charset.utf8) {
     this.handle = handle
+    this.charset = charset
   }
 
   // Up to `count` bytes as soon as there are any; null at the end.
@@ -23,37 +35,47 @@ class InputStream : AutoCloseable {
 
   // Everything up to the end, as bytes or as text.
   fun readBytes() : Bytes throws IOException => __io.readAll(handle)
-  fun readAllBytes() : Bytes throws IOException => __io.readAll(handle)
-  fun readText() : string throws IOException => readBytes().decodeToString()
+  fun readText() : string throws IOException => __io.readText(handle, charset)
 
   // The next line without its line end; null at the end.
-  fun readLine() : string? throws IOException => __io.readLine(handle)
+  fun readLine() : string? throws IOException => __io.readLine(handle, charset)
 
   // The lines that are left.
   fun readLines() : open List<string> throws IOException {
     val lines : open List<string> = []
     while (true) {
-      val line : string? = __io.readLine(handle)
+      val line : string? = __io.readLine(handle, charset)
       if (line == null) { break }
       lines.add(line)
     }
     return lines
   }
 
-  fun lines() : open List<string> throws IOException => readLines()
-
   fun forEachLine(action : (string) -> unit) throws IOException {
     while (true) {
-      val line : string? = __io.readLine(handle)
+      val line : string? = __io.readLine(handle, charset)
       if (line == null) { break }
       action(line)
     }
   }
 
-  // Runs the block on the lines and closes the stream afterwards.
-  fun <R> useLines(block : (List<string>) -> R) : R throws IOException {
+  // The lines that are left as a sequence, each read when it is asked for. A read that fails
+  // there throws an UncheckedIOException, its cause the IOException.
+  fun lineSequence() : Sequence<string> {
+    val reader = this
+    return generateSequence {
+      try {
+        reader.readLine()
+      } catch (e : IOException) {
+        throw UncheckedIOException(e)
+      }
+    }
+  }
+
+  // The block given the lines as a sequence, read as it goes; the reader is closed afterwards.
+  fun <R> useLines(block : (Sequence<string>) -> R) : R throws IOException {
     try {
-      return block(readLines())
+      return block(lineSequence())
     } finally {
       close()
     }
@@ -65,41 +87,38 @@ class InputStream : AutoCloseable {
 
   val isOpen : bool
     get() => __io.isOpen(handle)
-
-  // Kotlin wraps a stream to read text from it; here the stream reads text itself.
-  fun bufferedReader(charset : any? = null) : InputStream => this
-  fun reader(charset : any? = null) : InputStream => this
-  fun buffered() : InputStream => this
 }
 
-// Something to write to: a file, what a process reads, a socket. A write returns when the
-// system has taken all of it, so flush() has nothing left to do.
-class OutputStream : AutoCloseable {
+// Something to write to, bytes or text: a file, what a program reads, a socket. A write
+// returns when the system has taken all of it, so flush() has nothing left to do.
+class Writer : AutoCloseable {
   private val handle : any
+  var charset : Charset         // what text is read or written in; it may change as the writing goes on
 
-  fun init(handle : any) {
+  fun init(handle : any, charset : Charset = Charset.utf8) {
     this.handle = handle
+    this.charset = charset
   }
 
   // Text, or bytes. Anything else is written as print would show it.
   fun write(data : any?) throws IOException {
-    __io.write(handle, data)
+    __io.write(handle, data, charset)
   }
 
   fun print(value : any?) throws IOException {
-    __io.write(handle, "$value")
+    __io.write(handle, "$value", charset)
   }
 
   fun println(value : any? = "") throws IOException {
-    __io.write(handle, "$value\n")
+    __io.write(handle, "$value\n", charset)
   }
 
   fun newLine() throws IOException {
-    __io.write(handle, "\n")
+    __io.write(handle, "\n", charset)
   }
 
-  fun append(value : any?) : OutputStream throws IOException {
-    __io.write(handle, "$value")
+  fun append(value : any?) : Writer throws IOException {
+    __io.write(handle, "$value", charset)
     return this
   }
 
@@ -112,154 +131,137 @@ class OutputStream : AutoCloseable {
 
   val isOpen : bool
     get() => __io.isOpen(handle)
-
-  fun bufferedWriter(charset : any? = null) : OutputStream => this
-  fun writer(charset : any? = null) : OutputStream => this
-  fun printWriter(charset : any? = null) : OutputStream => this
-  fun buffered() : OutputStream => this
 }
 
-// ---- Processes ----
+// ---- Processes (D91) ----
+
+// Where a stream of a program started from this one goes: pipe (this program reads or writes
+// it, the default), inherit (the same place as this program's own), discard (nowhere), and for
+// errors toOutput (into the output). A Path in their place reads or writes that file.
+enum Stream { pipe, inherit, discard, toOutput }
 
 // A program started from this one.
 //
-//   val process = ProcessBuilder("git", "status").directory(folder).start()
-//   for line in process.inputStream.readLines() { print(line) }
-//   print("exit code", process.waitFor())
+//   val git = Process("git", "status", directory = repo)
+//   for line in git.output.readLines() { print(line) }
+//   print("exit code", git.waitFor())
 //
-// inputStream is what the program writes, errorStream what it writes as errors, and
-// outputStream what it reads. Each is null when it was sent somewhere other than a pipe.
+//   val result = Process.run("git", "status", directory = repo)   // runs it to its end
+//   if (result.exitCode == 0) { print(result.output) }
+//
+// The command is the program and its arguments, as separate words or one list. `environment`
+// holds variables added to this program's own (null takes one out). input is what the
+// program reads, a Writer; output and error what it writes, Readers; each is there when it is
+// a pipe.
 class Process {
   private val handle : any
-  val outputStream : OutputStream?
-  val inputStream : InputStream?
-  val errorStream : InputStream?
+  private val toProgram : Writer?
+  private val fromProgram : Reader?
+  private val fromErrors : Reader?
 
-  fun init(handles : List<any?>) {
+  fun init(vararg command : any, directory : (Path | string)? = null, environment : Map<string, string?>? = null,
+           input : Stream | Path = Stream.pipe, output : Stream | Path = Stream.pipe, error : Stream | Path = Stream.pipe,
+           charset : Charset = Charset.utf8) throws IOException {
+    val words = __processWords(command)
+    val handles : List<any?> = __io.spawn(words, directory == null ? null : "$directory", __redirect(input, "input", "<"),
+                                         __redirect(output, "output", ">"), __redirect(error, "error", ">"), environment)
     this.handle = handles[0] as any
-    this.outputStream = handles[1] == null ? null : OutputStream(handles[1] as any)
-    this.inputStream = handles[2] == null ? null : InputStream(handles[2] as any)
-    this.errorStream = handles[3] == null ? null : InputStream(handles[3] as any)
+    this.toProgram = handles[1] == null ? null : Writer(handles[1] as any, charset)
+    this.fromProgram = handles[2] == null ? null : Reader(handles[2] as any, charset)
+    this.fromErrors = handles[3] == null ? null : Reader(handles[3] as any, charset)
   }
-
-  // Waits for the program to end and gives its exit code. With a time limit it gives true
-  // if the program ended in that time and false if it is still running.
-  fun waitFor() : int => __io.processWait(handle)
-  fun waitFor(timeout : Duration) : bool => __io.processWait(handle, timeout.inWholeMilliseconds) != null
-
-  // The exit code of a program that has ended.
-  fun exitValue() : int {
-    val code : int? = __io.processWait(handle, 0)
-    if (code == null) { throw IllegalStateException("the process has not ended yet") }
-    return code
-  }
-
-  val isAlive : bool
-    get() => __io.processAlive(handle)
-  fun pid() : int => __io.processId(handle)
-
-  // Ends the program now.
-  fun destroy() {
-    __io.processKill(handle)
-  }
-
-  fun destroyForcibly() : Process {
-    __io.processKill(handle)
-    return this
-  }
-
-  // -- This program --
 
   static {
+    // Runs a program to its end and gives what it wrote, as text: Process(...)'s arguments,
+    // its output and errors read whatever they are said to be, and its input nothing unless
+    // said.
+    fun run(vararg command : any, directory : (Path | string)? = null, environment : Map<string, string?>? = null,
+            input : Stream | Path = Stream.discard, error : Stream | Path = Stream.pipe, charset : Charset = Charset.utf8) : ProcessResult throws IOException {
+      val words = __processWords(command)
+      val handles : List<any?> = __io.spawn(words, directory == null ? null : "$directory", __redirect(input, "input", "<"),
+                                           "pipe", __redirect(error, "error", ">"), environment)
+      if (handles[1] != null) { __io.close(handles[1] as any) }
+      val ended : List<any?> = __io.collect(handles[0], handles[2], handles[3], charset)
+      for k in 0..3 {
+        if (k != 1 and handles[k] != null) { __io.close(handles[k] as any) }
+      }
+      return ProcessResult(ended[0] as int, ended[1] as string, ended[2] as string)
+    }
+
     // What started this program: the path of its executable and, when it is a script run by
-    // astra, the script. ProcessBuilder(Process.currentCommand() + ["--second"]) starts it again.
+    // astra, the script. Process(Process.currentCommand() + ["--second"]) starts it again.
     fun currentCommand() : open List<string> => __io.selfCommand()
     fun currentPid() : int => __io.currentPid()
   }
-}
 
-// Says how a program is to be started, then starts it.
-class ProcessBuilder {
-  // Where a stream of the new program goes, for redirectInput, redirectOutput and redirectError.
-  static {
-    const pipe = "pipe"           // this program reads or writes it (the default)
-    const inherit = "inherit"     // the same place as this program's own
-    const discard = "discard"     // nowhere
-  }
+  // What the program reads, writes and writes as errors, where each is a pipe.
+  val input : Writer
+    get() => toProgram ?: throw IllegalStateException("the program's input was not a pipe: start it with input = pipe to write to it")
+  val output : Reader
+    get() => fromProgram ?: throw IllegalStateException("the program's output was not a pipe: start it with output = pipe to read it")
+  val error : Reader
+    get() => fromErrors ?: throw IllegalStateException("the program's errors were not a pipe: start it with error = pipe to read them")
 
-  private var parts : List<string>
-  private var folder : string? = null
-  private var input = "pipe"
-  private var output = "pipe"
-  private var error = "pipe"
-  private val variables : open Map<string, string?> = {:}
+  // Waits for the program to end and gives its exit code; with a time limit, null if it is
+  // still running when the time is up.
+  fun waitFor() : int => __io.processWait(handle) as int
+  fun waitFor(timeout : Duration) : int? => __io.processWait(handle, timeout.inWholeMilliseconds)
 
-  // ProcessBuilder("git", "status") or ProcessBuilder(["git", "status"]).
-  fun init(vararg command : any) {
-    this.parts = command.size == 1 and command[0] is List ? (command[0] as List<string>).toList() : command as List<string>
-  }
+  // Its exit code once it has ended; null while it runs.
+  val exitCode : int?
+    get() => __io.processWait(handle, 0)
 
-  fun command() : List<string> => parts
+  val isAlive : bool
+    get() => __io.processAlive(handle)
+  val pid : int
+    get() => __io.processId(handle)
 
-  // The folder the program starts in; this program's own if none is given.
-  fun directory(folder : any) : ProcessBuilder {
-    this.folder = folder is File ? folder.path : "$folder"
-    return this
-  }
-
-  // Changes to the environment the program gets, which is otherwise this program's: a map
-  // to put names and values in. A value of null takes the name out.
-  fun environment() : open Map<string, string?> => variables
-
-  // Sends what the program writes as errors to the same place as its ordinary output.
-  fun redirectErrorStream(merge : bool = true) : ProcessBuilder {
-    error = merge ? "merge" : "pipe"
-    return this
-  }
-
-  // Each takes ProcessBuilder.pipe, .inherit or .discard, or a File to read from or write to.
-  fun redirectInput(source : any) : ProcessBuilder {
-    input = source is File ? "<" + source.path : "$source"
-    return this
-  }
-
-  fun redirectOutput(target : any) : ProcessBuilder {
-    output = target is File ? ">" + target.path : "$target"
-    return this
-  }
-
-  fun redirectError(target : any) : ProcessBuilder {
-    error = target is File ? ">" + target.path : "$target"
-    return this
-  }
-
-  // All three streams go where this program's own go.
-  fun inheritIO() : ProcessBuilder {
-    input = "inherit"
-    output = "inherit"
-    error = "inherit"
-    return this
-  }
-
-  fun start() : Process throws IOException {
-    if (parts.isEmpty()) { throw IllegalStateException("ProcessBuilder has no program to start") }
-    return Process(__io.spawn(parts, folder, input, output, error, variables))
+  // Ends the program now.
+  fun kill() {
+    __io.processKill(handle)
   }
 }
 
-// ---- Sockets ----
+// What a program run to its end with Process.run gave.
+data ProcessResult(val exitCode : int, val output : string, val error : string)
+
+// The command's words: separate ones, or one list.
+fun __processWords(command : List<any>) : List<string> {
+  val words : List<any> = command.size == 1 and command[0] is List ? command[0] as List<any> : command
+  if (words.isEmpty()) { throw IllegalArgumentException("a process is started from its command: the program, then its arguments") }
+  return words.map { "$it" }
+}
+
+// What io.cpp is told for a stream: "pipe", "inherit", "discard", "merge", or a file.
+fun __redirect(target : Stream | Path, which : string, toFile : string) : string {
+  if (target is Path) { return toFile + target.text }
+  return when (target as Stream) {
+    Stream.pipe -> "pipe"
+    Stream.inherit -> "inherit"
+    Stream.discard -> "discard"
+    Stream.toOutput -> {
+      if (which != "error") { throw IllegalArgumentException("toOutput is for a program's errors, not its $which") }
+      "merge"
+    }
+  }
+}
+
+// ---- Sockets (D120) ----
 
 // One end of a TCP connection.
 //
-//   val socket = Socket("example.org", 80)
-//   socket.outputStream.write("GET / HTTP/1.0\r\n\r\n")
-//   print(socket.inputStream.readLine())
-//   socket.close()
+//   Socket("example.org", 80).use { socket ->
+//     socket.writer.write("GET / HTTP/1.0\r\n\r\n")
+//     print(socket.reader.readLine())
+//   }
+//
+// Its reads and writes block the thread they run on; a server serves each connection from a
+// thread or a pool's job.
 class Socket : AutoCloseable {
   private var handle : any? = null
-  private var input : InputStream? = null
-  private var output : OutputStream? = null
-  private var readLimit = 0
+  private var input : Reader? = null
+  private var output : Writer? = null
+  private var readLimit : Duration? = null
 
   // Socket(host, port) connects at once; Socket() waits for connect().
   fun init(host : string? = null, port : int = 0) throws IOException {
@@ -274,11 +276,12 @@ class Socket : AutoCloseable {
   }
 
   // Takes over a connection the system has already made.
-  fun adopt(connection : any) : Socket {
+  internal fun adopt(connection : any) : Socket {
     handle = connection
-    input = InputStream(connection)
-    output = OutputStream(connection)
-    if (readLimit > 0) { __io.socketTimeout(connection, readLimit) }
+    input = Reader(connection)
+    output = Writer(connection)
+    val limit = readLimit
+    if (limit != null) { __io.socketTimeout(connection, limit.inWholeMilliseconds) }
     return this
   }
 
@@ -288,30 +291,31 @@ class Socket : AutoCloseable {
     return held
   }
 
-  val inputStream : InputStream
-    get() { connected(); return input as InputStream }
-  val outputStream : OutputStream
-    get() { connected(); return output as OutputStream }
-  fun getInputStream() : InputStream => inputStream
-  fun getOutputStream() : OutputStream => outputStream
+  // What comes from the other side, and what goes to it.
+  val reader : Reader
+    get() { connected(); return input as Reader }
+  val writer : Writer
+    get() { connected(); return output as Writer }
 
   val isConnected : bool
     get() => handle != null
   val isClosed : bool
     get() => handle != null and !__io.isOpen(handle)
   val localPort : int
-    get() => __io.socketInfo(connected())[0]
+    get() => __io.socketInfo(connected())[0] as int
   val remoteAddress : string
-    get() => __io.socketInfo(connected())[1]
+    get() => __io.socketInfo(connected())[1] as string
   val port : int
-    get() => __io.socketInfo(connected())[2]
+    get() => __io.socketInfo(connected())[2] as int
 
-  // How long a read waits before it fails, in milliseconds; 0 for as long as it takes.
-  var soTimeout : int
+  // How long a read waits before it fails with a TimeoutException; null for as long as it
+  // takes (Java's soTimeout).
+  var readTimeout : Duration?
     get() => readLimit
-    set(millis) {
-      readLimit = millis
-      if (handle != null) { __io.socketTimeout(handle, millis) }
+    set(limit) {
+      readLimit = limit
+      val held = handle
+      if (held != null) { __io.socketTimeout(held, limit == null ? 0 : limit.inWholeMilliseconds) }
     }
 
   // Says that nothing more will be written: the other side reads the end.
@@ -320,7 +324,8 @@ class Socket : AutoCloseable {
   }
 
   override fun close() {
-    if (handle != null) { __io.close(handle) }
+    val held = handle
+    if (held != null) { __io.close(held) }
   }
 }
 
@@ -342,7 +347,7 @@ class ServerSocket : AutoCloseable {
   }
 
   val localPort : int
-    get() => __io.socketInfo(handle)[0]
+    get() => __io.socketInfo(handle)[0] as int
   val isClosed : bool
     get() => !__io.isOpen(handle)
 
@@ -353,4 +358,32 @@ class ServerSocket : AutoCloseable {
   override fun close() {
     __io.close(handle)
   }
+}
+
+// What the classes above are built on (io.cpp), declared with its types and what it throws.
+// A handle is a number of the C++'s own.
+external object __io {
+  fun open(path : string, mode : string) : any throws IOException
+  fun read(handle : any, count : int) : Bytes? throws IOException
+  fun readAll(handle : any) : Bytes throws IOException
+  fun readText(handle : any, charset : Charset = Charset.utf8) : string throws IOException
+  fun readLine(handle : any, charset : Charset = Charset.utf8) : string? throws IOException
+  fun write(handle : any, data : any?, charset : Charset = Charset.utf8) throws IOException
+  fun close(handle : any)
+  fun isOpen(handle : any?) : bool
+  fun spawn(command : List<string>, directory : string?, input : string, output : string, error : string,
+            environment : Map<string, string?>?) : List<any?> throws IOException
+  fun collect(process : any?, output : any?, error : any?, charset : Charset) : List<any?> throws IOException
+  fun processWait(handle : any, timeout : int? = null) : int?
+  fun processAlive(handle : any) : bool
+  fun processKill(handle : any)
+  fun processId(handle : any) : int
+  fun currentPid() : int
+  fun selfCommand() : open List<string>
+  fun connect(host : string, port : int, timeout : int? = null) : any throws IOException
+  fun listen(port : int, bindAddress : string? = null, backlog : int = 50) : any throws IOException
+  fun accept(handle : any) : any throws IOException
+  fun socketInfo(handle : any) : List<any?>
+  fun socketTimeout(handle : any, millis : int)
+  fun shutdownOutput(handle : any) throws IOException
 }
