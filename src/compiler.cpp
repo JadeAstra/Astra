@@ -1580,6 +1580,14 @@ private:
     }
 
     void compileCallee(const CallExpr& e) {
+        // A secondary constructor: the class's static function made of it is called.
+        if (session_.checker != nullptr)
+            if (const FunctionDecl* form = session_.checker->secondaryConstructor(e)) {
+                compileExpr(*e.callee);
+                line_ = e.callee->line;
+                emit(Op::GetProp, stringConstant(form->name));
+                return;
+            }
         if (const std::string* kind = kindName(*e.callee)) {
             emitTypeName(*kind, *e.callee);  // Click(1, 2) where an Event goes (D39)
             return;
@@ -4998,7 +5006,7 @@ private:
                 return;
             case ExprKind::Index: {
                 const auto& index = static_cast<const IndexExpr&>(e);
-                if (index.defaultValue) break;
+                if (index.defaultValue || !index.more.empty()) break;
                 compileExpr(*index.object);
                 compileExpr(*index.index);
                 line_ = e.line;
@@ -5229,6 +5237,14 @@ private:
 
             case ExprKind::Binary: {
                 const auto& e = static_cast<const BinaryExpr&>(expr);
+                if (session_.checker != nullptr && session_.checker->bundleAdd(e)) {
+                    // Two bundles: one with the names of both (D143).
+                    compileExpr(*e.left);
+                    compileExpr(*e.right);
+                    line_ = e.line;
+                    emit(Op::MergeBundle);
+                    break;
+                }
                 if (e.op == TokenType::EqEq || e.op == TokenType::BangEq) {
                     // Against something declared as an enum, the other side may name an entry.
                     compileExprFor(*e.left, declaredTypeOf(*e.right));
@@ -5282,6 +5298,20 @@ private:
                     break;
                 }
                 if (fs_->decl != nullptr && fs_->decl->isTail && session_.checker != nullptr) refuseTailCall(e);
+                if (session_.checker != nullptr && (session_.checker->bundleMake(e) || session_.checker->bundleCopy(e))) {
+                    // A bundle of named arguments, a map of names to values (D143): made by
+                    // params(...), or a copy with some of them changed.
+                    const bool copy = session_.checker->bundleCopy(e);
+                    if (copy) compileExpr(*static_cast<const MemberExpr&>(*e.callee).object);
+                    for (size_t i = 0; i < e.args.size(); i++) {
+                        emit(Op::Const, stringConstant(e.names[i]));
+                        compileExpr(*e.args[i]);
+                    }
+                    line_ = e.line;
+                    emit(Op::BuildMap, static_cast<int>(e.args.size()));
+                    if (copy) emit(Op::MergeBundle);
+                    break;
+                }
                 if (session_.checker != nullptr && session_.checker->samCall(e)) {
                     compileExpr(*e.args[0]);  // `Action { ... }`: the lambda, as the interface (D28)
                     break;
@@ -5390,9 +5420,13 @@ private:
                 const auto& e = static_cast<const IndexExpr&>(expr);
                 compileExpr(*e.object);
                 compileExpr(*e.index);
+                for (const ExprPtr& m : e.more) compileExpr(*m);
                 if (e.defaultValue) compileExpr(*e.defaultValue);
                 line_ = e.line;
-                if (e.defaultValue) emit(Op::GetIndexOr);
+                if (!e.more.empty()) {
+                    emit(Op::IndexN);
+                    emitByte(static_cast<uint8_t>(e.more.size() + 1));
+                } else if (e.defaultValue) emit(Op::GetIndexOr);
                 else if (session_.checker != nullptr && !copyReadsHere() && session_.checker->readsInPlace(e)) emit(Op::GetIndexRef);  // M6.6 part 4
                 else emit(Op::GetIndex);
                 break;
@@ -5477,6 +5511,9 @@ private:
                 break;
             }
 
+            case ExprKind::Current:
+                // The target of `.=`, already on the stack (D156).
+                break;
             case ExprKind::ClassOf: {
                 // `Image#`, `x#` (D48): the standard library's Class, made from the type and from
                 // the function written here, whose rights to members it has.
@@ -5922,6 +5959,7 @@ private:
         // it. It travels with the named arguments under the empty name.
         size_t trailing = e.trailingLambda ? 1 : 0;
         size_t positional = e.args.size() - e.namedCount - trailing;
+        size_t passedByName = e.namedCount + trailing;
         if (e.hasSpread) {
             // With `*list` among them, the positional arguments are gathered into one list:
             // each run of plain arguments, and each list written with a star, is added in turn.
@@ -5945,6 +5983,19 @@ private:
         }
         for (size_t i = positional; i < e.args.size(); i++) {
             line_ = e.args[i]->line;
+            if (e.names[i] == "...") {
+                // `...style`: each name of the bundle the call does not name itself, with its
+                // value, as an argument by name (D143).
+                const std::vector<std::string>* names = session_.checker != nullptr ? session_.checker->bundleExpansion(*e.args[i]) : nullptr;
+                passedByName--;
+                if (names == nullptr || names->empty()) continue;
+                compileExpr(*e.args[i]);
+                for (const std::string& name : *names) emit(Op::Const, stringConstant(name));
+                emit(Op::BundleValues);
+                emitByte(static_cast<uint8_t>(names->size()));
+                passedByName += names->size();
+                continue;
+            }
             emit(Op::Const, stringConstant(e.names[i]));
             compileArg(*e.args[i]);
         }
@@ -5953,7 +6004,7 @@ private:
         line_ = e.line;
         emit(e.hasSpread ? Op::CallSpread : Op::CallNamed);
         if (!e.hasSpread) emitByte(static_cast<int>(positional));
-        emitByte(static_cast<int>(e.namedCount + trailing));
+        emitByte(static_cast<int>(passedByName));
         emitExternalResult(e);
         if (toEnd >= 0) patchJump(toEnd);
     }
@@ -6021,7 +6072,30 @@ private:
     }
 
     // The value at an index that is being changed: the entry, or its start value.
+    // `grid[x, y]` and the like: the indexes after the first, compiled after it (D133).
+    void compileMoreIndexes(const IndexExpr& target) {
+        for (const ExprPtr& m : target.more) compileExpr(*m);
+    }
+
+    // Sets what is at the index, the object, the indexes and the value being on the stack.
+    void emitSetIndex(const IndexExpr& target) {
+        if (target.more.empty()) {
+            emit(Op::SetIndex);
+            return;
+        }
+        emit(Op::SetIndexN);
+        emitByte(static_cast<uint8_t>(target.more.size() + 1));
+    }
+
     void emitIndexForUpdate(const IndexExpr& target) {
+        if (!target.more.empty()) {
+            const uint8_t count = static_cast<uint8_t>(target.more.size() + 1);
+            emit(Op::DupN);
+            emitByte(static_cast<uint8_t>(count + 1));
+            emit(Op::IndexN);
+            emitByte(count);
+            return;
+        }
         emit(Op::Dup2);
         if (target.defaultValue) {
             compileExpr(*target.defaultValue);
@@ -6068,13 +6142,14 @@ private:
                 const auto& target = static_cast<const IndexExpr&>(*e.target);
                 compileExpr(*target.object);
                 compileExpr(*target.index);
+                compileMoreIndexes(target);
                 line_ = e.line;
                 emitIndexForUpdate(target);
                 const int skip = beginNullSafe(e.nullSafe);
                 emit(Op::Const, intConstant(1));
                 emit(change);
-                emit(Op::SetIndex);
-                endNullSafe(skip, 2);
+                emitSetIndex(target);
+                endNullSafe(skip, 2 + static_cast<int>(target.more.size()));
                 break;
             }
 
@@ -6154,6 +6229,8 @@ private:
             return;
         }
         bool compound = e.op != TokenType::Eq;
+        // `target .= member`: the member is asked of the value already on the stack (D156).
+        const bool dotEq = e.op == TokenType::DotEq;
 
         switch (e.target->kind) {
             case ExprKind::Name: {
@@ -6172,7 +6249,7 @@ private:
                 if (compound) compileExpr(*e.value);
                 else compileExprFor(*e.value, declaredTypeOf(target.name));
                 line_ = e.line;
-                if (compound) emit(binaryOp(e.op));
+                if (compound && !dotEq) emit(binaryOp(e.op));
                 emitSet(target.name, target);
                 endNullSafe(skip, 0);
                 break;
@@ -6203,7 +6280,7 @@ private:
                 if (compound) compileExpr(*e.value);
                 else compileExprFor(*e.value, declaredTypeOf(*e.target));
                 line_ = e.line;
-                if (compound) emit(binaryOp(e.op));
+                if (compound && !dotEq) emit(binaryOp(e.op));
                 emit(own ? Op::SetOwn : Op::SetProp, stringConstant(target.name));
                 endNullSafe(skip, 1);
                 if (toEnd >= 0) patchJump(toEnd);
@@ -6214,7 +6291,8 @@ private:
                 const auto& target = static_cast<const IndexExpr&>(*e.target);
                 compileExpr(*target.object);
                 compileExpr(*target.index);
-                if (!compound && session_.checker != nullptr && session_.checker->buildsInPlace(e)) {
+                compileMoreIndexes(target);
+                if (!compound && target.more.empty() && session_.checker != nullptr && session_.checker->buildsInPlace(e)) {
                     // `pts[i] = pts[i].moved(1)`: the item is where the result goes (M6.6 part 4),
                     // under the call as it is made.
                     emit(Op::Dup2);
@@ -6227,9 +6305,9 @@ private:
                 const int skip = beginNullSafe(compound && e.nullSafe);
                 compileExpr(*e.value);
                 line_ = e.line;
-                if (compound) emit(binaryOp(e.op));
-                emit(Op::SetIndex);
-                endNullSafe(skip, 2);
+                if (compound && !dotEq) emit(binaryOp(e.op));
+                emitSetIndex(target);
+                endNullSafe(skip, 2 + static_cast<int>(target.more.size()));
                 break;
             }
 

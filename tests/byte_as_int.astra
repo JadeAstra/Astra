@@ -1,0 +1,36 @@
+// A byte goes where an int or a number does, and is an int there: in a variable, a parameter,
+// a field, a result, a list of ints, and the standard library's number functions.
+
+val b = 200.toByte()
+val asInt : int = b
+print(b is byte, asInt is int, asInt, asInt + 100)   // expect: true true 200 300
+
+fun twice(n : int) : int => n * 2
+fun kind(n : int) : string => n is int ? "int" : "other"
+fun backAsInt() : int => b
+fun anyNumber(n : Number) : string => "$n is ${n is int ? "an int" : "something else"}"
+print(twice(b), kind(b), backAsInt() is int, anyNumber(b))   // expect: 400 int true 200 is an int
+
+class Counter(var count : int)
+val c = Counter(b)
+c.count = 7.toByte()
+print(c.count is int, c.count + 1)   // expect: true 8
+
+val ints : open List<int> = []
+ints.add(b)
+ints.add(3.toByte())
+print(ints, ints[0] is int, ints.sum())   // expect: [200, 3] true 203
+
+// Math and conversions take one as they take an int.
+val small = 9.toByte()
+print(Math.max(b, small), Math.min(b, small), Math.abs(small), Math.sqrt(small), Math.max(b, 300), Math.floor(small), Math.sign(small))   // expect: 200 9 9 3.0 300 9 1
+print(Math.max(small, small) is int, Math.pow(small, 2), "abc"[1.toByte()], [5, 6, 7][small - 8], [5, 6, 7][2.toByte()])   // expect: true 81 b 6 7
+
+// A colour's parts are bytes: added up, they are ints.
+val orange = Color(255, 128, 0)
+val total : int = orange.red + orange.green + orange.blue
+print(total, (orange.red + orange.green) / 2, Math.max(orange.red, orange.green))   // expect: 383 191 255
+
+// -- A value type made with a name for one part and the default for another --
+value Spot(val x : int = 1, val y : int = 2, val label : string = "spot")
+print(Spot(y = 5), Spot(label = "here"), Spot(3), Spot())   // expect: Spot(x=1, y=5, label="spot") Spot(x=1, y=2, label="here") Spot(x=3, y=2, label="spot") Spot(x=1, y=2, label="spot")

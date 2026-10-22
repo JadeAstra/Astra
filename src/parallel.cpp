@@ -430,13 +430,16 @@ std::string describe(const VM& vm, const Obj* obj) {
 }
 
 // `count` positions in `parts` parts as even as can be.
-void cut(ParallelSection& section, size_t count, size_t parts) {
+// `count` positions in `parts` pieces, each starting at a multiple of `align`: a grid's rows
+// kept whole (D155).
+void cut(ParallelSection& section, size_t count, size_t parts, size_t align = 1) {
+    const size_t units = count / align;
     section.pieces.resize(parts);
     for (size_t k = 0; k < parts; k++) {
         section.pieces[k].section = &section;
         section.pieces[k].index = k;
-        section.pieces[k].from = count * k / parts;
-        section.pieces[k].to = count * (k + 1) / parts;
+        section.pieces[k].from = units * k / parts * align;
+        section.pieces[k].to = k + 1 == parts ? count : units * (k + 1) / parts * align;
     }
 }
 
@@ -581,7 +584,7 @@ Value VM::runParallel(Value source, Value function, bool keep, bool replace) {
     return Value::object(out);
 }
 
-void VM::runParallelChunks(Value buffer, Value function) {
+void VM::runParallelChunks(Value buffer, Value function, size_t align) {
     // Bytes, or a list (D96): its positions in parts, each piece reading and writing its own.
     const bool bytes = buffer.isObjType(ObjType::Bytes);
     if (!bytes && !buffer.isObjType(ObjType::List))
@@ -594,7 +597,8 @@ void VM::runParallelChunks(Value buffer, Value function) {
     section.kind = ParallelSection::Chunks;
     section.function = function;
     section.buffer = buffer.as.obj;
-    cut(section, size, std::min(static_cast<size_t>(parallelCores()), size));
+    if (align == 0) align = 1;
+    cut(section, size, std::max<size_t>(1, std::min(static_cast<size_t>(parallelCores()), size / align)), align);
     runSection(section);
 }
 
@@ -1035,8 +1039,9 @@ void registerParallel(VM& vm) {
 
     // chunks(buffer, function): the function once on each core, with the range of positions
     // of the buffer that the core may write.
-    def("chunks", 2, 2, [](VM& vm, int, Value* args) -> Value {
-        vm.runParallelChunks(args[0], args[1]);
+    // chunks(buffer, function, align): parts starting at multiples of `align` (a grid's rows).
+    def("chunks", 2, 3, [](VM& vm, int argc, Value* args) -> Value {
+        vm.runParallelChunks(args[0], args[1], argc > 2 ? static_cast<size_t>(std::max<int64_t>(1, vm.toInt(args[2], "alignment"))) : 1);
         return Value::null();
     });
 

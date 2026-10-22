@@ -2,10 +2,10 @@
 // the graphics card and read back pixel by pixel. No window is opened.
 import Jade.*
 
-val white = 0xFFFFFFFF
-val black = 0xFF000000
+val white = Color.white
+val black = Color.black
 
-// A surface filled with white, and what was drawn on it as a Picture.
+// A surface filled with white; what was drawn on it is read back as an Image.
 fun stage(width : int, height : int, scale : Number = 1) {
   val surface = Surface(width, height, scale)
   val canvas = surface.canvas()
@@ -15,11 +15,11 @@ fun stage(width : int, height : int, scale : Number = 1) {
 }
 
 // How many pixels of a picture are exactly a colour.
-fun count(picture : Picture, color : int) {
+fun count(picture : Image, color : Color) {
   var n = 0
   for (y in 0..<picture.height) {
     for (x in 0..<picture.width) {
-      if (picture.get(x, y) == color) { n += 1 }
+      if (picture[x, y] == color) { n += 1 }
     }
   }
   return n
@@ -29,19 +29,19 @@ print(Native.problem(), Native.isAvailable, Native.describe().startsWith("OpenGL
 
 // -- A new surface is clear; fillRect covers exactly what it says --
 val s = Surface(40, 30)
-print(s, s.width, s.height, s.scale, s.deviceWidth, s.toPicture(), s.toPicture().inkBox())   // expect: Surface(40 x 30) 40 30 1 40 Picture(40 x 30) null
+print(s, s.width, s.height, s.scale, s.deviceWidth, s.toImage(), s.toImage().inkBox())   // expect: Surface(40 x 30) 40 30 1 40 Image(40 x 30) null
 val c = s.canvas()
-print(c.width, c.height, c.color, c.font, c.deviceScaleX, c.visibleBounds)   // expect: 40 30 Color(0, 0, 0) Font(Dialog, plain, 12) 1.0 Rectangle(0, 0, 40 x 30)
+print(c.width, c.height, c.color, c.font, c.deviceScaleX, c.visibleBounds)   // expect: 40 30 Color(0, 0, 0) Font(Dialog, 12) 1.0 Rect(0, 0, 40 x 30)
 c.color = Color(200, 100, 50)
 c.fillRect(5, 6, 10, 8)
-val p1 = s.toPicture()
-print(p1.inkBox(), p1.get(5, 6) == 0xFFC86432, p1.get(14, 13) == 0xFFC86432, p1.get(15, 13), p1.get(4, 6), count(p1, 0xFFC86432))   // expect: [5, 6, 10, 8] true true 0 0 80
+val p1 = s.toImage()
+print(p1.inkBox(), p1[5, 6] == Color(0xC86432), p1[14, 13] == Color(0xC86432), p1[15, 13], p1[4, 6] == Color.clear, count(p1, Color(0xC86432)))   // expect: Rect(5, 6, 10 x 8) true true Color(0, 0, 0, 0) true 80
 // Outside the surface nothing is drawn and nothing breaks; an empty rectangle draws nothing.
 c.fillRect(-100, -100, 50, 50)
 c.fillRect(35, 25, 100, 100)
 c.fillRect(20, 20, 0, 5)
 c.fillRect(20, 20, -3, 5)
-print(count(s.toPicture(), 0xFFC86432), s.toPicture().inkBox())   // expect: 105 [5, 6, 35, 24]
+print(count(s.toImage(), Color(0xC86432)), s.toImage().inkBox())   // expect: 105 Rect(5, 6, 35 x 24)
 
 // -- Colours that are see-through lie over what is there --
 val blend = stage(10, 10)
@@ -50,26 +50,26 @@ bc.color = Color(0, 0, 0, 128)
 bc.fillRect(0, 0, 5, 10)
 bc.color = Color(255, 0, 0, 128)
 bc.fillRect(5, 0, 5, 10)
-val bp = blend.toPicture()
-print(bp.get(2, 5) == 0xFF7F7F7F or bp.get(2, 5) == 0xFF808080, ((bp.get(7, 5) >> 16) & 255) == 255, Math.abs(((bp.get(7, 5) >> 8) & 255) - 127) <= 1)   // expect: true true true
+val bp = blend.toImage()
+print(bp[2, 5] == Color(0x7F7F7F) or bp[2, 5] == Color(0x808080), bp[7, 5].red == 255, Math.abs(bp[7, 5].green - 127) <= 1)   // expect: true true true
 // On a clear surface a see-through colour stays as it is.
 val clear = Surface(4, 4)
 val cc = clear.canvas()
 cc.color = Color(10, 200, 30, 128)
 cc.fillRect(0, 0, 2, 4)
-val cp = clear.toPicture()
-print((cp.get(0, 0) >> 24) == 128, Math.abs(((cp.get(0, 0) >> 8) & 255) - 200) <= 1, cp.get(3, 0))   // expect: true true 0
+val cp = clear.toImage()
+print(cp[0, 0].alpha == 128, Math.abs(cp[0, 0].green - 200) <= 1, cp[3, 0])   // expect: true true Color(0, 0, 0, 0)
 // clearRect makes pixels clear again.
 cc.clearRect(0, 0, 1, 4)
-print(clear.toPicture().get(0, 0), (clear.toPicture().get(1, 0) >> 24) == 128)   // expect: 0 true
+print(clear.toImage()[0, 0], clear.toImage()[1, 0].alpha == 128)   // expect: Color(0, 0, 0, 0) true
 
 // -- drawRect is an outline one unit thick, covering w + 1 by h + 1 as Java's does --
 val outline = stage(20, 20)
 val oc = outline.canvas()
 oc.color = Color.black
 oc.drawRect(3, 4, 10, 8)
-val op = outline.toPicture()
-print(op.inkBox(white), count(op, black), op.get(3, 4) == black, op.get(13, 12) == black, op.get(4, 5) == white, op.get(14, 4) == white)   // expect: [3, 4, 11, 9] 36 true true true true
+val op = outline.toImage()
+print(op.inkBox(white), count(op, black), op[3, 4] == black, op[13, 12] == black, op[4, 5] == white, op[14, 4] == white)   // expect: Rect(3, 4, 11 x 9) 36 true true true true
 
 // -- Lines: straight ones are whole pixels with both ends covered, slanted ones are smoothed --
 val lines = stage(30, 30)
@@ -78,30 +78,33 @@ lc.color = Color.black
 lc.drawLine(2, 3, 12, 3)
 lc.drawLine(20, 2, 20, 9)
 lc.drawLine(25, 25, 25, 25)
-val lp = lines.toPicture()
-print(count(lp, black), lp.get(2, 3) == black, lp.get(12, 3) == black, lp.get(13, 3) == white, lp.get(20, 9) == black, lp.get(25, 25) == black)   // expect: 20 true true true true true
+val lp = lines.toImage()
+print(count(lp, black), lp[2, 3] == black, lp[12, 3] == black, lp[13, 3] == white, lp[20, 9] == black, lp[25, 25] == black)   // expect: 20 true true true true true
 lc.drawLine(2, 12, 16, 26)
-val slanted = lines.toPicture()
+val slanted = lines.toImage()
 var onDiagonal = 0
 for (i in 0..<15) {
-  if (((slanted.get(2 + i, 12 + i) >> 16) & 255) < 80) { onDiagonal += 1 }
+  if (slanted[2 + i, 12 + i].red < 80) { onDiagonal += 1 }
 }
-print(onDiagonal, slanted.get(2, 26) == white, slanted.get(16, 12) == white)   // expect: 15 true true
+print(onDiagonal, slanted[2, 26] == white, slanted[16, 12] == white)   // expect: 15 true true
+// The shapes of the standard library, drawn and filled.
+lc.draw(Line(2.0, 28.0, 12.0, 28.0))
+print(lines.toImage()[7, 28] == black)   // expect: true
 
 // -- Rounded rectangles and ovals: smooth edges, clear corners, the same on every side --
 val shapes = stage(60, 40)
 val sc = shapes.canvas()
 sc.color = Color.blue
 sc.fillRoundRect(4, 4, 30, 20, 12, 12)
-sc.fillOval(40, 4, 16, 30)
-val sp = shapes.toPicture()
-val blue = 0xFF0000FF
-print(sp.get(4, 4) == white, sp.get(33, 23) == white, sp.get(19, 4) == blue, sp.get(4, 14) == blue, sp.get(19, 14) == blue, sp.get(34, 14) == white)   // expect: true true true true true true
-print(sp.get(40, 4) == white, sp.get(48, 4) == sp.get(48, 33), sp.get(40, 19) == sp.get(55, 19), sp.get(48, 19) == blue, sp.get(47, 19) == blue)   // expect: true true true true true
+sc.fill(Oval(40.0, 4.0, 16.0, 30.0))
+val sp = shapes.toImage()
+val blue = Color.blue
+print(sp[4, 4] == white, sp[33, 23] == white, sp[19, 4] == blue, sp[4, 14] == blue, sp[19, 14] == blue, sp[34, 14] == white)   // expect: true true true true true true
+print(sp[40, 4] == white, sp[48, 4] == sp[48, 33], sp[40, 19] == sp[55, 19], sp[48, 19] == blue, sp[47, 19] == blue)   // expect: true true true true true
 // An oval's pixels add up to its area, to within the smoothing.
 var covered = 0.0
 for (y in 0..<40) {
-  for (x in 38..<60) { covered += (255 - ((sp.get(x, y) >> 16) & 255)) / 255.0 }
+  for (x in 38..<60) { covered += (255 - sp[x, y].red) / 255.0 }
 }
 print(Math.abs(covered - Math.pi * 8 * 15) < 6)   // expect: true
 // Outlines: a ring, with the middle left alone.
@@ -110,28 +113,28 @@ val rc = rings.canvas()
 rc.color = Color.black
 rc.drawOval(5, 5, 20, 20)
 rc.drawRoundRect(32, 5, 20, 20, 8, 8)
-val rp = rings.toPicture()
-print(rp.get(15, 15) == white, rp.get(5, 15) == black, rp.get(25, 15) == black, rp.get(15, 5) == black, rp.get(42, 15) == white, rp.get(32, 15) == black, rp.get(52, 15) == black, rp.get(32, 5) == white)   // expect: true true true true true true true true
+val rp = rings.toImage()
+print(rp[15, 15] == white, rp[5, 15] == black, rp[25, 15] == black, rp[15, 5] == black, rp[42, 15] == white, rp[32, 15] == black, rp[52, 15] == black, rp[32, 5] == white)   // expect: true true true true true true true true
 
 // -- Polygons --
 val poly = stage(40, 40)
 val pc = poly.canvas()
 pc.color = Color.black
 pc.fillPolygon([5, 25, 25, 5], [5, 5, 15, 15])              // a rectangle: exactly its pixels
-print(count(poly.toPicture(), black), poly.toPicture().inkBox(white))   // expect: 200 [5, 5, 20, 10]
+print(count(poly.toImage(), black), poly.toImage().inkBox(white))   // expect: 200 Rect(5, 5, 20 x 10)
 pc.color = Color.red
 pc.fillPolygon([5, 35, 5], [20, 38, 38])                    // a triangle: half its box
 var red = 0.0
-val pp = poly.toPicture()
+val pp = poly.toImage()
 for (y in 18..<40) {
-  for (x in 0..<40) { red += (255 - (pp.get(x, y) & 255)) / 255.0 }
+  for (x in 0..<40) { red += (255 - pp[x, y].blue) / 255.0 }
 }
-print(Math.abs(red - 30 * 18 / 2) < 2, pp.get(6, 36) == 0xFFFF0000, pp.get(30, 22) == white)   // expect: true true true
+print(Math.abs(red - 30 * 18 / 2) < 2, pp[6, 36] == Color.red, pp[30, 22] == white)   // expect: true true true
 pc.color = Color.black
 pc.drawPolyline([2, 10, 10], [2, 2, 3])
 pc.drawPolygon([30, 38, 38, 30], [2, 2, 10, 10])
-val pl = poly.toPicture()
-print(pl.get(2, 2) == black, pl.get(10, 3) == black, pl.get(2, 3) == white, pl.get(30, 6) == black, pl.get(34, 10) == black, pl.get(34, 6) == white, [1, 2].size)   // expect: true true true true true true 2
+val pl = poly.toImage()
+print(pl[2, 2] == black, pl[10, 3] == black, pl[2, 3] == white, pl[30, 6] == black, pl[34, 10] == black, pl[34, 6] == white, [1, 2].size)   // expect: true true true true true true 2
 pc.fillPolygon([1, 2], [1, 2])                                // too few points: nothing
 pc.drawPolyline([1], [1])
 
@@ -139,50 +142,54 @@ pc.drawPolyline([1], [1])
 val parts = stage(50, 40)
 val whole = parts.canvas()
 val part = whole.sub(10, 8, 20, 12)
-print(part.width, part.height, part.visibleBounds, part.color, part.font == whole.font)   // expect: 20 12 Rectangle(0, 0, 20 x 12) Color(0, 0, 0) true
+print(part.width, part.height, part.visibleBounds, part.color, part.font == whole.font)   // expect: 20 12 Rect(0, 0, 20 x 12) Color(0, 0, 0) true
 part.color = Color.black
 part.fillRect(-50, -50, 200, 200)
-print(parts.toPicture().inkBox(white), count(parts.toPicture(), black))   // expect: [10, 8, 20, 12] 240
+print(parts.toImage().inkBox(white), count(parts.toImage(), black))   // expect: Rect(10, 8, 20 x 12) 240
 val inner = part.sub(15, 6, 100, 100)        // partly outside its parent: clipped to it
-print(inner.visibleBounds)                   // expect: Rectangle(0, 0, 5 x 6)
+print(inner.visibleBounds)                   // expect: Rect(0, 0, 5 x 6)
 inner.color = Color.red
 inner.fillRect(0, 0, 100, 100)
 inner.fillRect(-3, -3, 2, 2)                 // still inside the parent, outside this part: not drawn
-print(count(parts.toPicture(), 0xFFFF0000), count(parts.toPicture(), black), parts.toPicture().get(25, 14) == 0xFFFF0000)   // expect: 30 210 true
+print(count(parts.toImage(), Color.red), count(parts.toImage(), black), parts.toImage()[25, 14] == Color.red)   // expect: 30 210 true
 // Drawing with the parent again goes where the parent draws, and a part's colour is its own.
 whole.color = Color.green
 whole.fillRect(0, 0, 3, 3)
 part.fillRect(0, 0, 1, 1)
-print(parts.toPicture().get(1, 1) == 0xFF00FF00, parts.toPicture().get(10, 8) == black, whole.color, part.color)   // expect: true true Color(0, 255, 0) Color(0, 0, 0)
+print(parts.toImage()[1, 1] == Color.green, parts.toImage()[10, 8] == black, whole.color, part.color)   // expect: true true Color(0, 255, 0) Color(0, 0, 0)
 
-// -- Text: the same pixels as the text engine draws by itself, to within the rounding of the card --
+// -- Text: the same pixels as an Image's canvas draws in memory, to within the rounding of the card --
 val words = stage(260, 40)
 val wc = words.canvas()
 wc.color = Color.black
-wc.font = Font("Segoe UI", Font.plain, 16)
+wc.font = Font("Segoe UI", 16)
 val textWidth = wc.drawString("Text on the card: 中 😀", 6, 26)
-val engine = wc.font.textFont()
-val expected = Picture(260, 40, Picture.white)
-expected.drawText("Text on the card: 中 😀", 6, 26, engine)
-val got = words.toPicture()
+val expected = Image(260, 40, Color.white)
+val ec = expected.canvas()
+ec.color = Color.black
+ec.font = wc.font
+val inMemory = ec.drawString("Text on the card: 中 😀", 6, 26)
+val got = words.toImage()
+val gotBytes = got.pixels.bytes
+val expectedBytes = expected.pixels.bytes
 var worst = 0
 var differing = 0
-for (i in 0..<got.pixels.size) {
-  val gap = Math.abs(got.pixels[i] - expected.pixels[i])
+for (i in 0..<gotBytes.size) {
+  val gap = Math.abs(gotBytes[i] - expectedBytes[i])
   if (gap > worst) { worst = gap }
   if (gap > 2) { differing += 1 }
 }
-print(textWidth == engine.width("Text on the card: 中 😀"), worst <= 3, differing, got.inkBox(white) == expected.inkBox(white))   // expect: true true 0 true
-val measured = wc.measure("Hello", wc.font)
-print(measured is TextMetrics, measured.width == FontMetrics(wc.font).stringWidth("Hello"), measured.height == measured.ascent + measured.descent + FontMetrics(wc.font).leading, wc.getFontMetrics().font == wc.font)   // expect: true true true true
+print(textWidth == wc.font.width("Text on the card: 中 😀"), textWidth == inMemory, worst <= 3, differing, got.inkBox(white) == expected.inkBox(white))   // expect: true true true 0 true
+val measured = wc.measure("Hello")
+print(measured is TextMetrics, measured.width == wc.font.width("Hello"), measured.height == measured.ascent + measured.descent + wc.font.leading, measured.ascent == wc.font.ascent)   // expect: true true true true
 // Text is clipped like anything else, and its colour is the canvas's.
 val clipped = stage(60, 30)
 val cl = clipped.canvas().sub(10, 5, 20, 20)
 cl.color = Color.red
-cl.font = Font("Segoe UI", Font.bold, 18)
+cl.font = Font("Segoe UI", 18, bold = true)
 cl.drawString("WWWWWWWW", -5, 16)
-val box = clipped.toPicture().inkBox(white)!!
-print(box[0] >= 10, box[0] + box[2] <= 30, box[1] >= 5, count(clipped.toPicture(), 0xFFFF0000) > 20)   // expect: true true true true
+val box = clipped.toImage().inkBox(white)!!
+print(box.x >= 10, box.x + box.width <= 30, box.y >= 5, count(clipped.toImage(), Color.red) > 20)   // expect: true true true true
 
 // -- A dense screen: more pixels to the unit, edges still on pixel edges --
 val dense = stage(20, 10, 2)
@@ -192,62 +199,71 @@ dc.color = Color.black
 dc.fillRect(1, 1, 3, 2)
 dc.drawRect(8, 1, 5, 4)
 dc.drawLine(1, 8, 6, 8)
-val dp = dense.toPicture()
-print(dp.get(2, 2) == black, dp.get(7, 5) == black, dp.get(8, 5) == white, dp.get(1, 2) == white, count(dp, black))   // expect: true true true true 120
+val dp = dense.toImage()
+print(dp[2, 2] == black, dp[7, 5] == black, dp[8, 5] == white, dp[1, 2] == white, count(dp, black))   // expect: true true true true 120
 val half = stage(20, 10, 1.5)
 val hc = half.canvas()
 hc.color = Color.black
 hc.fillRect(1, 1, 3, 3)          // from 1.5 to 6 of the screen's pixels: put on whole ones
 hc.fillRect(4, 1, 3, 3)          // and its neighbour starts where it ends
-val hp = half.toPicture()
-print(half.deviceWidth, hp.inkBox(white), count(hp, black) == hp.inkBox(white)!![2] * hp.inkBox(white)!![3])   // expect: 30 [2, 2, 9, 4] true
-// Text on a dense screen is the font at that many pixels: twice the size at 2.
+val hp = half.toImage()
+print(half.deviceWidth, hp.inkBox(white), count(hp, black) == hp.inkBox(white)!!.width * hp.inkBox(white)!!.height)   // expect: 30 Rect(2, 2, 9 x 4) true
+// Text on a dense screen is the font at that many pixels: twice the size at 2, and what it
+// gives back is in units, rounded up.
 val big = stage(100, 30, 2)
 val bg = big.canvas()
 bg.color = Color.black
-bg.font = Font("Segoe UI", Font.plain, 12)
+bg.font = Font("Segoe UI", 12)
 val wide = bg.drawString("dense", 4, 20)
-print(wide == FontMetrics(bg.font, 2).stringWidth("dense"), big.toPicture().inkBox(white)!![2] > bg.font.textFont(1).width("dense") * 3 / 2)   // expect: true true
+print(wide == Math.ceil(bg.font.width("dense", 2) / 2.0).toInt(), big.toImage().inkBox(white)!!.width > bg.font.width("dense") * 3 / 2)   // expect: true true
 
-// -- Pictures drawn on pictures --
-val image = BufferedImage(8, 6)
-print(image, image.width, image.getHeight(), image.type == BufferedImage.typeIntArgb, image.getRGB(0, 0))   // expect: BufferedImage(8 x 6) 8 6 true 0
-for (y in 0..<6) {
-  for (x in 0..<8) { image.setRGB(x, y, x < 4 ? 0xFFFF0000 : 0xFF0000FF) }
+// -- Images drawn on surfaces: copied to the card, and only what changed sent again (D124) --
+val image = Image(8, 6)
+print(image, image.width, image.height, image.size, image[0, 0])   // expect: Image(8 x 6) 8 6 Size(8 x 6) Color(0, 0, 0, 0)
+image.editPixels { px ->
+  for (y in 0..<6) {
+    for (x in 0..<8) { px[x, y] = x < 4 ? Color.red : Color.blue }
+  }
 }
-image.setRGB(0, 0, 0)                                   // one clear pixel
+image[0, 0] = Color.clear                                 // one clear pixel
 val table = stage(40, 30)
 val tc = table.canvas()
-tc.drawImage(image, 5, 5)
-val tp = table.toPicture()
-print(tp.get(5, 5) == white, tp.get(6, 5) == 0xFFFF0000, tp.get(9, 10) == 0xFF0000FF, tp.get(12, 10) == 0xFF0000FF, tp.get(13, 10) == white, tp.inkBox(white))   // expect: true true true true true [5, 5, 8, 6]
+tc.draw(image, 5, 5)
+val tp = table.toImage()
+print(tp[5, 5] == white, tp[6, 5] == Color.red, tp[9, 10] == Color.blue, tp[12, 10] == Color.blue, tp[13, 10] == white, tp.inkBox(white))   // expect: true true true true true Rect(5, 5, 8 x 6)
 // Scaled, and see-through.
-tc.drawImage(image, 20, 10, 16, 12)
-tc.drawImage(image, 5, 20, 8, 6, 0.5)
-val tq = table.toPicture()
-print(tq.get(22, 13) == 0xFFFF0000, tq.get(34, 20) == 0xFF0000FF, Math.abs(((tq.get(7, 22) >> 8) & 255) - 128) <= 1, ((tq.get(7, 22) >> 16) & 255) == 255)   // expect: true true true true
-// A pixel set afterwards shows the next time the picture is drawn.
-image.setRGB(7, 5, 0xFF00FF00)
-tc.drawImage(image, 5, 5)
-print(table.toPicture().get(12, 10) == 0xFF00FF00)   // expect: true
+tc.draw(image, 20, 10, 16, 12)
+tc.draw(image, 5, 20, 8, 6, 0.5)
+val tq = table.toImage()
+print(tq[22, 13] == Color.red, tq[34, 20] == Color.blue, Math.abs(tq[7, 22].green - 128) <= 1, tq[7, 22].red == 255)   // expect: true true true true
+// A pixel set afterwards shows the next time the image is drawn.
+image[7, 5] = Color.green
+tc.draw(image, 5, 5)
+print(table.toImage()[12, 10] == Color.green)   // expect: true
+// So does what its own canvas draws, in memory.
+val imageCanvas = image.canvas()
+imageCanvas.color = Color.black
+imageCanvas.fillRect(1, 1, 2, 2)
+tc.draw(image, 5, 5)
+print(table.toImage()[6, 6] == black, table.toImage()[8, 8] == Color.red)   // expect: true true
 // Drawn on with a canvas, and its pixels read again: each side follows the other.
-val drawn = BufferedImage(10, 10, BufferedImage.typeIntRgb)
-print(drawn.getRGB(3, 3) == black)   // expect: true
+val drawn = Image(10, 10, Color.black)
+print(drawn[3, 3] == black)   // expect: true
 val ic = drawn.canvas()
 ic.color = Color.yellow
 ic.fillRect(2, 2, 4, 4)
-print(drawn.getRGB(3, 3) == 0xFFFFFF00, drawn.getRGB(6, 6) == black)   // expect: true true
-drawn.setRGB(3, 3, 0x0000FF)             // no alpha in this kind: every pixel is solid
+print(drawn[3, 3] == Color.yellow, drawn[6, 6] == black)   // expect: true true
+drawn[3, 3] = Color.blue
 ic.color = Color.red
 ic.fillRect(8, 8, 2, 2)
-print(drawn.getRGB(3, 3) == 0xFF0000FF, drawn.getRGB(9, 9) == 0xFFFF0000, drawn.getRGB(2, 2) == 0xFFFFFF00)   // expect: true true true
-val sub = drawn.getSubimage(2, 2, 4, 4)
-print(sub, sub.getRGB(1, 1) == 0xFF0000FF, sub.getRGB(0, 0) == 0xFFFFFF00, BufferedImage.fromPicture(drawn.toPicture()).getRGB(9, 9) == 0xFFFF0000)   // expect: BufferedImage(4 x 4) true true true
+print(drawn[3, 3] == Color.blue, drawn[9, 9] == Color.red, drawn[2, 2] == Color.yellow)   // expect: true true true
+val sub = drawn.crop(2, 2, 4, 4)
+print(sub, sub[1, 1] == Color.blue, sub[0, 0] == Color.yellow, Image.of(10, 10, drawn.pixels.bytes)[9, 9] == Color.red)   // expect: Image(4 x 4) true true true
 fun attempt(block : () -> any?) {
   try { block(); return "no error" } catch (e) { return "${e.message}" }
 }
-print(attempt { drawn.getRGB(10, 0) })       // expect: pixel (10, 0) is outside the picture, which is 10 by 10
-print(attempt { BufferedImage(0, 5) })       // expect: a BufferedImage is at least 1 pixel each way, not 0 by 5
+print(attempt { drawn[10, 0] }, drawn.getOrNull(10, 0))       // expect: pixel (10, 0) is outside the image, which is 10 by 10 null
+print(attempt { Image(-1, 5) })       // expect: an image is from 0 to 32768 pixels each way, not -1 by 5
 // One surface drawn on another, pixel for pixel, and a part of one.
 val stamp = Surface(6, 6)
 val st = stamp.canvas()
@@ -255,25 +271,25 @@ st.color = Color.black
 st.fillOval(0, 0, 6, 6)
 val sheet = stage(30, 20)
 val sh = sheet.canvas()
-sh.drawImage(stamp, 3, 3)
-sh.drawImage(stamp, 12, 3)
-sh.drawImagePart(stamp, 0, 0, 3, 6, 22, 3, 3, 6)
-val shp = sheet.toPicture()
-print(shp.get(5, 5) == black, shp.get(14, 5) == black, shp.get(3, 3) == white, shp.get(23, 5) == black, shp.get(26, 5) == white, shp.crop(3, 3, 6, 6) == shp.crop(12, 3, 6, 6))   // expect: true true true true true true
+sh.draw(stamp, 3, 3)
+sh.draw(stamp, 12, 3)
+sh.drawPart(stamp, 0, 0, 3, 6, 22, 3, 3, 6)
+val shp = sheet.toImage()
+print(shp[5, 5] == black, shp[14, 5] == black, shp[3, 3] == white, shp[23, 5] == black, shp[26, 5] == white, shp.crop(3, 3, 6, 6) == shp.crop(12, 3, 6, 6))   // expect: true true true true true true
 
-// -- Surfaces from pictures, to files, and their end --
-val from = Picture(5, 4, 0xFF336699)
-from.set(1, 1, 0x80FF0000)
+// -- Surfaces from images, to files, and their end --
+val from = Image(5, 4, Color(0x336699))
+from[1, 1] = Color(0x80FF0000, true)
 val loaded = Surface.of(from)
-print(loaded, loaded.toPicture() == from)   // expect: Surface(5 x 4) true
+print(loaded, loaded.toImage() == from)   // expect: Surface(5 x 4) true
 loaded.save("jade_canvas_out.png")
-print(Picture.load("jade_canvas_out.png") == from)   // expect: true
+print(Image.load("jade_canvas_out.png") == from)   // expect: true
 Path("jade_canvas_out.png").delete()
-print(attempt { loaded.upload(Picture(3, 3)) })   // expect: a picture of 3 by 3 does not fit a surface of 5 by 4 pixels
+print(attempt { loaded.upload(Image(3, 3)) })   // expect: an image of 3 by 3 does not fit a surface of 5 by 4 pixels
 print(attempt { Surface(0, 4) }, "|", attempt { Surface(100000, 4) }.startsWith("a picture on the graphics card is from 1 to "))   // expect: a Surface is at least 1 unit each way, not 0 by 4 | true
 loaded.dispose()
 loaded.dispose()
-print(attempt { loaded.toPicture() })   // expect: the picture has been disposed of
+print(attempt { loaded.toImage() })   // expect: the picture has been disposed of
 // Surfaces nothing refers to are given back by the collector, with nobody disposing of them.
 for (i in 0..<400) {
   val scratch = Surface(256, 256)

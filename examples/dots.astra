@@ -174,8 +174,8 @@ suspend fun game() {
 
 val window = NativeWindow("Dots", 780, 580)
 val background = Color(0x15191E)
-val bigFont = Font("Segoe UI", Font.bold, 20)
-val smallFont = Font("Segoe UI", Font.plain, 13)
+val bigFont = Font("Segoe UI", 20, bold = true)
+val smallFont = Font("Segoe UI", 13)
 val textColor = Color(0xD8DEE4)
 
 window.onInput = { event ->

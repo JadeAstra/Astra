@@ -164,6 +164,7 @@ void VM::saveContext() {
     c.openUpvalues = openUpvalues_;
     c.nativeDepth = nativeDepth_;
     c.nativeBase = nativeBase_;
+    c.pendingTypeArgs = pendingTypeArgs_;
 }
 
 void VM::loadContext(Context* c) {
@@ -180,6 +181,7 @@ void VM::loadContext(Context* c) {
     openUpvalues_ = c->openUpvalues;
     nativeDepth_ = c->nativeDepth;
     nativeBase_ = c->nativeBase;
+    pendingTypeArgs_ = c->pendingTypeArgs;
 }
 
 // ---- The lock ----

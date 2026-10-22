@@ -54,6 +54,9 @@ public:
     // Replaces what a surface holds with a picture of its size: red, green, blue, alpha,
     // four bytes a pixel, the colours not multiplied by the alpha.
     void upload(int id, const uint8_t* rgba);
+    // Only the rectangle (x, y, w, h) of a picture `rgbaWidth` pixels wide, into the same place:
+    // what an Image has changed since its copy was made (D124).
+    void uploadPart(int id, const uint8_t* rgba, int rgbaWidth, int x, int y, int w, int h);
     // The same the other way.
     bool read(int id, std::vector<uint8_t>& rgba);
     int maxSurfaceSize() const { return maxTexture_; }

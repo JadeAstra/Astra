@@ -1,0 +1,63 @@
+// What a program ported from Java's graphics or from JadeUI is told: each old name, and what
+// to write in Astra (D99, D101 to D106, L79 to L86, L101, L102).
+
+val size = Dimension(3, 4)        // check: a width and a height are a Size in Astra, a value type: Size(width, height) (L82)
+val box = Rectangle(0, 0, 2, 2)   // check: a rectangle is a Rect in Astra, a value type: Rect(x, y, width, height) (L84)
+val old = BufferedImage(4, 4)     // check: pixels in memory are an Image in Astra: Image(width, height), image[x, y] a Color, image.canvas() to draw on it (L86, L101)
+val pic = Picture(4, 4)           // check: a Picture is an Image in Astra: Image(width, height, color), image[x, y], image.canvas() (L101)
+fun measure(fm : FontMetrics) {}  // check: a font measures itself in Astra: font.width(text), font.ascent, font.descent, font.leading, font.lineHeight, and font.width(text, scale) in a screen's pixels (L81)
+
+// -- Colours --
+val c = Color(10, 20, 30)
+print(c.getRed())                 // check: a colour's parts are properties, bytes: color.red (L79)
+print(c.rgb)                      // check: the colour as one number is color.argb, 0xAARRGGBB (L79)
+print(c.getRGB())                 // check: the colour as one number is color.argb, 0xAARRGGBB (L79)
+val tooMuch = Color(300, 0, 0)    // a mistake when it runs: a part is from 0 to 255
+
+// -- Fonts --
+val f = Font("Segoe UI", 13)
+val bold = Font("Arial", 1, 12)   // check: Java's Font(name, style, size) is Font(name, size, bold = true, italic = true) in Astra: a style is said by name (L80)
+print(Font.bold)                  // check: a font's style is said by name: Font(name, size, bold = true) (L80)
+print(f.deriveFont(20.0))         // check: a font with options changed is font.copy(size = ..., bold = ..., italic = ..., weight = ...) (D144)
+print(f.style)                    // check: a font says its style as isBold and isItalic (L80)
+print(f.stringWidth("a"))         // check: a text's width is font.width(text) (L81)
+print(f.textFont())               // check: a font measures and is drawn by itself: font.width(text, scale), font.ascent(scale) (L102)
+
+// -- Images and canvases --
+val image = Image(4, 4)
+print(image.getRGB(0, 0))         // check: a pixel is image[x, y], a Color: image[x, y].argb for the number (D141)
+image.setRGB(0, 0, 0)             // check: a pixel is set with image[x, y] = color: Color(argb, hasAlpha = true) for a number (D141)
+print(image.getSubimage(0, 0, 1, 1))   // check: a part of an image is image.crop(x, y, width, height), a new image (L101)
+val canvas = image.canvas()
+canvas.drawImage(image, 0, 0)     // check: a picture is drawn with canvas.draw(picture, x, y), or draw(picture, x, y, w, h, alpha = ...) to scale it (L86)
+print(canvas.getFontMetrics())    // check: a font measures itself: canvas.font.width(text), or canvas.measure(text) for its width, ascent, descent and height (L81)
+canvas.setColor(c)                // check: the colour is a property: canvas.color = Color.red
+
+// -- Sizes and rectangles: value types --
+var s = Size(1, 2)
+s.setSize(3, 4)                   // check: a Size is a value: write size = Size(width, height), or set size.width where it is kept (L82)
+print(Rect(0, 0, 1, 1).bounds)    // check: a Rect is its own bounds: the call goes (L84)
+
+// -- A grid's new rows are a new grid: one left unused is a mistake (D155) --
+var g = Grid<int>(2, 2)
+g.appendRows(1)                   // check: 'appendRows' gives a new grid and leaves 'g' as it was: write g .= appendRows(...) (D155)
+g .= appendRows(1)
+
+// -- .= puts back what the call gives, which must fit the place (D156) --
+var word = "four"
+word .= size                      // check: 'word' is a string; '.=' would give it an int
+var maybe : string? = " x "
+maybe .= trim()                   // check: a string? may be null, so .trim() cannot be called on it; use ?.trim(), or check it first
+
+// -- Bundles of named arguments (D143) --
+fun label(text : string, size : int = 12, bold : bool = false) : string => text
+val style = params(size = 18, bold = true)
+print(label("a", ...style))
+val wrongName = params(colour = "red")
+print(label("a", ...wrongName))   // check: label(...) has no parameter 'colour', which the bundle gives
+val wrongType = params(size = "big")
+print(label("a", ...wrongType))   // check: label(...) takes an int for 'size', and the bundle gives a string
+print(style.copy(italic = true))  // check: the bundle has no 'italic' to change; add it with + params(italic = ...)
+print(params(18))                 // check: params(...) holds named arguments: params(bold = true, size = 14); to add another bundle's, write a + b
+val area = Size(2, 3)
+print(label("a", ...area))        // check: '...' passes the arguments of a bundle made with params(...), not a Size

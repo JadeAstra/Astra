@@ -11,7 +11,7 @@
 //     canvas.color = Color.white
 //     canvas.fillRect(0, 0, canvas.width, canvas.height)
 //     canvas.color = Color.black
-//     canvas.font = Font("Segoe UI", Font.bold, 20)
+//     canvas.font = Font("Segoe UI", 20, bold = true)
 //     canvas.drawString("Hello", 20, 40)
 //     window.present()
 //   }
@@ -78,12 +78,13 @@ internal fun jadeDispatch(id : int, kind : string, x : int, y : int, n1 : int, n
 
 // ---- A picture on the graphics card ----
 
-// A picture that is drawn on and drawn from: what a widget keeps of itself so as not to
-// draw it again, and what a test reads back. Its size is in layout units; with a scale it
-// has that many pixels to the unit, to match the screen it will be drawn on.
-class Surface {
-  val width : int
-  val height : int
+// A picture that is drawn on and drawn from on the graphics card: what a widget keeps of itself
+// so as not to draw it again, and heavy drawing off the screen (D123). Its size is in layout
+// units; with a scale it has that many pixels to the unit, to match the screen it will be drawn
+// on. Its pixels come back to memory as an Image.
+class Surface : Drawable, ToImage {
+  override val width : int
+  override val height : int
   val scale : Number
   val deviceWidth : int
   val deviceHeight : int
@@ -100,32 +101,36 @@ class Surface {
   }
 
   static {
-    // A surface holding a Picture, pixel for pixel.
-    fun of(picture : Picture) : Surface {
-      val made = Surface(picture.width, picture.height)
-      made.upload(picture)
+    // A surface holding an Image, pixel for pixel.
+    fun of(image : Image) : Surface {
+      val made = Surface(image.width, image.height)
+      made.upload(image)
       return made
     }
   }
+  // Its width and height in units (D152).
+  val size : Size
+    get() => Size(width, height)
+
   // Something to draw on it with. Every pixel starts clear.
-  fun canvas(owner : BufferedImage? = null) : NativeCanvas => NativeCanvas(handle, width, height, scale, 0, 0, 0, 0, deviceWidth, deviceHeight, owner)
+  fun canvas() : NativeCanvas => NativeCanvas(handle, width, height, scale, 0, 0, 0, 0, deviceWidth, deviceHeight)
 
   // A canvas of another size in units over the same pixels: `scale` pixels to the unit.
-  fun canvasAt(width : int, height : int, scale : Number, owner : BufferedImage? = null) : NativeCanvas => NativeCanvas(handle, width, height, scale, 0, 0, 0, 0, deviceWidth, deviceHeight, owner)
+  fun canvasAt(width : int, height : int, scale : Number) : NativeCanvas => NativeCanvas(handle, width, height, scale, 0, 0, 0, 0, deviceWidth, deviceHeight)
 
-  // What it holds, as a Picture of its pixels.
-  fun toPicture() : Picture => Picture(deviceWidth, deviceHeight, 0, __jade.surfaceRead(handle))
+  // What it holds, as an Image of its pixels.
+  override fun toImage() : Image => Image.of(deviceWidth, deviceHeight, __jade.surfaceRead(handle))
 
-  // Replaces what it holds with a Picture of the same number of pixels.
-  fun upload(picture : Picture) {
-    if (picture.width != deviceWidth or picture.height != deviceHeight) {
-      throw IllegalArgumentException("a picture of ${picture.width} by ${picture.height} does not fit a surface of $deviceWidth by $deviceHeight pixels")
+  // Replaces what it holds with an Image of the same number of pixels.
+  fun upload(image : Image) {
+    if (image.width != deviceWidth or image.height != deviceHeight) {
+      throw IllegalArgumentException("an image of ${image.width} by ${image.height} does not fit a surface of $deviceWidth by $deviceHeight pixels")
     }
-    __jade.surfaceUpload(handle, picture.pixels)
+    __jade.surfaceUpload(handle, image.pixels.bytes)
   }
 
   fun save(path : Path | string) throws IOException {
-    toPicture().save(path)
+    toImage().save(path)
   }
 
   // Gives its memory on the graphics card back now. Without this it is given back when
@@ -139,70 +144,35 @@ class Surface {
 
 // ---- The canvas ----
 
-// Draws on a window or a surface. The operations are the ones of JadeUI's canvas, with
-// Java's meanings: fillRect(x, y, w, h) covers w by h units; drawRect(x, y, w, h) is an
-// outline one unit thick that covers w + 1 by h + 1; drawString puts the text's baseline
-// at y. Shapes have smoothed edges; straight lines and rectangles sit on pixel edges.
+// Draws on a window or a surface, on the graphics card. Shapes have smoothed edges; straight
+// lines and rectangles sit on pixel edges. An Image drawn here is drawn from a copy of it on the
+// card, which the native layer keeps up to date from what has changed in it (D124).
 class NativeCanvas : Canvas {
-  override val width : int
-  override val height : int
-  val scale : Number
-  override val style : Style
   private val target : any
-  private val originX : int      // in the target's own pixels
-  private val originY : int
-  private val clipLeft : int
-  private val clipTop : int
-  private val clipRight : int
-  private val clipBottom : int
-  private val owner : BufferedImage?        // a BufferedImage being drawn on, which is told that it has changed
-  private var currentColor = Color.black
-  private var currentFont = Font("Dialog", Font.plain, 12)
-  private var fontSent = false
+  private var sentColor : Color? = null
+  private var sentFont : Font? = null
 
-  fun init(target : any, width : int, height : int, scale : Number, originX : int, originY : int, clipLeft : int, clipTop : int, clipRight : int, clipBottom : int,
-           owner : BufferedImage? = null, style : Style? = null) {
-    this.style = style ?: Style(null, null, true)
+  fun init(target : any, width : int, height : int, scale : Number, originX : int, originY : int, clipLeft : int, clipTop : int, clipRight : int, clipBottom : int) {
+    super.init(width, height, scale, originX, originY, clipLeft, clipTop, clipRight, clipBottom)
     this.target = target
-    this.width = width
-    this.height = height
-    this.scale = scale
-    this.originX = originX
-    this.originY = originY
-    this.clipLeft = clipLeft
-    this.clipTop = clipTop
-    this.clipRight = clipRight
-    this.clipBottom = clipBottom
-    this.owner = owner
   }
 
-  override val deviceScaleX : float
-    get() => scale.toFloat()
-  override val deviceScaleY : float
-    get() => scale.toFloat()
+  protected override fun another(width : int, height : int, originX : int, originY : int, clipLeft : int, clipTop : int, clipRight : int, clipBottom : int) : Canvas =>
+    NativeCanvas(target, width, height, scale, originX, originY, clipLeft, clipTop, clipRight, clipBottom)
 
-  override var color : Color
-    get() => currentColor
-    set(value) {
-      currentColor = value
-      if (jadeActiveCanvas === this) { __jade.color(value.rgb) }
-    }
-
-  override var font : Font
-    get() => currentFont
-    set(value) {
-      currentFont = value
-      fontSent = false
-    }
-
-  // Tells the native layer where drawing now goes, unless this canvas was the last to draw.
+  // Tells the native layer where drawing now goes, unless this canvas was the last to draw,
+  // and the colour, if it has changed since it was last told.
   private fun use() {
-    owner?.drawnOn()
-    if (jadeActiveCanvas === this) { return }
-    jadeActiveCanvas = this
-    __jade.target(target, originX, originY, scale, clipLeft, clipTop, clipRight, clipBottom)
-    __jade.color(currentColor.rgb)
-    fontSent = false
+    if (jadeActiveCanvas !== this) {
+      jadeActiveCanvas = this
+      __jade.target(target, originX, originY, scale, clipLeft, clipTop, clipRight, clipBottom)
+      sentColor = null
+      sentFont = null
+    }
+    if (sentColor != color) {
+      __jade.color(color.argb)
+      sentColor = color
+    }
   }
 
   override fun fillRect(x : Number, y : Number, w : Number, h : Number) {
@@ -213,8 +183,7 @@ class NativeCanvas : Canvas {
     use()
     __jade.drawRect(x, y, w, h)
   }
-  // Makes a rectangle clear again: what is under the picture shows through it.
-  fun clearRect(x : Number, y : Number, w : Number, h : Number) {
+  override fun clearRect(x : Number, y : Number, w : Number, h : Number) {
     use()
     __jade.clearRect(x, y, w, h)
   }
@@ -251,96 +220,48 @@ class NativeCanvas : Canvas {
     __jade.polygon(xs, ys, n ?: xs.size, true, true)
   }
 
-  // Text in the canvas's font and colour, starting at x with its baseline at y. Returns
-  // the width it took.
-  override fun drawString(text : string, x : Number, y : Number) {
+  override fun drawString(text : string, x : Number, y : Number) : int {
     use()
-    val engine = currentFont.textFont(scale)
-    if (!fontSent) {
-      __jade.font(engine.handle)
-      fontSent = true
+    if (sentFont != font) {
+      __jade.font(font, scale)   // the native layer finds the engine's font for it (D125)
+      sentFont = font
     }
-    val device = __jade.text("$text", x, y)
+    val device : int = __jade.text("$text", x, y)
     return scale == 1 ? device : Math.ceil(device / scale.toFloat()).toInt()
   }
 
-  // A BufferedImage or a Surface at (x, y): at its own size, or scaled into w by h units.
-  // `alpha` from 0.0 (not drawn) to 1.0 (solid) makes it see-through.
-  override fun drawImage(image : any, x : Number, y : Number, w : Number? = null, h : Number? = null, alpha : Number = 1.0) {
-    val source = image is Surface ? image : (image as BufferedImage).onCard()
-    use()
-    if (w == null) {
-      if (source.scale == scale) {
-        __jade.blit(source.handle, x, y, alpha)   // pixel for pixel
+  // An Image (from its copy on the card) or a Surface at (x, y), at its own size or scaled
+  // into w by h units; `alpha` from 0.0 (not drawn) to 1.0 (solid) makes it see-through.
+  protected override fun drawPicture(picture : Drawable, x : Number, y : Number, w : Number?, h : Number?, alpha : Number) {
+    if (picture is Surface) {
+      use()
+      if (w == null and h == null) {
+        if (picture.scale == scale) {
+          __jade.blit(picture.handle, x, y, alpha)   // pixel for pixel
+        } else {
+          __jade.image(picture.handle, 0, 0, picture.deviceWidth, picture.deviceHeight, x, y, picture.width, picture.height, alpha)
+        }
       } else {
-        __jade.image(source.handle, 0, 0, source.deviceWidth, source.deviceHeight, x, y, source.width, source.height, alpha)
+        __jade.image(picture.handle, 0, 0, picture.deviceWidth, picture.deviceHeight, x, y, w ?: picture.width, h ?: picture.height, alpha)
       }
-    } else {
-      __jade.image(source.handle, 0, 0, source.deviceWidth, source.deviceHeight, x, y, w, h, alpha)
+      return
     }
+    if (picture is Image) {
+      val card = __jade.imageCard(picture)
+      if (card == null) { return }
+      use()
+      __jade.image(card, 0, 0, picture.width, picture.height, x, y, w ?: picture.width, h ?: picture.height, alpha)
+      return
+    }
+    throw IllegalArgumentException("a NativeCanvas draws an Image or a Surface, not $picture")
   }
-
-  // A part of a picture, given in its own pixels, scaled into a rectangle.
-  fun drawImagePart(image : any, sourceX : Number, sourceY : Number, sourceW : Number, sourceH : Number, x : Number, y : Number, w : Number, h : Number,
-                    alpha : Number = 1.0) {
-    val source = image is Surface ? image : (image as BufferedImage).onCard()
+  protected override fun drawPicturePart(picture : Drawable, sourceX : Number, sourceY : Number, sourceW : Number, sourceH : Number, x : Number, y : Number,
+                                         w : Number, h : Number, alpha : Number) {
+    val source = picture is Surface ? picture.handle : (picture is Image ? __jade.imageCard(picture) : null)
+    if (source == null) { return }
     use()
-    __jade.image(source.handle, sourceX, sourceY, sourceW, sourceH, x, y, w, h, alpha)
+    __jade.image(source, sourceX, sourceY, sourceW, sourceH, x, y, w, h, alpha)
   }
-
-  // What a text takes up in a font, on this canvas's screen.
-  override fun measure(text : string, font : Font) : TextMetrics {
-    val m = FontMetrics(font, scale)
-    return TextMetrics(m.stringWidth(text), m.ascent, m.descent, m.height)
-  }
-  fun getFontMetrics(font : Font? = null) : FontMetrics => FontMetrics(font ?: currentFont, scale)
-
-  // The part of the canvas that can be drawn on: the rest is clipped away.
-  override val visibleBounds : Rectangle
-    get() {
-      val left = Math.max(0, Math.floor((clipLeft - originX) / scale.toFloat()).toInt())
-      val top = Math.max(0, Math.floor((clipTop - originY) / scale.toFloat()).toInt())
-      val right = Math.min(width, Math.ceil((clipRight - originX) / scale.toFloat()).toInt())
-      val bottom = Math.min(height, Math.ceil((clipBottom - originY) / scale.toFloat()).toInt())
-      return Rectangle(left, top, Math.max(0, right - left), Math.max(0, bottom - top))
-    }
-
-  // A canvas for a part of this one: its (0, 0) is at (x, y) here, and nothing it draws
-  // lands outside the part.
-  // The same canvas with another style to hand to what paints on it.
-  fun withStyle(style : Style) : NativeCanvas {
-    val same = NativeCanvas(target, width, height, scale, originX, originY, clipLeft, clipTop, clipRight, clipBottom, owner, style)
-    same.color = currentColor
-    same.font = currentFont
-    return same
-  }
-
-  // The same canvas, drawing only inside a rectangle of it.
-  fun clipped(x : Number, y : Number, w : Number, h : Number) : NativeCanvas {
-    val left = originX + Math.round(x * scale).toInt()
-    val top = originY + Math.round(y * scale).toInt()
-    val right = originX + Math.round((x + w) * scale).toInt()
-    val bottom = originY + Math.round((y + h) * scale).toInt()
-    val same = NativeCanvas(target, width, height, scale, originX, originY,
-                            Math.max(clipLeft, left), Math.max(clipTop, top), Math.min(clipRight, right), Math.min(clipBottom, bottom), owner, style)
-    same.color = currentColor
-    same.font = currentFont
-    return same
-  }
-
-  override fun sub(x : int, y : int, width : int, height : int, style : Style? = null) : NativeCanvas {
-    val left = originX + Math.round(x * scale).toInt()
-    val top = originY + Math.round(y * scale).toInt()
-    val right = originX + Math.round((x + width) * scale).toInt()
-    val bottom = originY + Math.round((y + height) * scale).toInt()
-    val child = NativeCanvas(target, width, height, scale, left, top,
-                             Math.max(clipLeft, left), Math.max(clipTop, top), Math.min(clipRight, right), Math.min(clipBottom, bottom), owner, style ?: this.style)
-    child.color = currentColor
-    child.font = currentFont
-    return child
-  }
-
-  override fun dispose() {}
 }
 
 // ---- A window ----
@@ -408,8 +329,8 @@ class NativeWindow {
     get() => __jade.windowInfo(id)[3]
   val scale : float
     get() => __jade.windowInfo(id)[4]
-  val size : Dimension
-    get() => Dimension(width, height)
+  val size : Size
+    get() => Size(width, height)
   fun setSize(width : int, height : int) {
     __jade.windowSetSize(id, width, height)
   }
@@ -455,12 +376,9 @@ class NativeWindow {
     __jade.windowAttention(id)
   }
 
-  // The picture for its title bar and the task bar: a Picture or a BufferedImage.
-  fun setIcon(picture : Picture) {
-    __jade.windowIcon(id, picture.pixels, picture.width, picture.height)
-  }
-  fun setIcon(image : BufferedImage) {
-    setIcon(image.toPicture())
+  // The picture for its title bar and the task bar.
+  fun setIcon(image : Image) {
+    __jade.windowIcon(id, image.pixels.bytes, image.width, image.height)
   }
 
   var cursor : CursorKind
@@ -492,9 +410,9 @@ class NativeWindow {
   }
 
   // The window's picture as it now is, whether or not the window is showing.
-  fun snapshot() : Picture {
+  fun snapshot() : Image {
     val info = __jade.windowInfo(id)
-    return Picture(info[2], info[3], 0, __jade.surfaceRead(info[5]))
+    return Image.of(info[2] as int, info[3] as int, __jade.surfaceRead(info[5]))
   }
 
   // An event made up, which then goes the way a real one does: for tests.

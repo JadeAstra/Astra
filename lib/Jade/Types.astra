@@ -4,7 +4,7 @@
 
 // What a content says of its size: the least it can be, what it would like, and the most. A
 // value type (M6.6 part 7): a component keeps the last ones inside itself.
-value Sizes(val min : Dimension, val pref : Dimension, val max : Dimension)
+value Sizes(val min : Size, val pref : Size, val max : Size)
 
 // How a widget is to draw itself, handed down from what it is in: a background and a
 // foreground to use where it has none of its own, whether it can be used, and whether it
@@ -41,8 +41,10 @@ interface Event {
 }
 
 // What a widget is made of: it says how large it is, paints itself, and hears of events.
-// A Component wraps one.
+// A Component wraps one, and is its owner: the content tells it that it has changed, and paints
+// in the style it says (owner.paintStyle, D132).
 interface Content {
+  var owner : Component?
   fun sizes() : Sizes
   fun paint(canvas : Canvas)
   fun onEvent(event : Event) {}
@@ -92,10 +94,6 @@ interface HeightForWidth {
   fun heightForWidth(width : int) : int
 }
 
-// Knows the Component it is in, to tell it that it has changed.
-interface OwnedContent {
-  var owner : Component?
-}
 
 interface BandAware {
   var paintBand : Range?
@@ -209,15 +207,45 @@ internal val jadeMetrics = {:}
 
 // The measurements of a font in layout units, for the screen being laid out for
 // (Jade.layoutScale), kept once made.
-internal fun metrics(font : Font) : FontMetrics {
+internal fun metrics(font : Font) : TextUnits {
   val scale = Jade.layoutScale
-  val key = "${font.name}|${font.style}|${font.size}|$scale"
+  // Mostly the same font as last time (every label's is the default one): no key made, no hashing.
+  val last = jadeLastMetrics
+  if (last != null and last.font === font and last.scale == scale) { return last }
+  val key = font to scale
   var found = jadeMetrics[key]
   if (found == null) {
-    found = FontMetrics(font, scale)
+    found = TextUnits(font, scale)
     jadeMetrics[key] = found
   }
-  return found
+  jadeLastMetrics = found as TextUnits
+  return found as TextUnits
+}
+internal var jadeLastMetrics : TextUnits? = null
+
+// A font's measurements in layout units on a screen of some scale: measured in that screen's
+// own pixels and divided, rounded up, so that text always fits the room measured for it. At a
+// scale of 1 the numbers are exact.
+internal class TextUnits {
+  val font : Font
+  val scale : Number
+  // The line, worked out once: it never changes.
+  val ascent : int
+  val descent : int
+  val leading : int
+  val height : int
+
+  fun init(font : Font, scale : Number) {
+    this.font = font
+    this.scale = scale
+    this.ascent = units(font.ascent(scale))
+    this.descent = units(font.descent(scale))
+    this.leading = units(font.leading(scale))
+    this.height = ascent + descent + leading
+  }
+
+  private fun units(device : int) : int => scale == 1 ? device : Math.ceil(device / scale.toFloat()).toInt()
+  fun stringWidth(text : string) : int => units(font.width(text, scale))
 }
 
 // A text cut short with "…" so that it fits a width; the whole text if it fits as it is.

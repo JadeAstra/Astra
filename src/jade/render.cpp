@@ -305,6 +305,27 @@ void Renderer::upload(int id, const uint8_t* rgba) {
     glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, s->width, s->height, GL_RGBA, GL_UNSIGNED_BYTE, multiplied.data());
 }
 
+void Renderer::uploadPart(int id, const uint8_t* rgba, int rgbaWidth, int x, int y, int w, int h) {
+    Surface* s = surface(id);
+    if (s == nullptr || w <= 0 || h <= 0) return;
+    if (!batch_.empty()) flush();
+    std::vector<uint8_t> multiplied(static_cast<size_t>(w) * static_cast<size_t>(h) * 4);
+    for (int row = 0; row < h; row++) {
+        const uint8_t* from = rgba + (static_cast<size_t>(y + row) * static_cast<size_t>(rgbaWidth) + static_cast<size_t>(x)) * 4;
+        uint8_t* to = multiplied.data() + static_cast<size_t>(row) * static_cast<size_t>(w) * 4;
+        for (int col = 0; col < w * 4; col += 4) {
+            const uint32_t a = from[col + 3];
+            to[col] = static_cast<uint8_t>((from[col] * a + 127) / 255);
+            to[col + 1] = static_cast<uint8_t>((from[col + 1] * a + 127) / 255);
+            to[col + 2] = static_cast<uint8_t>((from[col + 2] * a + 127) / 255);
+            to[col + 3] = static_cast<uint8_t>(a);
+        }
+    }
+    glBindTexture(GL_TEXTURE_2D, s->texture);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    glTexSubImage2D(GL_TEXTURE_2D, 0, x, y, w, h, GL_RGBA, GL_UNSIGNED_BYTE, multiplied.data());
+}
+
 bool Renderer::read(int id, std::vector<uint8_t>& rgba) {
     Surface* s = surface(id);
     if (s == nullptr) return false;

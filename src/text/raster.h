@@ -24,12 +24,19 @@ struct GlyphImage {
     bool empty() const { return width == 0 || height == 0; }
 };
 
+// How finely curves are cut into straight pieces: a glyph's, small, to within about a tenth of
+// a pixel; a shape's, which may be large, about ten times as closely, so that an oval's pixels
+// add up to its area.
+constexpr float kGlyphFineness = 1.0f;
+constexpr float kShapeFineness = 9.0f;
+
 // Fills an outline that is already in pixels (y still growing upwards), with exact-area
 // antialiasing: each pixel's value is the share of it that lies inside the outline.
-GlyphImage rasterize(const Path& path);
+GlyphImage rasterize(const Path& path, float fineness = kGlyphFineness);
 
 // The same into a box given beforehand, which a colour glyph's layers share: `left` and
 // `top` say where the box sits, as in GlyphImage. Adds nothing if the path is empty.
-void rasterizeInto(const Path& path, int left, int top, int width, int height, std::vector<uint8_t>& coverage);
+void rasterizeInto(const Path& path, int left, int top, int width, int height, std::vector<uint8_t>& coverage,
+                   float fineness = kGlyphFineness);
 
 }  // namespace astra::text

@@ -1,0 +1,59 @@
+// An index of several parts: `op [](x, y)` and `op []=(x, y, value)`, read, set, and changed
+// in place with the place worked out once.
+
+class Board {
+  val width : int
+  val height : int
+  private val cells : open List<string> = []
+  fun init(width : int, height : int) {
+    this.width = width
+    this.height = height
+    for (i in 0..<width * height) { cells.add(".") }
+  }
+  op [](x : int, y : int) : string => cells[y * width + x]
+  op []=(x : int, y : int, mark : string) {
+    cells[y * width + x] = mark
+  }
+  // Three parts, and a part that is not a number.
+  op [](x : int, y : int, layer : string) : string => "$layer:" + this[x, y]
+  override fun toString() : string {
+    var out = ""
+    for (y in 0..<height) { out += cells[y * width..<(y + 1) * width].join("") + (y < height - 1 ? "/" : "") }
+    return out
+  }
+}
+
+val b = Board(3, 2)
+b[0, 0] = "x"
+b[2, 1] = "o"
+print(b, b[0, 0], b[1, 0], b[2, 1, "top"])   // expect: x../..o x . top:o
+// Changed in place: +=, .=, and the parts worked out only once.
+b[1, 1] += "!"
+b[0, 0] .= upper()
+var asked = 0
+fun column() : int {
+  asked += 1
+  return 1
+}
+b[column(), 0] += "?"
+print(b, asked)   // expect: X.?./..!o 1
+
+// Counting with ++ on a counter kept by two keys.
+class Tally {
+  private val counts : open Map<string, int> = {:}
+  op [](row : string, col : string) : int => counts["$row/$col"] ?: 0
+  op []=(row : string, col : string, n : int) {
+    counts["$row/$col"] = n
+  }
+}
+val t = Tally()
+t["a", "b"]++
+t["a", "b"]++
+t["a", "c"] += 5
+print(t["a", "b"], t["a", "c"], t["z", "z"])   // expect: 2 5 0
+
+// The standard library's Grid takes two: a cell, and a part by two ranges.
+val g = Grid<int>(4, 3)
+g[1, 2] = 7
+g[1, 2] *= 3
+print(g[1, 2], g[0..<2, 1..<3].toList())   // expect: 21 [0, 0, 0, 21]

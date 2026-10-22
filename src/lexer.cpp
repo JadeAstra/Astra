@@ -218,7 +218,10 @@ void Lexer::scanToken() {
             }
             break;
         case '.':
-            if (next('.')) {
+            if (next('.') && pos_ + 2 < end_ && src_[pos_ + 2] == '.') {
+                type = TokenType::Ellipsis;
+                length = 3;
+            } else if (next('.')) {
                 if (pos_ + 2 < end_ && src_[pos_ + 2] == '=')
                     throw error("'..=' is not an operator; 'a..b' includes b, and 'a..<b' leaves it out");
                 if (pos_ + 2 < end_ && src_[pos_ + 2] == '<') {
@@ -228,6 +231,9 @@ void Lexer::scanToken() {
                     type = TokenType::DotDot;
                     length = 2;
                 }
+            } else if (next('=')) {
+                type = TokenType::DotEq;
+                length = 2;
             } else {
                 type = TokenType::Dot;
             }

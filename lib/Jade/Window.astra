@@ -34,7 +34,7 @@ class Window {
   val onClose : () -> unit
   val onFilesDropped : (List<Path>) -> unit
   val onFilesDroppedAt : ((List<Path>, int, int) -> bool)?
-  val icons : List<BufferedImage>
+  val icons : List<Image>
   val onFront : () -> unit
   val owner : Window?
   val focus : Component?
@@ -57,7 +57,7 @@ class Window {
   // not, unless `exitOnClose` says otherwise.
   fun init(root : Component, title : string = "Jade", initialWidth : int = 900, initialHeight : int = 640, exitOnClose : bool? = null, menuBar : any? = null,
            onClose : () -> unit = {}, onFilesDropped : (List<Path>) -> unit = {}, onFilesDroppedAt : ((List<Path>, int, int) -> bool)? = null,
-           icons : List<BufferedImage>? = null, onFront : () -> unit = {}, owner : Window? = null, focus : Component? = null, dialog : bool = false,
+           icons : List<Image>? = null, onFront : () -> unit = {}, owner : Window? = null, focus : Component? = null, dialog : bool = false,
            sizeToContent : bool = false, centerOnOwner : bool = false, resizable : bool = true, keyFilter : ((Event.KeyPress, Component?) -> bool)? = null) {
     this.currentRoot = root
     this.currentTitle = title
@@ -98,6 +98,11 @@ class Window {
 
   val isShowing : bool
     get() => handle != null
+
+  // The size of what it shows, in units (D152): its content's while it is open, else the size
+  // it opens at.
+  val size : Size
+    get() => isShowing ? root.size : Size(initialWidth, initialHeight)
 
   // Opens the window, or brings it to the front if it is open already.
   fun show() {
@@ -416,13 +421,13 @@ class WindowHost : WindowHandle {
     val onto = part == null ? all : all.clipped(part.x, part.y, part.width, part.height)
     onto.color = Palette.headerBg       // what shows where the tree draws nothing
     onto.fillRect(0, 0, w, h)
-    tree.paintInto(onto.withStyle(tree.style()))
+    tree.paintInto(onto)
     loop.drawn(plan, w, h)
     native.present()
   }
 
   // The window's picture as it now is.
-  fun snapshot() : Picture {
+  fun snapshot() : Image {
     frame()
     return native.snapshot()
   }
@@ -784,16 +789,16 @@ class WindowHost : WindowHandle {
 
   // Something happened: a frame is needed, and unless it was only the pointer moving, the
   // wheel, or a caret, every widget's kept picture may be out of date.
-  private fun noteInput(pointerMotion : bool = false, scroll : bool = false, caretNav : bool = false, damage : Rectangle? = null) {
+  private fun noteInput(pointerMotion : bool = false, scroll : bool = false, caretNav : bool = false, damage : Rect? = null) {
     if (damage != null) { loop.markDamage(damage) } else { loop.markDirty() }
     val caretOnlyNav = caretNav and focusedComponent?.content is OverlayContent
     if (!caretOnlyNav and !scroll and !pointerMotion) { Jade.invalidateRenderCaches() }
   }
 
-  private fun capturedRect() : Rectangle? {
+  private fun capturedRect() : Rect? {
     val c = captured
     if (c == null) { return null }
     val b = c.component.bounds
-    return Rectangle(c.offsetX - 2, c.offsetY - 2, b.width + 4, b.height + 4)
+    return Rect(c.offsetX - 2, c.offsetY - 2, b.width + 4, b.height + 4)
   }
 }

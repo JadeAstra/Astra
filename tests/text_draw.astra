@@ -1,19 +1,23 @@
-// Drawing text into a picture: where the pixels fall, and that they fall where measuring says.
+// Drawing text into an image: where the pixels fall, and that they fall where measuring says.
 
-val font = TextFont("Segoe UI", 16)
+val font = Font("Segoe UI", 16)
 
 // How much is painted: the sum of every pixel's alpha.
-fun ink(picture : Picture) {
+fun ink(image : Image) {
+  val bytes = image.pixels.bytes
   var total = 0
   var i = 3
-  while (i < picture.pixels.size) { total += picture.pixels[i]; i += 4 }
+  while (i < bytes.size) { total += bytes[i]; i += 4 }
   return total
 }
 
-fun drawn(text : string, f : TextFont, color : int = Picture.black, width : int = 300, height : int = 60, x : int = 10, y : int = 40) {
-  val picture = Picture(width, height)
-  picture.drawText(text, x, y, f, color)
-  return picture
+fun drawn(text : string, f : Font, color : Color = Color.black, width : int = 300, height : int = 60, x : int = 10, y : int = 40) {
+  val image = Image(width, height)
+  val canvas = image.canvas()
+  canvas.color = color
+  canvas.font = f
+  canvas.drawString(text, x, y)
+  return image
 }
 
 // -- On the baseline, under the capital height --
@@ -21,112 +25,118 @@ fun drawn(text : string, f : TextFont, color : int = Picture.black, width : int 
 // picture is exactly that tall, and its top and bottom rows are as strong as the rows next to them.
 val h = drawn("H", font)
 val box = h.inkBox()!!
-print(box[1] == 40 - font.capHeight, box[1] + box[3] == 40, box[0] >= 10, box[0] + box[2] <= 10 + font.width("H"))   // expect: true true true true
+print(box.y == 40 - font.capHeight, box.y + box.height == 40, box.x >= 10, box.x + box.width <= 10 + font.width("H"))   // expect: true true true true
 var sharpTop = true
 var sharpBottom = true
 var stems = 0
 for (x in 0..<h.width) {
   // As strong as the row next to it: the edge is on the pixel edge, not part way into the row.
-  sharpTop = sharpTop and h.get(x, box[1]) == h.get(x, box[1] + 1)
-  sharpBottom = sharpBottom and h.get(x, 39) == h.get(x, 38)
-  if (h.get(x, box[1]) != 0) { stems += 1 }
+  sharpTop = sharpTop and h[x, box.y] == h[x, box.y + 1]
+  sharpBottom = sharpBottom and h[x, 39] == h[x, 38]
+  if (h[x, box.y] != Color.clear) { stems += 1 }
 }
-print(sharpTop, sharpBottom, stems >= 2, h.get(box[0], box[1] - 1), h.get(box[0], 40))   // expect: true true true 0 0
+print(sharpTop, sharpBottom, stems >= 2, h[box.x, box.y - 1], h[box.x, 40])   // expect: true true true Color(0, 0, 0, 0) Color(0, 0, 0, 0)
 // "x" reaches the x-height, and a "p" hangs below the baseline.
 val x = drawn("x", font).inkBox()!!
 val p = drawn("p", font).inkBox()!!
-print(x[1] == 40 - font.xHeight, x[1] + x[3] == 40, p[1] + p[3] > 40, p[1] + p[3] <= 40 + font.descent)   // expect: true true true true
-// glyphBox says the same without drawing: [left, top, width, height, isColor, advance].
-val hBox = font.glyphBox("H")!!
-print(hBox[1] == font.capHeight, hBox[3] == font.capHeight, hBox[4], hBox[5] == font.charWidth("H"), 10 + (hBox[0] as int) == box[0], hBox[2] == box[2], font.glyphBox(" "))   // expect: true true false true true true null
+print(x.y == 40 - font.xHeight, x.y + x.height == 40, p.y + p.height > 40, p.y + p.height <= 40 + font.descent)   // expect: true true true true
 
 // -- The colour of the text --
-// On a clear picture every painted pixel is the text's colour, more or less see-through.
-val red = drawn("Colour", font, 0xFFCC2200)
+// On a clear image every painted pixel is the text's colour, more or less see-through.
+val red = drawn("Colour", font, Color(0xCC2200))
 var others = 0
 var painted = 0
 for (y in 0..<red.height) {
   for (x in 0..<red.width) {
-    val c = red.get(x, y)
-    if (c != 0) {
+    val c = red[x, y]
+    if (c != Color.clear) {
       painted += 1
-      if (c & 0xFFFFFF != 0xCC2200) { others += 1 }
+      if (c.red != 0xCC or c.green != 0x22 or c.blue != 0) { others += 1 }
     }
   }
 }
 print(painted > 100, others)   // expect: true 0
 // Black on white gives greys, and nothing else.
-val page = Picture(120, 40, Picture.white)
-page.drawText("grey", 5, 28, font)
+val page = Image(120, 40, Color.white)
+val pageCanvas = page.canvas()
+pageCanvas.font = font
+pageCanvas.drawString("grey", 5, 28)
 var greys = 0
 var tinted = 0
 var black = 0
 for (y in 0..<page.height) {
   for (x in 0..<page.width) {
-    val c = page.get(x, y)
-    val r = (c >> 16) & 255
-    if (r != ((c >> 8) & 255) or r != (c & 255) or (c >> 24) != 255) { tinted += 1 }
-    if (r > 0 and r < 255) { greys += 1 }
-    if (r < 100) { black += 1 }
+    val c = page[x, y]
+    if (c.red != c.green or c.red != c.blue or c.alpha != 255) { tinted += 1 }
+    if (c.red > 0 and c.red < 255) { greys += 1 }
+    if (c.red < 100) { black += 1 }
   }
 }
 print(greys > 20, black > 20, tinted)   // expect: true true 0
 // A half-clear colour paints half as much.
-val half = drawn("Colour", font, 0x80CC2200)
+val half = drawn("Colour", font, Color(0x80CC2200, true))
 print(Math.abs(ink(half) * 2 - ink(red)) < ink(red) / 50, ink(red) > 0)   // expect: true true
 
 // -- Drawn where measured --
 // A text drawn whole is the same picture as its characters drawn one at a time, each
 // where the widths before it add up to.
 var same = 0
-for (f in [font, TextFont("Times New Roman", 19, italic = true), TextFont("Consolas", 11), TextFont("Bahnschrift", 23, weight = 600), TextFont("Segoe UI", 12, scale = 1.5)]) {
+for (f in [font, Font("Times New Roman", 19, italic = true), Font("Consolas", 11), Font("Bahnschrift", 23, weight = 600), Font("Segoe UI", 18, bold = true)]) {
   val text = "Drawn where 中文 measured 😀!"
-  val whole = drawn(text, f, Picture.black, 700, 80)
-  val pieces = Picture(700, 80)
+  val whole = drawn(text, f, Color.black, 700, 80)
+  val pieces = Image(700, 80)
+  val canvas = pieces.canvas()
+  canvas.font = f
   val offsets = f.offsets(text)
   var i = 0
   for (c in text) {
-    pieces.drawText(c, 10 + offsets[i], 40, f)
+    canvas.drawString("$c", 10 + offsets[i], 40)
     i += 1
   }
   if (whole == pieces and ink(whole) > 0) { same += 1 }
 }
 print(same)   // expect: 5
-// drawText gives the width back, and drawing the same again gives the same picture.
-val once = Picture(300, 60)
-print(once.drawText("again", 10, 40, font) == font.width("again"), once == drawn("again", font), once.drawText("", 10, 40, font))   // expect: true true 0
+// drawString gives the width back, and drawing the same again gives the same picture.
+val once = Image(300, 60)
+val onceCanvas = once.canvas()
+onceCanvas.font = font
+print(onceCanvas.drawString("again", 10, 40) == font.width("again"), once == drawn("again", font), onceCanvas.drawString("", 10, 40))   // expect: true true 0
 
 // -- Past the edges: what is outside is not drawn, and nothing breaks --
-val small = Picture(20, 10)
-small.drawText("clipped at every edge", -30, 8, font)
-small.drawText("clipped", 15, 30, font)
-small.drawText("clipped", 5, -3, font)
-small.drawText("far away", 100000, 100000, font)
-small.drawText("far away", -100000, -100000, font)
-print(ink(small) > 0, Picture(0, 0).drawText("nothing to draw on", 0, 0, font) == font.width("nothing to draw on"))   // expect: true true
+val small = Image(20, 10)
+val smallCanvas = small.canvas()
+smallCanvas.font = font
+smallCanvas.drawString("clipped at every edge", -30, 8)
+smallCanvas.drawString("clipped", 15, 30)
+smallCanvas.drawString("clipped", 5, -3)
+smallCanvas.drawString("far away", 100000, 100000)
+smallCanvas.drawString("far away", -100000, -100000)
+val nothing = Image(0, 0).canvas()
+nothing.font = font
+print(ink(small) > 0, nothing.drawString("nothing to draw on", 0, 0) == font.width("nothing to draw on"))   // expect: true true
 
 // -- Weights of a variable font: the heavier, the more ink --
-val weights = [300, 400, 500, 600, 700].map { ink(drawn("Hamburgefonstiv", TextFont("Bahnschrift", 24, weight = it))) }
+val weights = [300, 400, 500, 600, 700].map { ink(drawn("Hamburgefonstiv", Font("Bahnschrift", 24, weight = it))) }
 print(weights == weights.sorted(), weights.toSet().size, weights[4] > weights[0] * 3 / 2)   // expect: true 5 true
 // And a bold or an italic the family lacks is made up.
-val upright = drawn("made up", TextFont("Bahnschrift", 24))
-val slanted = drawn("made up", TextFont("Bahnschrift", 24, italic = true))
-val plainEmoji = drawn("made up", TextFont("Segoe UI Emoji", 24))
-val thickened = drawn("made up", TextFont("Segoe UI Emoji", 24, bold = true))
-print(slanted != upright, slanted.inkBox()!![3] == upright.inkBox()!![3], ink(thickened) > ink(plainEmoji) * 11 / 10)   // expect: true true true
+val upright = drawn("made up", Font("Bahnschrift", 24))
+val slanted = drawn("made up", Font("Bahnschrift", 24, italic = true))
+val plainEmoji = drawn("made up", Font("Segoe UI Emoji", 24))
+val thickened = drawn("made up", Font("Segoe UI Emoji", 24, bold = true))
+print(slanted != upright, slanted.inkBox()!!.height == upright.inkBox()!!.height, ink(thickened) > ink(plainEmoji) * 11 / 10)   // expect: true true true
 
-// -- Hinting: without it the top of an "x" need not be on a pixel edge --
+// -- Hinting: the top of an "x" is on a pixel edge at every size --
 var crisp = 0
 var sizes = 0
 for (size in 9..<20) {
-  val f = TextFont("Segoe UI", size)
+  val f = Font("Segoe UI", size)
   val rows = drawn("xz", f)
-  val top = rows.inkBox()!![1]
+  val top = rows.inkBox()!!.y
   // With hinting, the row above the x-height is empty and the letter starts at full strength.
   sizes += 1
   if (top == 40 - f.xHeight) { crisp += 1 }
 }
-print(crisp == sizes, drawn("xz", TextFont("Segoe UI", 13, hinting = false)) != drawn("xz", TextFont("Segoe UI", 13)))   // expect: true true
+print(crisp == sizes)   // expect: true
 
 // -- The other kind of outline (cubic curves), where a font with them is installed --
 var cubic : Typeface? = null
@@ -134,43 +144,47 @@ for (face in Fonts.typefaces()) {
   if (cubic == null and face.hasCubicOutlines and face.has("o")) { cubic = face }
 }
 if (cubic != null) {
-  val f = TextFont(cubic, 30)
+  val f = Font(cubic, 30)
   val o = drawn("o", f)
   val b = o.inkBox()!!
   // An "o" has a hole: its middle is clear, its sides are not.
-  val midY = b[1] + b[3] / 2
-  print(ink(o) > 0, o.get(b[0] + b[2] / 2, midY) == 0, (o.get(b[0] + 1, midY) >> 24) > 100)   // expect: true true true
+  val midY = b.y + b.height / 2
+  print(ink(o) > 0, o[b.x + b.width / 2, midY] == Color.clear, o[b.x + 1, midY].alpha > 100)   // expect: true true true
 } else {
   print(true, true, true)
 }
 
 // -- Colour emoji: they bring their own colours, whatever the colour of the text --
-val face = drawn("😀", TextFont("Segoe UI", 40), Picture.black, 80, 60)
+val face = drawn("😀", Font("Segoe UI", 40), Color.black, 80, 60)
 val colours = {:}
 for (y in 0..<face.height) {
   for (x in 0..<face.width) {
-    val c = face.get(x, y)
-    if ((c >> 24) == 255) { colours[c & 0xF0F0F0] = true }
+    val c = face[x, y]
+    if (c.alpha == 255) { colours[c.argb & 0xF0F0F0] = true }
   }
 }
 val faceBox = face.inkBox()!!
-print(colours.size > 4, faceBox[2] > 25, faceBox[3] > 25, face == drawn("😀", TextFont("Segoe UI", 40), 0xFF00FF00, 80, 60))   // expect: true true true true
+print(colours.size > 4, faceBox.width > 25, faceBox.height > 25, face == drawn("😀", Font("Segoe UI", 40), Color.green, 80, 60))   // expect: true true true true
 // A see-through text colour makes an emoji see-through too.
-print(ink(drawn("😀", TextFont("Segoe UI", 40), 0x40000000, 80, 60)) < ink(face) / 3)   // expect: true
+print(ink(drawn("😀", Font("Segoe UI", 40), Color(0, 0, 0, 0x40), 80, 60)) < ink(face) / 3)   // expect: true
 
 // -- A dense screen: at 2x the same text covers four times the area --
-val one = ink(drawn("Scale", TextFont("Segoe UI", 15), Picture.black, 300, 100, 10, 60))
-val two = ink(drawn("Scale", TextFont("Segoe UI", 15, scale = 2), Picture.black, 300, 100, 10, 60))
-print(Math.abs(two - 4 * one) < one / 2)   // expect: true
+val one = ink(drawn("Scale", Font("Segoe UI", 15), Color.black, 300, 100, 10, 60))
+val dense = Image(600, 200)
+val denseCanvas = dense.canvasAt(300, 100, 2)
+denseCanvas.font = Font("Segoe UI", 15)
+val denseWidth = denseCanvas.drawString("Scale", 10, 60)
+val two = ink(dense)
+print(Math.abs(two - 4 * one) < one / 2, denseWidth == Math.ceil(Font("Segoe UI", 15).width("Scale", 2) / 2.0).toInt())   // expect: true true
 
 // -- From several threads at once: every one gets the same picture --
-val wanted = drawn("threads draw the same 中 😀", TextFont("Arial", 21), Picture.black, 500, 60)
+val wanted = drawn("threads draw the same 中 😀", Font("Arial", 21), Color.black, 500, 60)
 val results = []
 val workers = []
 val lock = Lock()
 for (n in 0..<6) {
   workers.add(thread {
-    val mine = drawn("threads draw the same 中 😀", TextFont("Arial", 21), Picture.black, 500, 60)
+    val mine = drawn("threads draw the same 中 😀", Font("Arial", 21), Color.black, 500, 60)
     lock.useKey { results.add(mine == wanted) }
   })
 }

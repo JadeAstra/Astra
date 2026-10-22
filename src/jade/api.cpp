@@ -610,6 +610,44 @@ void registerJade(VM& vm) {
         vm.account(made->data.size());
         return Value::object(made);
     });
+    // imageCard(image): the standard library's Image as a picture on the graphics card, kept in
+    // a slot of the image's that only this layer uses (D124): sent whole the first time, nothing
+    // while the image's change number is the one it was copied at, and only the rectangle changed
+    // since when it is not. Null for an image with no pixels.
+    def("imageCard", 1, 1, [](VM& vm, int, Value* args) -> Value {
+        if (!args[0].isObjType(ObjType::Instance)) throw vm.runtimeError(Thrown::ClassCastException, "expected an Image");
+        const Value image = args[0];
+        // By name, as reflection reads them: an int field is kept as a payload, not a slot.
+        auto field = [&](Value on, const char* name) -> Value { return vm.memberGet(on, vm.intern(name)); };
+        auto setField = [&](const char* name, Value v) { vm.memberSet(image, vm.intern(name), v); };
+        const int64_t w = field(image, "width").as.i, h = field(image, "height").as.i;
+        if (w <= 0 || h <= 0) return Value::null();
+        const Value grid = field(image, "cells");
+        if (!grid.isObjType(ObjType::Instance)) throw vm.runtimeError(Thrown::InternalError, "an Image's pixels are a grid");
+        const Value cells = field(grid, "cells");
+        if (!cells.isObjType(ObjType::List) || !asList(cells)->packed()) throw vm.runtimeError(Thrown::InternalError, "an Image's pixels are packed");
+        const uint8_t* rgba = asList(cells)->pack->block.data();
+        const int64_t changes = field(image, "changes").as.i;
+        Value card = field(image, "card");
+        Renderer& r = need(vm);
+        if (card.isNull()) {
+            const int id = r.createSurface(static_cast<int>(w), static_cast<int>(h));
+            if (id == 0) throw vm.runtimeError(Thrown::IllegalStateException, "the graphics card cannot hold a picture of " + std::to_string(w) + " by " + std::to_string(h));
+            vm.account(static_cast<size_t>(w) * static_cast<size_t>(h) * 4);
+            card = Value::object(vm.alloc<ObjResource>("surface", id, &Renderer::releaseLater));
+            TempRoot keep(vm, card);
+            setField("card", card);
+            r.upload(surfaceOf(vm, card), rgba);
+        } else if (field(image, "cardAt").as.i != changes) {
+            const int64_t l = std::clamp<int64_t>(field(image, "changedLeft").as.i, 0, w), t = std::clamp<int64_t>(field(image, "changedTop").as.i, 0, h);
+            const int64_t rt = std::clamp<int64_t>(field(image, "changedRight").as.i, 0, w), b = std::clamp<int64_t>(field(image, "changedBottom").as.i, 0, h);
+            if (rt > l && b > t) r.uploadPart(surfaceOf(vm, card), rgba, static_cast<int>(w), static_cast<int>(l), static_cast<int>(t), static_cast<int>(rt - l), static_cast<int>(b - t));
+        }
+        setField("cardAt", Value::integer(changes));
+        // Nothing changed since this copy.
+        for (const char* side : {"changedLeft", "changedTop", "changedRight", "changedBottom"}) setField(side, Value::integer(0));
+        return card;
+    });
     def("surfaceUpload", 2, 2, [](VM& vm, int, Value* args) -> Value {
         Renderer& r = need(vm);
         jade::Surface& s = surfaceNeeded(vm, r, args[0]);
@@ -638,8 +676,12 @@ void registerJade(VM& vm) {
         state().color = colorOf(vm, args[0]);
         return Value::null();
     });
-    def("font", 1, 1, [](VM& vm, int, Value* args) -> Value {
-        state().font = textFontOf(vm, args[0]);
+    // font(font, scale): a Font of the standard library's, drawn at the canvas's scale (D125):
+    // the engine's font for it is the one Font keeps for that scale.
+    def("font", 2, 2, [](VM& vm, int, Value* args) -> Value {
+        const Value method = vm.memberGet(args[0], vm.intern("engineHandle"));
+        const Value handle = vm.call(method, 1, &args[1]);
+        state().font = textFontOf(vm, handle);
         return Value::null();
     });
     def("flush", 0, 0, [](VM& vm, int, Value*) -> Value {

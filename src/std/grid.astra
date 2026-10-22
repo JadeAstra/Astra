@@ -1,0 +1,220 @@
+// ---- Grids (D155) ----
+// A rectangle of cells, `width` by `height`, each a T: an image's pixels (a Grid<Color>), a map
+// of walls (a Grid<bool>), the heights of a terrain (a Grid<float32>). It is packed by T as a
+// List is: a Color 4 bytes a cell, a bool or a byte 1, an int16 2, a float32 4; a grid of objects
+// keeps references.
+//
+//   val walls = Grid<bool>(width = 64, height = 64)        every cell false, the type's zero
+//   walls[3, 4] = true
+//   val heights = Grid<float32>(100, 100, fill = 1.0)
+//   val part = heights[10..19, 0..9]                        a new grid of 10 by 10
+//   walls .= appendRows(2)                                  two rows more, a new grid
+//
+// A grid's size is fixed for its life: adding or removing rows and columns gives a new grid,
+// and leaving that result unused is a compile error. A cell outside the grid is an
+// IndexOutOfBoundsException, as a list's is; getOrNull gives null there. Work across cores goes
+// by rows, so that no two pieces touch one cell: grid.parallelRows { rows -> ... }.
+class Grid<T> {
+  var width : int
+    private set
+  var height : int
+    private set
+  internal var cells : open List<T>   // row by row, made by __grid from this grid's own T
+  internal var writable = true        // false for a grid that may only be read (image.pixels)
+
+  // `width` by `height` cells, each `fill`, or T's zero (0, 0.0, false, a clear Color, null),
+  // which a grid of objects has none of.
+  fun init(width : int, height : int, fill : T? = null) {
+    if (width < 0 or height < 0) { throw IllegalArgumentException("a grid is at least 0 by 0, not $width by $height") }
+    this.width = width
+    this.height = height
+    this.cells = fill == null ? __grid.cells(this, width * height) as open List<T> : __grid.cells(this, width * height, fill) as open List<T>
+  }
+
+  // Its width and height (D152).
+  val size : Size
+    get() => Size(width, height)
+
+  // -- One cell --
+
+  op [](x : int, y : int) : T {
+    if (x < 0 or y < 0 or x >= width or y >= height) { throw __outside(x, y) }
+    return cells[y * width + x]
+  }
+  op []=(x : int, y : int, value : T) {
+    if (x < 0 or y < 0 or x >= width or y >= height) { throw __outside(x, y) }
+    if (!writable) { throw __readOnly() }
+    cells[y * width + x] = value
+  }
+  fun get(x : int, y : int) : T => this[x, y]
+  fun set(x : int, y : int, value : T) {
+    this[x, y] = value
+  }
+  // The cell, or null outside the grid: for work near the edges.
+  fun getOrNull(x : int, y : int) : T? => x < 0 or y < 0 or x >= width or y >= height ? null : cells[y * width + x]
+
+  // -- A part --
+
+  // The cells of the columns `xs` and rows `ys` (inclusive, as a slice is, and counted from the
+  // end with ^k), as a new grid.
+  op [](xs : Range, ys : Range) : Grid<T> {
+    val across = __gridSpan(xs, width, "columns")
+    val down = __gridSpan(ys, height, "rows")
+    val made = blank<T>(across.size, down.size)
+    __grid.region(cells, width, across.first(), down.first(), across.size, down.size, made.cells)
+    return made
+  }
+  // Another grid written in over those columns and rows: it must be their size.
+  op []=(xs : Range, ys : Range, from : Grid<T>) {
+    if (!writable) { throw __readOnly() }
+    val across = __gridSpan(xs, width, "columns")
+    val down = __gridSpan(ys, height, "rows")
+    if (from.width != across.size or from.height != down.size) {
+      throw IllegalArgumentException("a grid of ${from.width} by ${from.height} does not fit ${across.size} columns by ${down.size} rows")
+    }
+    __grid.paste(cells, width, across.first(), down.first(), from.cells, from.width, from.width, from.height)
+  }
+
+  // Each cell made into another, as a grid of the same size: pixels.map { it.alpha }.
+  fun <R> map(transform : (T) -> R) : Grid<R> {
+    val made = blank<R>(width, height)
+    for cell in cells { made.cells.add(transform(cell)) }
+    return made
+  }
+
+  // The cells, row by row, as a new list.
+  fun toList() : open List<T> => cells.toList()
+
+  // A copy of its storage, its cells' bytes one after another: for a grid of numbers, bools or
+  // value types (an image's pixels: four bytes each, red, green, blue, alpha).
+  val bytes : Bytes
+    get() => __grid.bytes(cells)
+
+  // -- New grids with rows and columns added or taken away --
+  // Each gives a new grid and leaves this one as it was: grid .= appendRows(2).
+
+  // `count` rows before row `at` (0 to height), each cell `fill` or T's zero.
+  fun insertRows(at : int, count : int = 1, fill : T? = null) : Grid<T> {
+    __gridAt(at, height, "rows")
+    val made = blank<T>(width, height + count)
+    __grid.region(cells, width, 0, 0, width, at, made.cells)
+    __gridFill(made.cells, count * width, fill)
+    __grid.region(cells, width, 0, at, width, height - at, made.cells)
+    return made
+  }
+  // The rows of another grid as wide as this one, before row `at`.
+  fun insertRows(at : int, rows : Grid<T>) : Grid<T> {
+    __gridAt(at, height, "rows")
+    if (rows.width != width) { throw IllegalArgumentException("rows of a grid ${rows.width} wide do not go into one $width wide") }
+    val made = blank<T>(width, height + rows.height)
+    __grid.region(cells, width, 0, 0, width, at, made.cells)
+    __grid.region(rows.cells, width, 0, 0, width, rows.height, made.cells)
+    __grid.region(cells, width, 0, at, width, height - at, made.cells)
+    return made
+  }
+  // `count` columns before column `at` (0 to width).
+  fun insertColumns(at : int, count : int = 1, fill : T? = null) : Grid<T> {
+    __gridAt(at, width, "columns")
+    val made = blank<T>(width + count, height)
+    for row in 0..<height {
+      __grid.region(cells, width, 0, row, at, 1, made.cells)
+      __gridFill(made.cells, count, fill)
+      __grid.region(cells, width, at, row, width - at, 1, made.cells)
+    }
+    return made
+  }
+  // The columns of another grid as high as this one, before column `at`.
+  fun insertColumns(at : int, columns : Grid<T>) : Grid<T> {
+    __gridAt(at, width, "columns")
+    if (columns.height != height) { throw IllegalArgumentException("columns of a grid ${columns.height} high do not go into one $height high") }
+    val made = blank<T>(width + columns.width, height)
+    for row in 0..<height {
+      __grid.region(cells, width, 0, row, at, 1, made.cells)
+      __grid.region(columns.cells, columns.width, 0, row, columns.width, 1, made.cells)
+      __grid.region(cells, width, at, row, width - at, 1, made.cells)
+    }
+    return made
+  }
+  fun prependRows(count : int = 1, fill : T? = null) : Grid<T> => insertRows(0, count, fill)
+  fun appendRows(count : int = 1, fill : T? = null) : Grid<T> => insertRows(height, count, fill)
+  fun prependColumns(count : int = 1, fill : T? = null) : Grid<T> => insertColumns(0, count, fill)
+  fun appendColumns(count : int = 1, fill : T? = null) : Grid<T> => insertColumns(width, count, fill)
+
+  // Without `count` rows from row `at`, which may count from the end: removeRows(^1).
+  fun removeRows(at : Index, count : int = 1) : Grid<T> {
+    val from = at.of(height)
+    if (count < 0 or from < 0 or from + count > height) { throw IndexOutOfBoundsException("rows $from to ${from + count - 1} are not all in a grid of $height rows") }
+    val made = blank<T>(width, height - count)
+    __grid.region(cells, width, 0, 0, width, from, made.cells)
+    __grid.region(cells, width, 0, from + count, width, height - from - count, made.cells)
+    return made
+  }
+  fun removeColumns(at : Index, count : int = 1) : Grid<T> {
+    val from = at.of(width)
+    if (count < 0 or from < 0 or from + count > width) { throw IndexOutOfBoundsException("columns $from to ${from + count - 1} are not all in a grid of $width columns") }
+    val made = blank<T>(width - count, height)
+    for row in 0..<height {
+      __grid.region(cells, width, 0, row, from, 1, made.cells)
+      __grid.region(cells, width, from + count, row, width - from - count, 1, made.cells)
+    }
+    return made
+  }
+
+  // -- Work across cores --
+
+  // Runs `action` on every core, each given rows of its own to work on: what it changes it
+  // changes only in those rows.
+  fun parallelRows(action : (Range) -> unit) {
+    if (!writable) { throw __readOnly() }
+    val across = width
+    if (across == 0 or height == 0) { return }
+    __parallel.chunks(cells, { positions : Range -> action((positions.start / across)..<(positions.end / across)) }, across)
+  }
+
+  // -- Comparing --
+
+  op ==(other : any?) : bool => other is Grid and other.width == width and other.height == height and other.cells == cells
+  fun hashCode() : int => hash(width, height, cells)
+  override fun toString() : string => "Grid($width x $height)"
+
+  // A grid of R of a size, its cells to be added: what the functions above build in.
+  internal fun <R> blank(width : int, height : int) : Grid<R> {
+    val made = Grid<R>(0, 0)
+    made.width = width
+    made.height = height
+    return made
+  }
+
+  // The same cells, to be read and not changed: what image.pixels gives.
+  internal fun readOnly() : Grid<T> {
+    val view = blank<T>(width, height)
+    view.cells = cells
+    view.writable = false
+    return view
+  }
+
+  private fun __outside(x : int, y : int) : IndexOutOfBoundsException =>
+    IndexOutOfBoundsException("($x, $y) is outside the grid, which is $width by $height")
+  private fun __readOnly() : IllegalStateException => IllegalStateException("this grid is only read here: change an image's pixels in image.editPixels { }")
+}
+
+// A range of a grid's columns or rows, made plain and checked: the positions it covers.
+fun __gridSpan(range : Range, size : int, what : string) : Range {
+  val plain = range.of(size)
+  if (plain.size > 0 and (plain.first() < 0 or plain.last() >= size)) { throw IndexOutOfBoundsException("$what ${plain.first()} to ${plain.last()} are not all in a grid of $size $what") }
+  if (plain.step != 1) { throw IllegalArgumentException("a grid's part is a run of $what, with no step") }
+  return plain
+}
+
+fun __gridAt(at : int, size : int, what : string) {
+  if (at < 0 or at > size) { throw IndexOutOfBoundsException("$what go in at 0 to $size, not $at") }
+}
+
+// `count` cells of `fill`, or of the type's zero, added to a grid's cells.
+fun <T> __gridFill(cells : open List<T>, count : int, fill : T?) {
+  if (fill != null) {
+    __grid.fill(cells, count, fill)
+  } else if (!(__grid.zeros(cells, count) as bool)) {
+    throw IllegalArgumentException("a grid of objects has no zero to start from: give the new cells a fill")
+  }
+}

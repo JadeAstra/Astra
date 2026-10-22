@@ -50,7 +50,7 @@ fun addBalls(count : int, x : Number? = null, y : Number? = null) {
 // ---- The window ----
 val window = NativeWindow("Bounce", 780, 580)
 val background = Color(0x202830)
-val statusFont = Font("Segoe UI", Font.plain, 12)
+val statusFont = Font("Segoe UI", 12)
 val statusHeight = 24
 
 var paused = false

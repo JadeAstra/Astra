@@ -62,6 +62,7 @@ struct Type {
         Index,      // a position: an int, or ^k from the end (D146)
         Set,        // Set [T] (M6.6 part 8)
         Union,      // `int | string` (D40): the types it may be in args; `nullable` for null among them
+        Bundle,     // `params(bold = true, size = 14)` (D143): its names in `fields`, their types in args
     };
     Kind kind = Unknown;
     bool nullable = false;
@@ -83,6 +84,7 @@ struct Type {
     std::vector<Type> throws;          // Function: the checked exceptions it may throw, as written (D52)
     FuncInfo* fnRef = nullptr;         // Function: the function this value is, where it is known (D35)
     std::string name;                  // TypeParam: its name
+    std::vector<std::string> fields;   // Bundle: its names, in the order of `args`
     std::shared_ptr<Type> bound;       // TypeParam: its bound, when one is written
 
     static Type of(Kind k) {
@@ -453,6 +455,11 @@ struct Checker::Impl {
                 for (size_t i = 0; i < t.args.size(); i++) s += (i ? " | " : "") + argText(t.args[i]);
                 if (t.nullable) s += " | null";
                 return s;
+            case Type::Bundle:
+                s = "params(";
+                for (size_t i = 0; i < t.args.size() && i < t.fields.size(); i++) s += (i ? ", " : "") + t.fields[i] + " : " + argText(t.args[i]);
+                s += ")";
+                break;
         }
         if (t.open) s = "open " + s;
         if (t.accepts) s = "accepts " + s;
@@ -709,8 +716,16 @@ struct Checker::Impl {
             return false;
         }
         switch (to.kind) {
+            case Type::Bundle:
+                // The same names, each of a type that fits.
+                if (from.kind != Type::Bundle || from.fields.size() != to.fields.size()) return false;
+                for (size_t i = 0; i < to.fields.size(); i++) {
+                    auto at = std::find(from.fields.begin(), from.fields.end(), to.fields[i]);
+                    if (at == from.fields.end() || !fits(from.args[static_cast<size_t>(at - from.fields.begin())], to.args[i])) return false;
+                }
+                return true;
             case Type::Number:
-                return from.kind == Type::Int || from.kind == Type::Float || from.kind == Type::Number;
+                return from.kind == Type::Int || from.kind == Type::Float || from.kind == Type::Number || from.kind == Type::Byte;
             case Type::Index:
                 return from.kind == Type::Int || from.kind == Type::Index;  // an int is a position from the start (D146)
             case Type::Set:
@@ -762,6 +777,9 @@ struct Checker::Impl {
                     if (!fits(above.args[i], to.args[i])) return false;
                 return true;
             }
+            case Type::Int:
+                // A byte goes where an int does: 0 to 255 is an int too, as byte arithmetic gives one.
+                return from.kind == Type::Int || from.kind == Type::Byte;
             default:
                 return from.kind == to.kind;
         }
@@ -1304,7 +1322,11 @@ struct Checker::Impl {
         if (!a.present() || a.star) return unknownType();
         if (auto kind = kindClasses.find(&a); kind != kindClasses.end()) return withNull(classType(kind->second), a.nullable);
         Type t;
-        if (a.isFunction()) {
+        if (a.isBundle) {
+            t = Type::of(Type::Bundle);
+            t.fields = a.bundleNames;
+            for (const TypeAnnotation& field : a.args) t.args.push_back(resolve(field, u));
+        } else if (a.isFunction()) {
             t.kind = Type::Function;
             t.knownParams = true;
             for (const TypeAnnotation& p : a.params) t.args.push_back(resolve(p, u));
@@ -2063,6 +2085,15 @@ struct Checker::Impl {
             {"ProcessBuilder", "a program is started with Process(command..., directory = ..., environment = {...}, input = ..., output = ..., error = ...) in Astra, or run to its end with Process.run(...) (D91)"},
             {"Charsets", "a character set is a Charset in Astra: Charset.utf8, latin1, ascii, utf16le, utf16be (D127)"},
             {"StandardCharsets", "a character set is a Charset in Astra: Charset.utf8, latin1, ascii, utf16le, utf16be (D127)"},
+            // Graphics (D99, D101 to D106, L79 to L86, L101, L102).
+            {"Dimension", "a width and a height are a Size in Astra, a value type: Size(width, height) (L82)"},
+            {"Rectangle", "a rectangle is a Rect in Astra, a value type: Rect(x, y, width, height) (L84)"},
+            {"BufferedImage", "pixels in memory are an Image in Astra: Image(width, height), image[x, y] a Color, image.canvas() to draw on it (L86, L101)"},
+            {"Picture", "a Picture is an Image in Astra: Image(width, height, color), image[x, y], image.canvas() (L101)"},
+            {"FontMetrics", "a font measures itself in Astra: font.width(text), font.ascent, font.descent, font.leading, font.lineHeight, and font.width(text, scale) in a screen's pixels (L81)"},
+            {"Bitmap", "pixels in memory are an Image in Astra: its pixels are changed in image.editPixels { pixels -> pixels[x, y] = color } (L110)"},
+            {"Graphics", "what draws is a Canvas in Astra: image.canvas(), surface.canvas(), or the one a widget paints on (D123)"},
+            {"Graphics2D", "what draws is a Canvas in Astra: image.canvas(), surface.canvas(), or the one a widget paints on (D123)"},
         };
         auto found = gone.find(name);
         return found == gone.end() ? std::string() : found->second;
@@ -2133,6 +2164,118 @@ struct Checker::Impl {
         if (table == nullptr) return "";
         auto found = table->find(name);
         return found == table->end() ? std::string() : found->second;
+    }
+
+    // What Java's members of the graphics types are in Astra (D99, D101 to D106, D141, D144,
+    // L79 to L86, L101, L102, L109), by the class of the standard library they were asked of.
+    static std::string graphicsAdvice(const std::string& cls, const std::string& name) {
+        static const std::unordered_map<std::string, std::string> color = {
+            {"getRed", "a colour's parts are properties, bytes: color.red (L79)"},
+            {"getGreen", "a colour's parts are properties, bytes: color.green (L79)"},
+            {"getBlue", "a colour's parts are properties, bytes: color.blue (L79)"},
+            {"getAlpha", "a colour's parts are properties, bytes: color.alpha (L79)"},
+            {"getRGB", "the colour as one number is color.argb, 0xAARRGGBB (L79)"},
+            {"rgb", "the colour as one number is color.argb, 0xAARRGGBB (L79)"},
+            {"getTransparency", "a colour is see-through where color.alpha is below 255 (L79)"},
+        };
+        static const std::unordered_map<std::string, std::string> font = {
+            {"deriveFont", "a font with options changed is font.copy(size = ..., bold = ..., italic = ..., weight = ...) (D144)"},
+            {"derive", "a font with options changed is font.copy(size = ..., bold = ..., italic = ...) (D144)"},
+            {"style", "a font says its style as isBold and isItalic (L80)"},
+            {"getStyle", "a font says its style as isBold and isItalic (L80)"},
+            {"isPlain", "a plain font is one that is neither bold nor italic: !font.isBold and !font.isItalic (L80)"},
+            {"plain", "a font's style is said by name: Font(name, size), Font(name, size, bold = true, italic = true) (L80)"},
+            {"bold", "a font's style is said by name: Font(name, size, bold = true) (L80)"},
+            {"italic", "a font's style is said by name: Font(name, size, italic = true) (L80)"},
+            {"getSize", "a font's size is font.size (L80)"},
+            {"getName", "the family asked for is font.name, the one used font.family (L80)"},
+            {"getFamily", "the family used is font.family (L80)"},
+            {"getFontName", "the typeface's full name is font.fontName (L80)"},
+            {"textFont", "a font measures and is drawn by itself: font.width(text, scale), font.ascent(scale) (L102)"},
+            {"stringWidth", "a text's width is font.width(text) (L81)"},
+            {"charWidth", "a character's width is font.width(c) (L81)"},
+            {"height", "the height of a line is font.lineHeight (L81)"},
+            {"getHeight", "the height of a line is font.lineHeight (L81)"},
+            {"getAscent", "a font's ascent is font.ascent (L81)"},
+            {"getDescent", "a font's descent is font.descent (L81)"},
+            {"getLeading", "a font's leading is font.leading (L81)"},
+            {"maxAscent", "a font's ascent is font.ascent: no glyph reaches past it (L81)"},
+            {"maxDescent", "a font's descent is font.descent: no glyph reaches past it (L81)"},
+        };
+        static const std::unordered_map<std::string, std::string> canvas = {
+            {"drawImage", "a picture is drawn with canvas.draw(picture, x, y), or draw(picture, x, y, w, h, alpha = ...) to scale it (L86)"},
+            {"drawImagePart", "a part of a picture is drawn with canvas.drawPart(picture, sx, sy, sw, sh, x, y, w, h) (L86)"},
+            {"getFontMetrics", "a font measures itself: canvas.font.width(text), or canvas.measure(text) for its width, ascent, descent and height (L81)"},
+            {"fontMetrics", "a font measures itself: canvas.font.width(text), or canvas.measure(text) for its width, ascent, descent and height (L81)"},
+            {"style", "a canvas has no style in Astra: a widget's content paints in owner.paintStyle (L109)"},
+            {"withStyle", "a canvas has no style in Astra: a widget's content paints in owner.paintStyle (L109)"},
+            {"setColor", "the colour is a property: canvas.color = Color.red"},
+            {"getColor", "the colour is a property: canvas.color"},
+            {"setFont", "the font is a property: canvas.font = Font(name, size)"},
+            {"getFont", "the font is a property: canvas.font"},
+            {"create", "a canvas for a part is canvas.sub(x, y, width, height), or clipped(x, y, w, h) at the same corner (D123)"},
+        };
+        static const std::unordered_map<std::string, std::string> image = {
+            {"getRGB", "a pixel is image[x, y], a Color: image[x, y].argb for the number (D141)"},
+            {"setRGB", "a pixel is set with image[x, y] = color: Color(argb, hasAlpha = true) for a number (D141)"},
+            {"getSubimage", "a part of an image is image.crop(x, y, width, height), a new image (L101)"},
+            {"createGraphics", "something to draw on an image with is image.canvas() (L101)"},
+            {"getGraphics", "something to draw on an image with is image.canvas() (L101)"},
+            {"graphics", "something to draw on an image with is image.canvas() (L101)"},
+            {"type", "an Image is always four bytes a pixel, red, green, blue and alpha: it has no type (L86)"},
+            {"getType", "an Image is always four bytes a pixel, red, green, blue and alpha: it has no type (L86)"},
+            {"getWidth", "an image's width is image.width"},
+            {"getHeight", "an image's height is image.height"},
+            {"drawText", "text is drawn with a canvas: val c = image.canvas(); c.font = font; c.drawString(text, x, y) (L101)"},
+            {"fillRect", "an image is drawn on with its canvas: val c = image.canvas(); c.color = color; c.fillRect(x, y, w, h) (L101)"},
+            {"blendRect", "an image is drawn on with its canvas, which lays see-through colours over what is there: image.canvas().fillRect(x, y, w, h) (L101)"},
+            {"draw", "an image is drawn on with its canvas: image.canvas().draw(picture, x, y) (L101)"},
+            {"fromPicture", "a Picture and an Image are one type, Image (L101)"},
+            {"toPicture", "a Picture and an Image are one type, Image: the call goes (L101)"},
+        };
+        static const std::unordered_map<std::string, std::string> size = {
+            {"getWidth", "a Size's width is size.width"},
+            {"getHeight", "a Size's height is size.height"},
+            {"setSize", "a Size is a value: write size = Size(width, height), or set size.width where it is kept (L82)"},
+        };
+        static const std::unordered_map<std::string, std::string> rect = {
+            {"bounds", "a Rect is its own bounds: the call goes (L84)"},
+            {"getBounds", "a Rect is its own bounds: the call goes (L84)"},
+            {"getX", "a Rect's corner is rect.x and rect.y"},
+            {"getY", "a Rect's corner is rect.x and rect.y"},
+            {"getWidth", "a Rect's width is rect.width"},
+            {"getHeight", "a Rect's height is rect.height"},
+            {"getSize", "a Rect's width and height are rect.size, a Size"},
+            {"getLocation", "a Rect's corner is rect.location, a Point"},
+        };
+        static const std::unordered_map<std::string, std::string> point = {
+            {"getX", "a Point's parts are point.x and point.y"},
+            {"getY", "a Point's parts are point.x and point.y"},
+            {"move", "a Point is moved with setLocation(x, y), or translate(dx, dy), where it is kept (L83)"},
+            {"getLocation", "a Point is its own location: the call goes (L83)"},
+        };
+        const std::unordered_map<std::string, std::string>* table = cls == "Color" ? &color
+                                                                 : cls == "Font" ? &font
+                                                                 : cls == "Canvas" ? &canvas
+                                                                 : cls == "Image" ? &image
+                                                                 : cls == "Size" ? &size
+                                                                 : cls == "Rect" ? &rect
+                                                                 : cls == "Point" ? &point : nullptr;
+        if (table == nullptr) return "";
+        auto found = table->find(name);
+        return found == table->end() ? std::string() : found->second;
+    }
+
+    // The advice for a member a class does not have, by the first class of the standard library
+    // in its line: a Jade NativeCanvas is asked as a Canvas.
+    static std::string preludeAdvice(const ClassInfo* k, const std::string& name) {
+        for (const ClassInfo* c = k; c != nullptr; c = c->superclass) {
+            if (c->unit == nullptr || !c->unit->prelude) continue;
+            std::string advice = ioAdvice(c->name, name);
+            if (advice.empty()) advice = graphicsAdvice(c->name, name);
+            return advice;
+        }
+        return "";
     }
 
     static std::string lockAdvice(const std::string& name) {
@@ -2481,6 +2624,7 @@ struct Checker::Impl {
         switch (s.kind) {
             case StmtKind::Expr:
                 expr(*static_cast<const ExprStmt&>(s).expr);
+                unusedCopy(*static_cast<const ExprStmt&>(s).expr);
                 break;
             case StmtKind::Var:
                 varStmt(static_cast<const VarStmt&>(s));
@@ -3663,6 +3807,8 @@ struct Checker::Impl {
                 return Type::of(Type::Bool);
             }
             case ExprKind::ClassOf: return classOfExpr(static_cast<const ClassOfExpr&>(e));
+            // The target of `.=`, as it is (D156).
+            case ExprKind::Current: return currentTargets.empty() ? unknownType() : currentTargets.back();
             case ExprKind::Cast: {
                 const auto& c = static_cast<const CastExpr&>(e);
                 const Type value = expr(*c.value);
@@ -4219,6 +4365,21 @@ struct Checker::Impl {
         Type l = expr(*b.left);
         Type r = expr(*b.right);
         const TokenType op = b.op;
+        // Two bundles added: the names of both, the right one's winning (D143).
+        if (op == TokenType::Plus && withNull(l, false).kind == Type::Bundle && withNull(r, false).kind == Type::Bundle) {
+            Type made = withNull(l, false);
+            for (size_t i = 0; i < r.fields.size(); i++) {
+                auto at = std::find(made.fields.begin(), made.fields.end(), r.fields[i]);
+                if (at == made.fields.end()) {
+                    made.fields.push_back(r.fields[i]);
+                    made.args.push_back(r.args[i]);
+                } else {
+                    made.args[static_cast<size_t>(at - made.fields.begin())] = r.args[i];
+                }
+            }
+            if (silent == 0) bundleAdds.insert(&b);
+            return made;
+        }
         switch (op) {
             case TokenType::EqEq:
             case TokenType::BangEq:
@@ -4719,6 +4880,28 @@ struct Checker::Impl {
         }
     }
 
+    // A grid's insertRows and the like give a new grid and leave the one they are called on as
+    // it was (D155): one whose result is left unused looks like a change and is not, so it is an
+    // error saying how to keep it.
+    void unusedCopy(const Expr& e) {
+        if (silent > 0 || e.kind != ExprKind::Call) return;
+        const auto& call = static_cast<const CallExpr&>(e);
+        if (call.callee->kind != ExprKind::Member) return;
+        const auto& m = static_cast<const MemberExpr&>(*call.callee);
+        static const std::unordered_set<std::string> copies = {"insertRows", "insertColumns", "prependRows", "appendRows",
+                                                               "prependColumns", "appendColumns", "removeRows", "removeColumns"};
+        if (copies.count(m.name) == 0) return;
+        const Type on = withNull(typeQuietly(*m.object), false);
+        if (on.kind != Type::Class || on.cls == nullptr || on.cls->name != "Grid" || on.cls->unit == nullptr || !on.cls->unit->prelude) return;
+        std::string target = "grid";
+        if (m.object->kind == ExprKind::Name) target = static_cast<const NameExpr&>(*m.object).name;
+        else if (m.object->kind == ExprKind::Member) target = static_cast<const MemberExpr&>(*m.object).name;
+        report(call, "'" + m.name + "' gives a new grid and leaves '" + target + "' as it was: write " + target + " .= " + m.name + "(...) (D155)");
+    }
+
+    // The targets of the `.=` being checked, innermost last: what CurrentExpr stands for.
+    std::vector<Type> currentTargets;
+
     Type assign(const AssignExpr& a) {
         atomicAssign(a);
         checkValueFieldWrite(*a.target);
@@ -4779,7 +4962,15 @@ struct Checker::Impl {
             effects[effectKeyHere()].types.insert(inside);
             if (a.op == TokenType::Eq && a.value->kind == ExprKind::Call && silent == 0) builtInPlace.insert(&a);
         }
-        Type value = exprExpected(*a.value, a.op == TokenType::Eq ? target : unknownType());
+        Type value;
+        if (a.op == TokenType::DotEq) {
+            // `target .= member`: the member asked of the target as it is (D156).
+            currentTargets.push_back(target);
+            value = expr(*a.value);
+            currentTargets.pop_back();
+        } else {
+            value = exprExpected(*a.value, a.op == TokenType::Eq ? target : unknownType());
+        }
         if (local != nullptr) {
             forget(targetName);
             // `next = Dog("Fido")`: from here on it is that value, not null.
@@ -4789,7 +4980,7 @@ struct Checker::Impl {
         }
         if (target.unknown()) return Type::of(Type::Unit);
         Type result = value;
-        if (a.op != TokenType::Eq) {
+        if (a.op != TokenType::Eq && a.op != TokenType::DotEq) {
             TokenType op;
             switch (a.op) {
                 case TokenType::PlusEq: op = TokenType::Plus; break;
@@ -4820,6 +5011,8 @@ struct Checker::Impl {
             std::string who = targetName.empty() ? "this place" : "'" + targetName + "'";
             if (a.op == TokenType::Eq)
                 report(*a.value, who + " is " + describe(target) + "; it cannot be given " + describe(result));
+            else if (a.op == TokenType::DotEq)
+                report(*a.value, who + " is " + describe(target) + "; '.=' would give it " + describe(result));
             else
                 report(a, who + " is " + describe(target) + "; this makes it " + describe(result));
         }
@@ -4887,7 +5080,7 @@ struct Checker::Impl {
             if (plain.kind == Type::Class && plain.cls != nullptr && !lookupMember(plain, m.name).found() &&
                 findExtensions(plain, m.name).empty() && reportMissing(plain.cls, m.name)) {
                 expr(*m.object);
-                const std::string io = plain.cls->unit != nullptr && plain.cls->unit->prelude ? ioAdvice(plain.cls->name, m.name) : std::string();
+                const std::string io = preludeAdvice(plain.cls, m.name);
                 report(m, !io.empty() ? io : plain.cls->name + " has no field '" + m.name + "'; fields must be declared in the class with val or var");
                 return unknownType();
             }
@@ -5112,7 +5305,20 @@ struct Checker::Impl {
         if (n != k->nested.end()) return n->second->isObject ? classType(n->second) : unknownType();
         auto sm = k->staticMethods.find(m.name);
         if (sm != k->staticMethods.end() && sm->second.size() == 1) return functionValue(sm->second[0]);
+        // An old name of the standard library's, Font.bold and the like, is said; other names the
+        // checker cannot yet rule out (static properties with getters are not kept here).
+        if (sm == k->staticMethods.end() && !hasStatic(k, m.name))
+            if (const std::string advice = preludeAdvice(k, m.name); !advice.empty()) report(m, advice);
         return unknownType();
+    }
+
+    // Whether a class or one above it has a static member, a nested class or an entry of the name.
+    static bool hasStatic(const ClassInfo* k, const std::string& name) {
+        for (const ClassInfo* c = k; c != nullptr; c = c->superclass) {
+            if (c->statics.count(name) != 0 || c->nested.count(name) != 0 || c->staticMethods.count(name) != 0) return true;
+            if (c->isEnum && (name == "entries" || name == "valueOf" || name == "values")) return true;
+        }
+        return false;
     }
 
     // Reports a value that may be null used as if it could not; true if it was.
@@ -5300,7 +5506,7 @@ struct Checker::Impl {
                 else if (k->isEnum && name == "name") result = Type::of(Type::String);
                 else if (extensionProperty(plain, name, at, result)) {}
                 else if (findExtensions(plain, name).empty() && reportMissing(k, name)) {
-                    const std::string io = k->unit != nullptr && k->unit->prelude ? ioAdvice(k->name, name) : std::string();
+                    const std::string io = preludeAdvice(k, name);
                     report(at, !io.empty() ? io
                                : name == "length" && (k->unit != nullptr && k->unit->prelude) ? goneAdvice(name)
                                : name == "class" ? k->name + " has no member 'class'; the class of an object is written x# (D48)"
@@ -5320,6 +5526,12 @@ struct Checker::Impl {
     Type index(const IndexExpr& i) {
         Type obj = expr(*i.object);
         Type idx = expr(*i.index);
+        std::vector<Type> rest;
+        for (const ExprPtr& m : i.more) rest.push_back(expr(*m));
+        if (!i.more.empty() && obj.known() && !obj.nullable && obj.kind != Type::Class && obj.kind != Type::TypeParam) {
+            report(*i.more[0], describe(obj) + " takes one index; several, as in [x, y], are for a class with op [](x, y)");
+            return unknownType();
+        }
         if (!i.defaultValue && obj.kind == Type::List && !obj.nullable && obj.args.size() == 1 && obj.args[0].kind == Type::Class &&
             obj.args[0].cls != nullptr && obj.args[0].cls->isValue)
             indexCandidates[&i] = IndexCandidate{effectKey(), obj.args[0].cls};
@@ -5342,7 +5554,7 @@ struct Checker::Impl {
             return unknownType();
         }
         auto needInt = [&] {
-            if (idx.known() && !((idx.kind == Type::Int || idx.kind == Type::Index) && !idx.nullable) && idx.kind != Type::Nothing &&
+            if (idx.known() && !((idx.kind == Type::Int || idx.kind == Type::Index || idx.kind == Type::Byte) && !idx.nullable) && idx.kind != Type::Nothing &&
                 idx.kind != Type::Range && idx.kind != Type::TypeParam)
                 report(*i.index, "an index must be an int, not " + describe(idx));
             // A negative number never counts from the end (D146).
@@ -5383,8 +5595,11 @@ struct Checker::Impl {
             case Type::Set:
                 report(i, "a set's items have no positions: first(), last(), or toList()[i] for a list of them");
                 return obj.args.empty() ? unknownType() : obj.args[0];
-            case Type::Class:
-                return operatorResult(obj, "[]", i, {idx});
+            case Type::Class: {
+                std::vector<Type> args{idx};
+                args.insert(args.end(), rest.begin(), rest.end());
+                return operatorResult(obj, "[]", i, args);
+            }
             default:
                 return unknownType();
         }
@@ -5398,6 +5613,8 @@ struct Checker::Impl {
         std::vector<bool> given;     // per parameter
         bool failed = false;         // an argument fit no parameter: missing ones are not reported
         bool missing = false;        // a parameter without a default was given no value
+        // `...style`: the parameter each of the bundle's names goes to, its type, and where (D143).
+        std::vector<std::tuple<int, Type, const Expr*, std::string>> bundled;
     };
 
     Binding bind(FuncInfo* f, const Args& args, const Node& at, const std::string& what) {
@@ -5410,6 +5627,37 @@ struct Checker::Impl {
         const size_t count = args.trailing && !args.exprs.empty() ? args.exprs.size() - 1 : args.exprs.size();
         for (size_t i = 0; i < count; i++) {
             const std::string argName = i < args.names.size() ? args.names[i] : std::string();
+            if (argName == "...") {
+                // A bundle's names, each going to the parameter of that name, unless the call
+                // names it itself, which wins (D143).
+                const Type t = withNull(typeQuietly(*args.exprs[i]), false);
+                if (t.kind != Type::Bundle) {
+                    if (t.known()) report(*args.exprs[i], "'...' passes the arguments of a bundle made with params(...), not " + describe(t));
+                    b.failed = !t.known() ? b.failed : true;
+                    continue;
+                }
+                std::vector<std::string> expanded;
+                for (size_t k = 0; k < t.fields.size(); k++) {
+                    const std::string& name = t.fields[k];
+                    if (std::find(args.names.begin(), args.names.end(), name) != args.names.end()) continue;
+                    auto found = std::find(f->paramNames.begin(), f->paramNames.end(), name);
+                    if (found == f->paramNames.end()) {
+                        report(*args.exprs[i], what + " has no parameter '" + name + "', which the bundle gives");
+                        b.failed = true;
+                        continue;
+                    }
+                    const size_t p = static_cast<size_t>(found - f->paramNames.begin());
+                    if (b.given[p]) {
+                        report(*args.exprs[i], "'" + name + "' is given twice: by the bundle as well");
+                        b.failed = true;
+                    }
+                    b.given[p] = true;
+                    b.bundled.emplace_back(static_cast<int>(p), t.args[k], args.exprs[i].get(), name);
+                    expanded.push_back(name);
+                }
+                if (silent == 0) bundleExpansions[args.exprs[i].get()] = std::move(expanded);
+                continue;
+            }
             if (argName.empty()) {
                 if (f->vararg >= 0 && positional >= static_cast<size_t>(f->vararg)) {
                     b.paramOf[i] = f->vararg;
@@ -5544,6 +5792,12 @@ struct Checker::Impl {
                 unify(want, types[i], env, vars);
             }
         }
+        // A bundle's arguments, each against the parameter it goes to (D143).
+        for (const auto& [p, given, from, name] : b.bundled) {
+            unify(f->params[static_cast<size_t>(p)], given, env, vars);
+            const Type want = subst(f->params[static_cast<size_t>(p)], env);
+            if (!fits(given, want)) report(*from, what + " takes " + describe(want) + " for '" + name + "', and the bundle gives " + describe(given));
+        }
         for (size_t i = 0; i < args.exprs.size(); i++) {
             if (b.paramOf[i] < 0) continue;
             Type want = subst(wanted(i), env);
@@ -5656,6 +5910,14 @@ struct Checker::Impl {
 
     Type constructorCall(ClassInfo* k, const Args& args, const std::vector<TypeAnnotation>& typeArgs, const Node& at) {
         const std::string what = k->name + "(...)";
+        // Java's Font(name, style, size), its style a number: the style is said by name (L80).
+        if (k->name == "Font" && k->unit != nullptr && k->unit->prelude && args.exprs.size() == 3 && !args.spread &&
+            std::all_of(args.names.begin(), args.names.end(), [](const std::string& n) { return n.empty(); }) &&
+            withNull(typeQuietly(*args.exprs[1]), false).kind == Type::Int) {
+            for (const ExprPtr& a : args.exprs) expr(*a);
+            report(at, "Java's Font(name, style, size) is Font(name, size, bold = true, italic = true) in Astra: a style is said by name (L80)");
+            return classType(k);
+        }
         // `Action { ... }`: the lambda, as the interface (D28).
         if (k->isInterface && args.exprs.size() == 1 && args.exprs[0]->kind == ExprKind::Function && !args.spread) {
             Type iface = classType(k);
@@ -5675,6 +5937,30 @@ struct Checker::Impl {
         Env env;
         for (size_t i = 0; i < typeArgs.size() && i < k->typeParams.size(); i++) env[k->typeParams[i]] = resolve(typeArgs[i], *unit);
         FuncInfo* init = k->inits.size() == 1 ? k->inits[0] : (k->headerInit ? headerFunc(k) : nullptr);
+        // Secondary constructors: the class's static functions made of them, chosen among with
+        // the class's own forms by D56's rules.
+        std::vector<FuncInfo*> secondaries;
+        for (const auto& [name, fs] : k->staticMethods)
+            if (name.rfind("<constructor ", 0) == 0) secondaries.insert(secondaries.end(), fs.begin(), fs.end());
+        if (!secondaries.empty() && !args.spread) {
+            std::vector<FuncInfo*> forms;
+            if (k->headerInit) forms.push_back(headerFunc(k));
+            else forms.insert(forms.end(), k->inits.begin(), k->inits.end());
+            forms.insert(forms.end(), secondaries.begin(), secondaries.end());
+            size_t index = 0;
+            const Env none;
+            auto envOf = [&](size_t i) -> const Env& { return forms[i]->isStatic ? none : env; };
+            FuncInfo* f = chooseForm(forms, envOf, args, typeArgs, nullptr, at, k->name, index);
+            if (f == nullptr) {
+                for (const ExprPtr& a : args.exprs) expr(*a);
+                return classType(k);
+            }
+            if (f->isStatic) {
+                if (silent == 0) secondaryCalls[&at] = f;
+                return callWith(f, args, typeArgs, none, nullptr, at, what);
+            }
+            init = f;
+        }
         if (init != nullptr) {
             callWith(init, args, {}, env, nullptr, at, what, &env);
         } else {
@@ -5689,6 +5975,10 @@ struct Checker::Impl {
         if (k->isValue && k->typeParams.empty()) constructedValues[&at] = k;
         return t;
     }
+
+    // Calls of a class's name that chose one of its secondary constructors: the static function
+    // made of it, which the compiler calls in place of making the object.
+    std::unordered_map<const Node*, FuncInfo*> secondaryCalls;
 
     // A call of a name that may have several forms (overloads, D56): the form it means is
     // chosen, and the call checked against it. `envs`, when given, holds each form's own `env`.
@@ -6392,6 +6682,7 @@ struct Checker::Impl {
         int defaultsUsed = 0;
         bool vararg = false;
         int conversions = 0;  // lambdas given as interfaces (D28)
+        int narrowed = 0;     // int constants taken as bytes (D19)
     };
 
     template <typename EnvOf>
@@ -6456,6 +6747,7 @@ struct Checker::Impl {
                     if (!ok && types[i].kind == Type::Int && subst(want, fit.env).kind == Type::Byte && literalsOnly(*args.exprs[i])) {
                         const ConstValue known = foldQuietly(*args.exprs[i]);
                         ok = known.kind == ConstValue::Int && known.i >= 0 && known.i <= 255;
+                        if (ok) fit.narrowed++;
                     }
                 }
             }
@@ -6538,7 +6830,10 @@ struct Checker::Impl {
             const bool ab = asSpecific(a, b), ba = asSpecific(b, a);
             if (ab && !ba) return true;
             if (ba && !ab) return false;
-            if (!ab) return false;
+            // Neither more specific: one the arguments fit as they are before one taking an int
+            // constant as a byte.
+            if (!ab) return a.narrowed < b.narrowed;
+            if (a.narrowed != b.narrowed) return a.narrowed < b.narrowed;
             if (a.conversions != b.conversions) return a.conversions < b.conversions;  // a function type before an interface
             if (a.vararg != b.vararg) return !a.vararg;
             return a.defaultsUsed < b.defaultsUsed;
@@ -6862,7 +7157,7 @@ struct Checker::Impl {
             if (reportMissing(k, m.name)) {
                 std::string advice = (k->unit != nullptr && k->unit->prelude) ? goneAdvice(m.name) : std::string();
                 if (k->unit != nullptr && k->unit->prelude && k->name == "Lock") advice = lockAdvice(m.name);
-                if (k->unit != nullptr && k->unit->prelude && advice.empty()) advice = ioAdvice(k->name, m.name);
+                if (advice.empty()) advice = preludeAdvice(k, m.name);
                 report(m, advice.empty() ? k->name + " has no method '" + m.name + "'" : advice);
             }
             return unknownType();
@@ -6913,8 +7208,60 @@ struct Checker::Impl {
         return false;
     }
 
+    // ---- Bundles of named arguments (D143) ----
+
+    // The names each `...bundle` of a call passes on, as the compiler expands it.
+    std::unordered_map<const Expr*, std::vector<std::string>> bundleExpansions;
+    // `params(...)` calls, `bundle.copy(...)` calls and `a + b` of bundles, for the compiler.
+    std::unordered_set<const Node*> bundleMakes, bundleCopies, bundleAdds;
+
+    // `params(name = value, ...)`, which makes a bundle, and `bundle.copy(name = value)`.
+    bool bundleCall(const CallExpr& c, Type& result) {
+        if (c.callee->kind == ExprKind::Name) {
+            const auto& n = static_cast<const NameExpr&>(*c.callee);
+            if (n.name != "params" || findLocal("params") != nullptr || unit == nullptr || findGlobal(*unit, "params") != nullptr) return false;
+            result = Type::of(Type::Bundle);
+            for (size_t i = 0; i < c.args.size(); i++) {
+                const Type t = expr(*c.args[i]);
+                const std::string name = i < c.names.size() ? c.names[i] : std::string();
+                if (name.empty() || name == "...") {
+                    report(*c.args[i], "params(...) holds named arguments: params(bold = true, size = 14); to add another bundle's, write a + b");
+                    continue;
+                }
+                result.fields.push_back(name);
+                result.args.push_back(t);
+            }
+            if (silent == 0) bundleMakes.insert(&c);
+            return true;
+        }
+        if (c.callee->kind != ExprKind::Member) return false;
+        const auto& m = static_cast<const MemberExpr&>(*c.callee);
+        const Type on = withNull(typeQuietly(*m.object), false);
+        if (on.kind != Type::Bundle) return false;
+        expr(*m.object);
+        if (m.name != "copy") {
+            for (const ExprPtr& a : c.args) expr(*a);
+            report(m, "a bundle has copy(name = value) and +, and is passed with ...: it has no '" + m.name + "'");
+            result = unknownType();
+            return true;
+        }
+        result = on;
+        for (size_t i = 0; i < c.args.size(); i++) {
+            const Type t = expr(*c.args[i]);
+            const std::string name = i < c.names.size() ? c.names[i] : std::string();
+            auto at = std::find(on.fields.begin(), on.fields.end(), name);
+            if (name.empty() || name == "...") report(*c.args[i], "copy(...) on a bundle takes its names: style.copy(size = 18)");
+            else if (at == on.fields.end()) report(*c.args[i], "the bundle has no '" + name + "' to change; add it with + params(" + name + " = ...)");
+            else if (!fits(t, on.args[static_cast<size_t>(at - on.fields.begin())]))
+                report(*c.args[i], "'" + name + "' in the bundle is " + describe(on.args[static_cast<size_t>(at - on.fields.begin())]) + ", not " + describe(t));
+        }
+        if (silent == 0) bundleCopies.insert(&c);
+        return true;
+    }
+
     Type call(const CallExpr& c) {
         if (Type changed; atomicCompareAndSet(c, changed)) return changed;
+        if (Type made; bundleCall(c, made)) return made;
         if (c.callee->kind == ExprKind::Name) {
             const std::string& n = static_cast<const NameExpr&>(*c.callee).name;
             if (Local* l = findLocal(n)) {
@@ -8634,6 +8981,19 @@ const TypeAnnotation* Checker::aliasExpansion(const TypeAnnotation& use) const {
 const std::string* Checker::kindName(const Node& at) const {
     auto found = impl_->kindNames.find(&at);
     return found == impl_->kindNames.end() ? nullptr : &found->second;
+}
+
+const std::vector<std::string>* Checker::bundleExpansion(const Expr& bundle) const {
+    auto found = impl_->bundleExpansions.find(&bundle);
+    return found == impl_->bundleExpansions.end() ? nullptr : &found->second;
+}
+bool Checker::bundleMake(const Node& at) const { return impl_->bundleMakes.count(&at) != 0; }
+bool Checker::bundleCopy(const Node& at) const { return impl_->bundleCopies.count(&at) != 0; }
+bool Checker::bundleAdd(const Node& at) const { return impl_->bundleAdds.count(&at) != 0; }
+
+const FunctionDecl* Checker::secondaryConstructor(const CallExpr& call) const {
+    auto found = impl_->secondaryCalls.find(&call);
+    return found == impl_->secondaryCalls.end() ? nullptr : found->second->decl;
 }
 
 const FunctionDecl* Checker::chosenForm(const CallExpr& call) const {

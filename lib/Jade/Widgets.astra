@@ -1,7 +1,10 @@
 // The simplest widgets: a label, a label that wraps, a button, a button with a picture,
 // and the rule between groups of a toolbar. (JadeUI: Widgets.kt.)
 
-internal val defaultFont = Font(Font.sansSerif, Font.plain, 12)
+internal val defaultFont = Font(Font.sansSerif, 12)
+
+// The style a content paints in: its owner's, as the owner worked it out when it painted (D132).
+internal fun styleOf(content : Content) : Style => content.owner?.paintStyle ?: Style(null, null, true)
 
 // A colour part of the way from one to another: a share of 0 is the first, of 1 the second.
 internal fun mixed(from : Color, to : Color, share : float) : Color =>
@@ -9,7 +12,7 @@ internal fun mixed(from : Color, to : Color, share : float) : Color =>
         (from.blue + (to.blue - from.blue) * share).toInt(), from.alpha)
 
 // One line of text.
-class Label : Content, OwnedContent {
+class Label : Content {
   override var owner : Component? = null
   var text : string = ""
     set(value) {
@@ -29,13 +32,13 @@ class Label : Content, OwnedContent {
 
   override fun sizes() : Sizes {
     val fm = metrics(font)
-    val pref = Dimension(fm.stringWidth(text) + 8, fm.height + 4)
-    return Sizes(pref, pref, Dimension(int.maxValue, pref.height))
+    val pref = Size(fm.stringWidth(text) + 8, fm.height + 4)
+    return Sizes(pref, pref, Size(int.maxValue, pref.height))
   }
 
   override fun paint(canvas : Canvas) {
     canvas.font = font
-    canvas.color = canvas.style.foreground ?: Palette.ink
+    canvas.color = styleOf(this).foreground ?: Palette.ink
     val m = canvas.measure(text, font)
     canvas.drawString(text, 4, (canvas.height - m.height) / 2 + m.ascent)
   }
@@ -43,7 +46,7 @@ class Label : Content, OwnedContent {
 
 // Text that goes on to further lines when it reaches the width it is given, and whose
 // height therefore depends on that width.
-class WrappedLabel : Content, OwnedContent, HeightForWidth {
+class WrappedLabel : Content, HeightForWidth {
   override var owner : Component? = null
   var text : string = ""
     set(value) {
@@ -100,7 +103,7 @@ class WrappedLabel : Content, OwnedContent, HeightForWidth {
   override fun sizes() : Sizes {
     val width = lastWidth > 0 ? lastWidth : preferredWidth
     val height = heightForWidth(width)
-    return Sizes(Dimension(60, height), Dimension(width, height), Dimension(int.maxValue, int.maxValue))
+    return Sizes(Size(60, height), Size(width, height), Size(int.maxValue, int.maxValue))
   }
 
   override fun paint(canvas : Canvas) {
@@ -109,7 +112,7 @@ class WrappedLabel : Content, OwnedContent, HeightForWidth {
       owner?.invalidateLayout()
     }
     canvas.font = font
-    canvas.color = canvas.style.foreground ?: Palette.ink
+    canvas.color = styleOf(this).foreground ?: Palette.ink
     val fm = metrics(font)
     var y = fm.ascent + 2
     for (line in wrap(canvas.width)) {
@@ -124,7 +127,7 @@ fun wrappedLabel(text : string, font : Font? = null) : Component => Component(Wr
 // A button: it does what `onClick` says when it is pressed and let go while the pointer is
 // still on it. While the pointer is over it, it is lit: its edge takes the accent colour
 // and its body a little of it. (JadeUI's button has no such look; its icon button has.)
-class Button : Content, OwnedContent {
+class Button : Content {
   override var owner : Component? = null
   var onClick : () -> unit
   var text : string = ""
@@ -151,22 +154,22 @@ class Button : Content, OwnedContent {
 
   override fun sizes() : Sizes {
     val fm = metrics(font)
-    val pref = Dimension(fm.stringWidth(text) + 24, fm.height + 12)
-    val min = Dimension(fm.stringWidth(text) + 12, fm.height + 6)
-    return Sizes(min, pref, Dimension(int.maxValue, pref.height))   // it may be made wider, not taller
+    val pref = Size(fm.stringWidth(text) + 24, fm.height + 12)
+    val min = Size(fm.stringWidth(text) + 12, fm.height + 6)
+    return Sizes(min, pref, Size(int.maxValue, pref.height))   // it may be made wider, not taller
   }
 
   override fun paint(canvas : Canvas) {
     w = canvas.width
     h = canvas.height
-    val base = canvas.style.background ?: Palette.bg(0xE0E0E0)
-    val lit = hovered and canvas.style.enabled
+    val base = styleOf(this).background ?: Palette.bg(0xE0E0E0)
+    val lit = hovered and styleOf(this).enabled
     canvas.color = pressed ? base.darker() : (lit ? mixed(base, Palette.accent, 0.12) : base)
     canvas.fillRoundRect(0, 0, canvas.width - 1, canvas.height - 1, 8, 8)
     canvas.color = lit ? Palette.accent : Palette.border
     canvas.drawRoundRect(0, 0, canvas.width - 1, canvas.height - 1, 8, 8)
     canvas.font = font
-    canvas.color = canvas.style.enabled ? (canvas.style.foreground ?: Palette.ink) : Palette.disabled
+    canvas.color = styleOf(this).enabled ? (styleOf(this).foreground ?: Palette.ink) : Palette.disabled
     val m = canvas.measure(text, font)
     val down = pressed ? 1 : 0           // the text goes down a little while it is pressed
     canvas.drawString(text, (canvas.width - m.width) / 2, (canvas.height - m.height) / 2 + m.ascent + down)
@@ -205,10 +208,10 @@ class Button : Content, OwnedContent {
 }
 
 // A button that shows a picture, for toolbars.
-class IconButton(image : BufferedImage, onClick : () -> unit = {}, size : int = 30) : Content, OwnedContent {
+class IconButton(image : Image, onClick : () -> unit = {}, size : int = 30) : Content {
   override var owner : Component? = null
   var onClick : () -> unit = onClick
-  var image : BufferedImage = image
+  var image : Image = image
     set(value) {
       field = value
       owner?.invalidate()
@@ -232,12 +235,12 @@ class IconButton(image : BufferedImage, onClick : () -> unit = {}, size : int = 
   private var hovered = false
   private var w = 0
   private var h = 0
-  private var fadedOf : BufferedImage? = null
-  private var fadedSource : BufferedImage? = null
+  private var fadedOf : Image? = null
+  private var fadedSource : Image? = null
 
   override fun sizes() : Sizes {
-    val d = Dimension(size, size)
-    return Sizes(d, d, Dimension(d.width, d.height))
+    val d = Size(size, size)
+    return Sizes(d, d, Size(d.width, d.height))
   }
 
   override fun paint(canvas : Canvas) {
@@ -247,14 +250,14 @@ class IconButton(image : BufferedImage, onClick : () -> unit = {}, size : int = 
       canvas.color = pressed ? Palette.bg(0xC6D2E0) : Palette.bg(0xE2E7EC)
       canvas.fillRoundRect(1, 1, w - 3, h - 3, 6, 6)
     }
-    canvas.drawImage(enabled ? image : faded(image), (w - image.width) / 2, (h - image.height) / 2)
+    canvas.draw(enabled ? image : faded(image), (w - image.width) / 2, (h - image.height) / 2)
   }
 
   // The picture as it looks when the button cannot be used: mostly see-through.
-  private fun faded(source : BufferedImage) : BufferedImage {
+  private fun faded(source : Image) : Image {
     if (fadedSource === source) { return fadedOf!! }
-    val out = BufferedImage(source.width, source.height, BufferedImage.typeIntArgb)
-    out.canvas().drawImage(source, 0, 0, alpha = 0.35)
+    val out = Image(source.width, source.height)
+    out.canvas().draw(source, 0, 0, alpha = 0.35)
     fadedSource = source
     fadedOf = out
     return out
@@ -279,10 +282,11 @@ class IconButton(image : BufferedImage, onClick : () -> unit = {}, size : int = 
   private fun isOver(x : int, y : int) : bool => x >= 0 and x < w and y >= 0 and y < h
 }
 
-fun iconButton(image : BufferedImage, onClick : () -> unit = {}) : Component => Component(IconButton(image, onClick))
+fun iconButton(image : Image, onClick : () -> unit = {}) : Component => Component(IconButton(image, onClick))
 
 // The thin upright rule between groups of buttons in a toolbar.
 class ToolbarSeparator : Content {
+  override var owner : Component? = null
   private val color : Color?
   private val height : int
 
@@ -292,8 +296,8 @@ class ToolbarSeparator : Content {
   }
 
   override fun sizes() : Sizes {
-    val d = Dimension(9, height)
-    return Sizes(d, d, Dimension(d.width, int.maxValue))
+    val d = Size(9, height)
+    return Sizes(d, d, Size(d.width, int.maxValue))
   }
 
   override fun paint(canvas : Canvas) {
@@ -308,6 +312,7 @@ fun toolbarSeparator() : Component => Component(ToolbarSeparator())
 
 // Takes up room and draws nothing but a background, if it is given one.
 internal class Spacer : Content {
+  override var owner : Component? = null
   private val w : int
   private val h : int
 
@@ -316,10 +321,10 @@ internal class Spacer : Content {
     this.h = h
   }
 
-  override fun sizes() : Sizes => Sizes(Dimension(w, h), Dimension(w, h), Dimension(int.maxValue, int.maxValue))
+  override fun sizes() : Sizes => Sizes(Size(w, h), Size(w, h), Size(int.maxValue, int.maxValue))
 
   override fun paint(canvas : Canvas) {
-    val fill = canvas.style.background
+    val fill = owner?.paintStyle?.background
     if (fill != null) {
       canvas.color = fill
       canvas.fillRect(0, 0, canvas.width, canvas.height)

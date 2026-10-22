@@ -101,6 +101,8 @@ private:
     std::unique_ptr<FunctionDecl> accessor();
     std::string operatorName();
     std::unique_ptr<FunctionDecl> functionRest(std::string name, const Token& start);
+    void parameterList(FunctionDecl& decl, const Token& start);
+    void secondaryConstructor(ClassStmt& s);
     std::unique_ptr<BlockStmt> block();
     StmtPtr statement();
     StmtPtr ifStatement();
@@ -127,7 +129,7 @@ private:
     ExprPtr multiplicative();
     ExprPtr cast();
     ExprPtr unary();
-    ExprPtr postfix();
+    ExprPtr postfix(ExprPtr start = nullptr);
     ExprPtr primary();
     ExprPtr jumpExpression(const Token& keyword);
     ExprPtr whenExpression(const Token& keyword);

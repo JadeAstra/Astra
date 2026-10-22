@@ -1,0 +1,150 @@
+// An Image is pixels in memory (L101), drawn on by its own canvas on the processor, on any
+// thread (L108). The same canvas operations as a Surface's, with the same meanings.
+
+val white = Color.white
+val black = Color.black
+
+fun stage(width : int, height : int) : Image => Image(width, height, white)
+fun count(image : Image, color : Color) : int {
+  var n = 0
+  for (y in 0..<image.height) {
+    for (x in 0..<image.width) { if (image[x, y] == color) { n += 1 } }
+  }
+  return n
+}
+fun attempt(block : () -> any?) : string {
+  try { block(); return "no error" } catch (e) { return "${e#.name}: ${e.message}" }
+}
+
+// -- What it is --
+val im = Image(30, 20)
+print(im, im.width, im.height, im.size, im[0, 0], im == Image(30, 20), im == Image(30, 20, white), im is Drawable)   // expect: Image(30 x 20) 30 20 Size(30 x 20) Color(0, 0, 0, 0) true false true
+print(attempt { im[30, 0] }, "|", attempt { im[0, -1] = black }, "|", im.getOrNull(30, 0), im.getOrNull(29, 19))   // expect: IndexOutOfBoundsException: pixel (30, 0) is outside the image, which is 30 by 20 | IndexOutOfBoundsException: pixel (0, -1) is outside the image, which is 30 by 20 | null Color(0, 0, 0, 0)
+print(attempt { Image(40000, 1) }, "|", attempt { Image.of(2, 2, Bytes(3)) })   // expect: IllegalArgumentException: an image is from 0 to 32768 pixels each way, not 40000 by 1 | IllegalArgumentException: 3 bytes are not the pixels of an image of 2 by 2
+
+// -- Rectangles, lines, outlines: whole pixels, as on the graphics card --
+val rects = stage(20, 20)
+val rc = rects.canvas()
+print(rc.width, rc.height, rc.scale, rc.color, rc.font, rc.visibleBounds)   // expect: 20 20 1 Color(0, 0, 0) Font(Dialog, 12) Rect(0, 0, 20 x 20)
+rc.color = black
+rc.fillRect(2, 2, 5, 3)
+print(rects.inkBox(white), count(rects, black))   // expect: Rect(2, 2, 5 x 3) 15
+rc.drawRect(10, 10, 6, 4)                    // an outline covering 7 by 5: 20 pixels
+print(count(rects, black), rects[10, 10] == black, rects[16, 14] == black, rects[11, 11] == white)   // expect: 35 true true true
+rc.drawLine(0, 18, 9, 18)                    // both ends covered
+print(count(rects, black), rects[9, 18] == black, rects[10, 18] == white)   // expect: 45 true true
+rc.clearRect(2, 2, 1, 1)
+print(rects[2, 2])   // expect: Color(0, 0, 0, 0)
+
+// -- Smooth shapes: an oval's pixels add up to its area, to within a pixel --
+val ovals = stage(40, 30)
+val oc = ovals.canvas()
+oc.color = black
+oc.fillOval(4, 4, 20, 16)
+var covered = 0.0
+for (y in 0..<30) {
+  for (x in 0..<40) { covered += (255 - ovals[x, y].red) / 255.0 }
+}
+print(Math.abs(covered - Math.pi * 10 * 8) < 1, ovals[14, 12] == black, ovals[4, 4] == white)   // expect: true true true
+oc.fillRoundRect(26, 2, 12, 12, 6, 6)
+print(ovals[26, 2].red > 240, ovals[31, 2] == black, ovals[31, 8] == black)   // expect: true true true
+// Polygons: a rectangle given as one is exactly its pixels.
+val poly = stage(20, 20)
+val pc = poly.canvas()
+pc.color = black
+pc.fillPolygon([2, 12, 12, 2], [3, 3, 9, 9])
+print(count(poly, black), poly.inkBox(white))   // expect: 60 Rect(2, 3, 10 x 6)
+
+// -- See-through colours lie over what is there --
+val glass = stage(4, 1)
+val gc = glass.canvas()
+gc.color = Color(0, 0, 0, 128)
+gc.fillRect(0, 0, 2, 1)
+print(glass[0, 0] == Color(127, 127, 127) or glass[0, 0] == Color(128, 128, 128), glass[2, 0] == white)   // expect: true true
+
+// -- A canvas for a part, and one clipped --
+val parts = stage(30, 20)
+val whole = parts.canvas()
+val part = whole.sub(5, 5, 10, 6)
+part.color = black
+part.fillRect(-20, -20, 100, 100)
+print(parts.inkBox(white), part.visibleBounds)   // expect: Rect(5, 5, 10 x 6) Rect(0, 0, 10 x 6)
+val clip = whole.clipped(20, 0, 4, 4)
+clip.color = Color.red
+clip.fillRect(0, 0, 30, 30)
+print(count(parts, Color.red), parts[20, 0] == Color.red, parts[24, 0] == white)   // expect: 16 true true
+
+// -- A dense screen: units of several pixels --
+val dense = Image(40, 20, white)
+val dc = dense.canvasAt(20, 10, 2)
+print(dc.width, dc.height, dc.deviceScaleX)   // expect: 20 10 2.0
+dc.color = black
+dc.fillRect(1, 1, 3, 2)
+print(dense.inkBox(white), count(dense, black))   // expect: Rect(2, 2, 6 x 4) 24
+
+// -- Text, measured as the canvas draws it --
+val words = stage(200, 40)
+val wc = words.canvas()
+wc.color = black
+wc.font = Font("Segoe UI", 15)
+val width = wc.drawString("Measured text", 4, 28)
+val m = wc.measure("Measured text")
+print(width == wc.font.width("Measured text"), m.width == width, m.height == m.ascent + m.descent + wc.font.leading, words.inkBox(white)!!.x >= 4)   // expect: true true true true
+val big = wc.measure("Measured text", Font("Segoe UI", 30))
+print(big.width > m.width, big.ascent > m.ascent)   // expect: true true
+
+// -- Images drawn on images: at their size, scaled, see-through, and a part --
+val tile = Image(4, 4, Color.blue)
+tile[0, 0] = Color.clear
+val sheet = stage(30, 20)
+val shc = sheet.canvas()
+shc.draw(tile, 1, 1)
+shc.draw(tile, 10, 1, 8, 8)
+shc.draw(tile, 20, 1, alpha = 0.5)
+shc.drawPart(tile, 2, 2, 2, 2, 1, 10, 4, 4)
+print(sheet[1, 1] == white, sheet[2, 1] == Color.blue, sheet[17, 8] == Color.blue, sheet[10, 1] == white, Math.abs(sheet[22, 2].red - 128) <= 1, sheet[22, 2].blue == 255)   // expect: true true true true true true
+print(sheet[1, 10] == Color.blue, sheet[4, 13] == Color.blue, sheet[5, 13] == white)   // expect: true true true
+// Anything that gives an Image can be drawn on one.
+class Checker(override val width : int, override val height : int) : Drawable, ToImage {
+  override fun toImage() : Image {
+    val made = Image(width, height)
+    made.editPixels { px ->
+      for (y in 0..<height) {
+        for (x in 0..<width) { px[x, y] = (x + y) % 2 == 0 ? black : white }
+      }
+    }
+    return made
+  }
+}
+val board = stage(6, 6)
+board.canvas().draw(Checker(4, 4), 1, 1)
+print(board[1, 1] == black, board[2, 1] == white, board[4, 4] == white, board[3, 2] == white)   // expect: true true false true
+
+// -- Pixels as a grid: read freely, changed in editPixels --
+val px = Image(3, 2, Color.green)
+print(px.pixels, px.pixels[2, 1], px.pixels.toList().size, px.pixels.bytes.size)   // expect: Grid(3 x 2) Color(0, 255, 0) 6 24
+print(attempt { px.pixels[0, 0] = black })   // expect: IllegalStateException: this grid is only read here: change an image's pixels in image.editPixels { }
+px.editPixels { cells -> cells[0, 0] = black }
+print(px[0, 0] == black, px.crop(0, 0, 1, 1) == Image(1, 1, black), px.copy() == px, px.copy() === px)   // expect: true true true false
+// A crop past the edges is clear there.
+print(px.crop(2, 1, 2, 2)[0, 0], px.crop(2, 1, 2, 2)[1, 1])   // expect: Color(0, 255, 0) Color(0, 0, 0, 0)
+
+// -- Drawn on several threads at once, each its own image --
+val wanted = Image(50, 50, white)
+val wantedCanvas = wanted.canvas()
+wantedCanvas.color = black
+wantedCanvas.fillOval(5, 5, 40, 30)
+val results = []
+val workers = []
+val lock = Lock()
+for (n in 0..<4) {
+  workers.add(thread {
+    val mine = Image(50, 50, white)
+    val c = mine.canvas()
+    c.color = black
+    c.fillOval(5, 5, 40, 30)
+    lock.useKey { results.add(mine == wanted) }
+  })
+}
+for (w in workers) { w.get() }
+print(results)   // expect: [true, true, true, true]

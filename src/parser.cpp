@@ -468,6 +468,9 @@ StmtPtr Parser::declaration() {
                                                "' its value where the value is made");
                 cls.isData = true;
                 cls.isValue = true;
+                // The body of a constructor of its own changes the value it is making.
+                for (auto& method : cls.methods)
+                    if (method->generated && method->name.rfind("<constructed ", 0) == 0) method->isMutating = true;
                 addDataMembers(cls, word);
                 return declared;
             }
@@ -704,8 +707,28 @@ TypeAnnotation Parser::typeExpression() {
             advance();
             type.name += "." + advance().text;
         }
-        if (type.name.find('.') == std::string::npos && isTypeParam(type.name)) type.typeParam = true;
-        if (match(TokenType::Lt)) type.args = typeArgumentsRest();
+        if (type.name == "params" && !type.isOpen && check(TokenType::LParen)) {
+            // The type of a bundle of named arguments (D143): params(size : int, bold : bool).
+            advance();
+            const bool tight = tightNullable_;
+            tightNullable_ = false;
+            while (!check(TokenType::RParen)) {
+                const Token& field = expect(TokenType::Identifier, "a name in params(name : type, ...)");
+                for (const std::string& seen : type.bundleNames)
+                    if (seen == field.text) throw error(field, "'" + field.text + "' is in the bundle twice");
+                expect(TokenType::Colon, "':' and the type of the name");
+                type.bundleNames.push_back(field.text);
+                type.args.push_back(typeExpression());
+                if (!match(TokenType::Comma)) break;
+            }
+            tightNullable_ = tight;
+            expect(TokenType::RParen, "')' after the names of the bundle");
+            type.name = "Map";
+            type.isBundle = true;
+        } else if (type.name.find('.') == std::string::npos && isTypeParam(type.name)) {
+            type.typeParam = true;
+        }
+        if (!type.isBundle && match(TokenType::Lt)) type.args = typeArgumentsRest();
         if (check(TokenType::Dot) && peekNext().type == TokenType::LParen) {
             // A function that runs on an object of this type: `Grid.() -> Unit`.
             advance();
@@ -1365,6 +1388,12 @@ void Parser::classMemberBody(ClassStmt& s, bool inStatic) {
     if ((infix || inlines || tail) && !check(TokenType::Fun))
         throw error(peek(), "'infix', 'inline' and 'tail' go in front of a function");
 
+    // constructor(...) : this(...): another form of making one.
+    if (word("constructor") && peekNext().type == TokenType::LParen) {
+        secondaryConstructor(s);
+        return;
+    }
+
     // init { ... }: runs when an object is made.
     if (word("init") && peekNext().type == TokenType::LBrace) {
         advance();
@@ -1574,7 +1603,10 @@ std::unique_ptr<FunctionDecl> Parser::method() {
             if (arity != 0) throw error(opToken, "op ~ takes no parameters");
             decl->name = "unary~";
         } else if (op == "[]=") {
-            if (arity != 2) throw error(opToken, "op []= takes exactly two parameters (index, value)");
+            // `op []=(x, y, value)`: as many indexes as op [] takes, then the value (D133).
+            if (arity < 2) throw error(opToken, "op []= takes the indexes, then the value: op []=(index, value)");
+        } else if (op == "[]") {
+            if (arity < 1) throw error(opToken, "op [] takes the indexes: op [](index), or op [](x, y)");
         } else if (arity != 1) {
             throw error(opToken, "op " + op + " takes exactly one parameter");
         }
@@ -1627,7 +1659,132 @@ std::unique_ptr<FunctionDecl> Parser::functionRest(std::string name, const Token
     decl->line = start.line;
     decl->col = start.col;
     decl->name = std::move(name);
+    parameterList(*decl, start);
+    decl->returnType = optionalType();
+    throwsClause(decl->throwsTypes);
 
+    decl->bodyFrom = p_;
+    if (match(TokenType::Arrow)) {
+        auto ret = node<ReturnStmt>(peek());
+        ret->value = expression();
+        decl->body.push_back(std::move(ret));
+    } else if ((inInterface_ || abstractMember_ || externalBody_) && !check(TokenType::LBrace)) {
+        decl->isAbstract = true;  // for the implementing class to write
+    } else {
+        decl->body = std::move(block()->statements);
+    }
+    decl->bodyTo = p_;
+    return decl;
+}
+
+// `constructor(params) : this(args) { body }` in a class or value type: another form of making
+// one (Kotlin's secondary constructor), as Color(0xFF8000) beside Color(255, 128, 0). It is made
+// into a static function of the class, which makes the value with this(...) and then, if there is
+// a body, runs it on the value as a method of its own (mutating in a value type); a call of the
+// class's name chooses among the forms by D56's rules.
+void Parser::secondaryConstructor(ClassStmt& s) {
+    const Token& word = advance();
+    if (s.isInterface || s.isObject || s.isEnum || s.isAnnotation)
+        throw error(word, std::string("a secondary constructor makes an object of a class or a value type, which ") +
+                              (s.isInterface ? "an interface" : s.isObject ? "an object" : s.isEnum ? "an enum" : "an annotation") + " is not");
+    int count = 1;
+    for (const auto& m : s.methods)
+        if (m->name.rfind("<constructor ", 0) == 0) count++;
+    auto factory = std::make_unique<FunctionDecl>();
+    factory->line = word.line;
+    factory->col = word.col;
+    factory->name = "<constructor " + std::to_string(count) + ">";
+    parameterList(*factory, word);
+    if (!check(TokenType::Colon) || peekNext().type != TokenType::This)
+        throw error(peek(), "a secondary constructor makes the value with another form first: constructor(...) : this(...)");
+    advance();
+    const Token& self = advance();
+    if (!check(TokenType::LParen)) throw error(peek(), "'(' after this: constructor(...) : this(...)");
+    auto callee = node<NameExpr>(self);
+    callee->name = s.name;
+    // The '{' after this(...) is the constructor's body, not a lambda for the call.
+    HeaderGuard noLambda(*this, true);
+    ExprPtr made = postfix(std::move(callee));
+    noLambda.restore();
+    if (made->kind != ExprKind::Call || static_cast<CallExpr&>(*made).callee->kind != ExprKind::Name)
+        throw error(self, "a secondary constructor's this(...) is a call of the class's other forms, and nothing else");
+
+    factory->isStatic = true;
+    factory->generated = true;
+    factory->access = kAccessWordNone;
+    factory->typeParams = s.typeParams;
+    factory->returnType.name = s.name;
+    factory->returnType.line = word.line;
+    factory->returnType.col = word.col;
+    for (const TypeParam& p : s.typeParams) {
+        TypeAnnotation arg;
+        arg.name = p.name;
+        arg.typeParam = true;
+        arg.line = p.line;
+        arg.col = p.col;
+        factory->returnType.args.push_back(std::move(arg));
+    }
+    // The parameters, passed on to the body as they were given.
+    auto passed = [&](CallExpr& call) {
+        for (size_t i = 0; i < factory->params.size(); i++) {
+            auto arg = node<NameExpr>(word);
+            arg->name = factory->params[i];
+            call.args.push_back(std::move(arg));
+            call.names.emplace_back();
+            const bool spread = static_cast<int>(i) == factory->varargIndex;
+            call.spread.push_back(spread ? 1 : 0);
+            call.hasSpread = call.hasSpread || spread;
+        }
+    };
+    if (check(TokenType::LBrace)) {
+        auto body = std::make_unique<FunctionDecl>();
+        body->line = word.line;
+        body->col = word.col;
+        body->name = "<constructed " + std::to_string(count) + ">";
+        body->params = factory->params;
+        body->paramTypes = factory->paramTypes;
+        body->paramPositions = factory->paramPositions;
+        body->varargIndex = factory->varargIndex;
+        body->varargType = factory->varargType;
+        for (size_t i = 0; i < factory->params.size(); i++) body->paramDefaults.push_back(nullptr);
+        body->generated = true;
+        body->access = kAccessWordPrivate;  // only the factory calls it
+        body->bodyFrom = p_;
+        body->body = std::move(block()->statements);
+        body->bodyTo = p_;
+        // var made = this(...); made.<constructed n>(params); return made
+        auto keep = node<VarStmt>(word);
+        keep->name = "<made>";
+        keep->init = std::move(made);
+        factory->body.push_back(std::move(keep));
+        auto run = node<CallExpr>(word);
+        auto member = node<MemberExpr>(word);
+        auto target = node<NameExpr>(word);
+        target->name = "<made>";
+        member->object = std::move(target);
+        member->name = body->name;
+        run->callee = std::move(member);
+        passed(*run);
+        auto runStmt = node<ExprStmt>(word);
+        runStmt->expr = std::move(run);
+        factory->body.push_back(std::move(runStmt));
+        auto ret = node<ReturnStmt>(word);
+        auto result = node<NameExpr>(word);
+        result->name = "<made>";
+        ret->value = std::move(result);
+        factory->body.push_back(std::move(ret));
+        s.methods.push_back(std::move(factory));
+        s.methods.push_back(std::move(body));
+        return;
+    }
+    auto ret = node<ReturnStmt>(word);
+    ret->value = std::move(made);
+    factory->body.push_back(std::move(ret));
+    s.methods.push_back(std::move(factory));
+}
+
+void Parser::parameterList(FunctionDecl& decl_, const Token& start) {
+    FunctionDecl* decl = &decl_;
     expect(TokenType::LParen, "'(' before the parameter list");
     while (!check(TokenType::RParen)) {
         Annotations written = annotations();  // (D153)
@@ -1663,21 +1820,6 @@ std::unique_ptr<FunctionDecl> Parser::functionRest(std::string name, const Token
     }
     expect(TokenType::RParen, "')' after the parameter list");
     if (decl->params.size() > 255) throw error(start, "a function cannot have more than 255 parameters");
-    decl->returnType = optionalType();
-    throwsClause(decl->throwsTypes);
-
-    decl->bodyFrom = p_;
-    if (match(TokenType::Arrow)) {
-        auto ret = node<ReturnStmt>(peek());
-        ret->value = expression();
-        decl->body.push_back(std::move(ret));
-    } else if ((inInterface_ || abstractMember_ || externalBody_) && !check(TokenType::LBrace)) {
-        decl->isAbstract = true;  // for the implementing class to write
-    } else {
-        decl->body = std::move(block()->statements);
-    }
-    decl->bodyTo = p_;
-    return decl;
 }
 
 std::unique_ptr<BlockStmt> Parser::block() {
@@ -1971,6 +2113,23 @@ ExprPtr Parser::assignment() {
             e->value = expression();
             return e;
         }
+        case TokenType::DotEq: {
+            // `target .= member`: the right side is a member of the target, or a chain from one
+            // (D156): `items .= sorted()`, `dir .= parent`, `a.b .= copy(x = 1)`.
+            const Token& op = advance();
+            if (left->kind != ExprKind::Name && left->kind != ExprKind::Member && left->kind != ExprKind::Index)
+                throw error(op, "invalid assignment target");
+            auto e = node<AssignExpr>(op);
+            e->op = op.type;
+            e->target = std::move(left);
+            const Token& name = expectName("a member of the target after '.=', as in items .= sorted()");
+            auto current = node<CurrentExpr>(op);
+            auto member = node<MemberExpr>(name);
+            member->object = std::move(current);
+            member->name = name.text;
+            e->value = postfix(std::move(member));
+            return e;
+        }
         default:
             return left;
     }
@@ -2250,8 +2409,9 @@ ExprPtr Parser::unary() {
     return postfix();
 }
 
-ExprPtr Parser::postfix() {
-    ExprPtr e = primary();
+// `start`, when given, is what the chain of calls, members and indexes goes on from.
+ExprPtr Parser::postfix(ExprPtr start) {
+    ExprPtr e = start != nullptr ? std::move(start) : primary();
     // A lambda passed to a function can be left with `return@` and that function's name.
     auto labelLambdas = [](CallExpr& call) {
         std::string name;
@@ -2318,6 +2478,16 @@ ExprPtr Parser::postfix() {
             call->typeArgs = std::move(typeArgs);
             HeaderGuard inside(*this, false);
             while (!check(TokenType::RParen)) {
+                // `...style` passes the arguments a bundle holds, by name (D143).
+                if (check(TokenType::Ellipsis)) {
+                    advance();
+                    call->names.push_back("...");
+                    call->namedCount++;
+                    call->spread.push_back(0);
+                    call->args.push_back(postfix());
+                    if (!match(TokenType::Comma)) break;
+                    continue;
+                }
                 // `name = value` passes an argument by name.
                 if (isName(peek()) && peekNext().type == TokenType::Eq) {
                     const Token& argName = advance();
@@ -2379,6 +2549,11 @@ ExprPtr Parser::postfix() {
                 index->index = std::move(range);
             } else {
                 index->index = expression();
+            }
+            // `grid[x, y]`: more indexes, for a class's op [](x, y) (D133).
+            while (check(TokenType::Comma) && !(peekNext().type == TokenType::Identifier && peekNext().text == "default")) {
+                advance();
+                index->more.push_back(expression());
             }
             inIndex_--;
             // `counts[word, default = 0]`: a start value for a key that is not there (L118).

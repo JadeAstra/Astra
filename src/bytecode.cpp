@@ -221,6 +221,11 @@ const OpInfo kOps[] = {
     {"CLASS_META", Operand::U16U8},
     {"ATOMIC_FIELD", Operand::U16U8},
     {"SETTLE_ENUM", Operand::None},
+    {"INDEX_N", Operand::U8},
+    {"SET_INDEX_N", Operand::U8},
+    {"DUP_N", Operand::U8},
+    {"BUNDLE_VALUES", Operand::U8},
+    {"MERGE_BUNDLE", Operand::None},
 };
 
 const char* const kTypeNames[] = {"", "int", "float", "Number", "string", "bool", "List", "Map", "Range", "Function", "Bytes", "Type", "",
@@ -909,6 +914,29 @@ static int analyzeStack(FunctionProto& f, const Program& program, bool partial) 
                     pushes = 1;
                     break;
                 case Op::SettleEnum:
+                    pops = 2;
+                    pushes = 1;
+                    break;
+                case Op::IndexN:
+                    if (a < 1) fail("bad index count");
+                    pops = a + 1;
+                    pushes = 1;
+                    break;
+                case Op::SetIndexN:
+                    if (a < 1) fail("bad index count");
+                    pops = a + 2;
+                    pushes = 1;
+                    break;
+                case Op::DupN:
+                    if (a < 1) fail("bad count");
+                    pops = a;
+                    pushes = 2 * a;
+                    break;
+                case Op::BundleValues:
+                    pops = a + 1;
+                    pushes = 2 * a;
+                    break;
+                case Op::MergeBundle:
                     pops = 2;
                     pushes = 1;
                     break;

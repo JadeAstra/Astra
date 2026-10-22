@@ -80,6 +80,9 @@ struct Context {
     ObjUpvalue* openUpvalues = nullptr;
     int nativeDepth = 0;
     Value* nativeBase = nullptr;
+    // The type arguments a call about to be made was given (Op::WithTypes): a thread may give
+    // way between them and the call, so they are its own.
+    const ObjTypeInfo* pendingTypeArgs = nullptr;
     Context* parent = nullptr;  // the one waiting for this one to finish or be set aside
     ObjFiber* fiber = nullptr;  // the task this is the stack of; null for a thread's own
 
@@ -449,6 +452,8 @@ public:
     // A member read, set or found by its name, whoever may use it: as reflection does once it
     // has listed it to the code asking.
     Value memberGet(Value obj, ObjString* name);
+    void bundleValues(int count);  // Op::BundleValues
+    void mergeBundles();           // Op::MergeBundle
     // Whether a value is an Iterator, an object with hasNext() and next().
     bool isIteratorObject(Value v) const;
     void memberSet(Value obj, ObjString* name, Value value);
@@ -734,7 +739,7 @@ public:
     Value runParallel(Value source, Value function, bool keep, bool replace = false);
     // Runs `function` on each of `parts` ranges that together cover a `bytes`, one core to
     // a range, each allowed to write that part of it.
-    void runParallelChunks(Value buffer, Value function);
+    void runParallelChunks(Value buffer, Value function, size_t align = 1);
     int parallelCores();
     // The core of a parallel section this VM is (1 and up), or 0 for a program's own.
     uint8_t coreId() const { return coreId_; }
@@ -1058,6 +1063,10 @@ private:
     bool bitwise(Op op);
 
     bool matchesType(const Value& v, uint8_t type, const ObjClass* cls) const;
+    // A byte kept where an int or a Number is declared becomes that int (8.9c): asked only once
+    // the value has failed its type's check, so that the checks that pass cost nothing more.
+    // True where it was widened, and so now fits.
+    static bool widenedByte(Value& v, uint8_t type);
     ObjClass* popTypeClass(uint8_t type);
     std::string declaredTypeText(uint8_t type, const ObjClass* cls) const;
     AstraThrow typeMismatch(const std::string& variable, uint8_t type, const ObjClass* cls, Value v);
@@ -1130,6 +1139,7 @@ private:
 void registerBuiltins(VM& vm);
 void registerThreads(VM& vm);  // threads.cpp: threads, locks, the event loop and tasks
 void registerIo(VM& vm);       // io.cpp: streams, processes and sockets
+void registerGrid(VM& vm);     // grid.cpp: what Grid<T> is built on (D155)
 void registerWorkers(VM& vm);  // worker.cpp: isolated workers
 void registerParallel(VM& vm); // parallel.cpp: parallel sections
 void registerText(VM& vm);     // text/api.cpp: fonts, text and pictures

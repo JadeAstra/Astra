@@ -7,10 +7,10 @@ class RenderLoop {
   private var lastW = -1
   private var lastH = -1
   private var dirty = true
-  private var damage : Rectangle? = null   // the part that has changed, if it is known to be only a part
+  private var damage : Rect? = null   // the part that has changed, if it is known to be only a part
 
   // One frame's plan: whether the tree is laid out first, and the part to draw (null: all).
-  class Frame(val layout : bool, val partial : Rectangle?)
+  class Frame(val layout : bool, val partial : Rect?)
 
   val isDirty : bool
     get() => dirty
@@ -27,7 +27,7 @@ class RenderLoop {
 
   // Only a rectangle has changed. Several add up to the rectangle that holds them all; a
   // markDirty before or after makes it everything.
-  fun markDamage(r : Rectangle) {
+  fun markDamage(r : Rect) {
     if (dirty and damage == null) { return }
     damage = damage?.union(r) ?: r
     dirty = true
@@ -46,10 +46,10 @@ class RenderLoop {
   // nothing else forces a whole frame: a layout, or a picture of another size.
   fun plan(w : int, h : int, buffersResized : bool) : Frame {
     val layout = layoutDue(w, h)
-    var partial : Rectangle? = null
+    var partial : Rect? = null
     val d = damage
     if (d != null and !layout and !buffersResized) {
-      val within = d.intersection(Rectangle(0, 0, w, h))
+      val within = d.intersection(Rect(0, 0, w, h))
       if (!within.isEmpty) { partial = within }
     }
     return Frame(layout, partial)
@@ -66,7 +66,7 @@ class RenderLoop {
   fun mayIdle(holding : bool) : bool => !dirty and !holding
 
   // Plans a frame, paints the tree into a picture, and notes it as drawn.
-  fun renderFrame(root : Component, buf : BufferedImage, w : int, h : int, sx : float = 1.0, sy : float = 1.0) : Frame {
+  fun renderFrame(root : Component, buf : Surface, w : int, h : int, sx : float = 1.0, sy : float = 1.0) : Frame {
     val frame = plan(w, h, false)
     root.renderInto(buf, w, h, sx, sy, frame.layout, frame.partial)
     drawn(frame, w, h)

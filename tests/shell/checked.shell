@@ -20,7 +20,7 @@ count * 2
 fun loose(x) => x
 // expect error: <shell>:1:11: error: 'x' has no type; write one, as in (x : Type)
 import Jade.*
-var box = Rectangle(1, 2, 3, 4)
+var box = Rect(1, 2, 3, 4)
 box.width = "wide"
 // expect error: <shell>:1:13: error: 'width' is an int; it cannot be given a string
 box.width + 1

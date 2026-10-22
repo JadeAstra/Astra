@@ -220,6 +220,43 @@ Value VM::classDescription(ObjClass* cls, const ObjTypeInfo* own, int which) {
 }
 
 // A property's getter and setter run, as `obj.name` and `obj.name = value` run them.
+// Op::BundleValues (D143): bundle name1 .. nameN -> name1 value1 .. nameN valueN, each value
+// the bundle's for that name. Kept out of the instruction loop, as it builds a list.
+void VM::bundleValues(int count) {
+    Value* asked = sp_ - count;
+    const Value bundle = asked[-1];
+    if (!bundle.isObjType(ObjType::Map)) throw runtimeError(Thrown::ClassCastException, "expected a bundle of named arguments");
+    std::vector<Value> pairs;
+    pairs.reserve(static_cast<size_t>(count) * 2);
+    for (int k = 0; k < count; k++) {
+        const Value* found = asMap(bundle)->map.find(asked[k]);
+        pairs.push_back(asked[k]);
+        pairs.push_back(found != nullptr ? *found : Value::null());
+    }
+    sp_ = asked - 1;
+    for (const Value& v : pairs) *sp_++ = v;
+}
+
+// Op::MergeBundle: a + b of two bundles, b's value where both have a name.
+void VM::mergeBundles() {
+    const Value a = sp_[-2], b = sp_[-1];
+    if (!a.isObjType(ObjType::Map) || !b.isObjType(ObjType::Map)) throw runtimeError(Thrown::ClassCastException, "expected bundles of named arguments");
+    ObjMap* made = alloc<ObjMap>();
+    made->map = asMap(a)->map;
+    for (const ValueMap::Entry& entry : asMap(b)->map.entries())
+        if (entry.live) made->map.set(entry.key, entry.value);
+    sp_[-2] = Value::object(made);
+    sp_--;
+}
+
+bool VM::widenedByte(Value& v, uint8_t type) {
+    if (v.kind != ValueKind::Byte) return false;
+    const uint8_t id = type & kTypeMask;
+    if (id != kTypeInt && id != kTypeNumber && !isIntStorage(id)) return false;
+    v = Value::integer(v.as.i);
+    return true;
+}
+
 Value VM::memberGet(Value obj, ObjString* name) {
     if (const ObjClass* cls = classOf(obj); cls != nullptr && cls->hasAccessors)
         if (const Value* getter = cls->getters.find(name)) return callWithReceiver(obj, asClosure(*getter));
@@ -1211,12 +1248,14 @@ std::string VM::typeName(Value v) const {
     return "unknown";
 }
 
+// A byte is taken where an int or a number is (M6.6 part 8, group 9).
 int64_t VM::toInt(Value v, const char* what) {
-    if (!v.isInt()) throw runtimeError(Thrown::ClassCastException, std::string(what) + " must be an int, got " + typeName(v));
+    if (!v.isInt() && !v.isByte()) throw runtimeError(Thrown::ClassCastException, std::string(what) + " must be an int, got " + typeName(v));
     return v.as.i;
 }
 
 double VM::toNumber(Value v, const char* what) {
+    if (v.isByte()) return static_cast<double>(v.as.i);
     if (!v.isNumber()) throw runtimeError(Thrown::ClassCastException, std::string(what) + " must be a number, got " + typeName(v));
     return v.toDouble();
 }
@@ -2521,7 +2560,7 @@ void VM::writeValueField(uint8_t* at, const ValueField& field, const ObjClass* o
     if (field.kind == ValueField::Narrow && value.isInt() && field.narrow != Narrow::Byte && field.narrow != Narrow::Char &&
         !fitsNarrow(field.narrow, value))
         throw runtimeError(Thrown::ClassCastException, storageMismatch(field.narrow, value) + " (field '" + field.name->utf8() + "' of " + owner->name->utf8() + ")");
-    if (field.type != 0 && !(value.isNull() && (field.type & kTypeNullable) != 0) && !matchesType(value, field.type, field.cls))
+    if (field.type != 0 && !(value.isNull() && (field.type & kTypeNullable) != 0) && (!matchesType(value, field.type, field.cls) && !widenedByte(value, field.type)))
         throw runtimeError(Thrown::ClassCastException, "cannot assign a value of type " + typeName(value) + " to field '" + field.name->utf8() + "' of " +
                            owner->name->utf8() + ", which is declared as " + declaredTypeText(field.type, field.cls));
     if (value.isRef() && field.kind == ValueField::Nested) {
@@ -2561,7 +2600,10 @@ const uint8_t* VM::readThrough(const uint8_t* at, const ValueField* field, const
         const Op op = static_cast<Op>(*next);
         if (op != Op::GetProp && op != Op::GetOwn && op != Op::GetPropRef && op != Op::GetOwnRef) break;
         const ObjString* name = asString(consts[operandU16(next + 1)]);
-        if (name->restricted != 0) break;  // whether it may be used is told by the instruction itself
+        // A name some class keeps from being read, and this value's class among them: whether it
+        // may be read is told by the instruction itself. (One only kept from being assigned, as a
+        // `private set` width elsewhere is, or kept by other classes only, is read here.)
+        if ((name->restricted & 1) != 0 && (field->cls->accessBits >> (name->hash & 63) & 1) != 0) break;
         const Value* index = field->cls->declaredIndex.find(name);
         if (index == nullptr) break;
         const ValueField& inner = layoutOf(field->cls).fields[static_cast<size_t>(index->as.i)];
@@ -2736,6 +2778,10 @@ Value VM::packedGet(ObjList* list, size_t i) {
 // Whether `v` may be an item of a packed list; an error saying why not, where it may not.
 void VM::checkItem(const ObjList* list, Value v) {
     if (v.isNull() && list->pack->nullable) return;
+    // A byte goes where an int does: kept as its number.
+    if (v.isByte() && (list->pack->store == ListStore::Ints ||
+                       (list->pack->store == ListStore::Narrow && list->pack->narrow != Narrow::Byte && list->pack->narrow != Narrow::Char)))
+        v = Value::integer(v.as.i);
     bool fits = false;
     switch (list->pack->store) {
         case ListStore::Ints: fits = v.isInt(); break;
@@ -2858,6 +2904,7 @@ ObjList* VM::listLike(const ObjList* like) {
         list->pack->store = like->pack->store;
         list->pack->width = like->pack->width;
         list->pack->itemClass = like->pack->itemClass;
+        list->pack->narrow = like->pack->narrow;   // what each item of a narrow list is
         list->pack->nullable = like->pack->nullable;
     }
     return list;
@@ -3230,7 +3277,11 @@ bool VM::construct(ObjClass* cls, int argc, bool packed, const Value* captures, 
     const ObjTypeInfo* typeArgs = std::exchange(pendingTypeArgs_, nullptr);
     if (cls->isValue) {
         const Value dest = std::exchange(pendingDestination_, Value::null());
-        if (cls->madeFromHeader && static_cast<size_t>(argc) == cls->components.size() && !packed) {
+        // Every argument given: none left out by a call by name (`Insets(top = 1, right = 2)`),
+        // which the initializer gives its default.
+        bool allGiven = cls->madeFromHeader && static_cast<size_t>(argc) == cls->components.size() && !packed;
+        for (int k = 0; allGiven && k < argc; k++) allGiven = sp_[-argc + k].kind != ValueKind::Undefined;
+        if (allGiven) {
             makeFromHeader(cls, argc, dest);
             return false;
         }
@@ -3328,7 +3379,7 @@ void VM::checkFieldAssignment(ObjInstance* instance, ObjString* stored, Value va
     }
 
     const ObjClass* typeClass = cls->declared[at].typeClass;
-    if (!matchesType(value, type, typeClass)) checkRange(type, value, "field '" + name->utf8() + "' of " + cls->name->utf8());
+    if ((!matchesType(value, type, typeClass) && !widenedByte(value, type))) checkRange(type, value, "field '" + name->utf8() + "' of " + cls->name->utf8());
     if (!matchesType(value, type, typeClass))
         throw runtimeError(Thrown::ClassCastException, "cannot assign a value of type " + typeName(value) + " to field '" + name->utf8() + "' of " +
                            cls->name->utf8() + ", which is declared as " + declaredTypeText(type, typeClass));
@@ -3460,7 +3511,7 @@ void VM::checkStaticType(ObjClass* owner, FieldDecl& field, Value value) {
             throw runtimeError(Thrown::ClassCastException, "a type must be a class or a built-in type, not a value of type " + typeName(resolved));
         field.typeClass = asClass(resolved);
     }
-    if (!matchesType(value, type, field.typeClass)) checkRange(type, value, "static field '" + field.name->utf8() + "' of " + owner->name->utf8());
+    if ((!matchesType(value, type, field.typeClass) && !widenedByte(value, type))) checkRange(type, value, "static field '" + field.name->utf8() + "' of " + owner->name->utf8());
     if (!matchesType(value, type, field.typeClass))
         throw runtimeError(Thrown::ClassCastException, "cannot assign a value of type " + typeName(value) + " to static field '" + field.name->utf8() +
                            "' of " + owner->name->utf8() + ", which is declared as " + declaredTypeText(type, field.typeClass));
@@ -4796,7 +4847,7 @@ void VM::run(int baseFrame) {
                         if (slot.kind == ValueKind::Undefined && !slot.isLazy())  // a lazy var may be given one first (D37)
                             throw runtimeError(Thrown::IllegalStateException, "undefined variable '" + program_->globalNames[static_cast<size_t>(index)] + "'");
                         const TypeConstraint& declared = globalTypes_[static_cast<size_t>(index)];
-                        if (declared.type != 0 && !matchesType(sp_[-1], declared.type, declared.cls))
+                        if (declared.type != 0 && (!matchesType(sp_[-1], declared.type, declared.cls) && !widenedByte(sp_[-1], declared.type)))
                             throw typeMismatch(program_->globalNames[static_cast<size_t>(index)], declared.type,
                                                declared.cls, sp_[-1]);
                         slot = own(sp_[-1]);
@@ -4905,7 +4956,7 @@ void VM::run(int baseFrame) {
                             Value& slot = globals_[index];
                             if (slot.kind == ValueKind::Undefined && !slot.isLazy()) throw undefinedName(frame, base, name, index);
                             const TypeConstraint& declared = globalTypes_[index];
-                            if (declared.type != 0 && !matchesType(sp_[-1], declared.type, declared.cls))
+                            if (declared.type != 0 && (!matchesType(sp_[-1], declared.type, declared.cls) && !widenedByte(sp_[-1], declared.type)))
                                 throw typeMismatch(program_->globalNames[index], declared.type, declared.cls, sp_[-1]);
                             slot = sp_[-1];
                             break;
@@ -4941,11 +4992,37 @@ void VM::run(int baseFrame) {
                         uint8_t type = READ_U8();
                         ObjClass* cls = popTypeClass(type);
                         Value value = *--sp_;
-                        if (!matchesType(value, type, cls))
+                        if ((!matchesType(value, type, cls) && !widenedByte(value, type)))
                             throw typeMismatch(program_->globalNames[index], type, cls, value);
                         if (coreId_ != 0) throw notOwned("'" + program_->globalNames[index] + "' is declared for the whole program");
                         globals_[index] = own(value);
                         globalTypes_[index] = TypeConstraint{type, cls};
+                        break;
+                    }
+                    case Op::IndexN:
+                    case Op::SetIndexN: {
+                        // `grid[x, y]` and `grid[x, y] = v` (D133): only a class's op [] takes several.
+                        const bool set = static_cast<Op>(ip[-1]) == Op::SetIndexN;
+                        const int count = READ_U8();
+                        const Value obj = sp_[-count - 1 - (set ? 1 : 0)];
+                        if (classOf(obj) == nullptr)
+                            throw runtimeError(Thrown::UnsupportedOperationException,
+                                               "a value of type " + typeName(obj) + " takes one index; [x, y] is for a class with op [](x, y)");
+                        SAVE_IP();
+                        invokeOperator(obj, set ? names.opIndexSet : names.opIndex, count + (set ? 1 : 0));
+                        LOAD_FRAME();
+                        break;
+                    }
+                    case Op::BundleValues:
+                        bundleValues(READ_U8());
+                        break;
+                    case Op::MergeBundle:
+                        mergeBundles();
+                        break;
+                    case Op::DupN: {
+                        const int count = READ_U8();
+                        for (int k = 0; k < count; k++) sp_[k] = sp_[k - count];
+                        sp_ += count;
                         break;
                     }
                     case Op::SettleEnum: {
@@ -4958,7 +5035,7 @@ void VM::run(int baseFrame) {
                         uint8_t type = READ_U8();
                         ObjClass* cls = popTypeClass(type);
                         if (sp_[-1].kind == ValueKind::EnumName) sp_[-1] = settleEnumName(sp_[-1], cls);
-                        if (!matchesType(sp_[-1], type, cls)) {
+                        if ((!matchesType(sp_[-1], type, cls) && !widenedByte(sp_[-1], type))) {
                             checkRange(type, sp_[-1], "argument '" + parameter->utf8() + "' of " + frame->closure->proto->name + "()");
                             throw runtimeError(Thrown::IllegalArgumentException, "argument '" + parameter->utf8() + "' of " + frame->closure->proto->name +
                                                "() must be " + declaredTypeText(type, cls) + ", got " + typeName(sp_[-1]));
@@ -4972,7 +5049,7 @@ void VM::run(int baseFrame) {
                         }
                         uint8_t type = READ_U8();
                         ObjClass* cls = popTypeClass(type);
-                        if (!matchesType(sp_[-1], type, cls))
+                        if ((!matchesType(sp_[-1], type, cls) && !widenedByte(sp_[-1], type)))
                             throw runtimeError(Thrown::ClassCastException, frame->closure->proto->name + "() must return " + declaredTypeText(type, cls) +
                                                ", but returned " + typeName(sp_[-1]));
                         break;
@@ -4981,7 +5058,7 @@ void VM::run(int baseFrame) {
                         ObjString* variable = asString(consts[READ_U16()]);
                         uint8_t type = READ_U8();
                         ObjClass* cls = popTypeClass(type);
-                        if (!matchesType(sp_[-1], type, cls)) throw typeMismatch(variable->utf8(), type, cls, sp_[-1]);
+                        if ((!matchesType(sp_[-1], type, cls) && !widenedByte(sp_[-1], type))) throw typeMismatch(variable->utf8(), type, cls, sp_[-1]);
                         break;
                     }
 
@@ -5351,11 +5428,11 @@ void VM::run(int baseFrame) {
                                 }
                             } else if (static_cast<uint32_t>(seen >> 32) == instance->shape && instance->core == coreId_ &&
                                 ((seen & 1) == 0 || field->kind == ValueKind::Undefined)) {
-                                const Value value = sp[-1];
+                                Value value = sp[-1];
                                 const uint8_t type = static_cast<uint8_t>(seen >> 8);
                                 if (type == 0 || (type == kTypeFloat ? value.isFloat()
                                                   : type == kTypeInt ? value.isInt()
-                                                                     : matchesType(value, type, nullptr))) {
+                                                                     : (matchesType(value, type, nullptr) || widenedByte(value, type)))) {
                                     *field = value;
                                     sp[-2] = value;
                                     sp--;
@@ -5697,7 +5774,7 @@ void VM::run(int baseFrame) {
                         goto plainEq;
 
                     case Op::CheckLocal: {
-                        if (matchesType(base[FAST_U16(0)], ip[4], nullptr)) {
+                        if ((matchesType(base[FAST_U16(0)], ip[4], nullptr) || widenedByte(base[FAST_U16(0)], ip[4]))) {
                             ip += 5;
                             continue;
                         }

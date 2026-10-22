@@ -3,9 +3,11 @@
 // code of Astra's own. The system is asked for one thing only, which font files are
 // installed. The same font file gives the same numbers and the same pixels everywhere.
 //
-//   val font = TextFont("Segoe UI", 14, bold = true)
-//   val page = Picture(font.width("Hello") + 20, font.height + 20, Picture.white)
-//   page.drawText("Hello", 10, 10 + font.ascent, font)
+//   val font = Font("Segoe UI", 14, bold = true)
+//   val page = Image(font.width("Hello") + 20, font.lineHeight + 20, Color.white)
+//   val canvas = page.canvas()
+//   canvas.font = font
+//   canvas.drawString("Hello", 10, 10 + font.ascent)
 //   page.save("hello.png")
 //
 // Measuring and drawing go by one rule. A character's width is its width in the font, scaled
@@ -64,9 +66,8 @@ class Typeface {
   // The number of the glyph for a character; 0, the "missing" glyph, if it has none.
   fun glyph(character : any) : int => __text.faceGlyph(handle, character)
 
-  // This typeface at a size. See TextFont.
-  fun font(size : Number, bold : bool = false, italic : bool = false, weight : Number? = null, scale : Number = 1, hinting : bool = true) : TextFont =>
-    TextFont(this, size, bold, italic, weight, scale, hinting)
+  // This typeface at a size: Font(typeface, size, ...).
+  fun font(size : Number = 12, bold : bool = false, italic : bool = false, weight : Number? = null) : Font => Font(this, size, bold, italic, weight)
 
   // In the font's own units, for a weight (which only a variable font has more than one of).
   fun advance(glyph : int, weight : Number? = null) : Number => __text.faceAdvance(handle, glyph, weight ?: this.weight)
@@ -114,18 +115,125 @@ object Fonts {
   fun count(path : Path | string) : int => __text.countIn("$path")
 }
 
-// A typeface at a size: what text is measured and drawn with.
+// ---- Fonts (D101, D125, D144) ----
+
+// A font: a family or a Typeface, a size and its options, free of any screen's scale.
 //
-//   TextFont("Consolas", 13)                      by family; "SansSerif", "Serif" and
-//   TextFont("Segoe UI", 12, bold = true)         "Monospaced" are the system's own
-//   TextFont("Bahnschrift", 20, weight = 350)     any weight, where the font has it
-//   TextFont(Fonts.load("my.ttf"), 16)            a typeface of your own
-//   TextFont("Segoe UI", 12, scale = 1.5)         for a screen at 150%
+//   Font("Consolas", 13)                          by family; "SansSerif", "Serif" and
+//   Font("Segoe UI", 12, bold = true)             "Monospaced" are the system's own
+//   Font("Bahnschrift", 20, weight = 350)         any weight, where the font has it
+//   Font(Fonts.load("my.ttf"), 16)                a typeface of your own
+//   font.copy(size = 16, bold = false)            the same with some options changed
 //
-// A family that is not installed gives the system's sans-serif font: `family` says which
-// was used. A style the family lacks is made up, a bold by thickening and an italic by
-// slanting. Every number is in pixels of the picture or screen drawn on.
-class TextFont {
+// It is measured in layout units: font.width("text"), font.ascent, font.lineHeight. Where
+// a screen's own pixels are wanted, the scale says how many make a unit: font.width("text",
+// scale = 1.5), font.ascent(1.5). A canvas draws it at its own scale. A family that is not
+// installed gives the system's sans-serif font (`family` says which was used); a style the
+// family lacks is made up, a bold by thickening and an italic by slanting.
+class Font {
+  static {
+    // The system's own families, Java's names.
+    const dialog = "Dialog"
+    const dialogInput = "DialogInput"
+    const sansSerif = "SansSerif"
+    const serif = "Serif"
+    const monospaced = "Monospaced"
+  }
+
+  // The family asked for (a name), or the typeface given.
+  val name : string
+  val source : Typeface?
+  val size : Number
+  val isBold : bool
+  val isItalic : bool
+  // The weight asked for, from 100 to 900; null for the usual, 400, or 700 when bold.
+  val weightAsked : Number?
+  private val engines : open Map<Number, TextFont> = {:}
+
+  fun init(family : string | Typeface, size : Number = 12, bold : bool = false, italic : bool = false, weight : Number? = null) {
+    if (!(size > 0)) { throw IllegalArgumentException("a font's size is more than 0, not $size") }
+    this.name = family is Typeface ? family.family : family as string
+    this.source = family is Typeface ? family : null
+    this.size = size
+    this.isBold = bold
+    this.isItalic = italic
+    this.weightAsked = weight
+  }
+
+  // The same font with some of its options changed (D144).
+  fun copy(size : Number? = null, bold : bool? = null, italic : bool? = null, weight : Number? = null) : Font =>
+    Font(source ?: name, size ?: this.size, bold ?: isBold, italic ?: isItalic, weight ?: weightAsked)
+
+  // What the font turned out to be: the family used, the typeface's full name, its weight.
+  val family : string
+    get() => engineAt(1).family
+  val fontName : string
+    get() => engineAt(1).typeface.fullName
+  val typeface : Typeface
+    get() => engineAt(1).typeface
+  val weight : Number
+    get() => engineAt(1).weight
+
+  // -- Its measurements, in layout units (D101); with a scale, in that screen's own pixels --
+
+  // From the baseline up to the top of a line, and down to its bottom; the extra room between
+  // one line and the next; the three together.
+  val ascent : int
+    get() => engineAt(1).ascent
+  val descent : int
+    get() => engineAt(1).descent
+  val leading : int
+    get() => engineAt(1).leading
+  val lineHeight : int
+    get() => engineAt(1).height
+  // The heights of a small letter such as x, and of a capital.
+  val xHeight : int
+    get() => engineAt(1).xHeight
+  val capHeight : int
+    get() => engineAt(1).capHeight
+  fun ascent(scale : Number) : int => engineAt(scale).ascent
+  fun descent(scale : Number) : int => engineAt(scale).descent
+  fun leading(scale : Number) : int => engineAt(scale).leading
+  fun lineHeight(scale : Number) : int => engineAt(scale).height
+
+  // A text's width, or a character's (L81), and where each of a text's characters starts and
+  // the last one ends (one number more than it has characters).
+  fun width(text : any?, scale : Number = 1) : int => text is char ? engineAt(scale).charWidth(text) : engineAt(scale).width(text)
+  fun offsets(text : any?, scale : Number = 1) : open List<int> => engineAt(scale).offsets(text)
+
+  // The typeface a character is drawn from: this font's own, or another one that has it when
+  // this one does not. Null if no installed font has it.
+  fun typefaceFor(character : any) : Typeface? => engineAt(1).typefaceFor(character)
+
+  op ==(other : any?) : bool =>
+    other is Font and other.name == name and other.source == source and other.size == size and other.isBold == isBold and
+    other.isItalic == isItalic and other.weightAsked == weightAsked
+  fun hashCode() : int => hash(name, size, isBold, isItalic, weightAsked)
+  override fun toString() : string {
+    val style = isBold ? (isItalic ? ", bold, italic" : ", bold") : (isItalic ? ", italic" : "")
+    return "Font($name, $size$style" + (weightAsked == null ? ")" : ", weight $weightAsked)")
+  }
+
+  // The text engine's font at a scale, made once for each scale it is asked at (D125). Jade's
+  // native layer is handed the Font and asks for it.
+  internal fun engineAt(scale : Number) : TextFont {
+    val last = lastEngine   // the one asked for last, mostly the one asked for next
+    if (last != null and last.scale == scale) { return last }
+    var found = engines[scale]
+    if (found == null) {
+      found = TextFont(source ?: name, size, isBold, isItalic, weightAsked, scale)
+      engines[scale] = found
+    }
+    lastEngine = found
+    return found
+  }
+  private var lastEngine : TextFont? = null
+  internal fun engineHandle(scale : Number) : int => engineAt(scale).handle
+}
+
+// A font at one scale, as the text engine has it: what Font measures and draws with. Every
+// number is in pixels of the picture or screen drawn on.
+internal class TextFont {
   val handle : int           // the engine's number for it
   val typeface : Typeface
   val size : Number
@@ -200,128 +308,4 @@ class TextFont {
   fun derive(size : Number? = null, scale : Number? = null) : TextFont => TextFont(typeface, size ?: this.size, isBold, isItalic, weight, scale ?: this.scale)
 
   override fun toString() : string => "TextFont(${typeface.fullName}, $size)"
-}
-
-// A picture: `width` by `height` pixels, each a colour that may be see-through.
-//
-// A colour is one number, 0xAARRGGBB: alpha (255 solid, 0 clear), red, green, blue.
-// 0xFF000000 is black, 0xFFFFFFFF white, 0x80FF0000 a half-clear red. Picture.rgb makes one.
-//
-// `pixels` is the picture itself as bytes, four for each pixel (red, green, blue, alpha),
-// top row first: pixel (x, y) starts at (y * width + x) * 4.
-class Picture {
-  val width : int
-  val height : int
-  val pixels : Bytes
-
-  static {
-    const black = 0xFF000000
-    const white = 0xFFFFFFFF
-    const clear = 0
-    fun rgb(red : int, green : int, blue : int, alpha : int = 255) : int => (alpha << 24) | (red << 16) | (green << 8) | blue
-    // Reads a PNG file, or the bytes of one.
-    fun load(source : Path | string | Bytes) : Picture throws IOException {
-      val data = source is Bytes ? source : (source is Path ? source : Path(source as string)).readBytes()
-      val read = __text.decodePng(data)
-      return Picture(read[0], read[1], 0, read[2])
-    }
-  }
-  // A picture of one colour: clear, unless another is given.
-  fun init(width : int, height : int, color : int = 0, pixels : Bytes? = null) {
-    if (width < 0 or height < 0 or width > 32768 or height > 32768) { throw IllegalArgumentException("a picture is from 0 to 32768 pixels each way, not $width by $height") }
-    this.width = width
-    this.height = height
-    if (pixels != null) {
-      if (pixels.size != width * height * 4) { throw IllegalArgumentException("the pixels do not fit a picture of $width by $height") }
-      this.pixels = pixels
-    } else {
-      this.pixels = Bytes(width * height * 4)
-      if (color != 0) { __text.fill(this.pixels, width, height, 0, 0, width, height, color) }
-    }
-  }
-
-  // Writes the picture as a PNG file. Nothing is lost: loading it gives the same pixels.
-  fun save(path : Path | string) throws IOException {
-    (path is Path ? path : Path(path as string)).writeBytes(__text.encodePng(pixels, width, height))
-  }
-
-  // The bytes of the PNG file that save() would write.
-  fun toPng() : Bytes => __text.encodePng(pixels, width, height)
-
-  // The colour of a pixel; clear outside the picture.
-  fun get(x : int, y : int) : int {
-    if (x < 0 or y < 0 or x >= width or y >= height) { return 0 }
-    val at = (y * width + x) * 4
-    return (pixels[at + 3] << 24) | (pixels[at] << 16) | (pixels[at + 1] << 8) | pixels[at + 2]
-  }
-
-  fun set(x : int, y : int, color : int) {
-    if (x < 0 or y < 0 or x >= width or y >= height) { return }
-    val at = (y * width + x) * 4
-    pixels[at] = (color >> 16).toByteWrapped()
-    pixels[at + 1] = (color >> 8).toByteWrapped()
-    pixels[at + 2] = color.toByteWrapped()
-    pixels[at + 3] = (color >> 24).toByteWrapped()
-  }
-
-  // Sets every pixel, or every pixel of a rectangle, to a colour.
-  fun fill(color : int) {
-    __text.fill(pixels, width, height, 0, 0, width, height, color)
-  }
-
-  fun fillRect(x : int, y : int, w : int, h : int, color : int) {
-    __text.fill(pixels, width, height, x, y, w, h, color)
-  }
-
-  // Lays a colour over a rectangle: what is underneath shows through a see-through colour.
-  fun blendRect(x : int, y : int, w : int, h : int, color : int) {
-    __text.blend(pixels, width, height, x, y, w, h, color)
-  }
-
-  // Draws a line of text starting at x, with its baseline at y: letters sit on that row
-  // and tails hang below it. (For text whose top is at `top`, the baseline is
-  // top + font.ascent.) Returns the text's width, which is font.width(text).
-  fun drawText(text : any?, x : int, y : int, font : TextFont, color : int = 0xFF000000) : int => __text.drawText(pixels, width, height, font.handle, "$text", x, y, color)
-
-  // Lays another picture over this one, its top-left corner at (x, y).
-  fun draw(other : Picture, x : int, y : int) {
-    __text.draw(pixels, width, height, other.pixels, other.width, other.height, x, y)
-  }
-
-  // A part of the picture as a picture of its own.
-  fun crop(x : int, y : int, w : int, h : int) : Picture {
-    val out = Picture(Math.max(w, 0), Math.max(h, 0))
-    for (row in 0..<out.height) {
-      for (col in 0..<out.width) { out.set(col, row, get(x + col, y + row)) }
-    }
-    return out
-  }
-
-  fun copy() : Picture => Picture(width, height, 0, Bytes(pixels))
-
-  // The same size and the same pixels.
-  op ==(other : any?) : bool => other is Picture and other.width == width and other.height == height and other.pixels == pixels
-  fun hashCode() : int => hash(width, height, pixels)
-
-  // The smallest rectangle outside which every pixel is `background`, as [x, y, width,
-  // height]; null if the whole picture is.
-  fun inkBox(background : int = 0) : open List<int>? {
-    var minX = width
-    var minY = height
-    var maxX = -1
-    var maxY = -1
-    for (y in 0..<height) {
-      for (x in 0..<width) {
-        if (get(x, y) != background) {
-          if (x < minX) { minX = x }
-          if (x > maxX) { maxX = x }
-          if (y < minY) { minY = y }
-          if (y > maxY) { maxY = y }
-        }
-      }
-    }
-    return maxX < 0 ? null : [minX, minY, maxX - minX + 1, maxY - minY + 1]
-  }
-
-  override fun toString() : string => "Picture($width x $height)"
 }

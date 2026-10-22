@@ -1,0 +1,98 @@
+// The standard library's graphics types (D99, D101): Color, Font, Size, Point, Insets, Rect
+// and the shapes, all but Font value types.
+
+// -- Color: a value type of four bytes --
+val orange = Color(255, 128, 0)
+print(orange, orange.red, orange.green, orange.blue, orange.alpha, orange.argb == 0xFFFF8000)   // expect: Color(255, 128, 0) 255 128 0 255 true
+print(Color(255, 128, 0, 64), Color(0xFF8000), Color(0x40FF8000, true), Color(0x40FF8000), Color(1.0, 0.5, 0.0))   // expect: Color(255, 128, 0, 64) Color(255, 128, 0) Color(255, 128, 0, 64) Color(255, 128, 0) Color(255, 128, 0)
+print(Color(0.5, 0.5, 0.5, 0.5), Color.decode("#FF8000"), Color.decode("0x0080FF"))   // expect: Color(128, 128, 128, 128) Color(255, 128, 0) Color(0, 128, 255)
+// A part outside 0..255 is a mistake, not clamped.
+try { Color(300, -5, 128) } catch (e : IllegalArgumentException) { print(e.message) }   // expect: a colour's red is from 0 to 255, not 300
+try { Color(0.5, 1.5, 0.0) } catch (e : IllegalArgumentException) { print(e.message) }   // expect: a colour's green as a fraction is from 0.0 to 1.0, not 1.5
+// The constants, and a constant and a part of a colour that share a name.
+print(Color.white, Color.black, Color.red, Color.red.red, Color.red.green, Color.lightGray, Color.orange, Color.clear)   // expect: Color(255, 255, 255) Color(0, 0, 0) Color(255, 0, 0) 255 0 Color(192, 192, 192) Color(255, 200, 0) Color(0, 0, 0, 0)
+print(Color(255, 0, 0) == Color.red, Color.red == Color.blue, Color.red != Color.blue, Color(255, 0, 0, 128) == Color.red, [Color.blue, Color.red].contains(Color(0xFF0000)))   // expect: true false true false true
+print(Color(100, 150, 200).darker(), Color(100, 150, 200).brighter(), Color.black.brighter(), Color.white.darker(), Color(1, 1, 1).brighter())   // expect: Color(70, 105, 140) Color(142, 214, 255) Color(3, 3, 3) Color(178, 178, 178) Color(4, 4, 4)
+print(Color.red.withAlpha(128), Color.red.withAlpha(128).argb == 0x80FF0000)   // expect: Color(255, 0, 0, 128) true
+// A part is a byte, and goes where an int does.
+val sum : int = orange.red + orange.green
+print(sum, orange.red * 2, Math.max(orange.green, orange.blue))   // expect: 383 510 128
+// Hue, saturation and brightness.
+print(Color.getHSBColor(0.0, 1.0, 1.0), Color.getHSBColor(1.0 / 3, 1.0, 1.0), Color.getHSBColor(0.5, 0.5, 0.5), Color.getHSBColor(0.7, 0.0, 0.25))   // expect: Color(255, 0, 0) Color(0, 255, 0) Color(64, 128, 128) Color(64, 64, 64)
+val hsb = Color.RGBtoHSB(64, 128, 128)
+print(hsb[0], hsb[1] > 0.49 and hsb[1] < 0.51, hsb[2] > 0.5 and hsb[2] < 0.51, Color.RGBtoHSB(255, 0, 0), Color(Color.HSBtoRGB(hsb[0], hsb[1], hsb[2])))   // expect: 0.5 true true [0.0, 1.0, 1.0] Color(64, 128, 128)
+// As the key of a map a colour goes by its own == and hashCode: an equal one finds it (D26).
+val colours = {:}
+colours[Color.red] = "the constant"
+colours[Color.red.argb] = "by number"
+print(colours[Color(255, 0, 0)], colours[Color.red], colours[Color(255, 0, 0).argb])   // expect: the constant the constant by number
+
+// -- Font: the standard library's, with named options --
+val font = Font("Segoe UI", 13, bold = true)
+print(font, font.name, font.size, font.isBold, font.isItalic, font.family, font.weight)   // expect: Font(Segoe UI, 13, bold) Segoe UI 13 true false Segoe UI 700
+print(Font("Arial", 9, bold = true, italic = true), Font("Arial"), Font("Arial", 10, weight = 300))   // expect: Font(Arial, 9, bold, italic) Font(Arial, 12) Font(Arial, 10, weight 300)
+// Another style, another size, or both.
+print(font.copy(bold = false, italic = true), font.copy(size = 20.0), font.copy(size = 9.5, bold = false), font.copy(bold = false).isBold)   // expect: Font(Segoe UI, 13, italic) Font(Segoe UI, 20.0, bold) Font(Segoe UI, 9.5) false
+print(font == Font("Segoe UI", 13, bold = true), font == font.copy(bold = false), font.fontName, Font("Segoe UI", 13, italic = true).fontName)   // expect: true false Segoe UI Bold Segoe UI Italic
+// The names that mean the system's own font; one that is not installed gives the system's too.
+print(Font(Font.monospaced, 12).typeface.isMonospace, Font("Dialog", 12).family == Font("SansSerif", 12).family, Font("No Such Font", 12).family == Font(Font.sansSerif, 12).family)   // expect: true true true
+// Sizes from the font itself, in pixels at a scale.
+print(font.lineHeight == font.ascent + font.descent + font.leading, font.ascent > font.descent, font.width("") == 0, font.width("Hello") == font.offsets("Hello").last())   // expect: true true true true
+print(font.copy(size = 26.0).width("Hello") > font.width("Hello"), font.copy(bold = false).width("Hello") < font.width("Hello"), font.width("Hello", 2) > font.width("Hello"))   // expect: true true true
+
+// On a dense screen a font is measured in the screen's own pixels, given the scale (L81); Jade
+// lays text out from these, rounded up to whole units (jade_host checks that).
+val line = "The quick brown fox jumps over the lazy dog"
+for (scale in [1.25, 1.5, 2, 3]) {
+  val device = font.width(line, scale)
+  print(scale, device > font.width(line), font.offsets(line, scale).last() == device, font.ascent(scale) > font.ascent, font.lineHeight(scale) == font.ascent(scale) + font.descent(scale) + font.leading(scale))
+}
+// expect: 1.25 true true true true
+// expect: 1.5 true true true true
+// expect: 2 true true true true
+// expect: 3 true true true true
+
+// -- Size, Point, Insets: value types (M6.6 part 7), changed where they are kept --
+var d = Size(30, 20)
+d.width = 40
+d.height += 5
+var p = Point(3, 4)
+p.translate(10, -1)
+print(d, d.width, d.height, d == Size(40, 25), Size(), d.isEmpty, Size(0, 3).isEmpty, p, p == Point(13, 3), Point())   // expect: Size(40 x 25) 40 25 true Size(0 x 0) false true Point(13, 3) true Point(0, 0)
+val insets = Insets(1, 2, 3, 4)
+print(insets, insets.top, insets.left, insets.bottom, insets.right, insets == Insets(1, 2, 3, 4), Insets())   // expect: Insets(top=1, left=2, bottom=3, right=4) 1 2 3 4 true Insets(top=0, left=0, bottom=0, right=0)
+
+// -- Rect --
+val r = Rect(10, 20, 100, 50)
+print(r, r.x, r.y, r.width, r.height, r.maxX, r.maxY, r.centerX, r.isEmpty, r.location, r.size)   // expect: Rect(10, 20, 100 x 50) 10 20 100 50 110 70 60.0 false Point(10, 20) Size(100 x 50)
+print(Rect(0, 0, 0, 0), Rect(0, 0, 30, 40), r.copy() == r, r.copy(x = 1) == r, Rect(0, 0, 0, 0).isEmpty, Rect(0, 0, 5, 0).isEmpty)   // expect: Rect(0, 0, 0 x 0) Rect(0, 0, 30 x 40) true false true true
+// What is inside: the left and top edges are, the right and bottom ones are not.
+print(r.contains(10, 20), r.contains(109, 69), r.contains(110, 69), r.contains(9, 20), r.contains(Point(50, 50)), r.contains(Rect(20, 30, 10, 10)), r.contains(20, 30, 200, 10))   // expect: true true false false true true false
+val other = Rect(60, 0, 100, 40)
+print(r.intersects(other), r.intersection(other), r.union(other), r.intersects(Rect(110, 20, 5, 5)), r.intersection(Rect(200, 200, 5, 5)).isEmpty)   // expect: true Rect(60, 20, 50 x 20) Rect(10, 0, 150 x 70) false true
+// It can be moved and resized where it is kept; a copy kept elsewhere stays as it was.
+var moving = r
+moving.translate(-10, -20)
+moving.grow(2, 3)
+print(moving, r)   // expect: Rect(-2, -3, 104 x 56) Rect(10, 20, 100 x 50)
+val before = moving
+moving.setBounds(1, 2, 3, 4)
+moving.width = 30
+moving.setLocation(5, 6)
+print(moving, moving.size == Size(30, 4), before)   // expect: Rect(5, 6, 30 x 4) true Rect(-2, -3, 104 x 56)
+
+// -- Shapes: a Rect, an Oval and a Line are drawn and filled by any canvas --
+val shapes : List<Shape> = [Rect(0, 0, 2, 2), Oval(1.0, 1.0, 4.0, 2.0), Line(0.0, 0.0, 3.0, 4.0)]
+print(shapes, shapes[1] is Shape)   // expect: [Rect(0, 0, 2 x 2), Oval(1.0, 1.0, 4.0 x 2.0), Line(0.0, 0.0 to 3.0, 4.0)] true
+val drawnOn = Image(10, 10)
+val sc = drawnOn.canvas()
+sc.color = Color.red
+sc.fill(Rect(1, 1, 3, 2))
+sc.draw(Line(0.0, 8.0, 9.0, 8.0))
+print(drawnOn.inkBox(), drawnOn[1, 1] == Color.red, drawnOn[4, 8] == Color.red, drawnOn[5, 5])   // expect: Rect(0, 1, 10 x 8) true true Color(0, 0, 0, 0)
+
+// -- Colours packed four bytes each in a list, as an image's pixels are --
+val palette : open List<Color> = [Color.red, Color.green]
+palette.add(Color(1, 2, 3, 4))
+palette[0] = palette[0].withAlpha(9)
+print(palette, palette.toList() == palette, palette.indexOf(Color.green))   // expect: [Color(255, 0, 0, 9), Color(0, 255, 0), Color(1, 2, 3, 4)] true 1

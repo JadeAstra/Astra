@@ -357,6 +357,15 @@ enum class Op : uint8_t {
     // A parameter declared as a union holding one enum (`output : Stream | Path`): a bare name
     // that arrived for it becomes that enum's entry; anything else is left as it is.
     SettleEnum,         //                                 value class -> value
+    // `grid[x, y]` (D133): a class's op [] or op []= with `count` indexes.
+    IndexN,             // u8 count                        object index... -> value
+    SetIndexN,          // u8 count                        object index... value -> result
+    DupN,               // u8 count                        a b ... -> a b ... a b ...
+    // Bundles of named arguments (D143): a map of names to values. BUNDLE_VALUES gives, for the
+    // `count` names on the stack, each name and the bundle's value of it, for CALL_NAMED;
+    // MERGE_BUNDLE is a new bundle of both, the second's values winning.
+    BundleValues,       // u8 count                        bundle name... -> name value ...
+    MergeBundle,        //                                 bundle bundle -> bundle
 
     Count_,
 };

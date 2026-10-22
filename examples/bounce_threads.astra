@@ -66,7 +66,7 @@ for group in groups {
 // ---- The window, on the main thread ----
 val window = NativeWindow("Bounce", 780, 580)
 val background = Color(0x202830)
-val statusFont = Font("Segoe UI", Font.plain, 12)
+val statusFont = Font("Segoe UI", 12)
 val statusHeight = 24
 
 window.onInput = { event ->

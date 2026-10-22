@@ -20,6 +20,7 @@ struct Node {
 enum class ExprKind {
     Literal, Interp, Name, This, Super, Unary, Binary, Logical, Ternary, Assign,
     Call, Member, Index, List, Map, Range, Is, Function, IncDec, Elvis, Jump, Cast, In, When, Statement, Object, ClassOf,
+    Current,
 };
 
 struct Expr : Node {
@@ -74,6 +75,11 @@ struct TypeAnnotation : Node {
     // The name is a type parameter of the class or function around it (`T` in `class Box<T>`):
     // any value fits it when the program runs.
     bool typeParam = false;
+
+    // `params(size : int, bold : bool)`: the type of a bundle of named arguments (D143), its
+    // names here and their types in `args`. It is a Map when the program runs, and named so.
+    bool isBundle = false;
+    std::vector<std::string> bundleNames;
 
     bool present() const { return !name.empty() || star; }
     bool isFunction() const { return !result.empty(); }
@@ -277,6 +283,8 @@ struct IndexExpr : Expr {
     // `counts[word, default = 0]`: what a map's entry starts from when its key is not there;
     // null when none is written (L118).
     ExprPtr defaultValue;
+    // `grid[x, y]`: the indexes after the first, for a class's op [](x, y) (D133).
+    std::vector<ExprPtr> more;
     IndexExpr() : Expr(ExprKind::Index) {}
 };
 
@@ -312,6 +320,12 @@ struct ClassOfExpr : Expr {
     ExprPtr value;
     std::vector<TypeAnnotation> typeArgs;
     ClassOfExpr() : Expr(ExprKind::ClassOf) {}
+};
+
+// In `target .= member` (D156), what the member is asked of: the target's value as it is,
+// worked out once with the path to it. Only the parser makes one, at the start of the right side.
+struct CurrentExpr : Expr {
+    CurrentExpr() : Expr(ExprKind::Current) {}
 };
 
 // `value as Type` insists on the type; `value as? Type` gives null instead of an error.

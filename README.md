@@ -297,6 +297,10 @@ a number that does not fit is an error (40000 into an `int16`, -1 into a `uint32
 `toInt16Wrapped()`, `toUint16Wrapped()`, `toInt32Wrapped()` and `toUint32Wrapped()` keep the
 low bits where that is meant. A `float32` keeps the nearest 32-bit float.
 
+A `byte` goes where an `int` or a `Number` does, and is an int there: in a variable, a
+parameter, a field, a result, a list of ints, an index, and `Math`'s functions. So a colour's
+parts, which are bytes, add up as ints: `val total : int = color.red + color.green`.
+
 A type can say more: what a list or map holds, and what a function takes and gives back.
 
 ```astra
@@ -416,7 +420,19 @@ Operators, from the ones that bind tightest:
 | `and` | |
 | `or` | |
 | `? :` | |
-| `=` `+=` `-=` `*=` `/=` `%=` `<<=` `>>=` `&=` `\|=` `^=` | assignment |
+| `=` `+=` `-=` `*=` `/=` `%=` `<<=` `>>=` `&=` `\|=` `^=` `.=` | assignment |
+
+`x .= f(...)` is `x = x.f(...)`: a method that gives a new value, put back where the old one
+was. The place is written once and worked out once, so a long one is not written twice:
+
+```astra
+name .= trim()
+p.tags[i] .= trim().upper()
+grid .= appendRows(2)        // a grid's new rows are a new grid
+```
+
+What the call gives must fit the place: `word .= size` on a string is an error, as `word =
+word.size` would be.
 
 The bit operators work on ints. They bind more tightly than comparisons, so `flags & mask != 0`
 tests the masked bits, with no parentheses needed. `>>` keeps the sign of a negative number,
@@ -647,6 +663,27 @@ chart(a, b, title = "Sales")      // what comes after a vararg parameter is pass
 
 A function has at most one `vararg` parameter. Passed by name it takes the list itself:
 `total(numbers = more)`.
+
+**Bundles of named arguments.** Named arguments that go together can be kept as a bundle,
+made with `params(...)` and passed with `...`. Each goes to the parameter of its name and
+is checked there as if it were written at the call:
+
+```astra
+fun label(text : string, size : int = 12, bold : bool = false, color : string = "black") { ... }
+
+val heading = params(size = 18, bold = true)
+label("Title", ...heading)                  // label("Title", size = 18, bold = true)
+label("Smaller", ...heading, size = 14)     // a name written at the call wins
+val warning = heading + params(color = "orange")
+val quiet = heading.copy(bold = false)
+Font("Segoe UI", ...heading)                // any function with those names
+
+fun twice(text : string, style : params(size : int, bold : bool)) => label(text, ...style)
+```
+
+A bundle's type is its names and their types, `params(size : int, bold : bool)`. A name the
+function has no parameter for, or a value of the wrong type, is a compile error at the call.
+A bundle is for functions not designed together; functions that are take an options class.
 
 Every parameter has its type written: `fun log(level : int, message)` is an error, `'message'
 has no type`. A lambda's parameters need none, taking theirs from where it is passed
@@ -941,6 +978,31 @@ declarations that `init` has to assign (a default there is just the field's init
 and `init` calls `super.init(...)` itself; the header cannot have bare parameters or
 superclass arguments in that case.
 
+**Other ways to make one.** A class or a value type with a header can have more ways to be
+made, each handing the header what it needs: `constructor(...) : this(...)`, with a body that
+runs after it where there is more to do. A call uses the one its arguments fit, chosen as
+among a function's forms; one they fit exactly wins over one that needs a number made smaller
+(an int constant taken as a `byte`).
+
+```astra
+class Temperature(val kelvin : float) {
+  constructor(celsius : int) : this(celsius + 273.15)
+  constructor(degrees : float, scale : string) : this(scale == "F" ? (degrees - 32) * 5 / 9 + 273.15 : degrees + 273.15)
+}
+
+class Account(val owner : string, var balance : int = 0) {
+  constructor(owner : string, opening : List<int>) : this(owner) {
+    for (amount in opening) { balance += amount }
+  }
+}
+
+Temperature(20)
+Temperature(212.0, "F")
+Account("Ada", [10, 20])
+```
+
+In a value type the body changes the value being made.
+
 #### Fields
 
 Fields are declared in the class body with `val` or `var`, like variables: the type and the
@@ -1014,6 +1076,11 @@ class Vec {
 Overloadable: `+ - * / %`, `<< >>`, `& | ^`, unary `-` and `~`, `==`, `< <= > >=`, `[]`, `[]=`.
 `!=` is the negation of `==`, and `++` and `--` use `+` and `-`. Without an `==` operator,
 an instance is equal only to itself.
+
+An index may have several parts: `op [](x : int, y : int)` is read as `board[3, 4]`, and
+`op []=(x : int, y : int, value : T)` is what `board[3, 4] = v` calls. `board[x, y] += 1`
+and `board[x, y]++` work the parts out once. The standard library's `Grid` and `Image` are
+indexed so.
 
 `==` compares by value. Two lists are equal if they hold equal items in the same order, two
 maps if they have the same keys with equal values, and that goes all the way down, using an
@@ -1897,17 +1964,18 @@ functions make the ones there are:
 | `label(text)` | one line of text |
 | `wrappedLabel(text)` | text that goes on to more lines at the width it is given |
 | `button(text) { ... }` | does what the block says when pressed and let go on it; lit while the pointer is over it |
-| `iconButton(image) { ... }` | a button showing a `BufferedImage` |
+| `iconButton(image) { ... }` | a button showing an `Image` |
 | `toolbarSeparator()` | the thin rule between groups of buttons |
 | `grid { ... }` | a grid holding others |
 
 A component has `id`, `visible`, `enabled`, `tooltip`, `background`, `foreground`, `bounds`
-(where its container placed it), and sizes that can be set over what its content asks for.
-The setting calls return the component, so they chain:
-`button("OK").withId("ok").foreground(Color.blue).preferredSize(Dimension(80, 28))`.
+(where its container placed it, a `Rect`) and `size`, and sizes that can be set over what its
+content asks for. The setting calls return the component, so they chain:
+`button("OK").withId("ok").foreground(Color.blue).preferredSize(Size(80, 28))`.
 `content` is the content itself, where a widget's own settings are: `counter.content.text`.
 
-**The grid** is the one layout. In `grid { }`, `row { }` starts a row and `cell(component,
+**The grid** is the one layout, a `GridPane` (JadeUI's `Grid`: the name `Grid` is the
+standard library's grid of values). In `grid { }`, `row { }` starts a row and `cell(component,
 ...)` puts a component in its next free column:
 
 | | |
@@ -1928,7 +1996,7 @@ of widgets follows the window's size by itself.
 `show()`. After those, by name: `onClose = { }`, `onFilesDropped = { files -> }`, `icons`,
 `exitOnClose`, and for a window that belongs to another `owner`, `dialog`, `sizeToContent`,
 `centerOnOwner`, `resizable`, `focus` and `keyFilter`. It has `title`, `root` (which can be
-replaced), `close()`, `toFront()`, `fitToContent()` and `requestRepaint()`. A window with no
+replaced), `size`, `close()`, `toFront()`, `fitToContent()` and `requestRepaint()`. A window with no
 owner ends the program when it is closed; one with an owner does not.
 
 The window decides what the keyboard and the pointer mean. A press belongs to the widget
@@ -1940,11 +2008,13 @@ is a command, by the letter the keyboard's layout gives the key.
 `Palette.dark = true` turns every window dark: a colour written `Palette.bg(0xECECEC)` is
 that grey by day and its counterpart by night.
 
-**A widget of your own** is a class with the three things a `Content` has:
+**A widget of your own** is a class with what a `Content` has: its owner, its sizes, how it
+paints, and what it does with events:
 
 ```astra
 class Swatch(val color : Color) : Content {
-  override fun sizes() => Sizes(Dimension(16, 16), Dimension(48, 24), Dimension(1000, 1000))   // least, liked, most
+  override var owner : Component? = null
+  override fun sizes() => Sizes(Size(16, 16), Size(48, 24), Size(1000, 1000))   // least, liked, most
   override fun paint(canvas : Canvas) {
     canvas.color = color
     canvas.fillRoundRect(0, 0, canvas.width - 1, canvas.height - 1, 6, 6)
@@ -1957,13 +2027,15 @@ class Swatch(val color : Color) : Content {
 cell(Component(Swatch(Color.orange)))
 ```
 
-`paint` gets a canvas of the component's own size (the canvas is described below), and its
-`canvas.style` says what was handed down: a foreground, a background, whether the widget is
-enabled. Events are `Event.Click`, `Drag`, `Release`, `Hover`, `Wheel`, `Context` (the
+`paint` gets a canvas of the component's own size (the canvas is described below). A
+content's `owner` is the component it is in, set when the component is made, and
+`owner!!.paintStyle` says what it paints in: a foreground, a background, whether the widget
+is enabled, worked out from what the component was handed and its own (the canvas carries no
+style). Events are `Event.Click`, `Drag`, `Release`, `Hover`, `Wheel`, `Context` (the
 other button), `KeyPress`, `KeyType` and `Shortcut`, with positions from the widget's own
 corner. A content that changes says so with `owner.invalidate()`, or `invalidateLayout()`
-if its size may have changed too (it is an `OwnedContent` then, and has `var owner`). A
-component keeps a picture of itself and is not painted again until it is invalidated.
+if its size may have changed too. A component keeps a picture of itself and is not painted
+again until it is invalidated.
 Being a `FocusTarget` makes it take the keyboard, a `CursorProvider` gives it its own
 pointer, and there are a few more such interfaces in `lib\Jade\Types.astra`.
 
@@ -1979,7 +2051,7 @@ root.renderToImage(300, 100).save("root.png")    // or its picture
 Jade.windowOpener = HiddenWindowOpener()         // windows that are never shown
 window.show()
 window.handle.send(RawInput.PointerDown(280, 20, PointerButton.left, Modifiers.none))
-window.handle.snapshot()                         // the window's picture, as a Picture
+window.handle.snapshot()                         // the window's picture, as an Image
 ```
 
 ### A bare window: NativeWindow
@@ -2003,7 +2075,7 @@ a window this one belongs to and stays in front of.
 | `cursorMode` | `CursorMode.normal`, `hidden`, or `locked` (hidden and held, its movements reported without end) |
 | `canvas()` | something to draw on the window's picture with |
 | `present()` | shows what has been drawn |
-| `snapshot()` | the window's picture as a `Picture`, whether or not it is showing |
+| `snapshot()` | the window's picture as an `Image`, whether or not it is showing |
 
 **A window keeps its picture.** The program draws when something changes, as much or as
 little as has changed, and calls `present()`. When the system wants the picture again (the
@@ -2051,8 +2123,10 @@ case, which is what a shortcut wants: Ctrl+Z is the key whose letter is `"Z"`. `
 
 ### The canvas
 
-`window.canvas()`, `surface.canvas()` and `image.canvas()` give a canvas. Its operations are
-the ones of JadeUI's canvas, with the meanings they have in Java:
+`window.canvas()`, `surface.canvas()` and `image.canvas()` give a canvas: the standard
+library's `Canvas` (see "Graphics"), one set of calls for all three. A window's and a surface's
+draw on the graphics card, an image's in memory. Its operations are the ones of JadeUI's
+canvas, with the meanings they have in Java:
 
 | | |
 | --- | --- |
@@ -2064,51 +2138,45 @@ the ones of JadeUI's canvas, with the meanings they have in Java:
 | `drawLine(x1, y1, x2, y2)` | both ends covered |
 | `drawPolyline`, `drawPolygon`, `fillPolygon(xs, ys, n = xs.size)` | through the points of two lists |
 | `drawString(text, x, y)` | starting at `x` with the baseline at `y`; returns the width |
-| `drawImage(image, x, y)`, `drawImage(image, x, y, w, h, alpha = 1.0)` | a `BufferedImage` or a `Surface`, at its size or scaled, as see-through as `alpha` |
+| `draw(picture, x, y)`, `draw(picture, x, y, w, h, alpha = 1.0)` | an `Image` or a `Surface`, at its size or scaled, as see-through as `alpha` |
+| `drawPart(picture, sx, sy, sw, sh, x, y, w, h)` | a part of one, given in its own pixels |
+| `draw(shape)`, `fill(shape)` | a `Rect`, an `Oval` or a `Line` |
 | `clearRect(x, y, w, h)` | makes pixels clear again |
-| `measure(text, font)` | a `TextMetrics`: `width`, `ascent`, `descent`, `height` |
+| `measure(text, font = this.font)` | a `TextMetrics`: `width`, `ascent`, `descent`, `height` |
 | `sub(x, y, width, height)` | a canvas for a part: its (0, 0) is at (x, y), and nothing it draws lands outside |
+| `clipped(x, y, w, h)` | the same corner, drawing only inside that rectangle |
 | `width`, `height`, `visibleBounds`, `deviceScaleX` | |
 
 Straight lines and rectangles sit on pixel edges and are sharp; curves and slanted lines
 have smoothed edges. A see-through colour (`Color(255, 0, 0, 128)`) lies over what is there.
 
 A **`Surface(width, height, scale = 1)`** is a picture on the graphics card that is drawn
-on and drawn from: what a widget keeps of itself so as not to draw it again, and what a
-test reads back. `canvas()`, `toPicture()`, `save(path)`, `upload(picture)`,
-`Surface.of(picture)`, `dispose()`. One that nothing refers to any more is given back by
+on and drawn from: what a widget keeps of itself so as not to draw it again, and heavy
+drawing off the screen. `canvas()`, `toImage()`, `save(path)`, `upload(image)`,
+`Surface.of(image)`, `size`, `dispose()`. One that nothing refers to any more is given back by
 the collector.
 
-### The types from the JDK
+An `Image` drawn on a window or a surface is copied to the graphics card the first time and
+kept there; after that only the part of it that has changed is sent again, and nothing while
+it has not changed.
 
-JadeUI's API uses a handful of Java's types, and Jade has them under the same names with
-the members JadeUI and its apps use. Constants are in camelCase like every other:
+### The graphics types
 
-- **`Color(r, g, b)`, `Color(r, g, b, a)`, `Color(0xRRGGBB)`, `Color(0xAARRGGBB, true)`**:
-  `red`, `green`, `blue`, `alpha`, `rgb`, `brighter()`, `darker()`, `withAlpha(a)`;
-  `Color.white`, `black`, `red`, `green`, `blue`, `yellow`, `cyan`, `magenta`, `orange`,
-  `pink`, `gray`, `lightGray`, `darkGray`; `Color.decode("#RRGGBB")`, `Color.getHSBColor`,
-  `Color.HSBtoRGB`, `Color.RGBtoHSB`.
-- **`Font(name, style, size)`** with `Font.plain`, `Font.bold`, `Font.italic`: `name`,
-  `style`, `size`, `family`, `isBold`, `isItalic`, `deriveFont(style)`, `deriveFont(size)`,
-  `deriveFont(style, size)` (a whole number is a style and a decimal one a size, as in Java).
-  `"Dialog"`, `"SansSerif"`, `"Serif"` and `"Monospaced"` are the system's own fonts.
-- **`FontMetrics(font, scale = 1)`**: `stringWidth(text)`, `charWidth(c)`, `ascent`,
-  `descent`, `leading`, `height`. On a dense screen the numbers are the screen's divided by
-  the scale and rounded up, so text always fits the room measured for it.
-- **`Rectangle`, `Point`, `Dimension`, `Insets`**, value types: two are `==` when their
-  fields are, and each is copied where Java's would be shared, so `bounds.translate(1, 1)`
-  changes the `bounds` it is called on and no other. `Rectangle(x, y, width, height)` takes all
-  four (Java's `Rectangle(w, h)` is `Rectangle(0, 0, w, h)`); `Point()`, `Dimension()` and
-  `Insets()` are all zeros. `Rectangle` has `contains`, `intersects`, `intersection`, `union`,
-  and the mutating `translate`, `grow`, `setBounds`, `setLocation`, `setSize`; `isEmpty`.
-- **`BufferedImage(width, height, type = BufferedImage.typeIntArgb)`**: `getRGB(x, y)`,
-  `setRGB(x, y, argb)`, `getSubimage`, `canvas()` to draw on it, `toPicture()`,
-  `BufferedImage.fromPicture(picture)`. It lives both in memory and on the graphics card,
-  and each is brought up to date from the other only when it is asked for.
+JadeUI's API uses a handful of Java's types. Jade takes the standard library's in their
+place (see "Graphics"), with Astra's names where they read better. A program ported from
+JadeUI changes these, and each old name is a compile error saying what to write:
 
-As the key of a map a `Color` or a `Font` compares by being the same object, not by value: key
-a map by `color.rgb` or by a string. The geometry compares by its fields.
+| JadeUI | Jade |
+| --- | --- |
+| `Dimension(w, h)` | `Size(w, h)`, a value type |
+| `Rectangle(x, y, w, h)` | `Rect(x, y, w, h)`, a value type |
+| `BufferedImage`, `getRGB`, `setRGB` | `Image`: `image[x, y]` is a `Color`, `image[x, y] = color` |
+| `canvas.drawImage(...)` | `canvas.draw(picture, ...)` |
+| `Font(name, Font.BOLD, 14)`, `deriveFont(...)` | `Font(name, 14, bold = true)`, `font.copy(size = ...)` |
+| `FontMetrics(font).stringWidth(text)` | `font.width(text)`, and `font.ascent`, `lineHeight` |
+| `color.rgb` | `color.argb` |
+| `canvas.style`, `sub(..., style)` | `owner!!.paintStyle`, `sub(...)` |
+| `Grid` (the layout) | `GridPane`; `grid { }` is unchanged |
 
 ## Standard library
 
@@ -2312,6 +2380,40 @@ val next = queue.removeFirst()       // removeFirstOrNull() when it may be empty
 queue.addFirst(urgent)        queue.removeLast()        queue.first()        queue.last()
 queue[0]        queue.size        queue.isEmpty()        for job in queue { ... }
 ```
+
+### Grids
+
+A `Grid<T>` is a rectangle of cells, `width` by `height`, each a `T`: the walls of a maze, the
+heights of a terrain, an image's pixels. It is kept packed by its type as a list is: a `bool`
+or a `byte` takes one byte a cell, a `float32` four, a `Color` four.
+
+```astra
+val walls = Grid<bool>(width = 64, height = 64)      // every cell false, the type's zero
+walls[3, 4] = true
+val heights = Grid<float32>(100, 100, fill = 1.0)
+heights[10, 20] += 0.5
+val part = heights[10..19, 0..<10]                   // a new grid of 10 by 10
+heights[0..<10, 0..<10] = part.map { it * 2 }        // written into a part
+val names = Grid<string>(3, 3, fill = "-")           // a grid of objects is given a fill
+```
+
+| | |
+| --- | --- |
+| `grid[x, y]`, `grid[x, y] = v`, `get`, `set` | a cell; outside the grid an `IndexOutOfBoundsException` |
+| `getOrNull(x, y)` | a cell, or null outside |
+| `grid[xs, ys]`, `grid[xs, ys] = other` | a part by two ranges (`^1` counts from the end), as a new grid, or written from one |
+| `width`, `height`, `size` | `size` is a `Size` |
+| `map { }` | a grid of what each cell gives, of any type |
+| `toList()`, `bytes` | the cells row by row; `bytes` a copy of their storage, for numbers and value types |
+| `insertRows(at, count = 1, fill?)`, `insertColumns(...)` | a new grid with rows or columns added; or `insertRows(at, rows)` with another grid's |
+| `prependRows`, `appendRows`, `prependColumns`, `appendColumns` | the same at an edge |
+| `removeRows(at, count = 1)`, `removeColumns(...)` | a new grid without them; `at` may be `^1` |
+| `parallelRows { rows -> }` | the block on every core, each given rows of its own |
+| `==`, `hashCode()`, `toString()` | by size and cells |
+
+A grid's size is fixed for its life: adding or removing rows and columns gives a new grid,
+`walls .= appendRows(2)`, and leaving that result unused is a compile error. Work across cores
+goes by rows, so that no two pieces touch one cell.
 
 ### Ranges
 
@@ -2804,34 +2906,80 @@ while (true) {
 thread is waiting on gets that thread out, with an `IOException`, which is what every failure
 to read, write, connect or start a program is.
 
-## Fonts, text and pictures
+## Graphics: colours, fonts, text and images
 
-Astra reads font files, measures text and draws it into pictures with code of its own. The
-system is asked for one thing only: which font files are installed. Everything else comes
-out of the files, so the same font file gives the same numbers and the same pixels on every
-machine. This is the text engine `Jade` draws with; it needs no window.
+Every program can draw, with no import and no window: colours and shapes, fonts and text,
+and images in memory, saved as PNG. Astra reads font files, measures text and draws it with
+code of its own. The system is asked for one thing only: which font files are installed.
+Everything else comes out of the files, so the same font file gives the same numbers and the
+same pixels on every machine. Jade draws windows with the same types.
 
 ```astra
-val font = TextFont("Segoe UI", 14, bold = true)
-val page = Picture(font.width("Hello") + 20, font.height + 20, Picture.white)
-page.drawText("Hello", 10, 10 + font.ascent, font)
-page.save("hello.png")
+val font = Font("Segoe UI", 14, bold = true)
+val image = Image(font.width("Hello") + 20, font.lineHeight + 20, Color.white)
+val canvas = image.canvas()
+canvas.font = font
+canvas.color = Color(0x2F81F7)
+canvas.drawString("Hello", 10, 10 + font.ascent)
+canvas.fillOval(4, 4, 8, 8)
+image.save("hello.png")
 ```
 
 `examples\text_page.astra` draws a page in several fonts and sizes and saves it as a PNG.
 
-**Measuring and drawing go by one rule.** A character's width is its width in the font,
-scaled to the size and rounded to a whole pixel. A text's width is the sum of its
-characters' widths, and each character is drawn where the widths before it add up to. So
-`width("abc")` is exactly where `"abc"` ends when drawn, `offsets(text)` are exactly where
-its characters start, and a caret placed by measuring sits on the text. Nothing is nudged
-between particular pairs of letters (no kerning) and letters are not joined into ligatures.
+### Colours and shapes
 
-**On a dense screen** a font is made with a scale: `TextFont("Segoe UI", 12, scale = 2)`.
-Its numbers are then in the screen's own pixels, which is where the rounding has to happen:
-at 2x a character may be 13 pixels wide, which is 6.5 of the layout's units, and a line of
-them stays as tight as the font means it to be. A size in the layout's units is the number
-divided by the scale.
+**`Color`** is a value type of four bytes, `red`, `green`, `blue` and `alpha`, kept in place
+with no allocation and compared by its parts:
+
+| | |
+| --- | --- |
+| `Color(red, green, blue, alpha = 255)` | parts from 0 to 255; outside that an `IllegalArgumentException` |
+| `Color(0xRRGGBB)`, `Color(0xAARRGGBB, hasAlpha = true)` | one number |
+| `Color(0.5, 0.25, 1.0)` | parts from 0.0 to 1.0 |
+| `argb` | the colour as one number, `0xAARRGGBB` |
+| `brighter()`, `darker()`, `withAlpha(a)` | |
+| `Color.white`, `black`, `red`, `green`, `blue`, `yellow`, `cyan`, `magenta`, `orange`, `pink`, `gray`, `lightGray`, `darkGray`, `clear` | |
+| `Color.decode("#RRGGBB")`, `Color.getHSBColor(h, s, b)`, `Color.HSBtoRGB`, `Color.RGBtoHSB` | |
+
+`Point(x, y)`, `Size(width, height)` and `Insets(top, left, bottom, right)` are value types
+too, as is **`Rect(x, y, width, height)`**: `location`, `size`, `minX`, `maxX`, `centerX` and the
+rest, `isEmpty`, `contains`, `intersects`, `intersection`, `union`, and the mutating
+`translate`, `grow`, `setBounds`, `setLocation` and `setSize`, which change the one they are
+called on where it is kept. A `Rect`, an `Oval(x, y, width, height)` and a `Line(x1, y1, x2,
+y2)` are each a `Shape`, which a canvas draws and fills: `canvas.fill(Oval(...))`.
+
+### The canvas
+
+A **`Canvas`** draws: `image.canvas()` in memory, and in Jade a window's or a surface's on the
+graphics card, with the same calls and the same meanings (they are listed under "The canvas"
+in Jade's section). Straight lines and rectangles sit on pixel edges and are sharp; curves and
+slanted lines have smoothed edges, whose pixels add up to the shape's area.
+
+`image.canvasAt(width, height, scale)` draws an image that stands for `width` by `height`
+units at `scale` pixels to the unit, as a dense screen does: what is drawn lands on whole
+pixels, and text is drawn at the screen's own size.
+
+### Images
+
+An **`Image`** is `width` by `height` pixels in memory, each a `Color`. Its canvas draws on
+the processor, on any thread, so a worker can draw a thumbnail.
+
+| | |
+| --- | --- |
+| `Image(width, height, color = Color.clear)` | an image of one colour |
+| `Image.load(path \| bytes)`, `save(path)`, `toPng()` | PNG files, read and written |
+| `Image.of(width, height, bytes)` | from bytes, four to a pixel: red, green, blue, alpha, top row first |
+| `image[x, y]`, `image[x, y] = color`, `get`, `set` | one pixel; outside the image an `IndexOutOfBoundsException` |
+| `getOrNull(x, y)` | a pixel, or null outside |
+| `pixels` | all of them as a `Grid<Color>`, to read: the image's own, with no copy |
+| `editPixels { pixels -> }` | all of them to change, in the block |
+| `canvas()`, `canvasAt(width, height, scale)` | something to draw on it with |
+| `crop(x, y, w, h)`, `copy()`, `==`, `inkBox(background)`, `size` | `inkBox` is the `Rect` outside which every pixel is the background |
+
+Anything that can give an `Image` (`ToImage`, as a `Surface` does) can be drawn on one. PNG is
+read in every kind the format has (grey, palette, colour, with or without alpha, 1 to 16 bits,
+interlaced) and written compressed; an image comes back from its file exactly.
 
 ### Fonts
 
@@ -2846,17 +2994,16 @@ divided by the scale.
 | `Fonts.count(path)` | how many fonts a file holds (a `.ttc` holds several) |
 
 A family is asked for by name, in any case. `"SansSerif"`, `"Serif"` and `"Monospaced"` (and
-Java's `"Dialog"`) are the system's own font of each kind, and several names separated by
-commas mean the first that is installed. Weights are 100 to 900: 400 is regular, 700 bold.
-The nearest the family has is chosen, a lighter one for a light weight and a heavier one for
-a bold. `"Segoe UI Semibold"`, the name such a font has in programs that know only four
-styles, finds it too.
+Java's `"Dialog"`, `Font.dialog` and the like) are the system's own font of each kind, and
+several names separated by commas mean the first that is installed. Weights are 100 to 900:
+400 is regular, 700 bold. The nearest the family has is chosen, a lighter one for a light
+weight and a heavier one for a bold. `"Segoe UI Semibold"`, the name such a font has in
+programs that know only four styles, finds it too.
 
 A `Typeface` is one font of a family: `family`, `style`, `fullName`, `weight`, `stretch`,
 `isItalic`, `isMonospace`, `isSymbol`, `isVariable`, `hasCubicOutlines`, `hasColor`,
 `glyphCount`, `unitsPerEm`, `path`, `index`, `axes`, `has(character)`, `glyph(character)`,
-`advance(glyph, weight?)`, `outline(glyph, weight?)` and `font(size, ...)`. A character is a
-one-character string or its number.
+`advance(glyph, weight?)`, `outline(glyph, weight?)` and `font(size, ...)`, a `Font`.
 
 What is read: TrueType and OpenType files and collections (`.ttf`, `.otf`, `.ttc`); both
 kinds of outline, the quadratic curves of `.ttf` fonts and the cubic ones of `.otf` fonts,
@@ -2866,26 +3013,40 @@ holds every weight and each glyph's outline and width are worked out for the wei
 ### A font at a size
 
 ```astra
-TextFont("Consolas", 13)                      // by family
-TextFont("Segoe UI", 12, bold = true, italic = true)
-TextFont("Bahnschrift", 20, weight = 350)     // any weight, where the font has it
-TextFont(Fonts.load("my.ttf"), 16)            // a typeface of your own
-TextFont("Segoe UI", 12, scale = 1.5)         // for a screen at 150%
+Font("Consolas", 13)                          // by family
+Font("Segoe UI", 12, bold = true, italic = true)
+Font("Bahnschrift", 20, weight = 350)         // any weight, where the font has it
+Font(Fonts.load("my.ttf"), 16)                // a typeface of your own
+font.copy(size = 18, bold = false)            // another, with some options changed
 ```
 
-A family that is not installed gives the system's sans-serif font (`family` says which was
-used). A style the family lacks is made up: a bold by thickening, an italic by slanting. A
-variable font with a cut for each size (an "optical size") is set to the one for the size.
+A `Font` is a family and a size with its options, the same at every scale: a canvas draws it
+at its own. A family that is not installed gives the system's sans-serif font (`family` says
+which was used). A style the family lacks is made up: a bold by thickening, an italic by
+slanting. A variable font with a cut for each size (an "optical size") is set to the one for
+the size.
 
 | | |
 | --- | --- |
-| `ascent`, `descent`, `leading`, `height` | the line: above the baseline, below it, between lines, and all three |
+| `ascent`, `descent`, `leading`, `lineHeight` | the line: above the baseline, below it, between lines, and all three |
 | `xHeight`, `capHeight` | the height of a small letter and of a capital |
-| `width(text)`, `charWidth(character)` | by the rule above |
+| `width(text)`, `width(c)` | by the rule below |
 | `offsets(text)` | where each character starts and where the last ends |
+| `width(text, scale)`, `offsets(text, scale)`, `ascent(scale)`, `descent(scale)`, `leading(scale)`, `lineHeight(scale)` | the same in a dense screen's pixels |
 | `typefaceFor(character)` | the typeface a character is drawn from |
-| `glyphBox(character)` | what its shape takes up: `[left, top, width, height, isColor, advance]` |
-| `typeface`, `family`, `size`, `scale`, `weight`, `isBold`, `isItalic`, `derive(size, scale)` | |
+| `name`, `size`, `isBold`, `isItalic`, `family`, `fontName`, `typeface`, `weight` | what was asked for, and what it turned out to be |
+
+**Measuring and drawing go by one rule.** A character's width is its width in the font,
+scaled to the size and rounded to a whole pixel. A text's width is the sum of its
+characters' widths, and each character is drawn where the widths before it add up to. So
+`width("abc")` is exactly where `"abc"` ends when drawn, `offsets(text)` are exactly where
+its characters start, and a caret placed by measuring sits on the text. Nothing is nudged
+between particular pairs of letters (no kerning) and letters are not joined into ligatures.
+
+**On a dense screen** the rule is kept in the screen's own pixels, given the scale:
+`font.width(text, scale = 2)`. At 2x a character may be 13 pixels wide, which is 6.5 of the
+layout's units, and a line of them stays as tight as the font means it to be. At a scale of 2
+a font of 12 measures exactly as one of 24.
 
 **A character the font lacks is taken from a font that has it**: Chinese in a line of Segoe
 UI comes from the system's Chinese font, an emoji from its emoji font, each measured and
@@ -2894,35 +3055,13 @@ drawn by the same rule. One that no installed font has is drawn as the font's "m
 **Hinting** is a rule of Astra's own, not the programs fonts carry: the baseline, the height
 of small letters and the height of capitals are put on pixel edges, so the flat tops and
 bottoms of letters are sharp at small sizes. Nothing is moved sideways, which is why widths
-do not depend on it. `hinting = false` turns it off.
+do not depend on it.
 
 **Colour emoji** are drawn in their own colours, in both formats Windows' emoji font has
 (flat layers, and the newer one with gradients) and in the picture formats other systems'
 emoji fonts use (`CBDT`, `sbix`), whose pictures are scaled to the size.
 
 Measuring may be done from threads and inside a parallel section.
-
-### Pictures
-
-A `Picture` is `width` by `height` pixels. A colour is one number, `0xAARRGGBB`: `0xFF000000`
-is black, `0x80FF0000` a half-clear red, and `Picture.rgb(red, green, blue, alpha = 255)`
-makes one. `pixels` is the picture itself as `bytes`, four for each pixel (red, green, blue,
-alpha), top row first, so a program can work on it directly, in a parallel section too
-(`pixels.parallelChunks`).
-
-| | |
-| --- | --- |
-| `Picture(width, height, color = clear)` | a picture of one colour |
-| `Picture.load(path \| bytes)`, `save(path)`, `toPng()` | PNG files, read and written |
-| `get(x, y)`, `set(x, y, color)` | one pixel |
-| `fill(color)`, `fillRect(x, y, w, h, color)` | sets pixels |
-| `blendRect(x, y, w, h, color)` | lays a colour over what is there |
-| `drawText(text, x, y, font, color = black)` | a line of text starting at `x` with its baseline at `y`; returns its width |
-| `draw(other, x, y)` | lays another picture over this one |
-| `crop(x, y, w, h)`, `copy()`, `==`, `inkBox(background)` | |
-
-PNG is read in every kind the format has (grey, palette, colour, with or without alpha, 1 to
-16 bits, interlaced) and written compressed; a picture comes back from its file exactly.
 
 ## How it works
 
@@ -3032,11 +3171,12 @@ opportunity, which is slow but useful for finding memory bugs when changing the 
   "Bahnschrift Condensed") are not families: the weight and the cut for the size are what is
   set. Emoji drawn as SVG are not read. The first use of fonts in a program reads the names
   of all installed ones, about a tenth of a second.
-- Pictures are read and written as PNG only.
+- Images are read and written as PNG only.
 - Streams, processes and sockets are there on Windows only. There is no way yet to fetch a URL.
 - Astra code runs on several cores at once only in a parallel section, on the items of one
   list, or in workers, which share nothing. Threads take turns.
-- Drawing is done from the main thread only: no thread, worker or parallel section can draw.
+- Drawing on a window or a surface is done from the main thread only; an image's canvas draws
+  on any thread.
   Five examples animate fifty thousand balls: `bounce.astra` moves and draws them in one loop,
   `bounce_parallel.astra` moves them in a parallel section (one line different),
   `bounce_threads.astra` on background threads, `bounce_tasks.astra` in tasks on the main

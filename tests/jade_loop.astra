@@ -45,16 +45,16 @@ aRequestedLayoutIsHonouredOnceThenForgotten()
 // damageAloneGivesAPartialFrame
 fun damageAloneGivesAPartialFrame() {
   val loop = settled()
-  loop.markDamage(Rectangle(10, 10, 20, 20))
-  loop.markDamage(Rectangle(50, 10, 20, 20))
-  same("two damaged rectangles: the one that holds both", loop.plan(400, 300, false).partial, Rectangle(10, 10, 60, 20))
+  loop.markDamage(Rect(10, 10, 20, 20))
+  loop.markDamage(Rect(50, 10, 20, 20))
+  same("two damaged rectangles: the one that holds both", loop.plan(400, 300, false).partial, Rect(10, 10, 60, 20))
 }
 damageAloneGivesAPartialFrame()
 
 // aPartialFrameIsRefusedWhenItLaysOutOrTheBuffersAreNew
 fun aPartialFrameIsRefusedWhenItLaysOutOrTheBuffersAreNew() {
   val loop = settled()
-  loop.markDamage(Rectangle(10, 10, 20, 20))
+  loop.markDamage(Rect(10, 10, 20, 20))
   same("a new picture has no old pixels", loop.plan(400, 300, true).partial, null)
   loop.requestLayout()
   same("a layout moves things outside it", loop.plan(400, 300, false).partial, null)
@@ -65,7 +65,7 @@ aPartialFrameIsRefusedWhenItLaysOutOrTheBuffersAreNew()
 fun aPendingFullRepaintIsNotNarrowedByDamage() {
   val loop = settled()
   loop.markDirty()
-  loop.markDamage(Rectangle(10, 10, 20, 20))
+  loop.markDamage(Rect(10, 10, 20, 20))
   same("the whole window is still owed", loop.plan(400, 300, false).partial, null)
 }
 aPendingFullRepaintIsNotNarrowedByDamage()
@@ -73,7 +73,7 @@ aPendingFullRepaintIsNotNarrowedByDamage()
 // damageOutsideTheWindowIsNotAFrame
 fun damageOutsideTheWindowIsNotAFrame() {
   val loop = settled()
-  loop.markDamage(Rectangle(500, 500, 10, 10))
+  loop.markDamage(Rect(500, 500, 10, 10))
   same("nothing of it is in the window", loop.plan(400, 300, false).partial, null)
 }
 damageOutsideTheWindowIsNotAFrame()
@@ -95,13 +95,13 @@ fun ensureLayoutLaysOutOnlyWhenDue() {
   val root = Component(Label("x"))
   val loop = RenderLoop()
   loop.ensureLayout(root, 400, 300)
-  same("laid out when first due", root.bounds, Rectangle(0, 0, 400, 300))
-  root.bounds = Rectangle(0, 0, 1, 1)          // a mark a second layout would write over
+  same("laid out when first due", root.bounds, Rect(0, 0, 400, 300))
+  root.bounds = Rect(0, 0, 1, 1)          // a mark a second layout would write over
   loop.ensureLayout(root, 400, 300)
-  same("not laid out again: nothing changed", root.bounds, Rectangle(0, 0, 1, 1))
+  same("not laid out again: nothing changed", root.bounds, Rect(0, 0, 1, 1))
   loop.requestLayout()
   loop.ensureLayout(root, 400, 300)
-  same("laid out again once asked", root.bounds, Rectangle(0, 0, 400, 300))
+  same("laid out again once asked", root.bounds, Rect(0, 0, 400, 300))
 }
 ensureLayoutLaysOutOnlyWhenDue()
 print("RenderLoopTest:", checks, "checks,", failed)   // expect: RenderLoopTest: 17 checks, []
@@ -109,10 +109,10 @@ print("RenderLoopTest:", checks, "checks,", failed)   // expect: RenderLoopTest:
 // renderFrame plans, paints and notes the frame as drawn.
 val looped = RenderLoop()
 val shown = button("Frame")
-val buffer = BufferedImage(90, 30, BufferedImage.typeIntArgb)
+val buffer = Surface(90, 30)
 val first = looped.renderFrame(shown, buffer, 90, 30)
 val second = looped.renderFrame(shown, buffer, 90, 30)
-print(first.layout, second.layout, looped.isDirty, shown.bounds, buffer.toPicture().inkBox() != null)   // expect: true false false Rectangle(0, 0, 90 x 30) true
+print(first.layout, second.layout, looped.isDirty, shown.bounds, buffer.toImage().inkBox() != null)   // expect: true false false Rect(0, 0, 90 x 30) true
 
 // -- PaletteThemeTest --
 
@@ -153,19 +153,19 @@ switchingNotifiesAndInvalidatesCaches()
 print("PaletteThemeTest:", checks, "checks,", failed)   // expect: PaletteThemeTest: 29 checks, []
 
 // A button is drawn in the theme's colours: dark when the theme is.
-val byDay = button("Theme").renderToImage(80, 30).toPicture()
+val byDay = button("Theme").renderToImage(80, 30)
 Palette.dark = true
-val byNight = button("Theme").renderToImage(80, 30).toPicture()
+val byNight = button("Theme").renderToImage(80, 30)
 Palette.dark = false
-fun lumaAt(picture : Picture, x : int, y : int) {
+fun lumaAt(picture : Image, x : int, y : int) {
   val c = picture.get(x, y)
-  return 0.299 * ((c >> 16) & 255) + 0.587 * ((c >> 8) & 255) + 0.114 * (c & 255)
+  return 0.299 * c.red + 0.587 * c.green + 0.114 * c.blue
 }
 print(lumaAt(byDay, 6, 15) > 180, lumaAt(byNight, 6, 15) < 100, Palette.border, Palette.disabled, Palette.selection)   // expect: true true Color(128, 128, 128) Color(144, 144, 144) Color(173, 216, 230)
 
 // -- WrappedLabelTest --
 
-val font = Font(Font.sansSerif, Font.plain, 12)
+val font = Font(Font.sansSerif, 12)
 val sentence = "the quick brown fox jumps over the lazy dog"
 
 // text wraps to the given width
@@ -256,6 +256,6 @@ val named = label("Name")
 val before = named.prefSize().width
 (named.content as Label).text = "A much longer name"
 val after = named.prefSize().width
-(named.content as Label).font = Font(Font.sansSerif, Font.bold, 20)
+(named.content as Label).font = Font(Font.sansSerif, 20, bold = true)
 Jade.removeLayoutHook(counting)
 print(after > before, named.prefSize().width > after, asked, wrappedLabel("made by the function").content is WrappedLabel)   // expect: true true 2 true

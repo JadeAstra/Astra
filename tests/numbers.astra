@@ -81,6 +81,8 @@ val halves : List<float32> = [0.5, 0.1]
 val words : open List<uint32> = [4294967295, 0]
 print(halves, halves[0] is float, words, attempt { words.add(-1) })
 // expect: [0.5, 0.10000000149011612] true [4294967295, 0] -1 does not fit in a uint32, which holds 0 to 4294967295; toUint32Wrapped() keeps the low 32 bits
+// A copy is of the same kind, item for item (it once lost what its items were).
+print(halves.toList(), shorts.toOpenList(), words.toList()[0])   // expect: [0.5, 0.10000000149011612] [1, -2, 300, 32767] 4294967295
 
 value Vertex(val x : int32, val y : int32, val tag : byte, val c : char)
 val v = Vertex(1, -2, 7, 'q')

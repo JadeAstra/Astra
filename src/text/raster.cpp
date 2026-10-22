@@ -91,10 +91,11 @@ private:
     }
 };
 
-// Walks an outline as straight pieces, curves cut into as many as their bend needs. Every
-// contour is closed, whether or not the outline says so.
+// Walks an outline as straight pieces, curves cut into as many as their bend needs, times
+// `fineness` squared. Every contour is closed, whether or not the outline says so.
 template <class Line>
-void flatten(const Path& path, Line&& line) {
+void flatten(const Path& path, float fineness, Line&& line) {
+    const float most = std::sqrt(fineness);
     float startX = 0, startY = 0, x = 0, y = 0;
     bool open = false;
     size_t p = 0;
@@ -121,7 +122,7 @@ void flatten(const Path& path, Line&& line) {
             case Path::Quad: {
                 const float cx = pt[0], cy = pt[1], ex = pt[2], ey = pt[3];
                 const float bend = std::hypot(x - 2 * cx + ex, y - 2 * cy + ey);
-                const int pieces = std::clamp(static_cast<int>(std::ceil(std::sqrt(bend * 3.0f))), 1, 32);
+                const int pieces = std::clamp(static_cast<int>(std::ceil(std::sqrt(bend * 3.0f * fineness))), 1, static_cast<int>(32 * most));
                 float px = x, py = y;
                 for (int i = 1; i <= pieces; i++) {
                     const float t = static_cast<float>(i) / static_cast<float>(pieces), u = 1.0f - t;
@@ -139,7 +140,7 @@ void flatten(const Path& path, Line&& line) {
             case Path::Cubic: {
                 const float ax = pt[0], ay = pt[1], bx = pt[2], by = pt[3], ex = pt[4], ey = pt[5];
                 const float bend = std::max(std::hypot(x - 2 * ax + bx, y - 2 * ay + by), std::hypot(ax - 2 * bx + ex, ay - 2 * by + ey));
-                const int pieces = std::clamp(static_cast<int>(std::ceil(std::sqrt(bend * 4.5f))), 1, 48);
+                const int pieces = std::clamp(static_cast<int>(std::ceil(std::sqrt(bend * 4.5f * fineness))), 1, static_cast<int>(48 * most));
                 float px = x, py = y;
                 for (int i = 1; i <= pieces; i++) {
                     const float t = static_cast<float>(i) / static_cast<float>(pieces), u = 1.0f - t;
@@ -166,16 +167,16 @@ void flatten(const Path& path, Line&& line) {
 
 }  // namespace
 
-void rasterizeInto(const Path& path, int left, int top, int width, int height, std::vector<uint8_t>& coverage) {
+void rasterizeInto(const Path& path, int left, int top, int width, int height, std::vector<uint8_t>& coverage, float fineness) {
     coverage.assign(static_cast<size_t>(std::max(width, 0)) * static_cast<size_t>(std::max(height, 0)), 0);
     if (path.empty() || width <= 0 || height <= 0) return;
     Accumulator acc(width, height);
     const float originX = static_cast<float>(left), originY = static_cast<float>(top);
-    flatten(path, [&](float x0, float y0, float x1, float y1) { acc.line(x0 - originX, originY - y0, x1 - originX, originY - y1); });
+    flatten(path, fineness, [&](float x0, float y0, float x1, float y1) { acc.line(x0 - originX, originY - y0, x1 - originX, originY - y1); });
     acc.finish(coverage);
 }
 
-GlyphImage rasterize(const Path& path) {
+GlyphImage rasterize(const Path& path, float fineness) {
     GlyphImage image;
     float minX, minY, maxX, maxY;
     if (!path.bounds(minX, minY, maxX, maxY)) return image;
@@ -184,7 +185,7 @@ GlyphImage rasterize(const Path& path) {
     image.width = static_cast<int>(std::ceil(maxX)) - image.left + 1;
     image.height = image.top - static_cast<int>(std::floor(minY)) + 1;
     if (image.width <= 0 || image.height <= 0 || image.width > 8192 || image.height > 8192) return GlyphImage{};
-    rasterizeInto(path, image.left, image.top, image.width, image.height, image.pixels);
+    rasterizeInto(path, image.left, image.top, image.width, image.height, image.pixels, fineness);
     return image;
 }
 

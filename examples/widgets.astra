@@ -23,7 +23,7 @@ val root = grid {
   vgap = 8
 
   row {
-    cell(Component(Label("Labels and buttons, laid out by a grid", Font("Segoe UI", Font.bold, 16))), colSpan = 4, anchor = Anchor.west)
+    cell(Component(Label("Labels and buttons, laid out by a grid", Font("Segoe UI", 16, bold = true))), colSpan = 4, anchor = Anchor.west)
   }
   row {
     cell(label("Counter:"), anchor = Anchor.east)

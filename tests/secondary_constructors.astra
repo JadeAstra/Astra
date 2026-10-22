@@ -1,0 +1,61 @@
+// Other ways to make an object: `constructor(...) : this(...)`, each handing the main
+// constructor what it needs, with a body of its own to run after it if there is one.
+
+class Temperature(val kelvin : float) {
+  constructor(celsius : int) : this(celsius + 273.15)
+  constructor(degrees : float, scale : string) : this(scale == "F" ? (degrees - 32) * 5 / 9 + 273.15 : degrees + 273.15)
+  override fun toString() : string => "${Math.round(kelvin * 100) / 100.0} K"
+}
+print(Temperature(300.0), Temperature(20), Temperature(212.0, "F"), Temperature(10.5, scale = "C"))   // expect: 300.0 K 293.15 K 373.15 K 283.65 K
+
+// With a body, which runs after the main constructor and may use what it set.
+class Account(val owner : string, var balance : int = 0) {
+  val log : open List<string> = []
+  constructor(owner : string, opening : List<int>) : this(owner) {
+    for (amount in opening) {
+      balance += amount
+      log.add("+$amount")
+    }
+  }
+}
+val a = Account("Ada", [10, 20, 5])
+print(a.owner, a.balance, a.log, Account("Bob", 7).balance, Account("Cy").log)   // expect: Ada 35 ["+10", "+20", "+5"] 7 []
+
+// The form chosen is the one the arguments fit; one that fits exactly wins over one that needs
+// a number made smaller.
+value Shade(val level : byte) {
+  constructor(level : int) : this(__shadeLevel(level))
+  constructor(fraction : float) : this(__shadeLevel(Math.round(fraction * 255).toInt()))
+  override fun toString() : string => "Shade($level)"
+}
+fun __shadeLevel(n : int) : byte {
+  if (n < 0 or n > 255) { throw IllegalArgumentException("a shade is from 0 to 255, not $n") }
+  return n.toByte()
+}
+print(Shade(200), Shade(0.5), Shade(7.toByte()), Shade(level = 9))   // expect: Shade(200) Shade(128) Shade(7) Shade(9)
+try { Shade(300) } catch (e : IllegalArgumentException) { print(e.message) }   // expect: a shade is from 0 to 255, not 300
+
+// In a value type a body changes the new value itself.
+value Span(var start : int, var end : int) {
+  constructor(text : string) : this(0, 0) {
+    val parts = text.split("..")
+    start = parts[0].toInt()
+    end = parts[1].toInt()
+  }
+  val size : int
+    get() => end - start
+}
+val s = Span("3..10")
+print(s.start, s.end, s.size, Span(1, 2).size)   // expect: 3 10 7 1
+
+// In a generic class, the type argument is the one asked for or worked out.
+class Bag<T>(val items : List<T>) {
+  constructor(one : T, count : int) : this(__repeat(one, count))
+}
+fun <T> __repeat(item : T, count : int) : List<T> {
+  val out : open List<T> = []
+  for (i in 0..<count) { out.add(item) }
+  return out
+}
+val bag = Bag("x", 3)
+print(bag.items, Bag<int>(4, 2).items, Bag([1, 2]).items)   // expect: ["x", "x", "x"] [4, 4] [1, 2]

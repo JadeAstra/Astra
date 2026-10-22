@@ -14,10 +14,10 @@ var pointerX = 320
 var pointerY = 300
 var held = false
 
-val title = Font("Segoe UI", Font.bold, 22)
-val body = Font("Segoe UI", Font.plain, 13)
-val small = Font("Segoe UI", Font.plain, 11)
-val mono = Font("Monospaced", Font.plain, 12)
+val title = Font("Segoe UI", 22, bold = true)
+val body = Font("Segoe UI", 13)
+val small = Font("Segoe UI", 11)
+val mono = Font("Monospaced", 12)
 
 val paper = Color(0xF6F8FA)
 val ink = Color(0x1B1F23)

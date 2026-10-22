@@ -1,4 +1,4 @@
-// PNG pictures, read and written by Astra's own code.
+// PNG images, read and written by Astra's own code.
 
 fun fromHex(text : string) {
   val out = Bytes(text.size / 2)
@@ -7,44 +7,46 @@ fun fromHex(text : string) {
 }
 
 // -- Writing and reading back: nothing is lost --
-val made = Picture(37, 23)
+val made = Image(37, 23)
 for (y in 0..<made.height) {
   for (x in 0..<made.width) {
-    made.set(x, y, Picture.rgb((x * 7) % 256, (y * 11) % 256, (x * y) % 256, (x + y) % 4 == 0 ? (x * 9) % 256 : 255))
+    made[x, y] = Color((x * 7) % 256, (y * 11) % 256, (x * y) % 256, (x + y) % 4 == 0 ? (x * 9) % 256 : 255)
   }
 }
 val file = made.toPng()
 print(file[0..<8])                              // expect: Bytes[137, 80, 78, 71, 13, 10, 26, 10]
-val back = Picture.load(file)
-print(back, back == made, back.pixels == made.pixels)   // expect: Picture(37 x 23) true true
-print(made.get(3, 5) == Picture.rgb(21, 55, 15, 27), back.get(3, 5) == made.get(3, 5), made.get(4, 0), made.get(-1, 0), made.get(0, 99))   // expect: true true 605814784 0 0
+val back = Image.load(file)
+print(back, back == made, back.pixels == made.pixels)   // expect: Image(37 x 23) true true
+print(made[3, 5] == Color(21, 55, 15, 27), back[3, 5] == made[3, 5], made[4, 0], made.getOrNull(-1, 0), made.getOrNull(0, 99))   // expect: true true Color(28, 0, 0, 36) null null
 
-// A picture with nothing see-through is written without its alpha, and comes back the same.
-val solid = Picture(16, 9, Picture.rgb(10, 200, 30))
-solid.fillRect(2, 2, 5, 3, Picture.black)
+// An image with nothing see-through is written without its alpha, and comes back the same.
+val solid = Image(16, 9, Color(10, 200, 30))
+val solidCanvas = solid.canvas()
+solidCanvas.color = Color.black
+solidCanvas.fillRect(2, 2, 5, 3)
 val solidFile = solid.toPng()
-print(solidFile[25], file[25], Picture.load(solidFile) == solid)   // expect: 2 6 true
+print(solidFile[25], file[25], Image.load(solidFile) == solid)   // expect: 2 6 true
 
-// It is compressed: a large plain picture is a small file.
-val plain = Picture(400, 300, Picture.white)
-print(plain.pixels.size, plain.toPng().size < 4000, Picture.load(plain.toPng()) == plain)   // expect: 480000 true true
+// It is compressed: a large plain image is a small file.
+val plain = Image(400, 300, Color.white)
+print(plain.pixels.bytes.size, plain.toPng().size < 4000, Image.load(plain.toPng()) == plain)   // expect: 480000 true true
 
 // Through a file.
 made.save("png_test_out.png")
-print(Picture.load("png_test_out.png") == made, Picture.load(Path("png_test_out.png")) == made)   // expect: true true
+print(Image.load("png_test_out.png") == made, Image.load(Path("png_test_out.png")) == made)   // expect: true true
 Path("png_test_out.png").delete()
 
-// -- Pictures of every kind the format has, written by Windows' own PNG writer --
-// Each line is a picture's file and the pixels Windows' own reader gives for it: grey,
+// -- Images of every kind the format has, written by Windows' own PNG writer --
+// Each line is an image's file and the pixels Windows' own reader gives for it: grey,
 // palette, colour, with and without alpha, 1 to 16 bits, interlaced and not.
 var read = 0
 val wrong = []
 fun check(name : string, colorType : int, depth : int, interlaced : int, png : string, pixels : string) {
   val data = fromHex(png)
   if (data[25] != colorType or data[24] != depth or data[28] != interlaced) { wrong.add(name + " (not the kind it says)") }
-  val picture = Picture.load(data)
+  val image = Image.load(data)
   read += 1
-  if (picture.width != 8 or picture.height != 8 or picture.pixels != fromHex(pixels)) { wrong.add(name) }
+  if (image.width != 8 or image.height != 8 or image.pixels.bytes != fromHex(pixels)) { wrong.add(name) }
 }
 check("rgba8", 6, 8, 0,
   "89504e470d0a1a0a0000000d4948445200000008000000080806000000c40fbe8b000000017352474200aece1ce90000000467414d410000b18f0bfc6105000000097048597300000ec300000ec301c76fa8640000004e49444154285375cf310a44211044c112848ebcc5dc533db99bfc0d276ba8a079034a5e89925bb24b46c929d953ad47904b3619e47cdb54ab4572a75a2d9233d56a91bca9568bff8b167d152d123fdab51df756b97b690000000049454e44ae426082",
@@ -124,43 +126,50 @@ check("palette1", 0, 1, 0,
 check("palette1-interlaced", 0, 1, 1,
   "89504e470d0a1a0a0000000d49484452000000080000000801000000019b73b3b0000000017352474200aece1ce90000000467414d410000b18f0bfc6105000000097048597300000ec300000ec301c76fa8640000001d4944415418d36360000207206e006203205e002405188480308c211e00210702aa286ac6e40000000049454e44ae426082",
   "000000ff000000ff000000ff000000ff000000ff000000ff000000ff000000ff000000ff000000ff000000ffffffffff000000ff000000ffffffffff000000ff000000ffffffffff000000ff000000ff000000ffffffffff000000ff000000ff000000ff000000ff000000ffffffffff000000ff000000ffffffffff000000ff000000ff000000ffffffffff000000ffffffffffffffffff000000ffffffffff000000ffffffffff000000ffffffffff000000ffffffffffffffffff000000ff000000ff000000ff000000ff000000ffffffffff000000ffffffffffffffffff000000ffffffffff000000ffffffffffffffffffffffffffffffffffffffffff")
-print(read, "pictures read,", wrong.size, "wrong", wrong)   // expect: 26 pictures read, 0 wrong []
+print(read, "images read,", wrong.size, "wrong", wrong)   // expect: 26 images read, 0 wrong []
 
-// -- What is not a picture --
+// -- What is not an image --
 fun attempt(block : () -> unit) {
   try { block(); return "no error" } catch (e) { return (e is IOException ? "IOException: " : "Error: ") + e.message }
 }
-print(attempt { Picture.load(Bytes([1, 2, 3])) })          // expect: IOException: not a PNG picture
-print(attempt { Picture.load(file[0..<60]) })         // expect: IOException: damaged PNG picture
+print(attempt { Image.load(Bytes([1, 2, 3])) })          // expect: IOException: not a PNG picture
+print(attempt { Image.load(file[0..<60]) })         // expect: IOException: damaged PNG picture
 val cut = Bytes(file[0..<file.size - 40])
-print(attempt { Picture.load(cut) } != "no error")         // expect: true
+print(attempt { Image.load(cut) } != "no error")         // expect: true
 val spoiled = Bytes(file)
 for (i in 60..<90) { spoiled[i] = (255 - spoiled[i]).toByte() }
-print(attempt { Picture.load(spoiled) } != "no error")     // expect: true
-print(attempt { Picture(3, 3, 0, Bytes(5)) })              // expect: Error: the pixels do not fit a picture of 3 by 3
-print(attempt { Picture(0, 0).toPng() })                   // expect: Error: a picture with no pixels cannot be written as PNG
+print(attempt { Image.load(spoiled) } != "no error")     // expect: true
+print(attempt { Image.of(3, 3, Bytes(5)) })              // expect: Error: 5 bytes are not the pixels of an image of 3 by 3
+print(attempt { Image(0, 0).toPng() })                   // expect: Error: a picture with no pixels cannot be written as PNG
 
 // -- Pixels, rectangles, parts --
-val p = Picture(6, 4)
-print(p.get(0, 0), p.inkBox())                             // expect: 0 null
-p.fillRect(1, 1, 3, 2, 0xFF336699)
-p.fillRect(-5, -5, 6, 6, 0x80FF0000)                       // clipped to the picture
-print(p.get(0, 0) == 0x80FF0000, p.get(1, 1) == 0xFF336699, p.get(3, 2) == 0xFF336699, p.get(4, 2), p.inkBox())   // expect: true true true 0 [0, 0, 4, 3]
-print(p.pixels[0..<4], p.pixels[(1 * 6 + 1) * 4..<(1 * 6 + 1) * 4 + 4])   // expect: Bytes[255, 0, 0, 128] Bytes[51, 102, 153, 255]
+val p = Image(6, 4)
+print(p[0, 0], p.inkBox())                             // expect: Color(0, 0, 0, 0) null
+val pc = p.canvas()
+pc.color = Color(0x336699)
+pc.fillRect(1, 1, 3, 2)
+pc.color = Color(255, 0, 0, 128)
+pc.fillRect(-5, -5, 6, 6)                              // clipped to the image
+print(p[0, 0] == Color(255, 0, 0, 128), p[1, 1] == Color(0x336699), p[3, 2] == Color(0x336699), p[4, 2], p.inkBox())   // expect: true true true Color(0, 0, 0, 0) Rect(0, 0, 4 x 3)
+print(p.pixels.bytes[0..<4], p.pixels.bytes[(1 * 6 + 1) * 4..<(1 * 6 + 1) * 4 + 4])   // expect: Bytes[255, 0, 0, 128] Bytes[51, 102, 153, 255]
 val part = p.crop(1, 1, 3, 2)
-print(part, part.get(0, 0) == 0xFF336699, part.inkBox(), p.copy() == p, p.copy() === p, part == p)   // expect: Picture(3 x 2) true [0, 0, 3, 2] true false false
+print(part, part[0, 0] == Color(0x336699), part.inkBox(), p.copy() == p, p.copy() === p, part == p)   // expect: Image(3 x 2) true Rect(0, 0, 3 x 2) true false false
 
 // Laying one colour over another: half-clear white over solid black is mid grey, and a
 // see-through colour over nothing is itself.
-val q = Picture(2, 1, Picture.black)
-q.blendRect(0, 0, 1, 1, 0x80FFFFFF)
-val r = Picture(1, 1)
-r.blendRect(0, 0, 1, 1, 0x40102030)
-print(q.pixels[0..<4], q.pixels[4..<8], r.get(0, 0) == 0x40102030)   // expect: Bytes[128, 128, 128, 255] Bytes[0, 0, 0, 255] true
+val q = Image(2, 1, Color.black)
+val qc = q.canvas()
+qc.color = Color(0x80FFFFFF, true)
+qc.fillRect(0, 0, 1, 1)
+val r = Image(1, 1)
+val rc = r.canvas()
+rc.color = Color(0x40102030, true)
+rc.fillRect(0, 0, 1, 1)
+print(q.pixels.bytes[0..<4], q.pixels.bytes[4..<8], r[0, 0] == Color(0x40102030, true))   // expect: Bytes[128, 128, 128, 255] Bytes[0, 0, 0, 255] true
 
-// One picture laid over another.
-val under = Picture(4, 4, Picture.white)
-val over = Picture(2, 2, 0xFF0000FF)
-over.set(1, 1, 0)
-under.draw(over, 1, 1)
-print(under.get(1, 1) == 0xFF0000FF, under.get(2, 2) == Picture.white, under.get(0, 0) == Picture.white, under.inkBox(Picture.white))   // expect: true true true [1, 1, 2, 2]
+// One image laid over another.
+val under = Image(4, 4, Color.white)
+val over = Image(2, 2, Color.blue)
+over[1, 1] = Color.clear
+under.canvas().draw(over, 1, 1)
+print(under[1, 1] == Color.blue, under[2, 2] == Color.white, under[0, 0] == Color.white, under.inkBox(Color.white))   // expect: true true true Rect(1, 1, 2 x 2)

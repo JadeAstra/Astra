@@ -309,6 +309,9 @@ void registerGlobals(VM& vm) {
 
 // ---- Math ----
 
+// A byte as the int it is, for the functions that keep an int an int; anything else as it is.
+static Value asWideInt(Value v) { return v.isByte() ? Value::integer(v.as.i) : v; }
+
 void registerMath(VM& vm) {
     ObjClass* math = vm.alloc<ObjClass>(vm.intern("Math"));
     auto def = [&](const char* name, int minArgs, int maxArgs, NativeFn fn) {
@@ -338,6 +341,7 @@ void registerMath(VM& vm) {
 #undef ASTRA_MATH_UNARY
 
     def("abs", 1, 1, [](VM& vm, int, Value* args) -> Value {
+        args[0] = asWideInt(args[0]);   // a byte is an int here
         Value v = args[0];
         if (v.isInt()) {
             if (v.as.i == INT64_MIN) throw vm.overflowError(Op::Sub, 0, v.as.i);  // (D27)
@@ -347,16 +351,19 @@ void registerMath(VM& vm) {
     });
 
     def("floor", 1, 1, [](VM& vm, int, Value* args) -> Value {
+        args[0] = asWideInt(args[0]);   // a byte is an int here
         if (args[0].isInt()) return args[0];
         return Value::integer(floatToInt(vm, std::floor(vm.toNumber(args[0], "Math.floor() argument"))));
     });
 
     def("ceil", 1, 1, [](VM& vm, int, Value* args) -> Value {
+        args[0] = asWideInt(args[0]);   // a byte is an int here
         if (args[0].isInt()) return args[0];
         return Value::integer(floatToInt(vm, std::ceil(vm.toNumber(args[0], "Math.ceil() argument"))));
     });
 
     def("round", 1, 1, [](VM& vm, int, Value* args) -> Value {
+        args[0] = asWideInt(args[0]);   // a byte is an int here
         if (args[0].isInt()) return args[0];
         return Value::integer(floatToInt(vm, std::round(vm.toNumber(args[0], "Math.round() argument"))));
     });
@@ -366,19 +373,21 @@ void registerMath(VM& vm) {
         Value best = args[0];
         vm.toNumber(best, "Math.min() argument");
         for (int i = 1; i < argc; i++)
-            if (vm.toNumber(args[i], "Math.min() argument") < best.toDouble()) best = args[i];
-        return best;
+            if (vm.toNumber(args[i], "Math.min() argument") < vm.toNumber(best, "Math.min() argument")) best = args[i];
+        return best.isByte() ? Value::integer(best.as.i) : best;
     });
 
     def("max", 1, -1, [](VM& vm, int argc, Value* args) -> Value {
         Value best = args[0];
         vm.toNumber(best, "Math.max() argument");
         for (int i = 1; i < argc; i++)
-            if (vm.toNumber(args[i], "Math.max() argument") > best.toDouble()) best = args[i];
-        return best;
+            if (vm.toNumber(args[i], "Math.max() argument") > vm.toNumber(best, "Math.max() argument")) best = args[i];
+        return best.isByte() ? Value::integer(best.as.i) : best;
     });
 
     def("pow", 2, 2, [](VM& vm, int, Value* args) -> Value {
+        args[0] = asWideInt(args[0]);   // a byte is an int here
+        args[1] = asWideInt(args[1]);
         if (args[0].isInt() && args[1].isInt() && args[1].as.i >= 0)
             return Value::integer(integerPower(vm, args[0].as.i, args[1].as.i));
         return Value::number(std::pow(vm.toNumber(args[0], "Math.pow() base"), vm.toNumber(args[1], "Math.pow() exponent")));
@@ -407,6 +416,7 @@ void registerMath(VM& vm) {
         return Value::number(std::hypot(vm.toNumber(args[0], "Math.hypot() argument"), vm.toNumber(args[1], "Math.hypot() argument")));
     });
     def("sign", 1, 1, [](VM& vm, int, Value* args) -> Value {
+        args[0] = asWideInt(args[0]);   // a byte is an int here
         if (args[0].isInt()) return Value::integer((args[0].as.i > 0) - (args[0].as.i < 0));
         const double d = vm.toNumber(args[0], "Math.sign() argument");
         return Value::number(d > 0 ? 1.0 : d < 0 ? -1.0 : d);
@@ -890,6 +900,7 @@ void registerBuiltins(VM& vm) {
     registerReflection(vm);
     registerThreads(vm);
     registerIo(vm);
+    registerGrid(vm);
     registerWorkers(vm);
     registerParallel(vm);
     // A built program that reaches neither Jade nor the text engine has their code left out of
@@ -918,7 +929,7 @@ void registerBuiltins(VM& vm) {
 // Op::Numeric (M6.6 part 6): a number's conversion or one of Math's functions, giving what the
 // standard library's own gives, errors included; the compiler chose it for the arguments' types.
 Value VM::numeric(uint8_t which, const Value* args) {
-    const Value a = args[0];
+    const Value a = args[0].isByte() ? Value::integer(args[0].as.i) : args[0];   // a byte is an int here
     switch (static_cast<NumericOp>(which)) {
         case NumericOp::ToInt: return a.isInt() ? a : Value::integer(floatToInt(*this, std::trunc(toNumber(a, "the number"))));
         case NumericOp::ToFloat: return Value::number(toNumber(a, "the number"));
@@ -945,13 +956,13 @@ Value VM::numeric(uint8_t which, const Value* args) {
             return Value::number(std::fabs(toNumber(a, "Math.abs() argument")));
         case NumericOp::MinInt:
         case NumericOp::MinFloat: {
-            const Value b = args[1];
+            const Value b = args[1].isByte() ? Value::integer(args[1].as.i) : args[1];
             const double x = toNumber(a, "Math.min() argument"), y = toNumber(b, "Math.min() argument");
             return y < x ? b : a;
         }
         case NumericOp::MaxInt:
         case NumericOp::MaxFloat: {
-            const Value b = args[1];
+            const Value b = args[1].isByte() ? Value::integer(args[1].as.i) : args[1];
             const double x = toNumber(a, "Math.max() argument"), y = toNumber(b, "Math.max() argument");
             return y > x ? b : a;
         }

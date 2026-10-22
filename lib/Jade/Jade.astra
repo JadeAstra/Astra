@@ -188,8 +188,8 @@ object Jade {
   // ---- Grids by name ----
 
   private val registry = {:}
-  fun register(id : string, grid : Grid) {
+  fun register(id : string, grid : GridPane) {
     registry[id] = grid
   }
-  fun registeredGrids() : List<Grid> => registry.values.toList()
+  fun registeredGrids() : List<GridPane> => registry.values.toList()
 }

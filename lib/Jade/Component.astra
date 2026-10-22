@@ -16,14 +16,17 @@ class Component {
   var tooltip : string? = null
   var background : Color? = null
   var foreground : Color? = null
-  var minSizeOverride : Dimension? = null
-  var prefSizeOverride : Dimension? = null
-  var maxSizeOverride : Dimension? = null
+  var minSizeOverride : Size? = null
+  var prefSizeOverride : Size? = null
+  var maxSizeOverride : Size? = null
   // Where it has been placed, in the canvas of what it is in.
-  var bounds = Rectangle(0, 0, 0, 0)
+  var bounds = Rect(0, 0, 0, 0)
+  // Its width and height there (D152).
+  val size : Size
+    get() => bounds.size
 
   // What the content last said of its size, kept inside the component (M6.6 part 7).
-  private var sizesCache = Sizes(Dimension(0, 0), Dimension(0, 0), Dimension(0, 0))
+  private var sizesCache = Sizes(Size(0, 0), Size(0, 0), Size(0, 0))
   private var sizesValid = false
   private var sizesGen = -1
 
@@ -45,7 +48,7 @@ class Component {
 
   fun init(content : Content) {
     this.content = content
-    if (content is OwnedContent) { content.owner = this }   // so that it can say it has changed
+    content.owner = this   // so that it can say it has changed, and paint in its style
     attachChildren()
   }
 
@@ -62,11 +65,15 @@ class Component {
   internal fun invalidateSizes() {
     sizesValid = false
   }
-  fun minSize() : Dimension => minSizeOverride ?: sizes().min
-  fun prefSize() : Dimension => prefSizeOverride ?: sizes().pref
-  fun maxSize() : Dimension => maxSizeOverride ?: sizes().max
+  fun minSize() : Size => minSizeOverride ?: sizes().min
+  fun prefSize() : Size => prefSizeOverride ?: sizes().pref
+  fun maxSize() : Size => maxSizeOverride ?: sizes().max
 
   // ---- Style ----
+
+  // The style it last painted in, worked out from what it was handed and its own (D132): what
+  // its content paints in.
+  var paintStyle = Style(null, null, true)
 
   // The style this component gives its content by itself, and within one handed down:
   // what it sets wins, what it leaves is the one handed down, and being disabled is passed on.
@@ -125,10 +132,11 @@ class Component {
 
   private fun cacheable() : bool => overlayDescendants == 0
 
-  // Paints the component on a canvas of its own size. On a canvas that really draws, a
-  // picture of the content is kept and drawn from then on until the component is
-  // invalidated, changes size, or is handed another style.
-  fun paintInto(canvas : Canvas) {
+  // Paints the component on a canvas of its own size, in the style `given` (its own if none
+  // is) as it changes it. On a canvas of the graphics card a picture of the content is kept and
+  // drawn from then on until the component is invalidated, changes size, or is handed another
+  // style.
+  fun paintInto(canvas : Canvas, given : Style? = null) {
     val bg = background
     if (bg != null) {
       canvas.color = bg
@@ -136,12 +144,11 @@ class Component {
     }
     val w = canvas.width
     val h = canvas.height
-    val st = styleIn(canvas.style)
+    val st = styleIn(given ?: style())
+    paintStyle = st
     if (!(canvas is NativeCanvas) or !cacheable() or w <= 0 or h <= 0) {
-      inStyle(canvas, st) { c ->
-        content.paint(c)
-        if (content is OverlayContent) { content.paintOverlay(c) }   // caret and selection, live
-      }
+      content.paint(canvas)
+      if (content is OverlayContent) { content.paintOverlay(canvas) }   // caret and selection, live
       return
     }
     val sx = canvas.deviceScaleX
@@ -151,10 +158,8 @@ class Component {
     if (pw * ph > maxCachePixels) {
       cache = null                       // one kept from when it was smaller
       cacheDirty = true
-      inStyle(canvas, st) { c ->
-        content.paint(c)
-        if (content is OverlayContent) { content.paintOverlay(c) }
-      }
+      content.paint(canvas)
+      if (content is OverlayContent) { content.paintOverlay(canvas) }
       return
     }
     val gen = Jade.renderGeneration
@@ -163,7 +168,7 @@ class Component {
       val old = cache
       val kept = old != null and old.deviceWidth == pw and old.deviceHeight == ph ? old : Surface(w, h, sx)
       cache = kept
-      val into = kept.canvas().withStyle(st)
+      val into = kept.canvas()
       into.clearRect(0, 0, w, h)         // the picture is used again: wiped first
       content.paint(into)
       cacheW = w
@@ -174,22 +179,8 @@ class Component {
       cacheStyle = st
       cacheDirty = false
     }
-    canvas.drawImage(cache!!, 0, 0)        // pixel for pixel: it was painted at the canvas's own scale
-    if (content is OverlayContent) {     // never kept
-      inStyle(canvas, st) { c -> content.paintOverlay(c) }
-    }
-  }
-
-  // Draws on `canvas` in the style `st`: on the canvas itself when it already has that
-  // style, else on one over the same pixels that has. However the content is painted, kept
-  // or live, and its overlay too, it sees its own style and not its parent's.
-  private fun inStyle(canvas : Canvas, st : Style, draw : (Canvas) -> unit) {
-    val c = st == canvas.style ? canvas : canvas.sub(0, 0, canvas.width, canvas.height, st)
-    try {
-      draw(c)
-    } finally {
-      if (c !== canvas) { c.dispose() }
-    }
+    canvas.draw(cache!!, 0, 0)        // pixel for pixel: it was painted at the canvas's own scale
+    if (content is OverlayContent) { content.paintOverlay(canvas) }   // never kept
   }
 
   // ---- Setting it up, one call after another ----
@@ -210,15 +201,15 @@ class Component {
     this.foreground = color
     return this
   }
-  fun preferredSize(size : Dimension?) : Component {
+  fun preferredSize(size : Size?) : Component {
     prefSizeOverride = size
     return this
   }
-  fun minimumSize(size : Dimension?) : Component {
+  fun minimumSize(size : Size?) : Component {
     minSizeOverride = size
     return this
   }
-  fun maximumSize(size : Dimension?) : Component {
+  fun maximumSize(size : Size?) : Component {
     maxSizeOverride = size
     return this
   }
@@ -227,68 +218,67 @@ class Component {
 
   // Gives the component a size and has its content place whatever is inside it.
   fun layout(width : int, height : int) {
-    bounds = Rectangle(0, 0, width, height)
+    bounds = Rect(0, 0, width, height)
     val c = content
-    if (c is Grid) { c.layout(width, height) }
+    if (c is GridPane) { c.layout(width, height) }
   }
 
   // The components its content shows, and all the ones it holds (which for some containers
   // is more: the tabs that are not in front).
   fun childComponents() : List<Component> {
     val c = content
-    if (c is Grid) { return c.cells.map { it.component } }
+    if (c is GridPane) { return c.cells.map { it.component } }
     return []
   }
   fun structuralChildren() : List<Component> => childComponents()
 
   // ---- Pictures of it ----
 
-  // Lays the component out at a size and paints it into a new picture.
-  fun renderFrame(width : int, height : int) : BufferedImage {
-    val image = BufferedImage(width, height, BufferedImage.typeIntArgb)
+  // Lays the component out at a size and paints it into a new picture, drawn on the graphics
+  // card as a window is.
+  fun renderFrame(width : int, height : int) : Image {
+    val drawn = Surface(Math.max(width, 1), Math.max(height, 1))
     layout(width, height)
-    paintInto(image.canvas().withStyle(style()))
-    return image
+    paintInto(drawn.canvas())
+    return drawn.toImage()
   }
 
   // The same with nothing kept from before, so that it shows the component as it now is.
   // With a scale the picture has that many pixels to the unit.
-  fun renderToImage(width : int, height : int, scaleX : float? = null, scaleY : float? = null) : BufferedImage {
+  fun renderToImage(width : int, height : int, scaleX : float? = null, scaleY : float? = null) : Image {
     Jade.invalidateRenderCaches()
     if (scaleX == null) { return renderFrame(width, height) }
-    val pw = Math.max(1, Math.round(width * scaleX).toInt())
-    val ph = Math.max(1, Math.round(height * (scaleY ?: scaleX)).toInt())
-    val image = BufferedImage(pw, ph, BufferedImage.typeIntArgb)
+    val drawn = Surface(Math.max(width, 1), Math.max(height, 1), scaleX)
     val before = Jade.layoutScale
     Jade.layoutScale = scaleX              // measured for the screen the picture stands for
     try {
       layout(width, height)
-      paintInto(image.canvasAt(width, height, scaleX).withStyle(style()))
+      paintInto(drawn.canvas())
     } finally {
       Jade.layoutScale = before
     }
-    return image
+    return drawn.toImage()
   }
 
   // Paints it into a picture that is used again frame after frame. The picture is wiped
-  // first, or only `clip` (a Rectangle) is, and then only that part is painted.
-  fun renderInto(target : BufferedImage, width : int, height : int, scaleX : float, scaleY : float, doLayout : bool = true, clip : Rectangle? = null) {
+  // first, or only `clip` (a Rect) is, and then only that part is painted.
+  fun renderInto(target : Surface, width : int, height : int, scaleX : float, scaleY : float, doLayout : bool = true, clip : Rect? = null) {
     renderOnto(target.canvasAt(width, height, scaleX), width, height, doLayout, clip)
   }
 
   // The same on a canvas: a window's, say.
-  fun renderOnto(canvas : NativeCanvas, width : int, height : int, doLayout : bool = true, clip : Rectangle? = null) {
+  fun renderOnto(canvas : NativeCanvas, width : int, height : int, doLayout : bool = true, clip : Rect? = null) {
     val onto = clip == null ? canvas : canvas.clipped(clip.x, clip.y, clip.width, clip.height)
     if (clip == null) { onto.clearRect(0, 0, width, height) } else { onto.clearRect(clip.x, clip.y, clip.width, clip.height) }
     if (doLayout) { layout(width, height) }
-    paintInto(onto.withStyle(style()))
+    paintInto(onto)
   }
 
   // What it would draw, as a list of DrawOp, with no window and no picture.
   fun record(width : int, height : int) : List<DrawOp> {
     val ops = []
     layout(width, height)
-    paintInto(RecordingCanvas(width, height, style(), ops))
+    paintInto(RecordingCanvas(width, height, ops))
     return ops
   }
 
@@ -298,7 +288,7 @@ class Component {
   // null if the point is the component's own.
   private fun positionalChild(px : int, py : int) : PositionalChild? {
     val c = content
-    if (c is Grid) {
+    if (c is GridPane) {
       val hit = c.childAt(px, py)
       if (hit != null) { return PositionalChild(hit, hit.bounds.x, hit.bounds.y) }
     }
@@ -480,8 +470,8 @@ fun button(text : string, onClick : () -> unit = {}) : Component => Component(Bu
 //     hgap = 8
 //     row { cell(label("Name:")); cell(button("OK") { save() }) }
 //   }
-fun grid(id : string? = null, build : Grid.() -> unit) : Component {
-  val g = Grid()
+fun grid(id : string? = null, build : GridPane.() -> unit) : Component {
+  val g = GridPane()
   if (id != null) { g.viewId = id }
   g.apply(build)
   val made = Component(g)

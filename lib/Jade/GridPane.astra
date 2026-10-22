@@ -10,7 +10,7 @@
 //     row { cell(button("OK") { save() }, colSpan = 2, anchor = Anchor.east) }
 //   }
 
-class Grid : Content, OwnedContent {
+class GridPane : Content {
   override var owner : Component? = null
 
   // Room kept free around the cells, and between one column or row and the next.
@@ -60,7 +60,7 @@ class Grid : Content, OwnedContent {
     require(rowSpan >= 1 and colSpan >= 1) { "spans must be at least 1 (got $rowSpan x $colSpan)" }
     cellList.add(Cell(component, row, col, rowSpan, colSpan, fill, anchor, weightX, weightY))
     for (r in row..<row + rowSpan) {
-      for (c in col..<col + colSpan) { occupied.add(Grid.key(r, c)) }
+      for (c in col..<col + colSpan) { occupied.add(GridPane.key(r, c)) }
     }
     builderRow = Math.max(builderRow, row + 1)
     owner?.attachChildren()
@@ -74,7 +74,7 @@ class Grid : Content, OwnedContent {
       occupied.clear()
       for (cell in cellList) {
         for (r in cell.row..<cell.row + cell.rowSpan) {
-          for (k in cell.col..<cell.col + cell.colSpan) { occupied.add(Grid.key(r, k)) }
+          for (k in cell.col..<cell.col + cell.colSpan) { occupied.add(GridPane.key(r, k)) }
         }
       }
       owner?.attachChildren()
@@ -92,7 +92,7 @@ class Grid : Content, OwnedContent {
 
   // What the block of row { } runs on. Its fields are private, so that in the block `grid`
   // is still the function grid() and `row` the grid's own row { }.
-  class RowScope(private val grid : Grid, private val row : int) {
+  class RowScope(private val grid : GridPane, private val row : int) {
     private var col = 0
 
     // The next cell of the row. It goes in the first column that is free: one taken by a
@@ -105,7 +105,7 @@ class Grid : Content, OwnedContent {
     }
   }
 
-  fun isOccupied(row : int, col : int) : bool => occupied.contains(Grid.key(row, col))
+  fun isOccupied(row : int, col : int) : bool => occupied.contains(GridPane.key(row, col))
 
   // A layout written for the grid outside the program takes the place of the one built
   // here. (Those files are read from a later milestone on; until then there is none.)
@@ -115,11 +115,11 @@ class Grid : Content, OwnedContent {
 
   override fun sizes() : Sizes {
     val e = effective()
-    val nc = Grid.numCols(e.cells)
-    val nr = Grid.numRows(e.cells)
+    val nc = GridPane.numCols(e.cells)
+    val nr = GridPane.numRows(e.cells)
     if (nc == 0 or nr == 0) {
-      val edge = Dimension(e.insets.left + e.insets.right, e.insets.top + e.insets.bottom)
-      return Sizes(edge, edge, Dimension(int.maxValue, int.maxValue))
+      val edge = Size(e.insets.left + e.insets.right, e.insets.top + e.insets.bottom)
+      return Sizes(edge, edge, Size(int.maxValue, int.maxValue))
     }
     val t = tracks(e.cells, e.hgap, e.vgap, nc, nr)
     val edgeW = e.insets.left + e.insets.right
@@ -128,9 +128,9 @@ class Grid : Content, OwnedContent {
     val prefH = t.rowPref.sum() + e.vgap * (nr - 1) + edgeH
     val minW = t.colMin.sum() + e.hgap * (nc - 1) + edgeW
     val minH = t.rowMin.sum() + e.vgap * (nr - 1) + edgeH
-    val maxW = Grid.trackMaxSum(t.colMax, e.hgap, edgeW)
-    val maxH = Grid.trackMaxSum(t.rowMax, e.vgap, edgeH)
-    return Sizes(Dimension(minW, minH), Dimension(prefW, prefH), Dimension(maxW, maxH))
+    val maxW = GridPane.trackMaxSum(t.colMax, e.hgap, edgeW)
+    val maxH = GridPane.trackMaxSum(t.rowMax, e.vgap, edgeH)
+    return Sizes(Size(minW, minH), Size(prefW, prefH), Size(maxW, maxH))
   }
 
   override fun paint(canvas : Canvas) {
@@ -140,7 +140,7 @@ class Grid : Content, OwnedContent {
       if (!comp.visible) { continue }
       val b = comp.bounds
       if (b.width <= 0 or b.height <= 0) { continue }
-      val cg = canvas.sub(b.x, b.y, b.width, b.height, comp.style())
+      val cg = canvas.sub(b.x, b.y, b.width, b.height)
       try {
         comp.paintInto(cg)
       } finally {
@@ -152,18 +152,18 @@ class Grid : Content, OwnedContent {
   // Places every cell's component in a grid of this size.
   fun layout(width : int, height : int) {
     val e = effective()
-    val nc = Grid.numCols(e.cells)
-    val nr = Grid.numRows(e.cells)
+    val nc = GridPane.numCols(e.cells)
+    val nr = GridPane.numRows(e.cells)
     if (nc == 0 or nr == 0) { return }
     val t = tracks(e.cells, e.hgap, e.vgap, nc, nr)
     val availW = width - e.insets.left - e.insets.right - e.hgap * (nc - 1)
     val availH = height - e.insets.top - e.insets.bottom - e.vgap * (nr - 1)
-    val colSize = Grid.resolveSizes(t.colPref, t.colMin, t.colW, availW)
-    val rowSize = Grid.resolveSizes(t.rowPref, t.rowMin, t.rowWt, availH)
-    val colPos = Grid.positions(colSize, e.insets.left, e.hgap)
-    val rowPos = Grid.positions(rowSize, e.insets.top, e.vgap)
+    val colSize = GridPane.resolveSizes(t.colPref, t.colMin, t.colW, availW)
+    val rowSize = GridPane.resolveSizes(t.rowPref, t.rowMin, t.rowWt, availH)
+    val colPos = GridPane.positions(colSize, e.insets.left, e.hgap)
+    val rowPos = GridPane.positions(rowSize, e.insets.top, e.vgap)
     for (cell in e.cells) {
-      place(cell, colPos[cell.col], rowPos[cell.row], Grid.spanSize(colSize, cell.col, cell.colSpan, e.hgap), Grid.spanSize(rowSize, cell.row, cell.rowSpan, e.vgap))
+      place(cell, colPos[cell.col], rowPos[cell.row], GridPane.spanSize(colSize, cell.col, cell.colSpan, e.hgap), GridPane.spanSize(rowSize, cell.row, cell.rowSpan, e.vgap))
     }
   }
 
@@ -203,14 +203,14 @@ class Grid : Content, OwnedContent {
       val p = cell.component.prefSize()
       val m = cell.component.minSize()
       if (cell.colSpan > 1) {
-        Grid.distributeDeficit(t.colPref, cell.col, cell.colSpan, hgap, p.width, t.colW)
-        Grid.distributeDeficit(t.colMin, cell.col, cell.colSpan, hgap, m.width, t.colW)
-        Grid.spreadWeight(t.colW, cell.col, cell.colSpan, cell.weightX)
+        GridPane.distributeDeficit(t.colPref, cell.col, cell.colSpan, hgap, p.width, t.colW)
+        GridPane.distributeDeficit(t.colMin, cell.col, cell.colSpan, hgap, m.width, t.colW)
+        GridPane.spreadWeight(t.colW, cell.col, cell.colSpan, cell.weightX)
       }
       if (cell.rowSpan > 1) {
-        Grid.distributeDeficit(t.rowPref, cell.row, cell.rowSpan, vgap, p.height, t.rowWt)
-        Grid.distributeDeficit(t.rowMin, cell.row, cell.rowSpan, vgap, m.height, t.rowWt)
-        Grid.spreadWeight(t.rowWt, cell.row, cell.rowSpan, cell.weightY)
+        GridPane.distributeDeficit(t.rowPref, cell.row, cell.rowSpan, vgap, p.height, t.rowWt)
+        GridPane.distributeDeficit(t.rowMin, cell.row, cell.rowSpan, vgap, m.height, t.rowWt)
+        GridPane.spreadWeight(t.rowWt, cell.row, cell.rowSpan, cell.weightY)
       }
     }
     return t
@@ -227,7 +227,7 @@ class Grid : Content, OwnedContent {
     val w = wide ? Math.max(Math.min(cw, max.width), Math.min(min.width, cw)) : Math.min(pref.width, cw)
     val h = high ? Math.max(Math.min(ch, max.height), Math.min(min.height, ch)) : Math.min(pref.height, ch)
     comp.layout(w, h)
-    comp.bounds = Rectangle(cx + Grid.anchorOffsetX(cell.anchor, cw - w), cy + Grid.anchorOffsetY(cell.anchor, ch - h), w, h)
+    comp.bounds = Rect(cx + GridPane.anchorOffsetX(cell.anchor, cw - w), cy + GridPane.anchorOffsetY(cell.anchor, ch - h), w, h)
   }
 
   class Tracks(nc : int, nr : int) {
@@ -271,7 +271,7 @@ class Grid : Content, OwnedContent {
     fun distributeDeficit(arr : open List<int>, start : int, span : int, gap : int, need : int, weight : open List<float>) {
       var cur = gap * (span - 1)
       for (i in start..<start + span) { cur += arr[i] }
-      if (need > cur) { Grid.distribute(arr, start, span, need - cur, weight) }
+      if (need > cur) { GridPane.distribute(arr, start, span, need - cur, weight) }
     }
     // Shares an amount among some tracks: by weight if any has one, evenly if none has.
     fun distribute(arr : open List<int>, start : int, span : int, amount : int, weight : open List<float>) {
@@ -364,4 +364,4 @@ class Grid : Content, OwnedContent {
 }
 
 // The cells a grid is laid out by: its own, or a layout written for it outside the program.
-internal class ResolvedLayout(val cells : List<Grid.Cell>, val insets : Insets, val hgap : int, val vgap : int)
+internal class ResolvedLayout(val cells : List<GridPane.Cell>, val insets : Insets, val hgap : int, val vgap : int)

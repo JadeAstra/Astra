@@ -352,3 +352,62 @@ says to write `100.milliseconds`; a `Channel<T>()` without a capacity says to ch
 to write, and so are Java's members of a file, a stream, a process and a socket that Astra
 names otherwise (`parentFile`, `absolutePath`, `listFiles`, `mkdirs`, `renameTo`, `toFile`,
 `inputStream`, `destroy`, `soTimeout` and the rest) and `toByteArray`.
+
+## Graphics and Jade (M6.6 part 8, group 9)
+
+### What to write instead
+
+| Kotlin and JadeUI | Astra | |
+| --- | --- | --- |
+| `Dimension(w, h)` | `Size(w, h)` | a value type (D102) |
+| `Rectangle(x, y, w, h)` | `Rect(x, y, w, h)` | a value type; `Rectangle(w, h)` is `Rect(0, 0, w, h)` (D104) |
+| `d.width = w` on a shared `Dimension` | the same, on the place that holds it | a value is copied where Java's object was shared |
+| `color.red` (an int), `color.getRed()` | `color.red` | a byte, which goes where an int does |
+| `color.rgb`, `getRGB()` | `color.argb` | (D99) |
+| `Color(r, g, b)` with a part over 255 | the same, in range | an `IllegalArgumentException`, as Java's |
+| `Font("Arial", Font.BOLD, 14)` | `Font("Arial", 14, bold = true)` | the style said by name (D144) |
+| `font.deriveFont(Font.ITALIC, 18f)` | `font.copy(size = 18, italic = true)` | |
+| `FontMetrics`, `fm.stringWidth(s)`, `fm.height` | `font.width(s)`, `font.lineHeight` | the font measures itself (D101) |
+| `fm.charWidth(c)` | `font.width(c)` | |
+| `FontMetrics(font, scale)`, `deviceWidth(s)` | `font.width(s, scale)` | in a dense screen's pixels |
+| `BufferedImage(w, h, TYPE_INT_ARGB)` | `Image(w, h)` | four bytes a pixel, always (D106, D122) |
+| `image.getRGB(x, y)` | `image[x, y]`, `image[x, y].argb` | a `Color` (D141) |
+| `image.setRGB(x, y, argb)` | `image[x, y] = Color(argb, hasAlpha = true)` | |
+| `image.getSubimage(x, y, w, h)` | `image.crop(x, y, w, h)` | a new image, not a view |
+| `image.createGraphics()` | `image.canvas()` | drawn in memory (D123) |
+| `ImageIO.read(file)`, `ImageIO.write(img, "png", file)` | `Image.load(path)`, `image.save(path)` | PNG |
+| `g.drawImage(img, x, y, null)` | `canvas.draw(img, x, y)` | and `draw(img, x, y, w, h, alpha = ...)` |
+| `g.fill(shape)`, `g.draw(shape)` | `canvas.fill(Rect(...))`, `canvas.draw(Oval(...))` | `Rect`, `Oval`, `Line` |
+| JadeUI `canvas.style`, `sub(x, y, w, h, style)` | `owner!!.paintStyle`, `sub(x, y, w, h)` | the style is on the component (D132) |
+| JadeUI `OwnedContent` | `Content`, which has `var owner` | every content has one |
+| JadeUI `Grid` (the layout) | `GridPane` | `grid { }` is unchanged |
+| `surface.toPicture()`, `Picture` | `surface.toImage()`, `Image` | one in-memory picture type (D122) |
+| a 2D array of cells | `Grid<T>(w, h)`, `grid[x, y]` | packed by `T` (D155) |
+| `x = x.trim()` | `x .= trim()` | (D156) |
+| several named arguments passed along together | `params(...)` and `...bundle` | (D143) |
+| Kotlin's secondary `constructor(...) : this(...)` | the same | a class or value type with a header |
+
+### What compiles but means something else
+
+- **A colour's parts are bytes**, 0 to 255, and go where an int does: `color.red + color.green`
+  is an int.
+- **The geometry is copied, not shared**: `val r = comp.bounds; r.translate(1, 1)` changes `r`,
+  not the component, as with every value type.
+- **An `Image` is drawn on in memory**, on the processor, and only copied to the graphics card
+  when it is drawn there (the part that changed). A `Surface` is the picture for heavy drawing
+  off the screen.
+- **`Font` has no scale**: a canvas draws it at its own, and `font.width(text)` is at scale 1.
+  On a dense screen, `font.width(text, scale)` gives the screen's pixels.
+- **`image.pixels` may only be read**; `editPixels { pixels -> }` changes them.
+- **`Grid.bytes` is a copy** of the cells' storage.
+- **A grid's rows and columns are added by making a new grid**: `g.appendRows(2)` alone does
+  nothing to `g` (a compile error); `g .= appendRows(2)`.
+
+### What the compiler says
+
+`Dimension`, `Rectangle`, `BufferedImage`, `Picture`, `FontMetrics`, `Bitmap`, `Graphics` and
+`Graphics2D` are each an error naming what to write, and so are Java's members of a colour, a
+font, a canvas, an image, a size, a rectangle and a point that Astra names otherwise (`getRed`,
+`rgb`, `deriveFont`, `Font.bold`, `stringWidth`, `textFont`, `drawImage`, `getFontMetrics`,
+`getRGB`, `setRGB`, `getSubimage`, `setSize`, `getBounds` and the rest), Java's
+`Font(name, style, size)`, and a grid's new rows left unused.

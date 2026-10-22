@@ -1,0 +1,23 @@
+// Bundles of named arguments (D143): params(...) holds some, ...bundle passes them, each going
+// to the parameter of its name, checked at the call like arguments written there.
+
+fun label(text : string, size : int = 12, bold : bool = false, color : string = "black") : string =>
+  "$text[$size${bold ? " bold" : ""} $color]"
+
+val heading = params(size = 18, bold = true)
+print(label("Title", ...heading))   // expect: Title[18 bold black]
+// A name written at the call wins over the bundle's.
+print(label("Smaller", ...heading, size = 14), label("Red", color = "red", ...heading))   // expect: Smaller[14 bold black] Red[18 bold red]
+// copy changes some of its names; + adds another bundle's.
+val quiet = heading.copy(bold = false)
+val warning = heading + params(color = "orange")
+print(label("a", ...quiet), label("b", ...warning), label("c", ...quiet, ...params(color = "grey")))   // expect: a[18 black] b[18 bold orange] c[18 grey]
+// The same bundle fits any function that has its names, the standard library's too.
+val type = params(size = 20, bold = true)
+val font = Font("Segoe UI", ...type)
+print(font, label("x", ...type))   // expect: Font(Segoe UI, 20, bold) x[20 bold black]
+// Passed on through a parameter of the bundle's type, and printed as what it holds.
+fun twice(text : string, style : params(size : int, bold : bool)) : string => label(text, ...style) + label(text.upper(), ...style)
+print(twice("ok", heading), heading)   // expect: ok[18 bold black]OK[18 bold black] {"size": 18, "bold": true}
+// An empty one passes nothing.
+print(label("plain", ...params()))   // expect: plain[12 black]

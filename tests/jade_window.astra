@@ -11,27 +11,27 @@ val unknown = { value -> value }
 
 // -- A window: its size is of what can be drawn on, in layout units --
 val window = NativeWindow("First", 320, 200, scale = 1)
-print(window, window.isOpen, window.isVisible, window.title, window.width, window.height, window.scale, window.size)   // expect: NativeWindow(First) true false First 320 200 1.0 Dimension(320 x 200)
+print(window, window.isOpen, window.isVisible, window.title, window.width, window.height, window.scale, window.size)   // expect: NativeWindow(First) true false First 320 200 1.0 Size(320 x 200)
 window.title = "Renamed"
 window.setTitle("Renamed twice")
 print(window.title, window.resizable, window.cursor, window.cursorMode)   // expect: Renamed twice true default normal
 
 // -- Its picture: drawn on, kept, and read back, with nothing on the screen --
 val canvas = window.canvas()
-print(canvas.width, canvas.height, canvas.deviceScaleX, canvas.visibleBounds)   // expect: 320 200 1.0 Rectangle(0, 0, 320 x 200)
+print(canvas.width, canvas.height, canvas.deviceScaleX, canvas.visibleBounds)   // expect: 320 200 1.0 Rect(0, 0, 320 x 200)
 canvas.color = Color.white
 canvas.fillRect(0, 0, 320, 200)
 canvas.color = Color.red
 canvas.fillRect(10, 10, 50, 40)
 canvas.color = Color.black
-canvas.font = Font("Segoe UI", Font.bold, 20)
+canvas.font = Font("Segoe UI", 20, bold = true)
 canvas.drawString("a window", 80, 40)
 window.present()                       // not showing: nothing to show it on, and no harm
 val shot = window.snapshot()
-print(shot, shot.get(10, 10) == 0xFFFF0000, shot.get(59, 49) == 0xFFFF0000, shot.get(60, 49) == 0xFFFFFFFF, shot.inkBox(0xFFFFFFFF)!![0], shot.inkBox(0xFFFFFFFF)!![2] > 100)   // expect: Picture(320 x 200) true true true 10 true
+print(shot, shot.get(10, 10).argb == 0xFFFF0000, shot.get(59, 49).argb == 0xFFFF0000, shot.get(60, 49).argb == 0xFFFFFFFF, shot.inkBox(Color.white)!!.x, shot.inkBox(Color.white)!!.width > 100)   // expect: Image(320 x 200) true true true 10 true
 // The picture is kept: another canvas draws over what is there.
 window.canvas().fillRect(0, 0, 2, 2)
-print(window.snapshot().get(1, 1) == 0xFF000000, window.snapshot().get(10, 10) == 0xFFFF0000)   // expect: true true
+print(window.snapshot().get(1, 1).argb == 0xFF000000, window.snapshot().get(10, 10).argb == 0xFFFF0000)   // expect: true true
 
 // -- Events: what the system would send, sent here, arrives as the toolkit's types --
 val seen = []
@@ -114,10 +114,10 @@ kc.color = Color.red
 kc.fillRect(0, 0, 260, 140)
 kept.setSize(320, 200)                     // nobody draws at the new size
 val grown = kept.snapshot()
-print(grown, grown.get(259, 139) == 0xFFFF0000, grown.get(0, 0) == 0xFFFF0000, grown.get(260, 139), grown.get(259, 140), grown.inkBox())   // expect: Picture(320 x 200) true true 0 0 [0, 0, 260, 140]
+print(grown, grown.get(259, 139).argb == 0xFFFF0000, grown.get(0, 0).argb == 0xFFFF0000, grown.get(260, 139), grown.get(259, 140), grown.inkBox())   // expect: Image(320 x 200) true true Color(0, 0, 0, 0) Color(0, 0, 0, 0) Rect(0, 0, 260 x 140)
 kept.setSize(220, 100)
 val shrunk = kept.snapshot()
-print(shrunk, shrunk.get(219, 99) == 0xFFFF0000, shrunk.inkBox())   // expect: Picture(220 x 100) true [0, 0, 220, 100]
+print(shrunk, shrunk.get(219, 99).argb == 0xFFFF0000, shrunk.inkBox())   // expect: Image(220 x 100) true Rect(0, 0, 220 x 100)
 kept.close()
 
 // -- And the program is told of the new size from inside the call, to draw it again --
@@ -129,7 +129,7 @@ window.onResize = { width, height ->
   c.fillRect(0, 0, width, height)
 }
 window.setSize(400, 260)
-print(sizes, window.width, window.height, window.snapshot(), window.snapshot().get(399, 259) == 0xFF0000FF)   // expect: [[400, 260]] 400 260 Picture(400 x 260) true
+print(sizes, window.width, window.height, window.snapshot(), window.snapshot().get(399, 259).argb == 0xFF0000FF)   // expect: [[400, 260]] 400 260 Image(400 x 260) true
 window.setLimits(100, 80, 600, 500)
 window.setPosition(40, 50)
 print(window.position, window.resizable)   // expect: Point(40, 50) true
@@ -138,17 +138,17 @@ window.cursor = CursorKind.hand
 window.cursor = CursorKind.text
 window.cursorMode = CursorMode.hidden
 window.cursorMode = CursorMode.normal
-val icon = Picture(16, 16, 0xFF2F81F7)
+val icon = Image(16, 16, Color(0xFF2F81F7, true))
 window.setIcon(icon)
 print(window.resizable, window.cursor, window.cursorMode, window.isFocused)   // expect: false text normal false
 
 // -- A window on a dense screen: more pixels, the same units --
 val dense = NativeWindow("Dense", 200, 100, scale = 2)
-print(dense.width, dense.height, dense.scale, dense.deviceWidth, dense.deviceHeight, dense.snapshot())   // expect: 200 100 2.0 400 200 Picture(400 x 200)
+print(dense.width, dense.height, dense.scale, dense.deviceWidth, dense.deviceHeight, dense.snapshot())   // expect: 200 100 2.0 400 200 Image(400 x 200)
 val dc = dense.canvas()
 dc.color = Color.red
 dc.fillRect(10, 10, 20, 20)
-print(dense.snapshot().inkBox(), dc.deviceScaleX)   // expect: [20, 20, 40, 40] 2.0
+print(dense.snapshot().inkBox(), dc.deviceScaleX)   // expect: Rect(20, 20, 40 x 40) 2.0
 // Where the pointer is comes in units, whatever the screen has to the unit.
 val places = []
 dense.onInput = { event -> if (event is RawInput.PointerDown) { places.add([event.x, event.y]) } }
@@ -163,7 +163,7 @@ print(child.isOpen, child.width, child.height, child.resizable)   // expect: tru
 val cc = child.canvas()
 cc.color = Color.green
 cc.fillRect(0, 0, 120, 90)
-print(child.snapshot().get(5, 5) == 0xFF00FF00, window.snapshot().get(5, 5) == 0xFF0000FF, dense.snapshot().get(30, 30) == 0xFFFF0000)   // expect: true true true
+print(child.snapshot().get(5, 5).argb == 0xFF00FF00, window.snapshot().get(5, 5).argb == 0xFF0000FF, dense.snapshot().get(30, 30).argb == 0xFFFF0000)   // expect: true true true
 
 // -- Closing: for good, and once is enough --
 child.close()

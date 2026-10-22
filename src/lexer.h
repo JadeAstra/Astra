@@ -17,6 +17,8 @@ enum class TokenType {
     // Operators
     Plus, Minus, Star, Slash, Percent,
     PlusEq, MinusEq, StarEq, SlashEq, PercentEq,
+    DotEq,  // `target .= member`: target = target.member, the path worked out once (D156)
+    Ellipsis,  // `...style`: a bundle's arguments passed (D143)
     Bang, BangEq, Eq, EqEq, Lt, LtEq, Gt, GtEq,
     EqEqEq, BangEqEq,   // === !==
     QuestionDot, Elvis, BangBang,   // ?. ?: !!

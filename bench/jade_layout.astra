@@ -5,10 +5,10 @@
 // drawn.) The same program runs on M6.5, where they were objects. The time is the layouts'.
 import Jade.*
 
-fun leaf(i : int) => label("x").preferredSize(Dimension(20 + i % 7, 10 + i % 3)).minimumSize(Dimension(10, 8))
+fun leaf(i : int) => label("x").preferredSize(Size(20 + i % 7, 10 + i % 3)).minimumSize(Size(10, 8))
 
-fun tree(depth : int, seed : int) : Grid {
-  val g = Grid()
+fun tree(depth : int, seed : int) : GridPane {
+  val g = GridPane()
   for (k in 0 ..< 4) {
     val child = depth == 0 ? leaf(seed * 4 + k) : Component(tree(depth - 1, seed * 4 + k))
     g.add(child, row = k / 2, col = k % 2)

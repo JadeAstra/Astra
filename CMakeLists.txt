@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
 # The version goes up with each milestone of docs/gui-plan.md: M1 is 0.1.0, M2 is 0.2.0,
-# M3.5 is 0.3.5, M4 is 0.4.0, M5 is 0.5.0, M6 is 0.6.0, M6.5 is 0.6.5.
-project(Astra VERSION 0.6.5 LANGUAGES CXX)
+# M3.5 is 0.3.5, M4 is 0.4.0, M5 is 0.5.0, M6 is 0.6.0, M6.5 is 0.6.5, M6.6 is 0.6.6.
+project(Astra VERSION 0.6.6 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -41,6 +41,7 @@ add_library(astra_core OBJECT
   src/threads.cpp
   src/io.cpp
   src/charset.cpp
+  src/grid.cpp
   src/worker.cpp
   src/parallel.cpp
   src/run.cpp
