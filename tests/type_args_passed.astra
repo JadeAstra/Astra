@@ -1,0 +1,54 @@
+// Type parameters passed on to another generic function (G3): the frame's own handed over
+// whole where they are exactly its own, and a type made of them kept where it was made last,
+// in each core's own table, so that a parallel section does not queue on a lock.
+
+fun <T> isA(x : any?) : bool => x is T
+fun <A, B> both(x : any, y : any) : bool => x is A and y is B
+
+// Passed on as they are, and in another order.
+fun <T> passOn(x : any) : bool => isA<T>(x)
+fun <A, B> sameOrder(x : any, y : any) : bool => both<A, B>(x, y)
+fun <A, B> swapped(x : any, y : any) : bool => both<B, A>(x, y)
+print(passOn<int>(1), passOn<string>(1), sameOrder<int, string>(1, "s"), swapped<int, string>(1, "s"), swapped<int, string>("s", 1))   // expect: true false true false true
+
+// Made of them: a list, a map, a nullable one; with the same names as the function called.
+val ints : List<int> = [1]
+val nested : List<List<int>> = [[1]]
+val counts : Map<string, int> = {"a": 1}
+fun <T> listOf(x : any) : bool => isA<List<T>>(x)
+fun <K, V> mapOf(x : any) : bool => isA<Map<K, V>>(x)
+fun <T> maybe(x : any?) : bool => isA<T?>(x)
+print(listOf<int>(ints), listOf<int>(nested), listOf<List<int>>(nested), listOf<string>(ints))   // expect: true false true false
+print(mapOf<string, int>(counts), mapOf<int, string>(counts), maybe<int>(null), maybe<int>(2), maybe<int>("s"))   // expect: true false true true false
+
+// The same place given other types in turn: each time its own.
+fun <T> many(items : List<any>) : List<bool> => items.map { isA<List<T>>(it) }
+print(many<int>([ints, nested, counts]), many<List<int>>([ints, nested, counts]))   // expect: [true, false, false] [false, true, false]
+
+// From a lambda, from a generic function declared inside (whose frame holds more), and from
+// an object made there.
+interface Holder<T> {
+  fun get() : T
+}
+fun <T> fromLambda(x : any) : bool {
+  val check = { y : any -> isA<T>(y) }
+  return check(x)
+}
+fun <T> fromInside(x : any) : string {
+  fun <U> inner(y : any) : string => "${isA<T>(x)} ${isA<U>(y)} ${both<T, U>(x, y)} ${both<U, T>(x, y)}"
+  return inner<string>("s")
+}
+fun <T> held(x : T) : Holder<T> {
+  val h = object : Holder<T> {
+    override fun get() : T => x
+  }
+  return h
+}
+print(fromLambda<int>(1), fromLambda<int>("s"), fromInside<int>(1), held(1) is Holder<int>, held("s") is Holder<int>)   // expect: true false true true true false true false
+
+// On every core of a parallel section, each with its own table.
+val mixed : List<any> = (0..<10000).map { it % 2 == 0 ? it : "s" }
+fun <T> counted(items : List<any>) : int => items.parallelStream().map { isA<T>(it) ? 1 : 0 }.toList().sum()
+fun <T> countedLists(items : List<any>) : int => items.parallelStream().map { isA<List<T>>(it) ? 1 : 0 }.toList().sum()
+val lists : List<any> = (0..<10000).map { it % 4 == 0 ? [it] : [[it]] }
+print(counted<int>(mixed), counted<string>(mixed), countedLists<int>(lists), countedLists<List<int>>(lists))   // expect: 5000 5000 2500 7500

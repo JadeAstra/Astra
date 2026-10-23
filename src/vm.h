@@ -977,6 +977,18 @@ private:
     // The type arguments WithTypes gave for the call that follows it, which takes them: the
     // frame it pushes, or the object it makes. Cleared by a call of C++, which has none.
     const ObjTypeInfo* pendingTypeArgs_ = nullptr;
+    // What MakeType made last at a place, from which types (G3): each VM's own, a core's in a
+    // parallel section, so read and written with no lock.
+    struct MadeTypeCache {
+        static constexpr int kMost = 3;
+        const uint8_t* site = nullptr;
+        uint64_t age = 0;  // the collections there had been: code freed since may be at the same place
+        const Obj* operands[kMost] = {};
+        ObjTypeInfo* made = nullptr;
+    };
+    static constexpr size_t kMadeTypeCaches = 64;
+    MadeTypeCache madeTypes_[kMadeTypeCaches];
+    uint64_t collections_ = 0;  // how many there have been: a MadeTypeCache is good for one age
 
     Value execute(const FunctionProto* proto);
     void run(int baseFrame);

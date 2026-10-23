@@ -226,6 +226,7 @@ const OpInfo kOps[] = {
     {"DUP_N", Operand::U8},
     {"BUNDLE_VALUES", Operand::U8},
     {"MERGE_BUNDLE", Operand::None},
+    {"FRAME_TYPES", Operand::None},
 };
 
 const char* const kTypeNames[] = {"", "int", "float", "Number", "string", "bool", "List", "Map", "Range", "Function", "Bytes", "Type", "",
@@ -939,6 +940,9 @@ static int analyzeStack(FunctionProto& f, const Program& program, bool partial) 
                 case Op::MergeBundle:
                     pops = 2;
                     pushes = 1;
+                    break;
+                case Op::FrameTypes:
+                    if ((f.typeArgs & (kTypeArgsOwn | kTypeArgsKept)) == 0) fail("type arguments out of reach");
                     break;
                 case Op::ClassMeta:
                     if (static_cast<size_t>(a) >= f.protos.size()) fail("nested function out of range");

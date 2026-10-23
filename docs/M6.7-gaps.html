@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>M6.7 open gaps</title>
+<style>
+:root {
+  --bg: #fbfaf7; --surface: #ffffff; --ink: #1d2422; --muted: #5d6763; --line: #dfe3e0;
+  --accent: #1f5fa8; --accent-soft: #e8f0fa; --decide: #a8551f; --decide-soft: #fbefe5;
+  --code-bg: #eef1ef;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #161a19; --surface: #1d2221; --ink: #e4e9e6; --muted: #9aa5a0; --line: #2e3533;
+    --accent: #7fb2ec; --accent-soft: #1e2a38; --decide: #e7a06b; --decide-soft: #3a2a1f;
+    --code-bg: #262c2a;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #161a19; --surface: #1d2221; --ink: #e4e9e6; --muted: #9aa5a0; --line: #2e3533;
+  --accent: #7fb2ec; --accent-soft: #1e2a38; --decide: #e7a06b; --decide-soft: #3a2a1f;
+  --code-bg: #262c2a;
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body {
+  margin: 0; background: var(--bg); color: var(--ink);
+  font: 16px/1.6 "Segoe UI", system-ui, -apple-system, sans-serif;
+}
+main { max-width: 880px; margin: 0 auto; padding: 40px 16px 80px; }
+h1 { font-size: 1.9rem; line-height: 1.25; margin: 0 0 8px; }
+.lede { color: var(--muted); margin: 0 0 28px; }
+h2 { font-size: 1.3rem; line-height: 1.3; margin: 32px 0 12px; }
+h3 { font-size: 1.05rem; margin: 0 0 8px; }
+p { margin: 0 0 12px; }
+ul { margin: 0 0 12px; padding-left: 22px; }
+li { margin: 4px 0; }
+a { color: var(--accent); }
+code {
+  font: 0.88em/1.4 Consolas, "Cascadia Mono", monospace; background: var(--code-bg);
+  padding: 1px 5px; border-radius: 4px;
+}
+nav {
+  background: var(--surface); border: 1px solid var(--line); border-radius: 10px;
+  padding: 16px 20px; margin: 0 0 8px;
+}
+nav h2 { font-size: 1rem; margin: 0 0 8px; color: var(--muted); }
+nav ul { list-style: none; padding: 0; margin: 0; }
+nav a { text-decoration: none; color: var(--ink); }
+nav a:hover { color: var(--accent); }
+.code { font-weight: 600; color: var(--accent); font-variant-numeric: tabular-nums; margin-right: 6px; }
+section.decision {
+  background: var(--surface); border: 1px solid var(--line); border-radius: 10px;
+  padding: 20px 24px 16px; margin: 0 0 18px;
+}
+.verdict {
+  display: flex; align-items: center; gap: 14px; background: var(--decide-soft);
+  border: 1px dashed var(--decide); border-radius: 6px; padding: 10px 14px; margin-top: 12px;
+}
+.label { font-size: 0.78rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
+.verdict .label { color: var(--decide); white-space: nowrap; }
+.verdict .blank { flex: 1; border-bottom: 1px solid var(--decide); height: 1.2em; opacity: 0.6; }
+.table { overflow-x: auto; margin: 4px 0 18px; }
+table { border-collapse: collapse; width: 100%; font-size: 0.93rem; }
+th, td { text-align: left; vertical-align: top; padding: 8px 10px; border-top: 1px solid var(--line); }
+th { color: var(--muted); font-weight: 600; border-top: none; border-bottom: 2px solid var(--line); }
+td.part { white-space: nowrap; color: var(--muted); }
+td.when { min-width: 9em; }
+.note { color: var(--muted); font-size: 0.93rem; }
+@media (max-width: 600px) {
+  main { padding-top: 24px; }
+  h1 { font-size: 1.5rem; }
+  section.decision { padding: 14px 14px 10px; }
+}
+</style>
+</head>
+<body>
+<main>
+<h1>M6.7: gaps to close</h1>
+<p class="lede">Gaps to be dealt with in M6.7, the faster VM, with what has been decided about them so far (G4's design). Gap numbers are kept from where the gap was found: these were found in M6.6 (<a href="M6.6-gaps.html">M6.6-gaps.html</a>) and placed in M6.7 there. The plan is in <a href="gui-plan.md">gui-plan.md</a>.</p>
+
+<h2 id="gaps">Gaps</h2>
+
+<div class="table"><table>
+<thead><tr><th>No.</th><th>Part</th><th>Gap</th><th>When</th></tr></thead>
+<tbody>
+<tr><td class="part" id="g4">G4</td><td class="part">2</td><td>A generic value type keeps no type arguments when the program runs: a <code>Two&lt;int, string&gt;</code> is any <code>Two</code> to <code>is</code> and <code>as</code>, and <code>Two&lt;int, string&gt;(1, "s") as Two&lt;string, string&gt;</code> passes. Decided with the user (2026-10-22), to be built with M6.7:
+<ul>
+<li><strong>The type arguments are kept where the class is already kept</strong>, at no cost in bytes: a small value&#39;s entry in the table of small classes becomes one for the class with its type arguments (<code>Id&lt;User&gt;</code>), a box&#39;s header names the same, and a value kept inline takes them from the list&#39;s or the field&#39;s declared type (or the object&#39;s own type arguments, for a field declared <code>Id&lt;T&gt;</code>).</li>
+<li><strong>A value stored in a container declared wider</strong> (a <code>Pair&lt;int, int&gt;</code> in a <code>List&lt;Pair&lt;Number, Number&gt;&gt;</code>) takes the container&#39;s type arguments: no boxing, and no list left unpacked because of it.</li>
+<li><strong>A phantom type parameter</strong>, one the contents cannot show (in no field, only in a function type, or only inside a collection that keeps no type), keeps its own: in a container declared wider than it (<code>List&lt;Id&lt;any&gt;&gt;</code>, a field <code>Id&lt;any&gt;</code>) each item or field has a hidden slot of 8 bytes holding its argument, the layout chosen from the container&#39;s declared type when it is made; elsewhere it costs nothing, the declared type saying it already (option B).</li>
+<li><strong><code>==</code> and <code>hashCode</code> ignore type arguments</strong>, as Kotlin&#39;s do: <code>Id&lt;User&gt;(7) == Id&lt;Order&gt;(7)</code>, and they are one key.</li>
+<li><strong><code>is</code> and <code>as</code> go by the recorded type arguments, refined by the contents where a recorded one is wider</strong>: a recorded argument that fits the one asked passes; a wider one passes if every field declared with that parameter fits it (<code>Pair(x, y)</code> with <code>x : any</code>, recorded <code>Pair&lt;any, any&gt;</code>, is a <code>Pair&lt;int, int&gt;</code> when both are ints); one that does not overlap fails. A cast gives a copy recorded with the narrower arguments; a value is copied and never shared, so the view cannot be undone behind it. <code>null</code> fits a nullable argument only. Reflection (<code>p#</code>) shows the recorded type.</li>
+<li>Making a value in generic code finds its class-with-arguments entry through a cache at each place, as G3&#39;s; a value sent to a worker has its type found again there, each worker having its own table of types.</li>
+</ul></td><td class="when">M6.7, with values in variables (D149)</td></tr>
+<tr><td class="part" id="g8">G8</td><td class="part">4</td><td>A variable changed through its place is given a box of its own at every change (<code>p.x = 1</code> in a loop makes a box each time), since another variable may hold the box it had: on 40 million calls, <code>one.move()</code> on a variable takes 8.4 s against 2.7 for an object.</td><td class="when">M6.7, values in variables (D149)</td></tr>
+<tr><td class="part" id="g9">G9</td><td class="part">4</td><td>A field read through a list item finds the item again each time (the list, its items, the item): on one core a mutating method on items is some 1.3 times slower than on objects (6.2 s against 4.8 in <code>bench/bounce_values.astra</code> with Clang; on 32 cores it is faster, 0.46 s against 0.78). Keeping where a list's items are beside the list, one load in place of three, was tried in part 6 and measured no faster.</td><td class="when">M6.7: the item's place held in a frame's slot for the whole method</td></tr>
+<tr><td class="part" id="g12">G12</td><td class="part">4</td><td>Calls, field access and the simulation slice are 4 to 6% slower than in part 3, the same instructions run (with Clang and with MSVC; <code>calls</code> 19% under MSVC, where placement alone moves it): the checks for references spread over the instructions, and what they do to how the compilers lay out the loop. Value types' benchmarks and making objects of classes got faster in part 4.</td><td class="when">The VM's loop rewritten for D160, M6.7</td></tr>
+<tr><td class="part" id="g13">G13</td><td class="part">5</td><td>A value of a value type larger than 8 bytes in a variable, an argument or a result is a box, so Jade's layout without kept sizes (<code>bench/layout_values.astra</code>) makes as many boxes as before: 470,042 in 200 passes.</td><td class="when">M6.7, values in variables (D149)</td></tr>
+<tr><td class="part" id="g14">G14</td><td class="part">5</td><td>Through a reference into an object, a field is read by finding which of the object's values the reference is in, and reading on through a value held in it (<code>node.sizes().pref.width</code>) looks each field up by name: Jade's layout with kept sizes takes 4 to 7% longer than in part 4 for it, though it makes 47 times fewer boxes.</td><td class="when">M6.7, with instructions that name a frame's slots</td></tr>
+<tr><td class="part" id="g17">G17</td><td class="part">6</td><td>A frame's slots keep a value's kind beside its payload, and arithmetic tests its operands' kinds, where the compiler knows them.</td><td class="when">M6.7 (D178)</td></tr>
+<tr><td class="part" id="g19">G19</td><td class="part">7</td><td>Jade's own layout (<code>bench/jade_layout.astra</code>) is 3 to 6% slower than on M6.5: the sizes pass between functions in variables and results, which keep a box until values in variables, and a widget not yet painted asks its content for its sizes again at each layout.</td><td class="when">M6.7, values in variables (D149)</td></tr>
+<tr><td class="part" id="g20">G20</td><td class="part">8.1</td><td>An object's field kept narrow (a byte, a char, a storage width) is read and written by the interpreter's general path, not by the quick one int, float and bool fields have, so it is slower to reach than an int field.</td><td class="when">If it shows in timings; M6.7's typed instructions</td></tr>
+<tr><td class="part" id="g58">G58</td><td class="part">8.9</td><td>A bundle is a Map when the program runs, and <code>...bundle</code> looks each name up at the call: a few lookups a call where D143 wanted none (8.9e).</td><td class="when">If it shows in timings; M6.7&#39;s typed instructions</td></tr>
+<tr><td class="part" id="g65">G65</td><td class="part">All</td><td>Under MSVC, code placement alone moves the <code>fields</code> benchmark by 10 to 20% with the same loop. Not a gap in Astra, but a caution in reading timings: compare against a baseline built the same way, and count instructions, before calling a change slower.</td><td class="when">D160: the Clang build's dispatch, M6.7</td></tr>
+<tr><td class="part" id="g66">G66</td><td class="part">8.9</td><td>An anonymous object or a local class whose supertype names a type parameter of the code around it (<code>object : Holder&lt;T&gt; { }</code>) has its class made on every call, even for a <code>T</code> seen before: 1.13 &micro;s a call against 0.17 for one made once. A table at each such place, from the call&#39;s type arguments (one object for each type, so a pointer is the key) to the class made for them, would make it once for each type.</td><td class="when">If it shows in timings; M6.7</td></tr>
+</tbody>
+</table></div>
+
+</main>
+</body>
+</html>

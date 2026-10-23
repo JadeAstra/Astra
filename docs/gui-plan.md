@@ -1852,7 +1852,7 @@ Group 1, numbers and strings (built 2026-10-20):
   not fit is an error where it is stored, naming the `toInt16Wrapped()` and the like that keep
   the low bits; locals and parameters declared so are checked the same way. `wrap32()`,
   `rotateLeft32`, `rotateRight32` and `hash(a, b, ...)` for 32-bit work.
-Choices made where the decisions left room, for the user to confirm (gaps.html): a byte becomes
+Choices made where the decisions left room, for the user to confirm (M6.6-gaps.html): a byte becomes
 an int by `toInt()`, as an int becomes a float only by `toFloat()` (comparing and `==` across
 them work); a char goes where a string is asked for only through Kotlin's overloads; a map
 with string keys indexed by a char is a compile error, though a `Map<any, V>` finds 'c' and
@@ -1896,7 +1896,7 @@ Group 2, equality and collections (built 2026-10-20):
   `map`, slices, `+`) is open; `toOpenList()`, `toOpenMap()`, `toOpenSet()` copy; `as open` and
   `is open` on a read-only name are errors; read-only maps and sets go where wider types are
   read. The mark is the checker's alone.
-Choices made where the decisions left room, for the user to confirm (gaps.html, 8.2a to 8.2l):
+Choices made where the decisions left room, for the user to confirm (M6.6-gaps.html, 8.2a to 8.2l):
 the names `FrozenList` and `open List` after the naming rule; `Bytes` no key, with no frozen
 form; what the checker follows to tell a key that can change; `hashCode()` for every value and
 `hash` calling a class's own; how deep `frozen()` goes; which results are open; `open` the
@@ -1935,7 +1935,7 @@ Group 3, types and declarations (built 2026-10-20):
 - Data classes extended only by data classes, the child's header starting with the parent's
   fields (D65). `extend Person : Weighed { val name get() => ... }` (D33) and extension
   functions in reach as imports say (D70), for the checker.
-Choices made where the decisions left room, for the user to confirm (gaps.html, 8.3a to 8.3k):
+Choices made where the decisions left room, for the user to confirm (M6.6-gaps.html, 8.3a to 8.3k):
 what may be lateinit; how lazy is kept; which objects are made when first used; where a kind is
 written bare; when inference gives a union; a type name referring to itself; Kotlin's accessors
 and what they take; what goes in the static block; how a data class passes its fields up; what
@@ -1969,7 +1969,7 @@ Group 4, functions (built 2026-10-21):
 - A call of itself as the last step a loop (D29), with `tail fun` asking for it and traces
   counting the repeats. `it` decided by the type a lambda is given, a nested `it` an error (D55).
   Overloads by type arguments (D31) were there since M6.5 part 3.
-Choices made where the decisions left room, for the user to confirm (gaps.html, 8.4a to 8.4k):
+Choices made where the decisions left room, for the user to confirm (M6.6-gaps.html, 8.4a to 8.4k):
 where an infix call may break; what a lambda given as an interface is; which calls of itself are
 a loop; what `tail` asks; when a nested `it` is an error; what `this@Name` names; how an inline
 function keeps its rights; what is copied in; which of the standard library's functions are
@@ -2009,7 +2009,7 @@ Group 5, errors (built 2026-10-21):
 - `use { }` for an `AutoCloseable` (D113), an inline function, in place of each stream's own.
 - Fixed on the way: `astra dis` ended before the cache it was writing was written, and could
   crash.
-Choices made where the decisions left room, for the user to confirm (gaps.html, 8.5a to 8.5k):
+Choices made where the decisions left room, for the user to confirm (M6.6-gaps.html, 8.5a to 8.5k):
 the classes of the VM's own errors; what a Throwable holds; where InterruptedException and
 CancellationException stand; what assert and TODO throw; what counts as kept; which functions are
 a library's public ones; `throw e` in a catch clause; what the standard library says it throws;
@@ -2046,7 +2046,7 @@ Group 6, reflection (built 2026-10-21):
 - `astra test` (D153): runs the functions and methods written `@Test`, with `@BeforeTest`,
   `@AfterTest`, `@BeforeAll`, `@AfterAll`, `@Timeout` (a test stopped at a safe point once past
   it) and `@TempDir`; kotlin.test's assertions in `test.astra`.
-Choices made where the decisions left room, for the user to confirm (gaps.html, 8.6a to 8.6k):
+Choices made where the decisions left room, for the user to confirm (M6.6-gaps.html, 8.6a to 8.6k):
 what `#` names; what a Class is; which members are listed; who may see a member; what is
 wrapped; types that cannot be named; what a built program keeps; what an annotation is; which of
 Kotlin's annotations are errors; how astra test runs; `type(x)` kept. Left: D50's flow of
@@ -2098,7 +2098,7 @@ Group 7, concurrency (built 2026-10-21):
   whole and committed a page at a time as it grows. In a sequence's block only `yield`,
   `yieldAll` and suspend functions of `SequenceScope`'s may wait.
 - The `for` loop takes any object with `hasNext` and `next`, or an `iterator()` giving one.
-Choices made where the decisions left room, for the user to confirm (gaps.html, 8.7a to 8.7m):
+Choices made where the decisions left room, for the user to confirm (M6.6-gaps.html, 8.7a to 8.7m):
 where a task's error goes; what `Job.all` and `Job.any` give; `fold` on a parallel stream; a
 `Thread` made with a lambda; `@Timeout` and Jade's `scheduler` left in milliseconds; how Atomic
 and the shared collections keep a change whole; how a section is divided; `parallelChunks` and
@@ -2139,7 +2139,7 @@ Group 8, files and input and output (built 2026-10-21):
   it throws; the checker's table of them is gone (gap 8.5f). Every Java and Kotlin name for
   these is an error naming what to write.
 - Jade: a window's dropped files are Paths; pictures, fonts and surfaces load and save Paths.
-Choices made where the decisions left room, for the user to confirm (gaps.html, 8.8a to 8.8k):
+Choices made where the decisions left room, for the user to confirm (M6.6-gaps.html, 8.8a to 8.8k):
 what `list()` and `walk()` give; deleting and what fails; permissions; what a Charset is; a
 line read lazily that fails; what a read past `readTimeout` throws; a started program's
 members; what `Process.run` does; bare entries for a union parameter; the C++ declared; Paths
@@ -2181,7 +2181,7 @@ Group 9, graphics and Jade (built 2026-10-22):
   the thread's, so a thread switch could give an object another's (since part 1); a name some
   class keeps from being assigned (`private set`) made every read of it through a value inside
   a value copy that value (2.9 times slower).
-Choices made where the decisions left room, for the user to confirm (gaps.html, 8.9a to 8.9l):
+Choices made where the decisions left room, for the user to confirm (M6.6-gaps.html, 8.9a to 8.9l):
 secondary constructors; an exact fit beating a narrowed constant; a byte where an int goes;
 what `Color` takes; what a bundle is when the program runs; details of `Grid`; a font's
 measurements at a scale; the style handed to a component; pictures of a component and where
@@ -2212,12 +2212,21 @@ lambda is, where it saw none of them; and `is T` in a string template finds `T`.
 type arguments; an object whose supertype names a type parameter of the code around it has its
 class made every time, so each is of its own call's type, as one using a variable of the code
 around it does; and a lambda starting with an anonymous object is no longer read as a map.
-Such a class made every time costs about 1 µs a call (G66). Measured again with Clang against
+Such a class made every time costs about 1 µs a call (G66, in M6.7-gaps.html). Measured again with Clang against
 group 8 after both, best of five in turns: every benchmark within 2%, the same check values,
 `jade_layout` 7% faster; `numeric` even (-0.7%), so the 5% above was the instruction loop's
 layout in that build, not a cost of the group. The suite, 838 checks, passes with every read
 from a list of values a copy, under the thread stress setting, with the C++ results checked,
 under the GC stress setting (814 there), and under the sanitizer, with and without it.
+Gap G3 closed: a call given the frame's own type arguments exactly, in their order (`isA<T>(x)`
+inside `fun <T>`), is handed them whole by FRAME_TYPES, with no type made or looked up; and
+MAKE_TYPE keeps, in a table of 64 places in each VM (each core's in a parallel section, so
+with no lock), the type it made last at a place from which types, good until the next
+collection. `isA<T>(x)` passed on went from 113 to about 45 ms a million calls, as the type
+written costs; in a parallel section from about 1,760 ms to 48 for two million, where every
+core had queued on the lock of the table of types. Found on the way and fixed: inside a
+generic function, a type argument naming its own type parameter was worked out again with the
+called function's of the same name, so `isA<List<T>>` inside `fun <T>` tested `List<List<T>>`.
 
 **M6.7. A faster VM.** Added 2026-10-16. The compiler's code generation and the VM's
 instruction loop rewritten once the language has stopped moving: instructions that name
@@ -2228,8 +2237,12 @@ is threaded as it is loaded, each opcode replaced by the address of its instruct
 built with MSVC, the same instructions are the cases of a switch. With them, from M6.6 (D178): a
 frame's slots that keep only a payload where the compiler knows their type, instructions chosen
 by type for arithmetic, which then need no test of their operands' kinds, and values of up to 32
-bytes in consecutive slots (D149). Invisible to programs;
-bytecode files are made again. Measured before and after on the benchmarks of M6.5 part 4;
+bytes in consecutive slots (D149). And, as the values' layouts are reworked, a generic value
+type's type arguments kept when the program runs (gap G4 in M6.7-gaps.html, decided 2026-10-22): where its class
+is kept already, at no cost in bytes; a hidden slot for a phantom type parameter only in a
+container declared wider than it; `==` and `hashCode` not looking at them; `is` and `as` going
+by them, refined by the value's contents where a recorded one is wider. Invisible to programs
+but for G4's `is` and `as`; bytecode files are made again. Measured before and after on the benchmarks of M6.5 part 4;
 the aim is one and a half to three times on top of M6.5 and M6.6. Scripts run from source,
 the shell, workers and tests keep running on the VM even once built programs can be native
 code (M14), so this stays worth having.

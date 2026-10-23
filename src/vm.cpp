@@ -5097,6 +5097,7 @@ void VM::run(int baseFrame) {
                     case Op::IsFull:
                     case Op::CastFull:
                     case Op::WithTypes:
+                    case Op::FrameTypes:
                     case Op::TypeArg:
                     case Op::InstanceTypeArg:
                     case Op::SupertypeMaker:
@@ -7318,15 +7319,45 @@ const uint8_t* VM::typeInstruction(Op op, const uint8_t* ip, CallFrame* frame) {
     std::atomic<uint64_t>* const caches = frame->closure->proto->caches.get();
     switch (op) {
         case Op::MakeType: {
+            const uint8_t* site = ip - 1;
             const std::string& shape = asString(consts[(ip += 2, operandU16(ip - 2))])->utf8();
             const int count = shapeOperands(shape);
             const Value* operand = sp_ - count;
+            // The same types as the last time here: the same type, with no look-up in the table
+            // of types, which a core takes a lock for (G3). Only types are keys: they are never
+            // freed, where a class may be and its address taken again.
+            MadeTypeCache* kept = nullptr;
+            if (count >= 1 && count <= MadeTypeCache::kMost) {
+                bool types = true;
+                for (int k = 0; k < count; k++) types = types && operand[k].isObjType(ObjType::TypeInfo);
+                if (types) {
+                    kept = &madeTypes_[(reinterpret_cast<uintptr_t>(site) >> 2) % kMadeTypeCaches];
+                    const uint64_t age = (root_ != nullptr ? root_ : this)->collections_;
+                    bool same = kept->site == site && kept->age == age;
+                    for (int k = 0; same && k < count; k++) same = kept->operands[k] == operand[k].as.obj;
+                    if (same) {
+                        sp_ -= count;
+                        *sp_++ = Value::object(kept->made);
+                        break;
+                    }
+                }
+            }
             size_t at = 0;
-            ObjTypeInfo* made = typeFromShape(shape, at, operand);
+            const Value* read = operand;  // typeFromShape moves it past what it reads
+            ObjTypeInfo* made = typeFromShape(shape, at, read);
+            if (kept != nullptr) {
+                kept->site = site;
+                kept->age = (root_ != nullptr ? root_ : this)->collections_;
+                for (int k = 0; k < count; k++) kept->operands[k] = operand[k].as.obj;
+                kept->made = made;
+            }
             sp_ -= count;
             *sp_++ = Value::object(made);
             break;
         }
+        case Op::FrameTypes:
+            pendingTypeArgs_ = frameTypeArgs(frame - frames_);
+            break;
         case Op::CachedType: {
             const int cache = (ip += 2, operandU16(ip - 2));
             const int target = (ip += 4, operandI32(ip - 4));
@@ -7692,6 +7723,7 @@ void VM::stringifyInto(std::string& out, Value v, bool quote, int depth) {
 
 void VM::collectGarbage() {
     liveBytes_ = 0;
+    collections_++;  // what MadeType kept may name code freed now
 
     // The context that is running, whose state is in the VM's own members...
     for (Value* slot = stack_; slot < sp_; slot++) markValue(*slot);

@@ -366,6 +366,9 @@ enum class Op : uint8_t {
     // MERGE_BUNDLE is a new bundle of both, the second's values winning.
     BundleValues,       // u8 count                        bundle name... -> name value ...
     MergeBundle,        //                                 bundle bundle -> bundle
+    // The frame's own type arguments, whole, for the call that follows, as WithTypes would give
+    // them (G3): `isA<T>(x)` inside `fun <T>`, with no type made or looked up.
+    FrameTypes,         //                                 ->  (for the call that follows)
 
     Count_,
 };

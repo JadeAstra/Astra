@@ -5871,10 +5871,23 @@ struct Checker::Impl {
     void noteTypeArguments(const std::vector<std::string>& params, const Env& env, const Node& at) {
         std::vector<Type>& given = typeArgumentsAt[&at];
         given.clear();
+        // What one of them was found to be may name another of the function's, worked out too;
+        // but a name the calling code has as a type parameter of its own is that one, not the
+        // function's of the same name: `isA<List<T>>` inside `fun <T>` passes List of the
+        // caller's T (found with G3).
+        Env own;
+        for (const auto& [name, type] : env)
+            if (!typeParamHere(name)) own.emplace(name, type);
         for (const std::string& p : params) {
             auto found = env.find(p);
-            given.push_back(found != env.end() ? subst(found->second, env) : unknownType());
+            given.push_back(found != env.end() ? subst(found->second, own) : unknownType());
         }
+    }
+
+    bool typeParamHere(const std::string& name) const {
+        for (const auto& scope : tparams)
+            if (scope.count(name) != 0) return true;
+        return false;
     }
 
     // Only a function written in Astra takes them: the C++'s have none.

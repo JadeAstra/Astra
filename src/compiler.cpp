@@ -2517,6 +2517,7 @@ private:
     void emitTypeArguments(const CallExpr& call) {
         std::vector<RuntimeType> args;
         if (session_.checker == nullptr || !session_.checker->typeArguments(call, args) || args.empty() || args.size() > 9) return;
+        if (emitFrameTypes(args, call)) return;
         std::string shape = "A";
         shape += static_cast<char>('0' + args.size());
         std::vector<TypeOperand> operands;
@@ -2531,6 +2532,35 @@ private:
             operands.insert(operands.end(), partOperands.begin(), partOperands.end());
         }
         if (emitShape(shape, operands, call)) emit(Op::WithTypes);
+    }
+
+    // The frame's own type arguments passed on whole, where the call's are exactly its type
+    // parameters in their order (`isA<T>(x)` inside `fun <T>`, `f<A, B>` inside `fun <A, B>`),
+    // read by this code or a lambda in it (G3). Not from inside a generic function declared in
+    // it, whose frame holds more.
+    bool emitFrameTypes(const std::vector<RuntimeType>& args, const Node& at) {
+        FunctionState* owner = nullptr;
+        for (size_t i = 0; i < args.size(); i++) {
+            if (args[i].kind != RuntimeType::TypeParam || args[i].nullable) return false;
+            TypeParamPlace place;
+            if (!findTypeParam(args[i].typeParam, place) || place.ofObject || place.index != static_cast<int>(i)) return false;
+            if (owner == nullptr) owner = place.owner;
+            if (place.owner != owner) return false;
+        }
+        if (owner == nullptr || owner->typeArgBase != 0 || owner->typeParams.size() != args.size()) return false;
+        for (FunctionState* state = fs_; state != owner; state = state->enclosing)
+            if (state == nullptr || !state->typeParams.empty()) return false;
+        for (FunctionState* state = fs_; state != owner; state = state->enclosing) state->proto->typeArgs |= kTypeArgsKept;
+        // An object's class made here keeps them, as with TypeArg (G2).
+        for (ObjectBuild* build = objectBuild_; build != nullptr; build = build->outer)
+            for (FunctionState* around = build->boundary; around != nullptr; around = around->enclosing)
+                if (around == owner) {
+                    build->usesOuter = true;
+                    break;
+                }
+        line_ = at.line;
+        emit(Op::FrameTypes);
+        return true;
     }
 
     // After a call of a function of the C++'s (`external`), on the value it gave: a list or
