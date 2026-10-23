@@ -193,6 +193,8 @@ struct FunctionState {
 
     // A generic function's type parameters, which its frame is given when it is called (M6.6 part 1).
     std::vector<std::string> typeParams;
+    // Where they start among its frame's: after those of a generic function it is declared in (G1).
+    int typeArgBase = 0;
 
     std::vector<Local> locals;
     int slotTop = 0;  // the slot the next local will get
@@ -2304,18 +2306,21 @@ private:
     };
 
     // The type parameter `name`, as the code being compiled reaches it; false where it cannot:
-    // a class's in a static member, a function's from inside a generic function of its own
-    // (whose frame has its own type arguments), and a class's from a class inside it.
+    // a class's in a static member, and a class's from a class inside it. A function's is
+    // reached from a generic function declared inside it too, whose frame holds the outer
+    // function's type arguments before its own (G1).
     bool findTypeParam(const std::string& name, TypeParamPlace& place) const {
         bool crossedGeneric = false;
         for (FunctionState* state = fs_; state != nullptr; state = state->enclosing) {
             auto found = std::find(state->typeParams.begin(), state->typeParams.end(), name);
             if (found != state->typeParams.end()) {
-                if (crossedGeneric || found - state->typeParams.begin() > 0xFF) return false;
-                place = TypeParamPlace{false, static_cast<int>(found - state->typeParams.begin()), state};
+                const int index = state->typeArgBase + static_cast<int>(found - state->typeParams.begin());
+                if (crossedGeneric || index > 0xFF) return false;
+                place = TypeParamPlace{false, index, state};
                 return true;
             }
-            if (!state->typeParams.empty()) crossedGeneric = true;
+            // One that does not hold the outer ones (none around, or too many) is a wall.
+            if (!state->typeParams.empty() && state->typeArgBase == 0) crossedGeneric = true;
             if (state->kind == FunctionKind::StaticMethod) return false;
             if (kindHasThis(state->kind)) {
                 if (class_ == nullptr) return false;
@@ -2338,6 +2343,15 @@ private:
             // The lambdas between keep the generic function's, each in its closure.
             for (FunctionState* state = fs_; state != place.owner && state != nullptr; state = state->enclosing)
                 state->proto->typeArgs |= kTypeArgsKept;
+            // An object's class made with a type parameter of the code around it, as in
+            // `object : Holder<T> { }` (G2), whose supertype's maker keeps the type arguments of
+            // the call that made it: made every time, as one using its variables is.
+            for (ObjectBuild* build = objectBuild_; build != nullptr; build = build->outer)
+                for (FunctionState* around = build->boundary; around != nullptr; around = around->enclosing)
+                    if (around == place.owner) {
+                        build->usesOuter = true;
+                        break;
+                    }
             emit(Op::TypeArg);
         }
         emitByte(place.index);
@@ -4575,7 +4589,26 @@ private:
         state.isLambda = decl.isLambda;
         state.decl = &decl;
         for (const TypeParam& p : decl.typeParams) state.typeParams.push_back(p.name);
-        if (!decl.typeParams.empty()) state.proto->typeArgs |= kTypeArgsOwn;
+        if (!decl.typeParams.empty()) {
+            state.proto->typeArgs |= kTypeArgsOwn;
+            // Declared inside another generic function (G1): its frame holds that one's type
+            // arguments first and its own after them, so that it reaches both. The functions
+            // between keep the outer ones for it.
+            for (FunctionState* around = state.enclosing; around != nullptr; around = around->enclosing) {
+                if (!around->typeParams.empty()) {
+                    const int base = around->typeArgBase + static_cast<int>(around->typeParams.size());
+                    if (base + static_cast<int>(decl.typeParams.size()) <= 0xFF) {
+                        state.typeArgBase = base;
+                        state.proto->typeArgBase = static_cast<uint8_t>(base);
+                        state.proto->typeArgs |= kTypeArgsKept;
+                        for (FunctionState* between = state.enclosing; between != around; between = between->enclosing)
+                            between->proto->typeArgs |= kTypeArgsKept;
+                    }
+                    break;
+                }
+                if (around->kind == FunctionKind::StaticMethod || kindHasThis(around->kind)) break;
+            }
+        }
         if (session_.checker != nullptr && session_.checker->returnsValue(decl)) state.proto->typeArgs |= kTakesDestination;
         state.label = decl.label;
         state.calleeLabel = decl.calleeLabel;

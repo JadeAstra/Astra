@@ -1302,7 +1302,7 @@ void disassemble(const Program& program, std::ostream& out) {
 namespace {
 
 const char kMagic[4] = {'A', 'S', 'T', 'R'};
-const uint8_t kFormatVersion = 20;
+const uint8_t kFormatVersion = 21;
 const int kMaxProtoNesting = 200;
 
 enum ConstantTag : uint8_t { TagInt = 0, TagFloat = 1, TagString = 2, TagChar = 3, TagByte = 4 };
@@ -1334,6 +1334,7 @@ struct Writer {
         u32(static_cast<uint32_t>(f.varargIndex + 1));
         u64(f.classParams);
         u8(f.typeArgs);
+        u8(f.typeArgBase);
         u32(static_cast<uint32_t>(f.paramNames.size()));
         for (const ObjString* param : f.paramNames) str(param->utf8());
 
@@ -1458,6 +1459,7 @@ struct Reader {
         f->classParams = u64();
         f->typeArgs = u8();
         if ((f->typeArgs & ~(kTypeArgsOwn | kTypeArgsKept | kTakesDestination)) != 0) corrupt();
+        f->typeArgBase = u8();
         uint32_t paramCount = count(4);
         for (uint32_t i = 0; i < paramCount; i++) f->paramNames.push_back(vm.intern(str()));
 

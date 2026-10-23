@@ -1,0 +1,77 @@
+// An anonymous object whose supertype has type arguments (G2): `object : Holder<int> { }`.
+// Its class is made once where nothing of the code around it is used, and every time where its
+// supertype names a type parameter of the code around it, so each object is of its own call's.
+
+interface Holder<T> {
+  fun get() : T
+}
+interface Named {
+  fun name() : string
+}
+class Box<T>(val item : T) {
+  fun describe() : string => "Box($item)"
+}
+
+// Type arguments, nested ones closing with >>, and several supertypes.
+val plain = object : Holder<int> {
+  override fun get() : int => 42
+}
+val nested = object : Holder<Map<string, List<int>>> {
+  override fun get() : Map<string, List<int>> => {"a": [1, 2]}
+}
+val both = object : Holder<string>, Named {
+  override fun get() : string => "got"
+  override fun name() : string => "both"
+}
+print(plain.get(), nested.get(), both.get(), both.name(), both is Named)   // expect: 42 {"a": [1, 2]} got both true
+print(plain is Holder<int>, plain is Holder<string>, nested is Holder<Map<string, List<int>>>)   // expect: true false true
+
+// A generic class as the supertype, given its constructor's arguments.
+val boxed = object : Box<string>("inside") {
+  fun shout() : string => describe().upper()
+}
+print(boxed.describe(), boxed.shout(), boxed is Box<string>, boxed is Box<int>)   // expect: Box(inside) BOX(INSIDE) true false
+
+// In a generic function: each object is of its own call's type.
+fun <T> wrap(x : T) : Holder<T> => object : Holder<T> {
+  override fun get() : T => x
+}
+val s = wrap("s")
+val n = wrap(3)
+print(s.get(), n.get(), s is Holder<string>, n is Holder<int>, n is Holder<string>, s is Holder<int>)   // expect: s 3 true true false false
+
+// Made once where its supertype is fixed: every object of one class.
+fun fixed() : Holder<int> => object : Holder<int> {
+  override fun get() : int => 7
+}
+print(fixed()# == fixed()#, wrap(1)# == wrap(2)#)   // expect: true false
+
+// From a lambda and from a generic function declared inside another (G1).
+fun <T> viaLambda(x : T) : Holder<T> {
+  val make = {
+    object : Holder<T> {
+      override fun get() : T => x
+    }
+  }
+  return make()
+}
+fun <T> outer(x : T) : string {
+  fun <U> inner(y : U) : string {
+    val h = object : Holder<U> {
+      override fun get() : U => y
+    }
+    val k = object : Holder<T> {
+      override fun get() : T => x
+    }
+    return "${h is Holder<U>} ${k is Holder<T>} ${h.get()} ${k.get()}"
+  }
+  return inner(2.5) + " / " + inner("u")
+}
+print(viaLambda(true) is Holder<bool>, viaLambda("x") is Holder<bool>, outer(1))   // expect: true false true true 2.5 1 / true true u 1
+// A lambda that starts with an object gives the object; a map may still have a key named object.
+val first = {
+  object : Named {
+    override fun name() : string => "first"
+  }
+}
+print(first().name(), {object: 1, other: 2})   // expect: first {"object": 1, "other": 2}

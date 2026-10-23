@@ -529,6 +529,9 @@ struct FunctionProto {
     // reads those of the function it is written in, or makes one that does, which its closure
     // keeps. Only such a function's frame has them: the others are called without.
     uint8_t typeArgs = 0;
+    // Of a generic function declared inside another generic function (G1): how many type
+    // arguments of the functions around it come first in its frame's, its own after them.
+    uint8_t typeArgBase = 0;
 
     // Bit i is set when parameter i is declared with a class type, the only kind of parameter
     // that can turn a bare name into an enum entry. (Parameters past the 64th never do.)

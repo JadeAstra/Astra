@@ -92,6 +92,7 @@ private:
     void addDataMembers(ClassStmt& s, const Token& at);
     StmtPtr classDeclaration(bool isEnum = false, bool isInterface = false, const Token* anonymous = nullptr);
     bool anonymousObjectNext() const;
+    bool anonymousObjectAt(size_t at) const;
     bool inInterface_ = false;  // a method may be declared without a body
     bool externalBody_ = false;  // in `external object`: the C++ provides the methods
     bool abstractMember_ = false;  // so may the member being read now, which is marked abstract

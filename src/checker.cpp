@@ -1282,6 +1282,9 @@ struct Checker::Impl {
     // ---- Type parameters in reach ----
 
     // Saves the type parameters in reach and starts afresh (for a body checked elsewhere).
+    // Set just before the body of a function declared inside another is checked.
+    bool bodyInside = false;
+
     struct TParamsSaved {
         Impl& impl;
         std::vector<std::unordered_map<std::string, std::shared_ptr<Type>>> saved;
@@ -2784,6 +2787,7 @@ struct Checker::Impl {
                 resolveFunc(f);
                 effects[effectKeyHere()].calls.push_back(fs.fn.get());  // called through a local, which is not followed
                 declareLocal(fs.fn->name, functionValue(f), true);
+                bodyInside = true;  // it sees the locals and type parameters around it (G1)
                 checkFunctionBody(f, nullptr);
                 break;
             }
@@ -2918,6 +2922,12 @@ struct Checker::Impl {
         TParamsSaved savedParams(*this);
         scopes.clear();
         narrowed.clear();
+        // A function declared inside another reaches its locals and type parameters, as a
+        // lambda does; what a test showed of them is not carried in, as it may be called later.
+        if (std::exchange(bodyInside, false)) {
+            scopes = savedScopes;
+            tparams = savedParams.saved;
+        }
         unit = f->unit;
         FnCtx c;
         c.fn = f;
@@ -7271,7 +7281,16 @@ struct Checker::Impl {
                 if (l->paramOf != nullptr) effects[effectKeyHere()].callsParams = true;
                 else effects[effectKeyHere()].any = true;
                 callingKnown = true;
-                return callValue(localType(n, *l), c, n);
+                // A generic function declared here (G1): called as one, so that its type
+                // arguments are worked out and handed to it.
+                const Type lt = localType(n, *l);
+                if (lt.kind == Type::Function && !lt.nullable && lt.fnRef != nullptr && !lt.fnRef->typeParams.empty() && l->paramOf == nullptr &&
+                    lt.fnRef->decl != nullptr) {
+                    noteValueCallThrows(lt, c);
+                    Args args{c.args, c.names, c.trailingLambda, c.hasSpread};
+                    return callWith(lt.fnRef, args, c.typeArgs, {}, nullptr, c, n + "(...)");
+                }
+                return callValue(lt, c, n);
             }
             if (ClassInfo* k = localClass(n); k != nullptr && !k->isObject) {
                 Args args{c.args, c.names, c.trailingLambda, c.hasSpread};

@@ -1476,6 +1476,15 @@ ObjClosure* VM::chooseForm(const ObjForms* set, const Value* args, int positiona
     return best;
 }
 
+// The first `base` of `outer` (any where it has fewer), then all of `own`.
+const ObjTypeInfo* VM::joinTypeArgs(const ObjTypeInfo* outer, int base, const ObjTypeInfo* own) {
+    std::vector<ObjTypeInfo*> all;
+    all.reserve(static_cast<size_t>(base) + (own != nullptr ? own->args.size() : 0));
+    for (int i = 0; i < base; i++) all.push_back(typeArgument(outer, i));
+    if (own != nullptr) all.insert(all.end(), own->args.begin(), own->args.end());
+    return typeOf(kTypeArguments, false, nullptr, all);
+}
+
 void VM::callClosure(ObjClosure* closure, int argc, bool packed) {
     if (closure->proto->chooser) closure = chooseForm(static_cast<const ObjForms*>(closure), sp_ - argc, argc, nullptr, 0);
     const FunctionProto* proto = closure->proto;
@@ -1497,6 +1506,12 @@ void VM::callClosure(ObjClosure* closure, int argc, bool packed) {
     // Arguments that were left out are marked, and the function fills in their defaults.
     for (int missing = argc; missing < proto->arity; missing++) *sp_++ = Value::undefined();
 
+    // A generic function declared inside another (G1) has those of where it was made and then
+    // its own, made before the frame is, as making them may collect.
+    const ObjTypeInfo* joined = (proto->typeArgs & kTypeArgsOwn) != 0 && proto->typeArgBase != 0
+                                    ? joinTypeArgs(closure->typeArgs, proto->typeArgBase, pendingTypeArgs_)
+                                    : nullptr;
+
     CallFrame& frame = frames_[static_cast<size_t>(frameCount_++)];
     frame.dropResult = false;
     frame.repeats = 0;
@@ -1504,8 +1519,9 @@ void VM::callClosure(ObjClosure* closure, int argc, bool packed) {
     // A generic function takes those WithTypes gave; a lambda has those of where it was made.
     // Only a function that reads them keeps them, which the others are not slowed by.
     if (proto->typeArgs != 0) {
-        frameTypeArgs(frameCount_ - 1) =
-            pendingTypeArgs_ != nullptr && (proto->typeArgs & kTypeArgsOwn) != 0 ? pendingTypeArgs_ : closure->typeArgs;
+        frameTypeArgs(frameCount_ - 1) = joined != nullptr ? joined
+                                         : pendingTypeArgs_ != nullptr && (proto->typeArgs & kTypeArgsOwn) != 0 ? pendingTypeArgs_
+                                                                                                                 : closure->typeArgs;
         pendingTypeArgs_ = nullptr;
         if ((proto->typeArgs & kTakesDestination) != 0) frameDestination(frameCount_ - 1) = pendingDestination_;
     }

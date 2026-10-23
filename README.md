@@ -1334,6 +1334,10 @@ button.onClick(object : Listener {
 val origin = object { val x = 0; val y = 0 }
 ```
 
+Its supertypes may have type arguments, `object : Comparator<Point> { ... }`. In a generic
+function, one written with the function's type parameter, `object : Holder<T> { ... }`, is of
+that call's `T`.
+
 #### Interfaces
 
 An interface lists what a class promises to have. A method written without a body, or a

@@ -1,0 +1,56 @@
+// A generic function declared inside another (G1): it reaches its own type parameters and
+// those of the functions around it, whose frames' type arguments its frame holds first.
+
+fun <T> outer(x : any) : List<bool> {
+  fun <U> inner(y : any) : List<bool> {
+    val seesT = x is T
+    val seesU = y is U
+    return [seesT, seesU]
+  }
+  return [x is T] + inner<string>(5) + inner<int>(5)
+}
+print(outer<string>(42), outer<int>(42))   // expect: [false, false, false, false, true] [true, true, false, true, true]
+
+// Its type arguments worked out from what it is given, as a top-level function's are.
+fun <T> pairUp(first : T) : string {
+  fun <U> describe(second : U) : string => "${first is T} ${second is U} ${0.5 is U}"
+  return describe(2.5) + " / " + describe("x")
+}
+print(pairUp<int>(1))   // expect: true true true / true true false
+
+// With a lambda between, and one level more.
+fun <A> levels(a : any) : string {
+  val run = { b : any ->
+    fun <B> middle(m : any) : string {
+      fun <C> deepest(d : any) : string => "${a is A}${m is B}${d is C}"
+      return deepest<bool>(true) + deepest<bool>(1)
+    }
+    middle<string>(b)
+  }
+  return run("s") + " " + run(3)
+}
+print(levels<int>(7), levels<string>(7))   // expect: truetruetruetruetruefalse truefalsetruetruefalsefalse falsetruetruefalsetruefalse falsefalsetruefalsefalsefalse
+
+// Passing a type parameter on, and calling itself.
+fun <T> isA(x : any) : bool => x is T
+fun <T> count(items : List<any>) : int {
+  fun <U> countFrom(i : int) : int {
+    if (i == items.size) { return 0 }
+    return (isA<T>(items[i]) and !isA<U>(items[i]) ? 1 : 0) + countFrom<U>(i + 1)
+  }
+  return countFrom<bool>(0)
+}
+print(count<Number>([1, 2.5, "a", true, 3]), count<any>([1, "a", false]))   // expect: 3 2
+
+// In a generic method of a generic class, the class's from the object as before.
+class Box<T>(val item : T) {
+  fun <R> check(x : any) : string {
+    fun <S> local(y : any) : string => "${item is T} ${x is R} ${y is S}"
+    return local<int>(1) + " | " + local<int>("no")
+  }
+}
+print(Box<string>("s").check<bool>(false))   // expect: true true true | true true false
+
+// `is` on a type parameter in a string template.
+fun <T> said(x : any) : string => "${x is T} ${x !is T}"
+print(said<int>(1), said<string>(1))   // expect: true false false true

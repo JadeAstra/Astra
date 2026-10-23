@@ -966,13 +966,17 @@ std::unique_ptr<VarStmt> Parser::constDeclaration(bool isField) {
 }
 
 // After the word `object` where a value is expected: does `{`, or `: Type, Type(args) {`, follow?
-bool Parser::anonymousObjectNext() const {
-    if (peek().newlineBefore) return false;
-    if (check(TokenType::LBrace)) return true;
-    if (!check(TokenType::Colon)) return false;
+bool Parser::anonymousObjectNext() const { return anonymousObjectAt(p_); }
+
+// Whether the tokens from `at` on, after the word `object`, are the rest of an anonymous
+// object: `{` or `: Supertypes {`.
+bool Parser::anonymousObjectAt(size_t at) const {
+    if (at >= toks_.size() || toks_[at].newlineBefore) return false;
+    if (toks_[at].type == TokenType::LBrace) return true;
+    if (toks_[at].type != TokenType::Colon) return false;
     int nesting = 0;
     bool wantName = true;
-    for (size_t i = p_ + 1; i < toks_.size(); i++) {
+    for (size_t i = at + 1; i < toks_.size(); i++) {
         const Token& t = toks_[i];
         if (nesting > 0) {
             if (t.type == TokenType::LParen) nesting++;
@@ -988,6 +992,20 @@ bool Parser::anonymousObjectNext() const {
             wantName = true;
         } else if (t.type == TokenType::LParen) {
             nesting = 1;
+        } else if (t.type == TokenType::Lt) {
+            // Type arguments of the supertype, `Holder<Map<string, int>>` (G2): passed over
+            // whole, a `>>` or `>>>` closing two or three at once.
+            int angles = 0;
+            for (; i < toks_.size(); i++) {
+                const TokenType a = toks_[i].type;
+                if (a == TokenType::Lt) angles++;
+                else if (a == TokenType::Gt) angles--;
+                else if (a == TokenType::Shr) angles -= 2;
+                else if (a == TokenType::Ushr) angles -= 3;
+                else if (a == TokenType::LBrace || a == TokenType::Eof) return false;
+                if (angles <= 0) break;
+            }
+            if (angles != 0) return false;
         } else {
             return false;
         }
@@ -2671,6 +2689,7 @@ ExprPtr Parser::primary() {
                 if (part.isExpr) {
                     Parser sub(part.tokens, file_);
                     sub.depth_ = depth_;
+                    sub.typeParamScopes_ = typeParamScopes_;  // `${x is T}` in a generic function
                     e->parts.push_back(sub.parseSingleExpression());
                 } else {
                     auto literal = node<LiteralExpr>(t);
@@ -2949,6 +2968,8 @@ bool Parser::trailingLambdaNext() const {
 // After a '{': does a map entry come next, that is a key followed by ':'?
 bool Parser::startsMapEntry() const {
     if (isKeyword(peek().type)) return peekNext().type == TokenType::Colon;
+    // `{ object : Listener { ... } }`: a lambda giving an anonymous object, not a map.
+    if (peek().type == TokenType::Identifier && peek().text == "object" && anonymousObjectAt(p_ + 1)) return false;
     switch (peek().type) {
         case TokenType::Identifier:
         case TokenType::String:

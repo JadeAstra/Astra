@@ -520,6 +520,7 @@ public:
     Value pendingDestination_;  // given by WithDestination to the call that follows
     // Type argument `i` of what is in `args` (a frame's, or an object's type), or `any` where
     // that is not known.
+    const ObjTypeInfo* joinTypeArgs(const ObjTypeInfo* outer, int base, const ObjTypeInfo* own);
     ObjTypeInfo* typeArgument(const ObjTypeInfo* args, int i) {
         return args != nullptr && static_cast<size_t>(i) < args->args.size() ? args->args[static_cast<size_t>(i)] : anyType();
     }

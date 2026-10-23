@@ -2203,6 +2203,21 @@ to an int, tested at every typed store, now only once a value has failed its typ
 (27% on `layout_values`). At start: 1.5 ms more for a script printing one line (13.2 ms
 against 11.7), the standard library being larger by graphics, grids and images; a program
 using Jade compiled afresh the same (33.2 ms against 34.0).
+After group 9 (2026-10-22), gap G1 closed: a generic function declared inside another now has
+its own type arguments (a call of it by name was not given them) and those of the generic
+functions around it, which its frame holds first (`typeArgBase`, bytecode format 21); a function
+declared inside another is checked with the locals and type parameters around it in reach, as a
+lambda is, where it saw none of them; and `is T` in a string template finds `T`. Gap G2 closed:
+`object : Holder<int> { }` parses, the look-ahead after `object :` passing over a supertype's
+type arguments; an object whose supertype names a type parameter of the code around it has its
+class made every time, so each is of its own call's type, as one using a variable of the code
+around it does; and a lambda starting with an anonymous object is no longer read as a map.
+Such a class made every time costs about 1 µs a call (G66). Measured again with Clang against
+group 8 after both, best of five in turns: every benchmark within 2%, the same check values,
+`jade_layout` 7% faster; `numeric` even (-0.7%), so the 5% above was the instruction loop's
+layout in that build, not a cost of the group. The suite, 838 checks, passes with every read
+from a list of values a copy, under the thread stress setting, with the C++ results checked,
+under the GC stress setting (814 there), and under the sanitizer, with and without it.
 
 **M6.7. A faster VM.** Added 2026-10-16. The compiler's code generation and the VM's
 instruction loop rewritten once the language has stopped moving: instructions that name
