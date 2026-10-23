@@ -59,7 +59,7 @@ task {
   // What cannot be copied is refused where it is sent.
   class Point(val x : int, val y : int)
   try { echo.post(Point(1, 2)) } catch (e) { print(e.message) }
-  // expect: a message to or from a worker can hold numbers, strings, booleans, null, bytes, and lists and maps of those, not a value of type Point: the two share no objects
+  // expect: a message to or from a worker can hold numbers, strings, booleans, null, bytes, objects of data classes and value types, and lists, maps and sets of those, not an object of Point, an ordinary class: the worker would have a copy, not the object; make it a data class, or send its fields
   try { echo.post([{ 1 }]) } catch (e) { print(e.message!!.endsWith("not a value of type Function: the two share no objects")) }   // expect: true
 
   // A worker has an event loop, threads and tasks of its own.

@@ -257,6 +257,24 @@ bool VM::widenedByte(Value& v, uint8_t type) {
     return true;
 }
 
+int VM::globalSlotOf(const ObjClass* cls) {
+    auto known = classSlots_.find(cls);
+    if (known != classSlots_.end() && static_cast<size_t>(known->second) < globals_.size() && globals_[static_cast<size_t>(known->second)].isObjType(ObjType::Class) &&
+        asClass(globals_[static_cast<size_t>(known->second)]) == cls)
+        return known->second;
+    for (size_t i = 0; i < globals_.size(); i++)
+        if (globals_[i].isObjType(ObjType::Class) && asClass(globals_[i]) == cls) {
+            classSlots_[cls] = static_cast<int>(i);
+            return static_cast<int>(i);
+        }
+    return -1;
+}
+
+ObjClass* VM::classInGlobal(int slot) const {
+    if (slot < 0 || static_cast<size_t>(slot) >= globals_.size() || !globals_[static_cast<size_t>(slot)].isObjType(ObjType::Class)) return nullptr;
+    return asClass(globals_[static_cast<size_t>(slot)]);
+}
+
 Value VM::memberGet(Value obj, ObjString* name) {
     if (const ObjClass* cls = classOf(obj); cls != nullptr && cls->hasAccessors)
         if (const Value* getter = cls->getters.find(name)) return callWithReceiver(obj, asClosure(*getter));

@@ -1,0 +1,83 @@
+// Messages to a worker of data classes and value types, and lists that keep their types (G6):
+// a packed list goes as its block of items, whole; an object of a data class or a value of a
+// value type is made again on the other side, by its constructor, from its header fields.
+import workers.records.*
+
+val arrived = Deque()
+var awaited : ((any?) -> unit)? = null
+val worker = Worker("workers/records_echo.astra")
+worker.onMessage = { message ->
+  val waiting = awaited
+  awaited = null
+  if (waiting == null) { arrived.addLast(message) } else { waiting(message) }
+}
+suspend fun next() : any? {
+  if (arrived.isNotEmpty()) { return arrived.removeFirst() }
+  return suspendTask<any?> { resume -> awaited = { m -> resume(m) } }
+}
+suspend fun roundTrip(message : any?) : List<any?> {
+  worker.post(message)
+  return next() as List<any?>
+}
+fun attempt(block : () -> any?) : string {
+  try { block(); return "sent" } catch (e) { return "${e#.name}: ${e.message}" }
+}
+
+task {
+  // Packed lists keep their type and their items, sent as one block.
+  val ints : List<int> = (0..<100000).toList()
+  val back = roundTrip(ints)
+  print(back[1], back[0] == ints, back[0]!!#)                  // expect: List<int> of 100000 true List<int>
+  val small : List<float32> = [1.5, 2.5]
+  val maybe : List<int?> = [1, null, 3]
+  val flags : List<bool> = [true, false]
+  val text : List<char> = ['a', 'b']
+  print(roundTrip(small), roundTrip(maybe), roundTrip(flags), roundTrip(text))
+  // expect: [[1.5, 2.5], "List<float32> of 2"] [[1, null, 3], "List<int?> of 3"] [[true, false], "List<bool> of 2"] [['a', 'b'], "List<char> of 2"]
+
+  // Typed lists, maps and sets that are not packed keep their types too.
+  val names : List<string> = ["a", "b"]
+  val scores : Map<string, int> = {"a": 1}
+  val tags : Set<string> = setOf("x")
+  print(roundTrip(names)[1], roundTrip(scores)[1], roundTrip(tags)[0])   // expect: List<string> of 2 Map<string, int> {"x"}
+
+  // Objects of data classes, made again there by their constructors.
+  val ada = Student("Ada", 9)
+  val sent = roundTrip(ada)
+  print(sent[0], sent[1], sent[0] == ada, sent[0] === ada)   // expect: Student(name="Ada", grade=9) a Student here true false
+  val course = Course("Maths", [ada, Student("Bo", 7)])
+  val courseBack = roundTrip(course)
+  print(courseBack[1], courseBack[0] == course)              // expect: a Course of 2, List<Student> true
+
+  // Values of value types: one, a packed list of them as one block, and ones holding a string.
+  print(roundTrip(Point(1, 2)), roundTrip(Tagged("here", Point(3, 4)))[0])   // expect: [Point(x=1, y=2), "a Point here"] Tagged(label="here", at=Point(x=3, y=4))
+  val points : open List<Point> = []
+  for (i in 0..<1000) { points.add(Point(i, -i)) }
+  val pointsBack = roundTrip(points)
+  print(pointsBack[1], pointsBack[0] == points)              // expect: List<Point> of 1000 true
+  val labels : List<Tagged> = [Tagged("a", Point(0, 0)), Tagged("b", Point(1, 1))]
+  print(roundTrip(labels))   // expect: [[Tagged(label="a", at=Point(x=0, y=0)), Tagged(label="b", at=Point(x=1, y=1))], "List<Tagged> of 2"]
+
+  // A frozen list of values is copied, not shared: values are made again on each side.
+  val frozenPoints = [Point(5, 6)].frozen()
+  print(roundTrip(frozenPoints)[0])                          // expect: [Point(x=5, y=6)]
+
+  // An object of an ordinary class has an identity: it is refused where it is sent.
+  class Plain(val n : int)
+  print(attempt { worker.post(Plain(1)) })
+  // expect: IllegalArgumentException: a message to or from a worker can hold numbers, strings, booleans, null, bytes, objects of data classes and value types, and lists, maps and sets of those, not an object of Plain, an ordinary class: the worker would have a copy, not the object; make it a data class, or send its fields
+
+  // A data class declared inside a function: the other side has no way to make one.
+  data Local(val n : int)
+  print(attempt { worker.post(Local(1)) })
+  // expect: IllegalArgumentException: a Local is of a class declared inside a function, which the other side has no way to make: declare it at the top level of a file both sides import
+  worker.terminate()
+
+  // A worker that does not import the file: it says so there, and ends.
+  val other = Worker("workers/echo.astra")
+  val failed = suspendTask<string> { resume ->
+    other.onError = { text -> resume(text as string) }
+    other.post(ada)
+  }
+  print(failed.contains("a message holds a Student, and this side has none: import the file that declares Student on both sides"))   // expect: true
+}

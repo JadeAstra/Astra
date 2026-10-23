@@ -2227,6 +2227,19 @@ written costs; in a parallel section from about 1,760 ms to 48 for two million, 
 core had queued on the lock of the table of types. Found on the way and fixed: inside a
 generic function, a type argument naming its own type parameter was worked out again with the
 called function's of the same name, so `isA<List<T>>` inside `fun <T>` tested `List<List<T>>`.
+Gap G6 closed, with D181's first step: a message to a worker keeps its lists', maps' and sets'
+types, sends a packed list as one block (a million ints there and back in about 10 ms, where
+it was 43, arriving a `List<int>` where it arrived a `List<any?>`), and carries objects of data
+classes and values of value types, made again by their constructors on the other side, their
+class named by its global, which is the same in a worker: a class declared inside a function
+is refused where it is sent, and one the other side has not imported is reported there. A
+frozen list of values is copied, not shared. Found with it: G67, lists from `map` and the like
+and sets carrying no type when the program runs.
+Next, in this order (decided 2026-10-22): G6 verified and committed; D182, a type parameter
+known to the checker by its declaration and not its name, with the error for a method's type
+parameter named as its class's; then G67's fix, an empty `[]`, `{:}` or set given the type
+written where it goes when that type names only the type parameters of the code around it,
+so that `map`, `filter`, `mapOf`, `setOf` and `toSet` give typed, and so packed, results.
 
 **M6.7. A faster VM.** Added 2026-10-16. The compiler's code generation and the VM's
 instruction loop rewritten once the language has stopped moving: instructions that name
@@ -2578,13 +2591,15 @@ font metrics will need new numbers: no other font engine measures text exactly a
 | D178 | Frame slots, typed arithmetic and values in variables in M6.7. | Decided 2026-10-19 by the user: payload-only slots in objects now (M6.6 part 6); in frames, with instructions chosen by type for arithmetic and values of up to 32 bytes in consecutive slots (D149), in M6.7, on the rewritten loop, since each changes every instruction that touches a frame's slots and M6.7 rewrites those anyway. |
 | D179 | Jade's geometry as value types. | Decided 2026-10-19 by the user (M6.6 part 7): `Point`, `Dimension`, `Insets`, `Rectangle` and `Sizes` are value types. Two are `==` when their fields are; each is copied where JadeUI's would be shared, so `bounds.translate(1, 1)` changes the `bounds` it is called on and no other; `setSize`, `translate`, `setLocation`, `grow` and `setBounds` are mutating methods, called on a place. A component's `bounds` and the sizes it keeps are inside it. Code that changed a shared one to change another's (none in Jade) changes only its own. |
 | D180 | `Rectangle` takes all four numbers. | Proposed 2026-10-19 (M6.6 part 7), to be confirmed. A value type is made from its header alone, and Astra has no constructors of other forms (secondary constructors were left out: 4 uses), so `Rectangle(x, y, width, height)` takes all four, with no defaults: Java's `Rectangle()` is `Rectangle(0, 0, 0, 0)`, `Rectangle(w, h)` is `Rectangle(0, 0, w, h)` (both compile errors as written, so that `Rectangle(30, 40)` cannot quietly mean the corner), and `Rectangle(other)` is `other`, a value being copied wherever it is kept. `Point()`, `Dimension()` and `Insets()` keep their zeros, as in Java. |
+| D181 | What a message to a worker may hold. | Decided 2026-10-22 by the user, in three steps. First, built with gap G6: besides numbers, strings, booleans, `null`, `bytes`, and lists, maps and sets of those, an object of a data class or a value of a value type, made again on the other side by its constructor from its header fields; a class declared at the top level of a file both sides import, named in the message by the global it is kept in (a worker runs the same program); lists and maps keep their types, and a packed list goes as its block of items, whole. An object of an ordinary class is refused where it is sent, as before: the worker would have a copy, not the object. Second, open, for when real programs need it: an ordinary class may say it can be sent (`class Student(...) : Sendable`), the checker making sure its fields are of types that can, and a message copying the graph of such objects whole, objects shared in it shared in the copy and cycles kept. Never: every class copied without asking, which would make objects whose `init` never ran, whose lambdas lost their surroundings, and whose holds on windows, files or locks broke in the worker. |
+| D182 | What a type parameter is, to the checker. | Decided 2026-10-22 by the user. A type parameter is the one its declaration makes, not a name: `class Apple<T>`'s is Apple's T, `fun <R> other()` in it is other's R, `fun <T> augment()` is augment's T, a generic function declared inside another has its own. Inside the checker each is a thing of its own (its declaration, not a dotted name, which overloaded forms, files and local functions could make ambiguous), and what it is replaced by, worked out and kept in reach goes by that, never by the name; the compiler and the VM, where they are slots by position, do not change. Messages still say `T`, and `T (of augment)` only where two would be confused. A method that declares a type parameter of the same name as its class's (`fun <T> eat()` in `class Apple<T>`) is a compile error: Apple already has a type parameter T; name this one otherwise, or leave it out to use the class's. Built next, before gap G67's fix, which it makes safe (found with G3: the same name in the function called and the code calling it was worked out wrongly). |
 | | How files are loaded under namespaces. | Importing a folder loads every `.astra` file directly in it, as one unit. Importing a file loads that file only, into its folder's namespace (5.1). |
 | | A lambda's parameter list over several lines. | Allowed, as in Kotlin (5.1). |
 
 ### Open
 
-Ten. The language choices, all decided since; eight from M6.6 for the user to answer; and one
-left for the milestone that raises it. (The measuring rule on scaled displays, open earlier, was settled in M4:
+Eleven. The language choices, all decided since; eight from M6.6 for the user to answer; one
+left for the milestone that raises it; and one for when programs need it. (The measuring rule on scaled displays, open earlier, was settled in M4:
 section 4, point 8.)
 
 - **The language choices Kotlin made for the JVM** (L0 to L117 in
@@ -2608,6 +2623,8 @@ section 4, point 8.)
   coming only from the 16-bit offset in a reference into a list item.
 - **How JadeMem's real sampling is done** (M8): on sample data, or through a way for Astra
   to call Windows system functions, which this plan does not size.
+- **Sendable classes for workers** (D181, its second step): an ordinary class saying it may be
+  sent, checked for fields that can be, and copied as a graph. Open until a program needs it.
 
 ## 9. Risks
 

@@ -150,16 +150,95 @@ SharedBlock* shareFrozen(VM& vm, Value v) {
 
 // ---- Messages ----
 // A value is written out as bytes on the one side and built again on the other. It can hold
-// null, booleans, numbers, strings, bytes, and lists and maps of those. Frozen data travels as
-// the block it is shared as; bytes handed over travel as their own buffer, moved.
+// null, booleans, numbers, strings, bytes, lists, maps and sets of those, and objects of data
+// classes and value types, built again on the other side by their constructors from their
+// header fields (G6). Lists, maps and sets keep their types; a packed list travels as its block
+// of items, whole. Frozen data travels as the block it is shared as; bytes handed over travel
+// as their own buffer, moved.
 
-enum : char { kNull, kFalse, kTrue, kInt, kFloat, kString, kBytes, kList, kMap, kChar, kByte, kSet, kShared, kHandedOver };
+enum : char { kNull, kFalse, kTrue, kInt, kFloat, kString, kBytes, kList, kMap, kChar, kByte, kSet, kShared, kHandedOver, kData, kPackedList };
 
 void putRaw(std::string& out, const void* data, size_t size) { out.append(static_cast<const char*>(data), size); }
 
 void putSize(std::string& out, size_t size) {
     const uint32_t n = static_cast<uint32_t>(size);
     putRaw(out, &n, sizeof n);
+}
+
+void putText(std::string& out, const std::string& text) {
+    putSize(out, text.size());
+    out += text;
+}
+
+// A class, by the global it is kept in and its name. A worker runs the same program as the
+// side that started it, so the same global is the same declaration there, made by that side's
+// own run of the file that declares it: one it has not imported is not there.
+void putClass(VM& vm, std::string& out, const ObjClass* cls) {
+    const int slot = cls != nullptr ? vm.globalSlotOf(cls) : -1;
+    putRaw(out, &slot, sizeof slot);
+    putText(out, cls != nullptr ? cls->name->utf8() : std::string());
+}
+
+// A type, so that a list, map or set is built again with it: its kind, whether it may be
+// null, its class, and its type arguments.
+constexpr uint8_t kNoType = 0xFF;
+void encodeType(VM& vm, const ObjTypeInfo* type, std::string& out, int depth) {
+    if (type == nullptr || depth > 16 || (type->cls != nullptr && vm.globalSlotOf(type->cls) < 0)) {
+        out += static_cast<char>(kNoType);
+        return;
+    }
+    out += static_cast<char>(type->id);
+    out += type->nullable ? '\1' : '\0';
+    putClass(vm, out, type->cls);
+    putSize(out, type->args.size());
+    for (const ObjTypeInfo* arg : type->args) encodeType(vm, arg, out, depth + 1);
+}
+
+// How a value type's items are laid out, for a packed list sent whole: the other side's must
+// be the same, field for field.
+std::string layoutSignature(VM& vm, ObjClass* cls) {
+    const ValueLayout& layout = vm.layoutOf(cls);
+    std::string sig = std::to_string(layout.size) + ":";
+    for (const ValueField& field : layout.fields)
+        sig += (field.name != nullptr ? field.name->utf8() : std::string()) + "/" + std::to_string(field.offset) + "/" +
+               std::to_string(static_cast<int>(field.kind)) + "/" + std::to_string(static_cast<int>(field.narrow)) + ";";
+    return sig;
+}
+
+// A packed list whose block can be sent as it is: numbers, bools, chars and bytes, or a value
+// type holding no objects (whose block would hold pointers into this side's heap).
+bool plainBlock(VM& vm, const ObjList* list) {
+    if (list->pack->store != ListStore::Items) return true;
+    const ValueLayout& layout = vm.layoutOf(list->pack->itemClass);
+    return layout.objects.empty() && layout.values.empty();
+}
+
+// Whether frozen data can be shared as one block outside every heap: numbers, text, bytes and
+// frozen lists, maps and sets of those; a value type's values are copied instead.
+bool sharable(VM& vm, Value v, int depth) {
+    if (depth > 64) return false;
+    if (v.isSmall() || v.isRef()) return false;
+    if (!v.isObj()) return true;
+    switch (v.as.obj->type) {
+        case ObjType::String:
+        case ObjType::Bytes: return true;
+        case ObjType::List: {
+            const ObjList* list = asList(v);
+            if (list->packed()) return list->pack->store != ListStore::Items;
+            for (const Value& item : list->values())
+                if (!sharable(vm, item, depth + 1)) return false;
+            return true;
+        }
+        case ObjType::Map:
+            for (const ValueMap::Entry& entry : asMap(v)->map.entries())
+                if (entry.live && (!sharable(vm, entry.key, depth + 1) || !sharable(vm, entry.value, depth + 1))) return false;
+            return true;
+        case ObjType::Set:
+            for (const ValueMap::Entry& entry : asSet(v)->items.entries())
+                if (entry.live && !sharable(vm, entry.key, depth + 1)) return false;
+            return true;
+        default: return false;
+    }
 }
 
 void encode(VM& vm, Value v, std::string& out, int depth) {
@@ -183,7 +262,8 @@ void encode(VM& vm, Value v, std::string& out, int depth) {
             return;
         default: break;
     }
-    if (v.isObj() && v.as.obj->frozen != 0 && v.as.obj->type != ObjType::String) {
+    if (v.isObj() && v.as.obj->frozen != 0 && v.as.obj->type != ObjType::String &&
+        (v.as.obj->outside || vm.sharedAs.count(v.as.obj) != 0 || sharable(vm, v, 0))) {
         // Frozen data: shared, not copied (D97).
         SharedBlock* block = shareFrozen(vm, v);
         out += kShared;
@@ -198,19 +278,50 @@ void encode(VM& vm, Value v, std::string& out, int depth) {
         out += kBytes;
         putSize(out, asBytes(v)->data.size());
         putRaw(out, asBytes(v)->data.data(), asBytes(v)->data.size());
+    } else if (v.isObjType(ObjType::List) && asList(v)->packed() && plainBlock(vm, asList(v))) {
+        // A packed list whole (G6): its type, how it is packed, and its block of items.
+        ObjList* list = asList(v);
+        const PackedItems& pack = *list->pack;
+        out += kPackedList;
+        encodeType(vm, list->type, out, 0);
+        out += static_cast<char>(pack.store);
+        out += static_cast<char>(pack.narrow);
+        out += pack.nullable ? '\1' : '\0';
+        putSize(out, pack.width);
+        putText(out, pack.store == ListStore::Items ? layoutSignature(vm, pack.itemClass) : std::string());
+        putSize(out, pack.count);
+        putRaw(out, pack.block.data(), pack.count * pack.width);
+        if (pack.nullable) {
+            putSize(out, pack.nulls.size());
+            putRaw(out, pack.nulls.data(), pack.nulls.size() * sizeof(uint64_t));
+        }
     } else if (v.isObjType(ObjType::List)) {
         const std::vector<Value> items = vm.listCopy(asList(v));
         out += kList;
+        encodeType(vm, asList(v)->type, out, 0);
         putSize(out, items.size());
         for (const Value& item : items) encode(vm, item, out, depth + 1);
     } else if (v.isObjType(ObjType::Set)) {
         const std::vector<Value> items = vm.setItems(asSet(v));
         out += kSet;
+        encodeType(vm, asSet(v)->type, out, 0);
         putSize(out, items.size());
         for (const Value& item : items) encode(vm, item, out, depth + 1);
+    } else if (ObjClass* cls = classOf(v); cls != nullptr && cls->isData && !cls->isEnum &&
+                                              (v.isObjType(ObjType::Instance) || v.isObjType(ObjType::Value))) {
+        // An object of a data class or a value of a value type (G6): its class's name, the names
+        // of its header fields, and their values, from which its constructor makes it again.
+        if (vm.globalSlotOf(cls) < 0)
+            throw vm.runtimeError(Thrown::IllegalArgumentException, "a " + cls->name->utf8() +
+                                                                        " is of a class declared inside a function, which the other side has no way to make: declare it at the top level of a file both sides import");
+        out += kData;
+        putClass(vm, out, cls);
+        putSize(out, cls->components.size());
+        for (ObjString* field : cls->components) encode(vm, vm.memberGet(v, field), out, depth + 1);
     } else if (v.isObjType(ObjType::Map)) {
         const ObjMap* map = asMap(v);
         out += kMap;
+        encodeType(vm, map->type, out, 0);
         putSize(out, map->map.size());
         for (const ValueMap::Entry& entry : map->map.entries()) {
             if (!entry.live) continue;
@@ -218,8 +329,12 @@ void encode(VM& vm, Value v, std::string& out, int depth) {
             encode(vm, entry.value, out, depth + 1);
         }
     } else {
-        throw vm.runtimeError(Thrown::IllegalArgumentException, "a message to or from a worker can hold numbers, strings, booleans, null, bytes, and lists and maps of those, not a value of type " +
-                              vm.typeName(v) + ": the two share no objects");
+        const ObjClass* of = classOf(v);
+        const bool ordinary = of != nullptr && v.isObjType(ObjType::Instance) && !of->isEnum;
+        throw vm.runtimeError(Thrown::IllegalArgumentException,
+                              "a message to or from a worker can hold numbers, strings, booleans, null, bytes, objects of data classes and value types, and lists, maps and sets of those, not " +
+                                  (ordinary ? "an object of " + vm.typeName(v) + ", an ordinary class: the worker would have a copy, not the object; make it a data class, or send its fields"
+                                            : "a value of type " + vm.typeName(v) + ": the two share no objects"));
     }
 }
 
@@ -245,6 +360,11 @@ struct Reader {
 
 // No collection can run while a built-in function is at work, so what is being built needs
 // no protecting until it is handed to the program.
+ObjTypeInfo* decodeType(VM& vm, Reader& in, int depth);
+ObjClass* takeClass(VM& vm, Reader& in, std::string& name);
+Value decodePacked(VM& vm, Reader& in);
+Value decodeData(VM& vm, Reader& in);
+
 Value decode(VM& vm, Reader& in) {
     if (in.at >= in.end) return Value::null();
     switch (*in.at++) {
@@ -286,32 +406,125 @@ Value decode(VM& vm, Reader& in) {
             return Value::object(made);
         }
         case kList: {
+            // A data object in it may be made by its constructor, which may collect: what is
+            // being built is kept alive until it is handed on.
+            ObjTypeInfo* type = decodeType(vm, in, 0);
             const uint32_t count = in.raw<uint32_t>();
             ObjList* list = newList(vm);
+            TempRoot keep(vm, Value::object(list));
             list->values().reserve(std::min<size_t>(count, static_cast<size_t>(in.end - in.at)));
             for (uint32_t i = 0; i < count && in.at < in.end; i++) list->values().push_back(decode(vm, in));
             vm.account(list->values().size() * sizeof(Value));
+            if (type != nullptr && type->id == kTypeList) vm.typeList(list, type);
             return Value::object(list);
         }
+        case kPackedList: return decodePacked(vm, in);
         case kMap: {
+            ObjTypeInfo* type = decodeType(vm, in, 0);
             const uint32_t count = in.raw<uint32_t>();
             ObjMap* map = vm.alloc<ObjMap>();
+            TempRoot keep(vm, Value::object(map));
+            if (type != nullptr && type->id == kTypeMap) map->type = type;
             for (uint32_t i = 0; i < count && in.at < in.end; i++) {
                 const Value key = decode(vm, in);
+                TempRoot keepKey(vm, key);
                 map->map.set(key, decode(vm, in));
             }
             vm.account(map->map.size() * 2 * sizeof(Value));
             return Value::object(map);
         }
         case kSet: {
+            ObjTypeInfo* type = decodeType(vm, in, 0);
             const uint32_t count = in.raw<uint32_t>();
             ObjSet* set = vm.alloc<ObjSet>();
+            TempRoot keep(vm, Value::object(set));
+            if (type != nullptr && type->id == kTypeSet) set->type = type;
             for (uint32_t i = 0; i < count && in.at < in.end; i++) set->items.set(decode(vm, in), Value::null());
             vm.account(set->items.size() * 64);
             return Value::object(set);
         }
+        case kData: return decodeData(vm, in);
         default: return Value::null();
     }
+}
+
+// A type written by encodeType, made again here; null where a class it names is not found here,
+// or where none was written: the list, map or set is then made without one.
+ObjTypeInfo* decodeType(VM& vm, Reader& in, int depth) {
+    const uint8_t id = in.raw<uint8_t>();
+    if (id == kNoType || depth > 16) return nullptr;
+    const bool nullable = in.raw<uint8_t>() != 0;
+    std::string name;
+    ObjClass* cls = takeClass(vm, in, name);
+    const uint32_t count = in.raw<uint32_t>();
+    bool known = name.empty() || cls != nullptr;
+    std::vector<ObjTypeInfo*> args;
+    for (uint32_t i = 0; i < count && in.at < in.end; i++) {
+        ObjTypeInfo* arg = decodeType(vm, in, depth + 1);
+        if (arg == nullptr) known = false;
+        args.push_back(arg != nullptr ? arg : vm.anyType());
+    }
+    return known ? vm.typeOf(id, nullable, cls, args) : nullptr;
+}
+
+// A class written by putClass: the one in that global here, if it is there with that name.
+ObjClass* takeClass(VM& vm, Reader& in, std::string& name) {
+    const int slot = in.raw<int32_t>();
+    name = std::string(in.text());
+    ObjClass* cls = vm.classInGlobal(slot);
+    return cls != nullptr && cls->name->utf8() == name ? cls : nullptr;
+}
+
+// A packed list sent whole (G6): one of the same type here, packed the same way, given the
+// block of items as it came.
+Value decodePacked(VM& vm, Reader& in) {
+    ObjTypeInfo* type = decodeType(vm, in, 0);
+    const auto store = static_cast<ListStore>(in.raw<uint8_t>());
+    const auto narrow = static_cast<Narrow>(in.raw<uint8_t>());
+    const bool nullable = in.raw<uint8_t>() != 0;
+    const uint32_t width = in.raw<uint32_t>();
+    const std::string signature(in.text());
+    const uint32_t count = in.raw<uint32_t>();
+    const size_t bytes = static_cast<size_t>(count) * width;
+    if (width == 0 || bytes > static_cast<size_t>(in.end - in.at)) throw std::runtime_error("a packed list in a message that is cut short");
+    ObjList* list = newList(vm);
+    TempRoot keep(vm, Value::object(list));
+    if (type != nullptr) vm.typeList(list, type);
+    const PackedItems* pack = list->pack.get();
+    if (type == nullptr || pack == nullptr || pack->store != store || pack->narrow != narrow || pack->nullable != nullable || pack->width != width ||
+        (store == ListStore::Items && layoutSignature(vm, pack->itemClass) != signature))
+        throw vm.runtimeError(Thrown::IllegalArgumentException,
+                              "a list in a message is of a value type this side has no such class for, or one whose fields differ" +
+                                  std::string(type != nullptr && type->args.size() == 1 && type->args[0]->cls != nullptr
+                                                  ? " (" + type->args[0]->cls->name->utf8() + "): import the same file on both sides"
+                                                  : ""));
+    list->pack->block.assign(reinterpret_cast<const uint8_t*>(in.at), reinterpret_cast<const uint8_t*>(in.at) + bytes);
+    in.at += bytes;
+    list->pack->count = count;
+    if (nullable) {
+        const uint32_t words = in.raw<uint32_t>();
+        if (static_cast<size_t>(words) * sizeof(uint64_t) > static_cast<size_t>(in.end - in.at)) throw std::runtime_error("a packed list in a message that is cut short");
+        list->pack->nulls.resize(words);
+        std::memcpy(list->pack->nulls.data(), in.at, words * sizeof(uint64_t));
+        in.at += words * sizeof(uint64_t);
+    }
+    vm.account(bytes);
+    return Value::object(list);
+}
+
+// An object of a data class or a value (G6), made again by its class's constructor here from
+// its header fields: this side's class of the same declaration, from a file both sides import.
+Value decodeData(VM& vm, Reader& in) {
+    std::string name;
+    ObjClass* cls = takeClass(vm, in, name);
+    const uint32_t count = in.raw<uint32_t>();
+    std::vector<Value> values;
+    TempVector keep(vm, values);
+    for (uint32_t i = 0; i < count && in.at < in.end; i++) values.push_back(decode(vm, in));
+    if (cls == nullptr || !cls->isData || cls->components.size() != count)
+        throw vm.runtimeError(Thrown::IllegalArgumentException, "a message holds a " + name + ", and this side has none: import the file that declares " + name +
+                                                                     " on both sides");
+    return vm.call(Value::object(cls), static_cast<int>(values.size()), values.data());
 }
 
 // `post(bytes, handOver = true)` (D97): the buffer moved into the message, the sender's left

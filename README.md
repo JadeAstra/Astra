@@ -2702,9 +2702,17 @@ Worker.parent!!.onMessage = { job -> Worker.parent!!.post(countPrimes(job["upTo"
   program there, so a program built into an executable takes its workers with it. Its names
   are its own: it does not see the program's functions and variables, nor clash with them.
   It can `import` what it needs, as any file can.
-- **A message** can hold numbers, strings, booleans, `null`, `bytes`, and lists, maps and
-  sets of those. Anything else is refused where it is sent. What arrives is a copy: changing
-  it does nothing to the original.
+- **A message** can hold numbers, strings, booleans, `null`, `bytes`, objects of data classes
+  and values of value types, and lists, maps and sets of those. Anything else is refused where
+  it is sent. What arrives is a copy: changing it does nothing to the original. A list or map
+  keeps its type (`List<int>` arrives as a `List<int>`), and a list kept packed goes as one
+  block of memory.
+- **Data classes and value types** are made again on the other side by their constructors,
+  from their header fields. Their class must be declared at the top level of a file that both
+  sides import (`import records.*` in the program and in the worker's script): a worker runs
+  the same program, and the message names the class by where it is declared. An object of an
+  ordinary class is refused, since the worker could only have a copy and not the object; make
+  it a data class, or send its fields.
 - **Frozen data is shared, not copied** (D97). A `frozen()` list, map or set holding only
   numbers, text and other frozen data is put once outside every heap, and each worker it is
   sent to reads that one copy in place: a large table sent to eight workers costs one copy,
@@ -3121,9 +3129,21 @@ powershell -ExecutionPolicy Bypass -File tests\run.ps1
 ```
 
 Each `tests\*.astra` file states its expected output in `// expect:` comments. The runner
-executes every test three ways (from source, from a compiled `.astc`, and built into an
-`.exe`) and expects the same result from each. A last check builds a program with `--icon`
-and looks for the icon in the result.
+executes every test five ways (from source, again from the program the first run kept, again
+from the units it kept, from a compiled `.astc`, and built into an `.exe`) and expects the
+same result from each. A last check builds a program with `--icon` and looks for the icon in
+the result.
+
+`-Parallel 24` runs 24 tests at a time, each in a directory and with a cache of its own; a
+test that fails is run again alone, and reported only if it fails again (one that passes alone
+is listed as such). `-Modes script` runs only some of the five ways, which is enough under the
+stress settings below: they look for faults in the runtime, which do not depend on how the
+program was loaded.
+
+```
+powershell -ExecutionPolicy Bypass -File tests\run.ps1 -Parallel 24
+powershell -ExecutionPolicy Bypass -File tests\run.ps1 -Parallel 24 -Modes script
+```
 
 `// expect error output:` is for a program that finishes normally having reported an error
 (one that ended a thread, say).

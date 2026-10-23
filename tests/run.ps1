@@ -7,14 +7,25 @@
 #   // expect error output: <text>     the program finishes normally, having reported <text>
 #
 # One more check at the end covers the --icon option of `astra build`.
+#
+# -Parallel N runs the tests\*.astra files N at a time, each with a working directory and a
+# cache of its own, its ways in order; a test that fails is run again alone, and reported only
+# if it fails then too (one that passes alone is listed as such). -Modes runs only some of the
+# five ways (script, cached, units, compiled, program): the stress settings and the sanitizer
+# look for faults in the runtime, which the way a program was loaded does not change.
+#
+#   powershell -File tests\run.ps1 -Astra build\work\astra.exe -Parallel 16 -Modes script
 
-param([string]$Astra = (Join-Path $PSScriptRoot '..\build\astra.exe'))
+param([string]$Astra = (Join-Path $PSScriptRoot '..\build\astra.exe'), [int]$Parallel = 1,
+      [string[]]$Modes = @('script', 'cached', 'units', 'compiled', 'program'))
 
 if (-not (Test-Path $Astra)) {
     Write-Host "astra.exe not found at $Astra - run build.bat first"
     exit 2
 }
 $Astra = (Resolve-Path $Astra).Path
+# `-Modes script,cached` arrives as one string from the command line of another shell.
+$Modes = @($Modes | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ })
 
 $tmp = Join-Path ([IO.Path]::GetTempPath()) "astra-tests-$PID"
 New-Item -ItemType Directory -Force $tmp | Out-Null
@@ -22,8 +33,11 @@ New-Item -ItemType Directory -Force $tmp | Out-Null
 # own, which goes with the rest at the end.
 $env:ASTRA_CACHE = Join-Path $tmp 'cache'
 
-# Runs astra, or with -Program a program built by `astra build --exe`.
-function Invoke-Astra([string[]]$AstraArgs, [string]$Program = $Astra) {
+# What running one test takes, defined here and, for -Parallel, in each runspace.
+$testFunctions = {
+# Runs astra, or with -Program a program built by `astra build --exe`, in `$Dir` with the cache
+# `$Cache`.
+function Invoke-Astra([string[]]$AstraArgs, [string]$Program, [string]$Dir, [string]$Cache) {
     $psi = New-Object System.Diagnostics.ProcessStartInfo
     $psi.FileName = $Program
     $psi.Arguments = ($AstraArgs | ForEach-Object { '"' + $_ + '"' }) -join ' '
@@ -32,7 +46,8 @@ function Invoke-Astra([string[]]$AstraArgs, [string]$Program = $Astra) {
     $psi.RedirectStandardError = $true
     $psi.CreateNoWindow = $true
     # A test that writes files writes them here, not into the source tree.
-    $psi.WorkingDirectory = $tmp
+    $psi.WorkingDirectory = $Dir
+    $psi.EnvironmentVariables['ASTRA_CACHE'] = $Cache
     # Programs write UTF-8, and the expectations in the test files are UTF-8 too.
     $psi.StandardOutputEncoding = [System.Text.Encoding]::UTF8
     $psi.StandardErrorEncoding = [System.Text.Encoding]::UTF8
@@ -77,50 +92,104 @@ function Get-Marker([string]$path, [string]$pattern) {
     return ''
 }
 
-$passed = 0
-$failures = @()
-
-foreach ($test in Get-ChildItem (Join-Path $PSScriptRoot '*.astra') | Sort-Object Name) {
-    $expected = @(Select-String -Path $test.FullName -Pattern '// expect: ?(.*)$' -Encoding UTF8 |
+# Runs one tests\*.astra file the ways asked for, in its own directory with its own cache: what
+# each way gave, $null where it matched.
+function Test-One([string]$Path, [string]$AstraExe, [string]$Dir, [string[]]$Ways) {
+    New-Item -ItemType Directory -Force $Dir | Out-Null
+    $cache = Join-Path $Dir 'cache'
+    $name = [IO.Path]::GetFileNameWithoutExtension($Path)
+    $expected = @(Select-String -Path $Path -Pattern '// expect: ?(.*)$' -Encoding UTF8 |
         ForEach-Object { $_.Matches[0].Groups[1].Value })
-    $runtimeError = Get-Marker $test.FullName '// expect runtime error: (.*)$'
-    $compileError = Get-Marker $test.FullName '// expect compile error: (.*)$'
+    $runtimeError = Get-Marker $Path '// expect runtime error: (.*)$'
+    $compileError = Get-Marker $Path '// expect compile error: (.*)$'
 
-    $bytecode = Join-Path $tmp ($test.BaseName + '.astc')
+    $bytecode = Join-Path $Dir ($name + '.astc')
     $results = [ordered]@{}
 
     if ($compileError) {
-        $results['script'] = Compare-Run (Invoke-Astra @($test.FullName)) @() $compileError 65
-        $results['compiled'] = Compare-Run (Invoke-Astra @('build', $test.FullName, '-o', $bytecode)) @() $compileError 65
+        if ($Ways -contains 'script') { $results['script'] = Compare-Run (Invoke-Astra @($Path) $AstraExe $Dir $cache) @() $compileError 65 }
+        if ($Ways -contains 'compiled') { $results['compiled'] = Compare-Run (Invoke-Astra @('build', $Path, '-o', $bytecode) $AstraExe $Dir $cache) @() $compileError 65 }
     } else {
         # `// expect error output: <text>`: the program goes on to its end, having reported <text>
         # (an error that ended one of its threads, say).
         $errorText = $runtimeError
-        if (-not $errorText) { $errorText = Get-Marker $test.FullName '// expect error output: (.*)$' }
+        if (-not $errorText) { $errorText = Get-Marker $Path '// expect error output: (.*)$' }
         $exitCode = if ($runtimeError) { 70 } else { 0 }
-        $results['script'] = Compare-Run (Invoke-Astra @($test.FullName)) $expected $errorText $exitCode
+        $script = $null
+        # The first run compiles it and keeps the program; cached and units start from what it kept.
+        if ($Ways -contains 'script' -or $Ways -contains 'cached' -or $Ways -contains 'units') {
+            $script = Compare-Run (Invoke-Astra @($Path) $AstraExe $Dir $cache) $expected $errorText $exitCode
+        }
+        if ($Ways -contains 'script') { $results['script'] = $script }
         # Run again, it starts from the program the first run kept.
-        $results['cached'] = Compare-Run (Invoke-Astra @($test.FullName)) $expected $errorText $exitCode
+        if ($Ways -contains 'cached') { $results['cached'] = Compare-Run (Invoke-Astra @($Path) $AstraExe $Dir $cache) $expected $errorText $exitCode }
         # And without the program, it is compiled again from the units the first run kept.
-        Remove-Item (Join-Path $env:ASTRA_CACHE '*.program') -ErrorAction SilentlyContinue
-        $results['units'] = Compare-Run (Invoke-Astra @($test.FullName)) $expected $errorText $exitCode
-
-        $build = Invoke-Astra @('build', $test.FullName, '-o', $bytecode)
-        if ($build.Code -ne 0) {
-            $results['compiled'] = "build failed: $($build.Error.Trim())"
-        } else {
-            $results['compiled'] = Compare-Run (Invoke-Astra @($bytecode)) $expected $errorText $exitCode
+        if ($Ways -contains 'units') {
+            Remove-Item (Join-Path $cache '*.program') -ErrorAction SilentlyContinue
+            $results['units'] = Compare-Run (Invoke-Astra @($Path) $AstraExe $Dir $cache) $expected $errorText $exitCode
         }
 
-        $program = Join-Path $tmp ($test.BaseName + '.exe')
-        $build = Invoke-Astra @('build', $test.FullName, '--exe', '-o', $program)
-        if ($build.Code -ne 0) {
-            $results['program'] = "build failed: $($build.Error.Trim())"
-        } else {
-            $results['program'] = Compare-Run (Invoke-Astra @() -Program $program) $expected $errorText $exitCode
+        if ($Ways -contains 'compiled') {
+            $build = Invoke-Astra @('build', $Path, '-o', $bytecode) $AstraExe $Dir $cache
+            if ($build.Code -ne 0) {
+                $results['compiled'] = "build failed: $($build.Error.Trim())"
+            } else {
+                $results['compiled'] = Compare-Run (Invoke-Astra @($bytecode) $AstraExe $Dir $cache) $expected $errorText $exitCode
+            }
+        }
+
+        if ($Ways -contains 'program') {
+            $program = Join-Path $Dir ($name + '.exe')
+            $build = Invoke-Astra @('build', $Path, '--exe', '-o', $program) $AstraExe $Dir $cache
+            if ($build.Code -ne 0) {
+                $results['program'] = "build failed: $($build.Error.Trim())"
+            } else {
+                $results['program'] = Compare-Run (Invoke-Astra @() $program $Dir $cache) $expected $errorText $exitCode
+            }
         }
     }
+    return $results
+}
+}
+. $testFunctions
 
+$passed = 0
+$failures = @()
+$aloneOnly = @()
+
+$tests = @(Get-ChildItem (Join-Path $PSScriptRoot '*.astra') | Sort-Object Name)
+$outcomes = @{}
+if ($Parallel -gt 1) {
+    # Each test in a runspace of a pool of $Parallel, all started at once and gathered in order.
+    $pool = [runspacefactory]::CreateRunspacePool(1, $Parallel)
+    $pool.Open()
+    $running = @()
+    $runOne = 'param($fns, $path, $exe, $dir, $ways) . ([scriptblock]::Create($fns)); Test-One $path $exe $dir $ways'
+    foreach ($test in $tests) {
+        $ps = [powershell]::Create()
+        $ps.RunspacePool = $pool
+        [void]$ps.AddScript($runOne).AddArgument($testFunctions.ToString()).AddArgument($test.FullName).AddArgument($Astra).AddArgument((Join-Path $tmp $test.BaseName)).AddArgument($Modes)
+        $running += @{ Test = $test; Shell = $ps; Handle = $ps.BeginInvoke() }
+    }
+    foreach ($job in $running) {
+        $output = $job.Shell.EndInvoke($job.Handle)
+        $outcomes[$job.Test.FullName] = if ($output.Count -gt 0) { $output[0] } else { [ordered]@{ 'runner' = "the runspace gave nothing: $($job.Shell.Streams.Error | Out-String)" } }
+        $job.Shell.Dispose()
+    }
+    $pool.Close()
+} else {
+    foreach ($test in $tests) { $outcomes[$test.FullName] = Test-One $test.FullName $Astra (Join-Path $tmp $test.BaseName) $Modes }
+}
+
+foreach ($test in $tests) {
+    $results = $outcomes[$test.FullName]
+    $failed = @($results.Keys | Where-Object { $null -ne $results[$_] })
+    if ($Parallel -gt 1 -and $failed.Count -gt 0) {
+        # Run again alone: a failure that goes away is the load of the others, not the test.
+        $alone = Test-One $test.FullName $Astra (Join-Path $tmp ($test.BaseName + '-alone')) $Modes
+        if (@($alone.Keys | Where-Object { $null -ne $alone[$_] }).Count -eq 0) { $aloneOnly += "$($test.Name) [$($failed -join ', ')]" }
+        $results = $alone
+    }
     foreach ($mode in $results.Keys) {
         if ($null -eq $results[$mode]) {
             $passed++
@@ -140,7 +209,7 @@ foreach ($test in Get-ChildItem (Join-Path $PSScriptRoot 'check\*.astra') | Sort
         $lineNumber++
         if ($line -match '// check: (.*)$') { $wanted["$($lineNumber): $($Matches[1].TrimEnd())"] = $true }
     }
-    $run = Invoke-Astra @('check', $test.FullName)
+    $run = Invoke-Astra @('check', $test.FullName) $Astra $tmp $env:ASTRA_CACHE
     $problems = @()
     $found = @{}
     foreach ($line in $run.Lines) {
@@ -169,7 +238,7 @@ foreach ($test in Get-ChildItem (Join-Path $PSScriptRoot 'check\*.astra') | Sort
 foreach ($test in Get-ChildItem (Join-Path $PSScriptRoot 'testing\*.astra') | Sort-Object Name) {
     $expected = @(Select-String -Path $test.FullName -Pattern '// expect: ?(.*)$' -Encoding UTF8 |
         ForEach-Object { $_.Matches[0].Groups[1].Value })
-    $run = Invoke-Astra @('test', $test.FullName)
+    $run = Invoke-Astra @('test', $test.FullName) $Astra $tmp $env:ASTRA_CACHE
     $run.Lines = @($run.Lines | Select-Object -Skip 1)
     $exitCode = if (@($expected | Where-Object { $_ -match '^\s*FAIL' }).Count -gt 0) { 1 } else { 0 }
     $result = Compare-Run $run $expected '' $exitCode
@@ -186,7 +255,7 @@ if (Test-Path $examples) {
 foreach ($entry in $checked) {
     $parts = $entry -split '\|'
     $arguments = if ($parts.Count -gt 1) { @('check', $parts[1], $parts[0]) } else { @('check', $parts[0]) }
-    $run = Invoke-Astra $arguments
+    $run = Invoke-Astra $arguments $Astra $tmp $env:ASTRA_CACHE
     $name = (Split-Path $parts[0] -Leaf) + $(if ($parts.Count -gt 1) { ' with the standard library' } else { '' })
     if ($run.Code -eq 0) {
         $passed++
@@ -285,7 +354,7 @@ foreach ($scenario in $scenarios) {
             # program the first kept.
             $counted = $step.Units -and $run -eq 'first'
             if ($counted) { $env:ASTRA_TIMES = '1' }
-            $got = Invoke-Astra @((Join-Path $dir 'main.astra'))
+            $got = Invoke-Astra @((Join-Path $dir 'main.astra')) $Astra $tmp $env:ASTRA_CACHE
             $env:ASTRA_TIMES = $null
             if ($counted) {
                 $said = $got.Error
@@ -329,12 +398,12 @@ $iconFile = Join-Path $tmp 'test.ico'
 $source = Join-Path $tmp 'icon.astra'
 [IO.File]::WriteAllText($source, 'print("has an icon")')
 $program = Join-Path $tmp 'icon.exe'
-$build = Invoke-Astra @('build', $source, '--icon', $iconFile, '-o', $program)
+$build = Invoke-Astra @('build', $source, '--icon', $iconFile, '-o', $program) $Astra $tmp $env:ASTRA_CACHE
 $result = $null
 if ($build.Code -ne 0) {
     $result = "build failed: $($build.Error.Trim())"
 } else {
-    $result = Compare-Run (Invoke-Astra @() -Program $program) @('has an icon') '' 0
+    $result = Compare-Run (Invoke-Astra @() $program $tmp $env:ASTRA_CACHE) @('has an icon') '' 0
     if ($null -eq $result) {
         Add-Type -AssemblyName System.Drawing
         $pixel = [Drawing.Icon]::ExtractAssociatedIcon($program).ToBitmap().GetPixel(16, 16)
@@ -347,5 +416,6 @@ if ($null -eq $result) { $passed++ } else { $failures += "--icon option [program
 Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
 
 foreach ($failure in $failures) { Write-Host "FAIL $failure" }
+foreach ($note in $aloneOnly) { Write-Host "passed only when run alone: $note" }
 Write-Host "$passed passed, $($failures.Count) failed"
 if ($failures.Count -gt 0) { exit 1 }

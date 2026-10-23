@@ -452,6 +452,10 @@ public:
     // A member read, set or found by its name, whoever may use it: as reflection does once it
     // has listed it to the code asking.
     Value memberGet(Value obj, ObjString* name);
+    // The global a class is kept in, or -1 (one declared inside a function): a worker runs the
+    // same program, so a message names a class by it (G6). And the class in a global, or null.
+    int globalSlotOf(const ObjClass* cls);
+    ObjClass* classInGlobal(int slot) const;
     void bundleValues(int count);  // Op::BundleValues
     void mergeBundles();           // Op::MergeBundle
     // Whether a value is an Iterator, an object with hasNext() and next().
@@ -977,6 +981,7 @@ private:
     // The type arguments WithTypes gave for the call that follows it, which takes them: the
     // frame it pushes, or the object it makes. Cleared by a call of C++, which has none.
     const ObjTypeInfo* pendingTypeArgs_ = nullptr;
+    std::unordered_map<const ObjClass*, int> classSlots_;  // globalSlotOf's, found once
     // What MakeType made last at a place, from which types (G3): each VM's own, a core's in a
     // parallel section, so read and written with no lock.
     struct MadeTypeCache {

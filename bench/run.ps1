@@ -3,9 +3,16 @@
 # this runs each a few times and takes the best. With -Save, the times are kept as the
 # baseline; afterwards each run is shown against it.
 #
-#   powershell -ExecutionPolicy Bypass -File bench\run.ps1 [-Save] [-Runs 5]
+#   powershell -ExecutionPolicy Bypass -File bench\run.ps1 [-Save] [-Runs 5] [-AnyCore]
+#
+# Each run is kept on the fastest kind of core the processor has (bench\fastcores.ps1): on a
+# processor with performance and efficient cores, one put on an efficient core would measure
+# the core. -AnyCore leaves it to the system.
 
-param([string]$Astra = (Join-Path $PSScriptRoot '..\build\astra.exe'), [int]$Runs = 5, [switch]$Save)
+param([string]$Astra = (Join-Path $PSScriptRoot '..\build\astra.exe'), [int]$Runs = 5, [switch]$Save, [switch]$AnyCore)
+
+. (Join-Path $PSScriptRoot 'fastcores.ps1')
+$mask = if ($AnyCore) { 0 } else { Get-FastCoreMask }
 
 $baselineFile = Join-Path $PSScriptRoot 'baseline.txt'
 $baseline = @{}
@@ -21,7 +28,7 @@ foreach ($bench in Get-ChildItem (Join-Path $PSScriptRoot '*.astra') | Sort-Obje
     $best = $null
     $check = $null
     for ($r = 0; $r -lt $Runs; $r++) {
-        $out = (& $Astra $bench.FullName 2>&1 | Select-Object -Last 1) -split ' '
+        $out = (Invoke-Pinned $Astra @($bench.FullName) $mask | Select-Object -Last 1) -split ' '
         $seconds = [double]$out[-1]
         $check = $out[1..($out.Count - 2)] -join ' '
         if ($null -eq $best -or $seconds -lt $best) { $best = $seconds }

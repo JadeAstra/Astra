@@ -1,0 +1,6 @@
+// The types tests/worker_data.astra and its worker both import: a message names them, and each
+// side makes them from its own copy of this file (G6).
+data Student(val name : string, val grade : int)
+data Course(val title : string, val students : List<Student>)
+value Point(val x : int, val y : int)
+value Tagged(val label : string, val at : Point)
