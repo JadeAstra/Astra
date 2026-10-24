@@ -108,14 +108,21 @@ print(Countdown(1).await(timeout = 10.milliseconds), done.await(), done.count, d
 
 // ---- Interrupting ----
 // A thread waiting is woken with an error; one that is working sees the mark when it asks.
+// Waited for by what it signals, not by the clock, so a loaded machine only makes it slower. The
+// short wait after "started" makes it usual for the interrupt to find the thread asleep; one that
+// comes just before the sleep wakes it at once all the same.
 var caught : string? = null
+val sleeperStarted = Countdown(1)
+val sleeperDone = Countdown(1)
 val sleeper = thread {
+  sleeperStarted.countDown()
   try { Thread.sleep(1.minutes) } catch (e : InterruptedException) { caught = e.message }
+  sleeperDone.countDown()
 }
+sleeperStarted.await()
 Thread.sleep(20.milliseconds)
 sleeper.cancel(interrupt = true)
-Thread.sleep(20.milliseconds)
-print(caught, sleeper.isCancelled)                           // expect: the thread was interrupted true
+print(sleeperDone.await(timeout = 10.seconds), caught, sleeper.isCancelled)   // expect: true the thread was interrupted true
 var noticed = false
 val started = Countdown(1)
 val busyThread = Thread({
@@ -164,10 +171,12 @@ try { stuck.get(timeout = 20.milliseconds) } catch (e : TimeoutException) { prin
 print(stuck.cancel(interrupt = true), stuck.isCancelled, stuck.cancel())   // expect: true true false
 // Timed jobs: once after a delay, and again and again until cancelled.
 val once = pool.after(10.milliseconds) { "later" }
+// Three runs of the repeating one are waited for, not a time: under load it only takes longer.
 var times = 0
-val repeating = pool.every(5.milliseconds) { times += 1 }
+val ticks = Countdown(3)
+val repeating = pool.every(5.milliseconds) { times += 1; ticks.countDown() }
 print(once.get(), once.isDone)                               // expect: later true
-Thread.sleep(60.milliseconds)
+print(ticks.await(timeout = 10.seconds))                     // expect: true
 repeating.cancel()
 print(times >= 3)                                            // expect: true
 pool.close()
