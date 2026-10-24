@@ -84,7 +84,7 @@ td.when { min-width: 9em; }
 <h2>Contents</h2>
 <ul>
 <li><a href="#choices">Choices to confirm</a> (nineteen from the first half; seven from part 8, group 1; twelve from group 2; eleven from group 3; eleven from group 4; eleven from group 5; eleven from group 6; thirteen from group 7; eleven from group 8; twelve from group 9)</li>
-<li><a href="#gaps">Gaps left</a> (forty-eight; those for M6.7 are in <a href="M6.7-gaps.html">M6.7-gaps.html</a>)</li>
+<li><a href="#gaps">Gaps left</a> (forty-seven; those for M6.7 are in <a href="M6.7-gaps.html">M6.7-gaps.html</a>)</li>
 </ul>
 </nav>
 
@@ -868,8 +868,7 @@ td.when { min-width: 9em; }
 <div class="table"><table>
 <thead><tr><th>No.</th><th>Part</th><th>Gap</th><th>When</th></tr></thead>
 <tbody>
-<tr><td class="part" id="g11">G11</td><td class="part">4</td><td>A list of values that may hold null (<code>List&lt;Point?&gt;</code>) is gone through by copies in a parallel section, so <code>forEach { it?.move() }</code> cannot change its items.</td><td class="when">Not placed yet</td></tr>
-<tr><td class="part" id="g15">G15</td><td class="part">5</td><td>Generic list functions that hand each item to a lambda (<code>filter</code>, <code>any</code>, <code>count</code> and the like) copy each item of a list of values, since the lambda may change the list: <code>filter</code> on a million points 98 ms, against 43 written out by hand.</td><td class="when">Inline functions (D59), the second half</td></tr>
+<tr><td class="part" id="g15">G15</td><td class="part">5</td><td>Generic list functions that hand each item to a lambda (<code>filter</code>, <code>any</code>, <code>count</code> and the like) copy each item of a list of values, since the lambda may change the list: <code>filter</code> on a million points 98 ms, against 43 written out by hand. (<code>forEach</code>, <code>forEachIndexed</code> and <code>onEach</code> hand each item over where it is, since 2026-10-24.)</td><td class="when">Inline functions (D59), the second half</td></tr>
 <tr><td class="part" id="g16">G16</td><td class="part">5</td><td>A field is kept inside its object only when its type is written, or it is given a value made by its type's name; one whose type the checker works out from anything else keeps a box, as does one whose type names a class that does not exist yet when the first object is made. So does a field of a value type that may be null (<code>var bounds : Rect?</code>): only one that is never null is kept inside its object (D172); keeping it there with a mark for null would serve both. (Gap G5, a field of a value type always holding a box, was closed by part 5 itself.)</td><td class="when">Not placed yet</td></tr>
 <tr><td class="part" id="g18">G18</td><td class="part">6</td><td>A field whose type the checker works out is kept as a payload only when it is an int, a float or a bool; one of a value type only when it is made by its type's name (part 5); any other keeps its slot.</td><td class="when">Not placed yet</td></tr>
 <tr><td class="part" id="g21">G21</td><td class="part">8.1</td><td>A one-character string keeps <code>code</code>, and strings their <code>isLetter()</code> and the like, beside the char's. (Kotlin's <code>uppercase()</code> and <code>lowercase()</code> went with D74 in group 2.)</td><td class="when">Not placed yet</td></tr>

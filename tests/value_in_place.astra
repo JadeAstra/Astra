@@ -101,3 +101,56 @@ print(failure { many.parallelStream().forEach { many.sortBy { it.x } } })
 // expect: a parallel section changes only the item it was given and what it makes itself: this List is shared with the other cores
 print(failure { many.parallelStream().forEach { many.contains(it) } })
 // expect: this List is the one the section is over and is read here an item at a time: a core looks only into its own items
+
+// forEach hands each item over where it is: what the lambda changes through it changes the item
+// (value-lists.html section 8), as in a parallel section. Found 2026-10-24: a plain forEach used
+// to work on copies, and the changes were lost.
+val row : open List<Ball> = [Ball(1.0, 1.0, 0.5), Ball(5.0, -1.0, 0.5)]
+row.forEach { it.move(10.0) }
+print(row)   // expect: [Ball(x=2.0, dx=1.0, r=0.5), Ball(x=4.0, dx=-1.0, r=0.5)]
+row.forEachIndexed { i, b -> if (i == 1) { b.move(10.0) } }
+print(row.onEach { it.move(10.0) }.map { it.x })   // expect: [3.0, 2.0]
+fun moveAll(items : List<Ball>) { items.forEach { it.move(10.0) } }
+moveAll(row)
+print(row.map { it.x })   // expect: [4.0, 1.0]
+
+// A lambda that keeps the item, or may change the list while it holds it, takes a copy first:
+// what it keeps stays as it was.
+var keptBall : Ball? = null
+row.forEach { keptBall = it }
+row[1] = Ball(99.0, 0.0, 0.5)
+print(keptBall)   // expect: Ball(x=1.0, dx=-1.0, r=0.5)
+fun lastOf(items : open List<Ball>) : Ball? {
+  var last : Ball? = null
+  items.forEach { last = it }
+  items[items.size - 1] = Ball(-1.0, 0.0, 0.5)
+  return last
+}
+print(lastOf(row))   // expect: Ball(x=99.0, dx=0.0, r=0.5)
+val unchanged : open List<bool> = []
+row.forEach { b ->
+  val before = b.x
+  row[0] = Ball(50.0, 0.0, 0.5)
+  unchanged.add(before == b.x)
+}
+print(unchanged)   // expect: [true, true]
+// A lambda run by a function of its own that keeps the item in a variable around it.
+fun <T> each(items : List<T>, f : (T) -> unit) { for x in items { f(x) } }
+var seenBall : Ball? = null
+each(row) { seenBall = it }
+row[1] = Ball(7.0, 0.0, 0.5)
+print(seenBall)   // expect: Ball(x=-1.0, dx=0.0, r=0.5)
+
+// A list that may hold null: ?. passes by a null item, also through its place, and the others
+// are changed where they are, on one core or on several (G11).
+val gaps : open List<Ball?> = [Ball(1.0, 1.0, 0.5), null, Ball(5.0, 1.0, 0.5)]
+gaps.forEach { it?.move(10.0) }
+for (i in gaps.indices) { gaps[i]?.move(10.0) }
+print(gaps)   // expect: [Ball(x=3.0, dx=1.0, r=0.5), null, Ball(x=7.0, dx=1.0, r=0.5)]
+gaps.parallelStream().forEach { it?.move(10.0) }
+print(gaps)   // expect: [Ball(x=4.0, dx=1.0, r=0.5), null, Ball(x=8.0, dx=1.0, r=0.5)]
+val manyGaps : open List<Ball?> = []
+for (i in 0..<1000) { manyGaps.add(i % 3 == 1 ? null : Ball(i.toFloat(), 1.0, 0.5)) }
+manyGaps.parallelStream().forEach { it?.move(2000.0) }
+manyGaps.parallelStream().replaceAll { it == null ? Ball(-1.0, 0.0, 0.5) : (it.x > 500.0 ? null : it) }
+print(manyGaps[0], manyGaps[1], manyGaps[999], manyGaps.count { it == null })   // expect: Ball(x=1.0, dx=1.0, r=0.5) Ball(x=-1.0, dx=0.0, r=0.5) null 334

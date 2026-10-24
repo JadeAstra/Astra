@@ -1521,6 +1521,12 @@ kept in a variable, the loop it is in, or the whole function when it may outlive
 (in a field, a list, a variable a lambda holds), it is copied. The program sees no difference
 but the time and the memory; with `ASTRA_COPY_READS=1` every read is a copy, for testing that.
 
+`forEach { }`, `forEachIndexed { }` and `onEach { }` hand the lambda each item where it is, so a
+change made through `it` changes the item, as in a parallel section; a lambda that may change a
+list of the item's type, or gives `it` to a variable outside itself, is given a copy instead. On a
+list that may hold null, `it?.move()` and `pts[i]?.move()` pass by the null items and change the
+others where they are.
+
 Larger values kept in variables, arguments and results without a box come in the rest of M6.6
 ([value-lists.html](docs/value-lists.html)).
 

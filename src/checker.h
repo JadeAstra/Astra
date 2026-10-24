@@ -266,6 +266,8 @@ public:
     bool loopsInPlace(const ForInStmt& loop) const;
     bool loopPassesOn(const ForInStmt& loop) const;  // its variable's one use is to be passed on
     std::vector<int> paramsOwned(const FunctionDecl& fn) const;
+    // Whether a lambda gives a value to a variable of the code around it (`saved = it`).
+    bool keepsOutside(const FunctionDecl& lambda) const;
     bool ownsThis(const FunctionDecl& fn) const;
 
     // Results built where they go (M6.6 part 4): whether a function or lambda gives a value of a

@@ -760,7 +760,8 @@ private:
     int copiedDepth_ = 0;  // lambdas being copied in
     // What the checker says of reads where a value is (M6.6 parts 4 and 5) is of the code as
     // written, not as copied into another's: in an inline body or a lambda copied in, every
-    // read is a copy (D59).
+    // read is a copy (D59), but for an item an inline body hands to a lambda copied in
+    // (handsItemToLambda).
     bool inPlaceOff() const { return inlineDepth_ > 0 || copiedDepth_ > 0; }
     bool copyReadsHere() const { return copyingReads() || inPlaceOff(); }
 
@@ -964,6 +965,27 @@ private:
         return true;
     }
 
+    // `for item in this { action(item) }` in an inline function's own body, where `action` is
+    // given a lambda copied in and what it gives is not used (forEach, forEachIndexed, onEach):
+    // the item is handed over where it is, so that `forEach { it.move() }` changes it there
+    // (value-lists.html section 8). The lambda takes a copy first where it may change a list of
+    // the item's type or keeps it (compileLambdaCopy); what it gives back goes nowhere.
+    bool handsItemToLambda(const ForInStmt& s) {
+        if (inlineDepth_ == 0 || copiedDepth_ > 0 || frame_ == nullptr || fs_->owner != frame_->owner || !s.pattern.empty() ||
+            !session_.checker->loopPassesOn(s))
+            return false;
+        for (const StmtPtr& st : s.body->statements) {
+            if (st->kind != StmtKind::Expr) continue;
+            const Expr& e = *static_cast<const ExprStmt&>(*st).expr;
+            if (e.kind != ExprKind::Call) continue;
+            const auto& call = static_cast<const CallExpr&>(e);
+            if (call.callee->kind != ExprKind::Name || boundLambda(static_cast<const NameExpr&>(*call.callee).name) == nullptr) continue;
+            for (const ExprPtr& arg : call.args)
+                if (arg->kind == ExprKind::Name && static_cast<const NameExpr&>(*arg).name == s.variable) return true;
+        }
+        return false;
+    }
+
     // A body compiled in place leaves its value: what its last expression comes to, or null.
     void compileInlineBody(const std::vector<StmtPtr>& body) {
         for (size_t i = 0; i + 1 < body.size(); i++) compileStmt(*body[i]);
@@ -1038,6 +1060,14 @@ private:
             aliasLocal("this", slotOf(object));
             if (!lambda.label.empty()) aliasLocal("this@" + lambda.label, slotOf(object));
             if (!b.callee.empty() && b.callee != lambda.label) aliasLocal("this@" + b.callee, slotOf(object));
+        }
+        // Given an item of a list where it is (handsItemToLambda), a copy of its own first where it
+        // may change a list of the item's type, or keeps it, as a function called would take one.
+        if (session_.checker != nullptr) {
+            const bool keeps = session_.checker->keepsOutside(lambda);
+            std::vector<int> owned = session_.checker->paramsOwned(lambda);
+            for (size_t i = 0; i < given.size() && i < lambda.params.size(); i++)
+                if (keeps || std::find(owned.begin(), owned.end(), static_cast<int>(i)) != owned.end()) emit(Op::OwnLocal, slotOf(given[i]));
         }
         compileInlineBody(lambda.body);
         endScopeKeepingValue();
@@ -3595,7 +3625,7 @@ private:
         fs_->loop = &loop;
         line_ = s.line;
         // A list of values may hand the loop its items where they are (M6.6 part 4).
-        const bool inPlace = !counted && session_.checker != nullptr && !inPlaceOff() && session_.checker->loopsInPlace(s) &&
+        const bool inPlace = !counted && session_.checker != nullptr && (!inPlaceOff() || handsItemToLambda(s)) && session_.checker->loopsInPlace(s) &&
                              (!copyingReads() || session_.checker->loopPassesOn(s));
         // Two names taking the item apart, `for ((key, value) in map)`: both parts at once, with
         // nothing made for a map's entry (D64, D73).

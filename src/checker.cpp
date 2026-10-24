@@ -321,6 +321,9 @@ struct FnCtx {
     NoWait noWait = CanWait;
     // Where what is thrown or called here is noted (D35): the function's own scope, or a try's.
     void* throwScope = nullptr;
+    // A lambda's: how many scopes there were around it, so that a variable it declares is told
+    // from one of the code around.
+    size_t scopeBase = 0;
 };
 
 const char* article(const std::string& word) {
@@ -3195,6 +3198,7 @@ struct Checker::Impl {
         }
         effects[effectKeyHere()].calls.push_back(&d);  // it may run while the code around it does
         FnCtx* saved = ctx;
+        c.scopeBase = scopes.size();
         ctx = &c;
         push();
         Type ft = Type::of(Type::Function);
@@ -5011,6 +5015,20 @@ struct Checker::Impl {
             }
     }
 
+    // `saved = it` in a lambda, to a variable of the code around it that may hold a value. Given
+    // an item of a list where it is and copied in where that code runs (the lambda of an inline
+    // function, `forEach { }`), the lambda takes a copy of it first, so that what it keeps stays
+    // as it was when the list changes.
+    std::unordered_set<const FunctionDecl*> keepingLambdas;
+    void noteLambdaKeeping(const std::string& name, const Type& type) {
+        if (silent > 0 || !mayHoldValue(type)) return;
+        size_t at = scopes.size();
+        while (at > 0 && scopes[at - 1].count(name) == 0) at--;
+        if (at == 0) return;
+        for (FnCtx* c = ctx; c != nullptr && c->fn == nullptr && c->placeDecl != nullptr; c = c->parent)
+            if (at - 1 < c->scopeBase) keepingLambdas.insert(c->placeDecl);
+    }
+
     // A change to a list of `list`'s type: of its value type's lists, or, for a list that may be
     // seen as one of any (List<any>, List<T>), of every one.
     void noteListChange(const Type& list) {
@@ -5269,7 +5287,10 @@ struct Checker::Impl {
             target = local != nullptr ? local->type : name(n);
             if (local != nullptr) {
                 noteKeptPastLoops(n.name, local->type);
-                if (a.op == TokenType::Eq) noteKeeping(local->type);
+                if (a.op == TokenType::Eq) {
+                    noteKeeping(local->type);
+                    noteLambdaKeeping(n.name, local->type);
+                }
             }
             // The name of a class, an object or a function is never given a value; the compiler
             // says so, which tells more than what the value's type is.
@@ -9376,6 +9397,7 @@ bool Checker::loopPassesOn(const ForInStmt& loop) const {
     return found != impl_->loopCandidates.end() && found->second.uses.size() == 1 && found->second.argUses.size() == 1;
 }
 std::vector<int> Checker::paramsOwned(const FunctionDecl& fn) const { return impl_->paramsOwned(fn); }
+bool Checker::keepsOutside(const FunctionDecl& lambda) const { return impl_->keepingLambdas.count(&lambda) != 0; }
 
 // A method of a value type that is not mutating, run on an item where it is: copied as it
 // starts if it may change a list of its type, so that what it reads stays as it was.

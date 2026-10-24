@@ -3290,6 +3290,8 @@ void VM::setRefField(Value r, ObjString* name, Value value) {
 Value VM::placeIn(Value& slot) {
     if (slot.isRef() && slot.as.obj->type != ObjType::Value) return slot;  // where it is already: in a list or an object
     const Value kept = boxed(slot);
+    // Null, for `p?.move()` to pass by: what is changed through it reports a change to null.
+    if (kept.isNull()) return kept;
     if (!kept.isObjType(ObjType::Value))
         throw runtimeError(Thrown::NullPointerException, "cannot change a field of " + (kept.isNull() ? std::string("null") : "a value of type " + typeName(kept)) +
                            " through its place");
@@ -4996,7 +4998,7 @@ void VM::run(int baseFrame) {
                             const TypeConstraint& declared = globalTypes_[index];
                             if (declared.type != 0 && (!matchesType(sp_[-1], declared.type, declared.cls) && !widenedByte(sp_[-1], declared.type)))
                                 throw typeMismatch(program_->globalNames[index], declared.type, declared.cls, sp_[-1]);
-                            slot = sp_[-1];
+                            slot = own(sp_[-1]);  // as SetGlobal: an item where it is is copied as it is kept
                             break;
                         }
                         CHECK_ACCESS(receiver, 2, true, true);  // found, but its setter may be kept back
@@ -5209,7 +5211,9 @@ void VM::run(int baseFrame) {
                         ObjUpvalue* upvalue = frame->closure->upvalues[static_cast<size_t>(READ_U16())];
                         // A variable of the code around the section is every core's to read, and nobody's to change.
                         if (upvalue->core != coreId_) throw notOwned("a variable from outside the section is shared");
-                        *upvalue->location = upvalue->location == &upvalue->closed ? own(sp_[-1]) : sp_[-1];
+                        // An item of a list where it is is copied as it is kept: in a variable of
+                        // the code around, it would outlive what the checker judged of the lambda.
+                        *upvalue->location = own(sp_[-1]);
                         break;
                     }
 
@@ -7319,8 +7323,8 @@ const uint8_t* VM::placeInstruction(Op op, const uint8_t* ip, CallFrame* frame) 
             if (!position(index, list->size(), i, "list index")) throw outOfRange("list index", index, list->size());
             sp_--;
             if (list->store() == ListStore::Items) {
-                if (list->pack->nullable && (list->pack->nulls[i / 64] >> (i % 64) & 1)) throw runtimeError(Thrown::NullPointerException, "cannot change a field of null");
-                sp_[-1] = Value::ref(list, static_cast<uint32_t>(i), 0, 0);  // the item, where it is
+                if (list->pack->nullable && (list->pack->nulls[i / 64] >> (i % 64) & 1)) sp_[-1] = Value::null();  // for `pts[i]?.move()` to pass by
+                else sp_[-1] = Value::ref(list, static_cast<uint32_t>(i), 0, 0);  // the item, where it is
             } else {
                 sp_[-1] = placeIn(list->values()[i]);
             }

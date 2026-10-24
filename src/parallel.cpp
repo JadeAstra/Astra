@@ -334,8 +334,9 @@ void VM::runParallelPiece(ParallelPiece& piece) {
                 bandTo_ = piece.to;
                 if (section.keep) piece.results.reserve(piece.to - piece.from);
                 for (size_t i = piece.from; i < piece.to && !section.cancelled.load(std::memory_order_relaxed); i++) {
-                    Value item = Value::ref(list, static_cast<uint32_t>(i), 0, 0);
-                    if (section.replace) pendingDestination_ = item;
+                    const bool null = list->pack->nullable && (list->pack->nulls[i / 64] >> (i % 64) & 1);
+                    Value item = null ? Value::null() : Value::ref(list, static_cast<uint32_t>(i), 0, 0);
+                    if (section.replace && !null) pendingDestination_ = item;  // a null item is replaced by setting it
                     Value result = call(section.function, 1, &item);
                     pendingDestination_ = Value::null();
                     if (section.replace) {
@@ -543,8 +544,8 @@ void VM::runSection(ParallelSection& section) {
 Value VM::runParallel(Value source, Value function, bool keep, bool replace) {
     if (replace && !source.isObjType(ObjType::List)) throw runtimeError(Thrown::ClassCastException, "replaceAll is for a list, not a value of type " + typeName(source));
     // A list of values (M6.6 part 4): each piece is given its own part of the list, and the items
-    // where they are. A list that may hold null is gone through as any other.
-    ObjList* values = source.isObjType(ObjType::List) && asList(source)->store() == ListStore::Items && !asList(source)->pack->nullable
+    // where they are; one that may hold null, null for each that is (G11).
+    ObjList* values = source.isObjType(ObjType::List) && asList(source)->store() == ListStore::Items
                           ? asList(source)
                           : nullptr;
     if (values != nullptr && values->core != coreId_ && (replace || coreId_ != 0)) values = nullptr;  // not this piece's to write in place
@@ -566,7 +567,10 @@ Value VM::runParallel(Value source, Value function, bool keep, bool replace) {
     section.values = values;
     section.keep = keepAll;
     section.replace = replace && values != nullptr;
-    cut(section, count, std::min(static_cast<size_t>(parallelCores()), count));
+    // Which items are null is kept in bits, 64 to a word: a list that may hold null is cut at whole
+    // words, so that no two cores set bits of the same word as they replace items.
+    const size_t align = values != nullptr && values->pack->nullable ? 64 : 1;
+    cut(section, count, std::min(static_cast<size_t>(parallelCores()), (count + align - 1) / align), align);
     runSection(section);
 
     if (replace && values == nullptr) {
