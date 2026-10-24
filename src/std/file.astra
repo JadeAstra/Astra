@@ -1,3 +1,6 @@
+// Inside Astra: the work is done by the built-in __file, which only the standard library can
+// name.
+
 // ---- Paths ----
 
 // A file or directory on disk, by its path (D107): Java's File and java.nio.file.Path in one.
@@ -9,8 +12,7 @@
 //   Path(directory, "out.bin").writeBytes(data)
 //   for file in Path("src").walk() { if (file.extension == "astra") { print(file.name) } }
 //
-// Text is UTF-8 unless a Charset says otherwise (D127). The work itself is done by the
-// built-in __file, which only the standard library can name.
+// Text is UTF-8 unless a Charset says otherwise (D127).
 class Path {
   // The path as it was made (D137).
   val text : string
@@ -29,6 +31,9 @@ class Path {
     // A new, empty directory or file in the system's temporary directory, its name starting with
     // `prefix` (D131).
     fun createTempDirectory(prefix : string = "astra") : Path throws IOException => Path(__file.createTemp(prefix, "", true))
+    // A new, empty file in the system's temporary directory, named `prefix`, a number, then
+    // `suffix`, as astra240932127838.tmp; no other program gets the same one. An IOException
+    // where none can be made.
     fun createTempFile(prefix : string = "astra", suffix : string = ".tmp") : Path throws IOException => Path(__file.createTemp(prefix, suffix, false))
   }
 
@@ -46,6 +51,8 @@ class Path {
       return dot < 0 ? "" : whole[dot + 1..]
     }
 
+  // The name without its last dot and what follows: "a.tar" for a.tar.gz, the whole name where it
+  // has no dot, and "" for a name such as .bashrc whose only dot comes first.
   val nameWithoutExtension : string
     get() {
       val whole : string = __file.name(text)
@@ -69,10 +76,16 @@ class Path {
 
   // -- What is on disk --
 
+  // Whether something is there, a file or a directory.
   fun exists() : bool => __file.exists(text)
+  // Whether a file is there; false for a directory and where nothing is there.
   fun isFile() : bool => __file.isFile(text)
+  // Whether a directory is there; false for a file and where nothing is there.
   fun isDirectory() : bool => __file.isDirectory(text)
+  // Whether this program may read it; false where nothing is there.
   fun isReadable() : bool => (__file.permissions(text) & 4) != 0
+  // Whether this program may write it (on Windows, whether it is not read-only); false where
+  // nothing is there.
   fun isWritable() : bool => (__file.permissions(text) & 2) != 0
   // Whether it can be run as a program: on Windows, a file whose extension PATHEXT lists.
   fun isExecutable() : bool => (__file.permissions(text) & 1) != 0
@@ -80,6 +93,7 @@ class Path {
   // The size in bytes, and when it was last written in milliseconds since the start of 1970.
   // Both are 0 for a file that is not there.
   fun size() : int => __file.size(text)
+  // When it was last written, in milliseconds since the start of 1970; 0 where nothing is there.
   fun lastModified() : int => __file.lastModified(text)
 
   // With `.`, `..` and links worked out; an IOException if it is not there (D135).
@@ -102,7 +116,10 @@ class Path {
   // -- Reading and writing --
   // Each call reads or writes the whole file.
 
+  // The whole file as text in `charset`; an IOException where it cannot be read, as when it is
+  // not there or is a directory.
   fun readText(charset : Charset = Charset.utf8) : string throws IOException => __file.read(text, charset)
+  // The whole file as bytes; an IOException where it cannot be read.
   fun readBytes() : Bytes throws IOException => __file.readBytes(text)
 
   // The lines of the file, without their line ends.
@@ -123,14 +140,23 @@ class Path {
     return reader(charset).use { block(it.lineSequence()) }
   }
 
+  // Makes `text`, in `charset`, the whole file: made where it is not there, emptied first where
+  // it is. The directory it is in is not made: an IOException where it is missing, or where the
+  // file cannot be written.
   fun writeText(text : string, charset : Charset = Charset.utf8) throws IOException { __file.write(this.text, text, charset) }
+  // Adds `text`, in `charset`, to the end of the file, which is made where it is not there; an
+  // IOException where it cannot be written.
   fun appendText(text : string, charset : Charset = Charset.utf8) throws IOException { __file.append(this.text, text, charset) }
+  // Makes `data` the whole file, as writeText does with text.
   fun writeBytes(data : Bytes) throws IOException { __file.writeBytes(text, data) }
+  // Adds `data` to the end of the file, as appendText does with text.
   fun appendBytes(data : Bytes) throws IOException { __file.appendBytes(text, data) }
 
   // A piece at a time (D119): close each when it is done with, or let use { } do it.
   //   path.reader().use { it.readLine() }
   fun reader(charset : Charset = Charset.utf8) : Reader throws IOException => Reader(__io.open(text, "r"), charset)
+  // A Writer to the file, made where it is not there: emptied first, or with `append` written
+  // after what it holds. An IOException where it cannot be opened.
   fun writer(append : bool = false, charset : Charset = Charset.utf8) : Writer throws IOException =>
     Writer(__io.open(text, append ? "a" : "w"), charset)
 
@@ -155,17 +181,27 @@ class Path {
     return to
   }
 
+  // A copy of the file at `target`, given as a Path. Only a file is copied: a directory is an
+  // IOException, as is a `target` already there while `overwrite` is false.
   fun copyTo(target : Path | string, overwrite : bool = false) : Path throws IOException {
     val to = target is Path ? target : Path(target as string)
     __file.copy(text, to.text, overwrite)
     return to
   }
 
+  // Lets it be written, or keeps it from being written (on Windows, its read-only flag); an
+  // IOException where nothing is there.
   fun setWritable(writable : bool) throws IOException { __file.setWritable(text, writable) }
+  // Sets when it was last written, `millis` since the start of 1970; an IOException where
+  // nothing is there.
   fun setLastModified(millis : int) throws IOException { __file.setLastModified(text, millis) }
 
+  // Whether `other` is a Path with the same text. Paths that name one file in different words,
+  // as "a" and "./a", are not ==; their canonical() Paths are, where the file is there.
   op ==(other : any?) : bool => other is Path and other.text == this.text
+  // The hash code of its text, the same for two Paths that are ==.
   fun hashCode() : int => text.hashCode()
+  // The path as it was made, its text.
   override fun toString() : string => text
 }
 

@@ -29,6 +29,9 @@ external fun __memberCall(obj : any, name : string, args : List<any?>) : any?
 // rights to the members the class keeps.
 fun __classOf(type : Type, asker : any) : Class => Class(type, asker)
 
+// A class, or a built-in type, as `Image#` or `x#` gives it; `type` is the type it stands for,
+// with its type arguments (the class of a Box<int> is Box<int>). What it lists is what the code
+// where the `#` is written may use.
 class Class(val type : Type, private val asker : any? = null) {
   // The class's name, or a built-in type's: "Circle", "int", "List".
   val name : string
@@ -70,6 +73,8 @@ class Class(val type : Type, private val asker : any? = null) {
   // The annotations written on it (D153).
   val annotations : List<any>
     get() => __typeAnnotations(type)
+  // The first annotation written on it that is an `A`, as `Shape#.annotation<Tag>()`; null where
+  // there is none.
   fun <A> annotation() : A? => __typeAnnotations(type).firstOrNull { it is A } as A?
 
   // The field, or the method, of that name; null where there is none the code may use. Of a
@@ -78,6 +83,8 @@ class Class(val type : Type, private val asker : any? = null) {
     val entry = __typeFields(type, asker).firstOrNull { it[0] == name }
     return entry == null ? null : Field(this, entry)
   }
+  // The method named `name`, the first of its forms where it has several; null where there is
+  // none the code may use.
   fun method(name : string) : Method? {
     val entry = __typeMethods(type, asker).firstOrNull { it[0] == name }
     return entry == null ? null : Method(this, entry)
@@ -86,8 +93,12 @@ class Class(val type : Type, private val asker : any? = null) {
   // Whether a value is an object of the class, or of a class below it.
   fun isInstance(value : any?) : bool => __typeHas(type, value)
 
+  // Whether `other` is a Class for the same type, type arguments included: Box(1)# == Box(2)#,
+  // but Box(1)# != Box("a")#.
   op ==(other : any?) : bool => other is Class and other.type == type
+  // A number from its type, the same for two Classes that are ==.
   fun hashCode() : int => __hashCode(type)
+  // The type with its type arguments, as "Box<int>" or "string".
   fun toString() : string => "$type"
 
   static {
@@ -98,11 +109,14 @@ class Class(val type : Type, private val asker : any? = null) {
 }
 
 // A field or a property of a class.
+// `owner` is the Class that lists it.
 class Field(val owner : Class, entry : List<any?>) {
+  // Its name, as written in the class.
   val name : string = entry[0] as string
   // What it holds: `any?` where its type cannot be named as the program runs.
   val type : Type = entry[1] as Type
   private val flags : int = entry[2] as int
+  // The annotations written on it, in their order.
   val annotations : List<any> = entry[3] as List<any>
 
   // Whether `set` may change it: a var, or a property with a setter, that the code may assign to.
@@ -132,19 +146,26 @@ class Field(val owner : Class, entry : List<any?>) {
     }
   }
 
+  // The first annotation written on it that is an `A`; null where there is none.
   fun <A> annotation() : A? => annotations.firstOrNull { it is A } as A?
+  // Its name and type, as "count : int".
   fun toString() : string => "$name : $type"
 }
 
 // A parameter of a method or a constructor.
 class Parameter(entry : List<any?>) {
+  // Its name, as written in the declaration.
   val name : string = entry[0] as string
+  // The type an argument for it has to be.
   val type : Type = entry[1] as Type
   // Whether a call may leave it out, for its default.
   val isOptional : bool = entry[2] as bool
+  // The annotations written on it, in their order.
   val annotations : List<any> = entry[3] as List<any>
 
+  // The first annotation written on it that is an `A`; null where there is none.
   fun <A> annotation() : A? => annotations.firstOrNull { it is A } as A?
+  // Its name and type, as "extra : string"; a default is not shown.
   fun toString() : string => "$name : $type"
 }
 
@@ -160,12 +181,16 @@ fun __checkArguments(what : string, parameters : List<Parameter>, args : List<an
 }
 
 // A method of a class.
+// `owner` is the Class that lists it.
 class Method(val owner : Class, entry : List<any?>) {
+  // Its name; the forms of a method with several share it.
   val name : string = entry[0] as string
   private val key : string = entry[1] as string
+  // Its parameters, in their order.
   val parameters : List<Parameter> = (entry[2] as List<List<any?>>).map { Parameter(it) }
   // What it gives; null where it gives nothing.
   val result : Type? = entry[3] as Type?
+  // The annotations written on it, in their order.
   val annotations : List<any> = entry[4] as List<any>
 
   // Runs it on `obj`, an object of the class, with `args`.
@@ -179,13 +204,18 @@ class Method(val owner : Class, entry : List<any?>) {
     }
   }
 
+  // The first annotation written on it that is an `A`; null where there is none.
   fun <A> annotation() : A? => annotations.firstOrNull { it is A } as A?
+  // Its name, parameters and result, as "twice(n : int, extra : string) : int".
   fun toString() : string => "$name(" + parameters.join(", ") + ")" + (result == null ? "" : " : $result")
 }
 
 // A constructor of a class.
+// `owner` is the Class it makes objects of.
 class Constructor(val owner : Class, entry : List<any?>) {
+  // Its parameters, in their order.
   val parameters : List<Parameter> = (entry[0] as List<List<any?>>).map { Parameter(it) }
+  // The annotations written on it, in their order.
   val annotations : List<any> = entry[1] as List<any>
 
   // A new object of the class, with its type arguments, made from `args`.
@@ -198,6 +228,8 @@ class Constructor(val owner : Class, entry : List<any?>) {
     }
   }
 
+  // The first annotation written on it that is an `A`; null where there is none.
   fun <A> annotation() : A? => annotations.firstOrNull { it is A } as A?
+  // The class's name and its parameters, as "Box(item : int, count : int)".
   fun toString() : string => owner.name + "(" + parameters.join(", ") + ")"
 }

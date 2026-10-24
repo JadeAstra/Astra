@@ -1,3 +1,5 @@
+// Inside Astra: the work is done by the built-in __worker (worker.cpp).
+
 // ---- Workers ----
 // A worker is a second copy of the runtime, on a thread of its own, running a script of its
 // own. Unlike a thread it runs at the same time as the program that started it, on another
@@ -17,7 +19,6 @@
 // A message can hold numbers, strings, booleans, null, bytes, and lists and maps of those.
 // Frozen data in one is shared rather than copied, and bytes can be handed over (D97).
 // Messages arrive on the event loop of the side they are sent to, one at a time.
-// The work is done by the built-in __worker (worker.cpp).
 class Worker {
   static {
     // In a worker: the program that started it. Null in a program that is not a worker.
@@ -53,6 +54,8 @@ class Worker {
     __worker.terminate(id)
   }
 
+  // True until this program's event loop has heard that the worker ended, whether it finished,
+  // failed or was terminated; so it can stay true for a moment after the end.
   val isAlive : bool
     get() => __worker.isAlive(id)
 }

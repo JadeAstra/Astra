@@ -21,7 +21,8 @@
 //
 // What it does not do yet: scripts whose letters join or reorder (Arabic, Devanagari),
 // right-to-left text, and marks placed on other letters. One character is one glyph.
-// The work is done by the built-in __text (src/text).
+
+// Inside Astra: the work is done by the built-in __text (src/text).
 
 // One axis a variable font can be varied along: "wght" (weight), "wdth" (width), "opsz"
 // (the size it is to be read at) and so on.
@@ -29,22 +30,45 @@ data FontAxis(val tag : string, val minimum : Number, val defaultValue : Number,
 
 // One font out of a font file: a family in one style, at no particular size.
 class Typeface {
+  // The text engine's number for the typeface; every Typeface of the same font has the same one.
   val handle : int            // the engine's number for it
+  // The file the typeface was read from; "<bytes>" for one loaded from bytes.
   val path : string
+  // Which font of its file it is: 0 unless the file is a collection (.ttc).
   val index : int
+  // The family's name, as the font gives it: "Segoe UI".
   val family : string          // "Segoe UI"
+  // The style within the family, as the font names it: "Bold Italic".
   val style : string           // "Bold Italic"
+  // The family and the style together, as the font names them: "Segoe UI Bold Italic".
   val fullName : string        // "Segoe UI Bold Italic"
+  // The family as programs that know only four styles (regular, bold, italic, bold italic) see
+  // it, which may name a weight: "Segoe UI Semibold". Fonts.typefaces finds a family by either
+  // name.
   val legacyFamily : string    // the family as programs that know four styles see it: "Segoe UI Semibold"
+  // How heavy its letters are, usually from 100 to 900: 400 is regular, 700 bold. A variable
+  // font's is its default weight.
   val weight : Number          // 100 to 900: 400 is regular, 700 bold
+  // How wide its letters are, from 1 (the narrowest) to 9 (the widest); 5 is the normal width.
   val stretch : int            // 1 to 9: 5 is the normal width
+  // Whether the typeface is italic or oblique.
   val isItalic : bool
+  // Whether the font says every character is the same width.
   val isMonospace : bool
+  // Whether it is a symbol font, such as Wingdings: its characters are pictures, not letters.
   val isSymbol : bool          // a symbol font: its characters are not letters
+  // Whether it is a variable font, one file holding a range of weights or other styles: `axes`
+  // lists what it can be varied along.
   val isVariable : bool        // one file holding every weight
+  // Whether its outlines are cubic curves, the kind in an .otf file, rather than the quadratic
+  // curves of a .ttf; `outline` gives "C" in place of "Q".
   val hasCubicOutlines : bool  // the .otf kind of outline
+  // Whether it has glyphs in colour, drawn or as pictures (emoji).
   val hasColor : bool          // has colour glyphs (emoji)
+  // How many glyphs the font has; glyph numbers go from 0 to one less.
   val glyphCount : int
+  // How many of the font's own units make its size (the em): what `advance` and `outline`
+  // measure in, often 1000 or 2048.
   val unitsPerEm : int
 
   fun init(handle : int) {
@@ -80,8 +104,11 @@ class Typeface {
   // [how many have one, how many points, how many are damaged].
   fun check(step : int = 1, weight : Number? = null) : open List<int> => __text.faceCheck(handle, 0, step, weight ?: this.weight)
 
+  // Whether `other` is a Typeface of the same font.
   op ==(other : any?) : bool => other is Typeface and other.handle == handle
+  // A hash code, the same for equal typefaces.
   fun hashCode() : int => handle
+  // The typeface's full name in "Typeface(...)": "Typeface(Segoe UI Bold Italic)".
   override fun toString() : string => "Typeface($fullName)"
 }
 
@@ -112,6 +139,8 @@ object Fonts {
   // A font from a file that is not installed, or from the bytes of one. A collection
   // (.ttc) holds several: `count` says how many, `index` picks one.
   fun load(path : Path | string | Bytes, index : int = 0) : Typeface => Typeface(path is Bytes ? __text.fromBytes(path, index) : __text.load("$path", index))
+  // How many fonts the file at `path` holds: more than 1 for a collection (.ttc), 0 if it
+  // cannot be read or is not a font file.
   fun count(path : Path | string) : int => __text.countIn("$path")
 }
 
@@ -132,19 +161,27 @@ object Fonts {
 // family lacks is made up, a bold by thickening and an italic by slanting.
 class Font {
   static {
-    // The system's own families, Java's names.
+    // "Dialog", Java's name for the system's sans-serif family.
     const dialog = "Dialog"
+    // "DialogInput", Java's name for the system's monospaced family.
     const dialogInput = "DialogInput"
+    // "SansSerif", the system's sans-serif family, such as Segoe UI on Windows.
     const sansSerif = "SansSerif"
+    // "Serif", the system's serif family, such as Times New Roman on Windows.
     const serif = "Serif"
+    // "Monospaced", the system's monospaced family, such as Consolas on Windows.
     const monospaced = "Monospaced"
   }
 
   // The family asked for (a name), or the typeface given.
   val name : string
+  // The Typeface the font was made from; null when it was made from a family's name.
   val source : Typeface?
+  // The size in layout units: the height of the font's em, so a 14 is 14 pixels at scale 1.
   val size : Number
+  // Whether bold was asked for.
   val isBold : bool
+  // Whether italic was asked for.
   val isItalic : bool
   // The weight asked for, from 100 to 900; null for the usual, 400, or 700 when bold.
   val weightAsked : Number?
@@ -164,51 +201,77 @@ class Font {
   fun copy(size : Number? = null, bold : bool? = null, italic : bool? = null, weight : Number? = null) : Font =>
     Font(source ?: name, size ?: this.size, bold ?: isBold, italic ?: isItalic, weight ?: weightAsked)
 
-  // What the font turned out to be: the family used, the typeface's full name, its weight.
+  // The family the font is drawn from: the one asked for if it is installed, otherwise the
+  // system's sans-serif.
   val family : string
     get() => engineAt(1).family
+  // The full name of the typeface used: "Segoe UI Bold".
   val fontName : string
     get() => engineAt(1).typeface.fullName
+  // The typeface used: the one of the family nearest to the weight and style asked for.
   val typeface : Typeface
     get() => engineAt(1).typeface
+  // The weight it is drawn at: the one asked for when the typeface has it (a variable font has
+  // its whole range), otherwise the nearest the family has.
   val weight : Number
     get() => engineAt(1).weight
 
   // -- Its measurements, in layout units (D101); with a scale, in that screen's own pixels --
 
-  // From the baseline up to the top of a line, and down to its bottom; the extra room between
-  // one line and the next; the three together.
+  // From the baseline up to the top of a line, in layout units.
   val ascent : int
     get() => engineAt(1).ascent
+  // From the baseline down to the bottom of a line, in layout units.
   val descent : int
     get() => engineAt(1).descent
+  // The extra room the font asks for between one line and the next, in layout units; often 0.
   val leading : int
     get() => engineAt(1).leading
+  // The height of a line, in layout units: `ascent`, `descent` and `leading` together.
   val lineHeight : int
     get() => engineAt(1).height
-  // The heights of a small letter such as x, and of a capital.
+  // The height of a small letter such as x, in layout units.
   val xHeight : int
     get() => engineAt(1).xHeight
+  // The height of a capital letter, in layout units.
   val capHeight : int
     get() => engineAt(1).capHeight
+  // The `ascent` in the pixels of a screen with `scale` of them to a unit. It is measured at
+  // that size, so it is not always `scale` times `ascent`. A `scale` of 0 or less throws an
+  // IllegalArgumentException.
   fun ascent(scale : Number) : int => engineAt(scale).ascent
+  // The `descent` in the pixels of a screen with `scale` of them to a unit, measured at that
+  // size; a `scale` of 0 or less throws an IllegalArgumentException.
   fun descent(scale : Number) : int => engineAt(scale).descent
+  // The `leading` in the pixels of a screen with `scale` of them to a unit, measured at that
+  // size; a `scale` of 0 or less throws an IllegalArgumentException.
   fun leading(scale : Number) : int => engineAt(scale).leading
+  // The `lineHeight` in the pixels of a screen with `scale` of them to a unit, measured at that
+  // size; a `scale` of 0 or less throws an IllegalArgumentException.
   fun lineHeight(scale : Number) : int => engineAt(scale).height
 
-  // A text's width, or a character's (L81), and where each of a text's characters starts and
-  // the last one ends (one number more than it has characters).
+  // The width of `text`, a string or a char, in layout units, or with `scale` in the pixels of
+  // a screen with that many to a unit: the sum of its characters' widths, and so where it ends
+  // when drawn.
   fun width(text : any?, scale : Number = 1) : int => text is char ? engineAt(scale).charWidth(text) : engineAt(scale).width(text)
+  // Where each character of `text` starts and where the last one ends, in layout units or with
+  // `scale` in that screen's pixels: one number more than it has characters, the first 0.
+  //   font.offsets("abc")   [0, font.width("a"), font.width("ab"), font.width("abc")]
   fun offsets(text : any?, scale : Number = 1) : open List<int> => engineAt(scale).offsets(text)
 
   // The typeface a character is drawn from: this font's own, or another one that has it when
   // this one does not. Null if no installed font has it.
   fun typefaceFor(character : any) : Typeface? => engineAt(1).typefaceFor(character)
 
+  // Whether `other` is a Font asked for in the same way: the same family name or typeface,
+  // size, bold, italic and weight. One made from a family's name is not equal to one made
+  // from its Typeface.
   op ==(other : any?) : bool =>
     other is Font and other.name == name and other.source == source and other.size == size and other.isBold == isBold and
     other.isItalic == isItalic and other.weightAsked == weightAsked
+  // A hash code, the same for equal fonts.
   fun hashCode() : int => hash(name, size, isBold, isItalic, weightAsked)
+  // The font as it was asked for: "Font(Segoe UI, 14, bold)", "Font(Segoe UI, 14, weight 350)".
   override fun toString() : string {
     val style = isBold ? (isItalic ? ", bold, italic" : ", bold") : (isItalic ? ", italic" : "")
     return "Font($name, $size$style" + (weightAsked == null ? ")" : ", weight $weightAsked)")
@@ -234,17 +297,29 @@ class Font {
 // A font at one scale, as the text engine has it: what Font measures and draws with. Every
 // number is in pixels of the picture or screen drawn on.
 internal class TextFont {
+  // The text engine's number for it.
   val handle : int           // the engine's number for it
+  // The typeface it draws with.
   val typeface : Typeface
+  // The size asked for, in layout units.
   val size : Number
+  // How many pixels of the picture or screen make one layout unit.
   val scale : Number
+  // The weight it is drawn at.
   val weight : Number
+  // Whether it is drawn bold: a weight of 600 or more, or a bold made up by thickening.
   val isBold : bool
+  // Whether it is drawn italic: an italic typeface, or an italic made up by slanting.
   val isItalic : bool
+  // From the baseline up to the top of a line, in pixels.
   val ascent : int           // from the baseline up to the top of the line
+  // From the baseline down to the bottom of a line, in pixels.
   val descent : int          // from the baseline down to its bottom
+  // The extra room between one line and the next, in pixels.
   val leading : int          // extra room between one line and the next
+  // The height of a small letter such as x, in pixels.
   val xHeight : int          // the height of a small letter such as x
+  // The height of a capital letter, in pixels.
   val capHeight : int        // the height of a capital
 
   // The family is a name or a Typeface.
@@ -278,6 +353,7 @@ internal class TextFont {
     this.isItalic = typeface.isItalic or fakeItalic
   }
 
+  // The family of its typeface.
   val family : string
     get() => typeface.family
 
@@ -287,6 +363,9 @@ internal class TextFont {
 
   // A text's width: the sum of its characters' widths, and where it ends when drawn.
   fun width(text : any?) : int => __text.width(handle, text)
+  // A character's width in pixels: a char, a one-character string or the character's number.
+  // A number that is no character throws an IllegalArgumentException, an empty string a
+  // NoSuchElementException.
   fun charWidth(character : any) : int => __text.charWidth(handle, character)
 
   // Where each character of a text starts and where the last one ends: one more number
@@ -307,5 +386,6 @@ internal class TextFont {
   // The same font at another size or scale.
   fun derive(size : Number? = null, scale : Number? = null) : TextFont => TextFont(typeface, size ?: this.size, isBold, isItalic, weight, scale ?: this.scale)
 
+  // The typeface's full name and the size in "TextFont(...)": "TextFont(Segoe UI Bold, 14)".
   override fun toString() : string => "TextFont(${typeface.fullName}, $size)"
 }

@@ -1,0 +1,391 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The Astra language</title>
+<!-- docs/language.html is made from this page: astra doc src/std/*.astra --template docs/language-template.html -o docs/language.html
+     Edit this page, and the comments in src/std, never docs/language.html itself. -->
+<style>
+:root {
+  --bg: #fbfaf7; --surface: #ffffff; --ink: #1d2422; --muted: #5d6763; --line: #dfe3e0;
+  --accent: #1f5fa8; --accent-soft: #e8f0fa; --code-bg: #eef1ef; --warn: #a8551f;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #161a19; --surface: #1d2221; --ink: #e4e9e6; --muted: #9aa5a0; --line: #2e3533;
+    --accent: #7fb2ec; --accent-soft: #1e2a38; --code-bg: #262c2a; --warn: #e7a06b;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #161a19; --surface: #1d2221; --ink: #e4e9e6; --muted: #9aa5a0; --line: #2e3533;
+  --accent: #7fb2ec; --accent-soft: #1e2a38; --code-bg: #262c2a; --warn: #e7a06b;
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.6 "Segoe UI", system-ui, -apple-system, sans-serif; }
+main { max-width: 920px; margin: 0 auto; padding: 40px 16px 80px; }
+h1 { font-size: 1.9rem; line-height: 1.25; margin: 0 0 8px; }
+.lede { color: var(--muted); margin: 0 0 28px; }
+h2 { font-size: 1.35rem; line-height: 1.3; margin: 40px 0 12px; }
+h3 { font-size: 1.1rem; margin: 28px 0 8px; }
+h4 { font-size: 1rem; margin: 20px 0 6px; color: var(--muted); }
+p { margin: 0 0 12px; }
+a { color: var(--accent); }
+code { font: 0.88em/1.4 Consolas, "Cascadia Mono", monospace; background: var(--code-bg); padding: 1px 5px; border-radius: 4px; }
+pre { font: 0.86em/1.45 Consolas, "Cascadia Mono", monospace; background: var(--code-bg); padding: 10px 12px; border-radius: 6px; overflow-x: auto; margin: 6px 0 12px; }
+nav { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 16px 20px; margin: 0 0 32px; }
+nav ul { list-style: none; padding: 0; margin: 0; columns: 2 260px; column-gap: 24px; }
+nav li { break-inside: avoid; }
+dl.kw { margin: 0 0 12px; }
+dl.kw dt { font-weight: 600; margin-top: 18px; }
+dl.kw dt code { font-size: 0.95em; }
+dl.kw dd { margin: 4px 0 0 0; }
+table { border-collapse: collapse; width: 100%; margin: 6px 0 16px; font-size: 0.95rem; }
+th, td { text-align: left; vertical-align: top; border-bottom: 1px solid var(--line); padding: 6px 8px; }
+th { color: var(--muted); font-weight: 600; }
+
+</style>
+</head>
+<body>
+<main>
+<h1>The Astra language</h1>
+<p class="lede">Every keyword of Astra, what it does and how it is written, then every function, type and value of the standard library. The library part is made from the comments in its source (<code>src/std</code>) by <code>astra doc</code>, so it says what the library does as it stands.</p>
+
+<nav>
+<ul>
+<li><a href="#keywords">Keywords</a></li>
+<li><a href="#kw-declarations">Declaring things</a></li>
+<li><a href="#kw-members">Members, access and kinds of function</a></li>
+<li><a href="#kw-control">Choosing and repeating</a></li>
+<li><a href="#kw-errors">Errors</a></li>
+<li><a href="#kw-values">Values, tests and types</a></li>
+<li><a href="#kw-modules">Files and libraries</a></li>
+<li><a href="#kw-refused">Words from other languages</a></li>
+<li><a href="#api-files">The standard library, file by file</a></li>
+<li><a href="#api-types">Types and what they have</a></li>
+</ul>
+</nav>
+
+<h2 id="keywords">Keywords</h2>
+<p>Twenty-five words are reserved and are never names: <code>val</code> <code>var</code> <code>fun</code> <code>class</code> <code>this</code> <code>super</code> <code>return</code> <code>if</code> <code>else</code> <code>while</code> <code>for</code> <code>in</code> <code>break</code> <code>continue</code> <code>true</code> <code>false</code> <code>null</code> <code>try</code> <code>catch</code> <code>throw</code> <code>import</code> <code>is</code> <code>and</code> <code>or</code> <code>when</code>. The others below are keywords only where they are written: <code>value</code>, <code>data</code> or <code>init</code> can still name a variable or a function.</p>
+
+<h3 id="kw-declarations">Declaring things</h3>
+<dl class="kw">
+<dt><code>val</code>, <code>var</code></dt>
+<dd>A variable: <code>val</code> is given its value once, <code>var</code> may be given another. The type comes from the value unless it is written after a colon; a variable of type <code>any</code> holds anything, and needs a cast before most uses.
+<pre>val fixed = 3
+var count : int = 0
+count += fixed</pre></dd>
+
+<dt><code>const</code></dt>
+<dd>A <code>val</code> whose value is worked out when the program is compiled, from literals and other constants, and written into each place it is used. Declared at the top level, in an object or in a class's <code>static { }</code> block.
+<pre>const maxRows = 1000</pre></dd>
+
+<dt><code>fun</code>, <code>return</code></dt>
+<dd>A function: its parameters with their types, then its result type after a colon (none for a function that gives nothing). <code>return</code> leaves it, with the value it gives; a body written <code>=&gt; expression</code> gives that expression.
+<pre>fun square(x : int) : int { return x * x }
+fun cube(x : int) : int =&gt; x * x * x</pre></dd>
+
+<dt><code>vararg</code></dt>
+<dd>A parameter that takes any number of arguments, as a list. One per function.
+<pre>fun total(vararg parts : int) : int {
+  var sum = 0
+  for (p in parts) { sum += p }
+  return sum
+}
+total(1, 2, 3)    // 6</pre></dd>
+
+<dt><code>class</code></dt>
+<dd>A class: the fields in its header (<code>val</code> or <code>var</code> in front makes a field; a bare name is only a parameter of the initializer), then its body. After a colon, at most one superclass, with the arguments for it, and any number of interfaces. Every class can be extended and every member overridden.
+<pre>class Shape(val name : string) {
+  fun describe() : string =&gt; "a shape called $name"
+}
+class Square(val side : int) : Shape("square")</pre></dd>
+
+<dt><code>interface</code></dt>
+<dd>What classes promise to have: functions and properties without a body, which each class supplies, and functions with one, which they inherit. An interface has no objects of its own.
+<pre>interface Named {
+  fun name() : string
+  fun greeting() : string =&gt; "hello, ${name()}"
+}</pre></dd>
+
+<dt><code>abstract</code></dt>
+<dd>An <code>abstract class</code> is never made itself, only its subclasses are; an <code>abstract</code> member has no body, and each subclass writes it.
+<pre>abstract class Base : Named {
+  abstract fun id() : int
+  override fun name() : string =&gt; "base ${id()}"
+}</pre></dd>
+
+<dt><code>data</code></dt>
+<dd>A class compared, hashed and printed by the fields of its header, which are also the parts it comes apart into (<code>val (name, age) = user</code>). It has a <code>copy</code> that changes some of them.
+<pre>data User(val name : string, val age : int)
+User("Ann", 30) == User("Ann", 30)    // true
+print(User("Ann", 30))                // User(name="Ann", age=30)</pre></dd>
+
+<dt><code>value</code></dt>
+<dd>A value type: a data class whose values have no identity of their own. A value is copied where it is given or kept, and a list of them keeps them one after another in one block of memory, with no object for each.
+<pre>value Point(var x : int, var y : int)</pre></dd>
+
+<dt><code>mutating</code></dt>
+<dd>A function of a value type that may give its <code>var</code> fields new values. It is called on a place that holds the value (a <code>var</code>, a field, an item of a list), which keeps the result.
+<pre>value Point(var x : int, var y : int) {
+  mutating fun moveBy(dx : int, dy : int) { x += dx; y += dy }
+}
+var p = Point(1, 2)
+p.moveBy(10, 10)    // p is Point(x=11, y=12)</pre></dd>
+
+<dt><code>enum</code></dt>
+<dd><code>enum Name { A, B }</code> is a class whose only objects are the entries listed; <code>Name.entries</code> lists them. <code>enum class</code> and <code>enum interface</code> declare a fixed set of kinds: the classes and objects that extend it, all written in its file, so that a <code>when</code> over them needs no <code>else</code>.
+<pre>enum Direction { NORTH, EAST, SOUTH, WEST }
+
+enum class Event {
+  class Click(val x : int) : Event()
+  object Close : Event()
+}
+fun handle(e : Event) : string =&gt; when (e) {
+  is Event.Click -&gt; "click at ${e.x}"
+  Event.Close -&gt; "close"
+}</pre></dd>
+
+<dt><code>object</code></dt>
+<dd><code>object Name { ... }</code> declares a class and makes its one object, reached by the name. Where a value is expected, <code>object : Listener { ... }</code> is an object of a class with no name.
+<pre>object Counter {
+  var hits = 0
+  fun hit() { hits += 1 }
+}
+Counter.hit()</pre></dd>
+
+<dt><code>annotation</code></dt>
+<dd>An annotation: declared like a class, with the values it holds in its header, and written with <code>@</code> on a class, a function, a field or a parameter. Nothing is made from it but what reflection reads.
+<pre>annotation JsonField(val name : string = "")
+class Row(@JsonField("row_id") val id : int, val label : string)
+for (f in Row#.fields) { print(f.annotation&lt;JsonField&gt;()?.name ?: f.name) }    // row_id, label</pre></dd>
+
+<dt><code>type</code></dt>
+<dd>Another name for a type, not a new type: the two are the same everywhere.
+<pre>type Table = Map&lt;string, List&lt;int&gt;&gt;
+val t : Table = {"a": [1, 2]}</pre></dd>
+
+<dt><code>extend</code></dt>
+<dd>Makes classes someone else wrote fit an interface of this program. Where the names differ, the properties written in its body bridge them.
+<pre>class Crate(val count : int)
+interface Sized { val size : int }
+extend Crate : Sized { val size : int get() =&gt; count }</pre></dd>
+</dl>
+
+<h3 id="kw-members">Members, access and kinds of function</h3>
+<dl class="kw">
+<dt><code>this</code>, <code>super</code></dt>
+<dd><code>this</code> is the object a method runs on (a field's name alone reaches it too). <code>super.name</code> is the member the superclass has under that name, for a method that adds to the one it overrides.
+<pre>override fun describe() : string =&gt; super.describe() + " of area $area"</pre></dd>
+
+<dt><code>init</code>, <code>constructor</code></dt>
+<dd><code>init { ... }</code> runs when an object is made, in order with the fields' starting values. <code>constructor(...) : this(...)</code> is another way of making one, which hands its work on to the class's own initializer.
+<pre>class Square(val side : int) : Shape("square") {
+  var area = 0
+  init { area = side * side }
+  constructor(text : string) : this(text.toInt())
+}</pre></dd>
+
+<dt><code>override</code></dt>
+<dd>Written in front of a member that takes the place of one the class would otherwise inherit, from its superclass or an interface. Leaving it out there is an error, and so is writing it where nothing is replaced.</dd>
+
+<dt><code>static</code></dt>
+<dd>A class's one <code>static { ... }</code> block holds the members of the class itself rather than of its objects, reached as <code>ClassName.member</code>.
+<pre>class Temperature(val celsius : float) {
+  static {
+    fun fromFahrenheit(f : float) : Temperature =&gt; Temperature((f - 32.0) * 5.0 / 9.0)
+  }
+}
+Temperature.fromFahrenheit(212.0).celsius    // 100.0</pre></dd>
+
+<dt><code>get</code>, <code>set</code>, <code>field</code></dt>
+<dd>A property's own code, written under it: <code>get()</code> works out its value each time it is read, <code>set(value)</code> runs when it is assigned. In them, <code>field</code> is the value the property keeps. <code>private set</code> (or <code>protected set</code>, <code>internal set</code>) lets everyone read it and only that code assign it.
+<pre>class Account {
+  var balance = 0
+    private set
+  var owner = ""
+    set(value) { field = value.trim() }
+  val isEmpty : bool get() =&gt; balance == 0
+}</pre></dd>
+
+<dt><code>private</code>, <code>protected</code>, <code>internal</code>, <code>public</code></dt>
+<dd>Who may use a declaration. <code>private</code>: a member only its class's code, a top-level declaration only its file. <code>protected</code>: that, and code written in a subclass, on objects of that subclass. <code>internal</code>: code of the same library (a program is one library; so is Jade). <code>public</code> is accepted and changes nothing: everything else is open to everyone.</dd>
+
+<dt><code>lateinit</code></dt>
+<dd>A <code>var</code> field given its value after the object is made. Reading it before that is an error.</dd>
+
+<dt><code>lazy</code></dt>
+<dd>A <code>val</code> whose value is worked out the first time it is read, and kept.
+<pre>class Config {
+  lateinit var path : string
+  lazy val size : int = path.size
+}</pre></dd>
+
+<dt><code>atomic</code></dt>
+<dd>A <code>var</code> field that any core of a parallel section may change, in one step, through <code>+=</code>, <code>-=</code>, <code>= max(...)</code>, <code>= min(...)</code> and <code>compareAndSet</code>.
+<pre>class Tally { atomic var hits = 0 }
+val tally = Tally()
+(0 ..&lt; 1000).toList().parallelStream().forEach { tally.hits += 1 }    // tally.hits is 1000</pre></dd>
+
+<dt><code>op</code></dt>
+<dd>An operator of a class or value type: <code>op +(other)</code>, <code>op [](index)</code>, <code>op ==(other)</code> and the others, used as the operator is.
+<pre>value Money(val cents : int) {
+  op +(other : Money) : Money =&gt; Money(cents + other.cents)
+}
+Money(150) + Money(250)    // Money(cents=400)</pre></dd>
+
+<dt><code>infix</code></dt>
+<dd>A function of one parameter, a member or an extension, called between its two values with no dot or brackets.
+<pre>infix fun int.times(text : string) : string =&gt; text.repeat(this)
+3 times "ab"    // "ababab"</pre></dd>
+
+<dt><code>inline</code></dt>
+<dd>A function copied into each place it is called, with the lambdas given to it, so a lambda costs nothing and a <code>return</code> in it leaves the function around the call.
+<pre>inline fun twice(action : () -&gt; unit) { action(); action() }</pre></dd>
+
+<dt><code>tail</code></dt>
+<dd>Says that each call the function makes of itself is its last step. A function calling itself as its last step is made a loop with or without the word; with it, a call that is not its last step is an error.
+<pre>tail fun countDown(n : int) : int {
+  if (n == 0) { return 0 }
+  return countDown(n - 1)
+}</pre></dd>
+
+<dt><code>suspend</code></dt>
+<dd>A function that may wait (for a timer, a file, an answer), setting its task aside while it does. It is called only where waiting is possible: from another <code>suspend</code> function, at the top level of a script, or in the lambda given to <code>task</code> or <code>thread</code>. There is no <code>await</code> at the call.
+<pre>suspend fun later(x : int) : int {
+  Thread.sleep(1.milliseconds)
+  return x * 2
+}
+task { print(later(21)) }    // 42</pre></dd>
+
+<dt><code>throws</code></dt>
+<dd>Written after a function's result type: the checked exceptions it may throw, which callers handle. The compiler works these out on its own inside a program; a library's public functions, and declarations with no body, say them.
+<pre>fun readConfig(path : string) : string throws IOException =&gt; Path(path).readText()</pre></dd>
+
+<dt><code>external</code></dt>
+<dd>Only in the standard library: a function, property or object written in C++, declared in Astra so that its types and parameter names are known. It has no body. The reference below leaves the word out.</dd>
+</dl>
+
+<h3 id="kw-control">Choosing and repeating</h3>
+<dl class="kw">
+<dt><code>if</code>, <code>else</code></dt>
+<dd>Runs one block or the other. Written where a value is wanted, it gives the value of the block that runs; the braces are always written.
+<pre>val sign = if (count &gt; 0) { "positive" } else { "not positive" }</pre></dd>
+
+<dt><code>when</code></dt>
+<dd>Picks the first branch that fits: a value it equals, <code>is Type</code>, <code>in</code> a range or a collection, or, with no subject, a condition. Its value is that of the branch taken. <code>when (val x = ...)</code> names the subject for the branches.
+<pre>fun describe(x : any) : string {
+  return when (x) {
+    0 -&gt; "zero"
+    is string -&gt; "a string"
+    in 1..9 -&gt; "a digit"
+    else -&gt; "something else"
+  }
+}</pre></dd>
+
+<dt><code>while</code>, <code>do</code></dt>
+<dd><code>while (condition) { ... }</code> repeats while the condition holds, testing it first; <code>do { ... } while (condition)</code> tests it after each run.
+<pre>do { n -= 1 } while (n &gt; 3)</pre></dd>
+
+<dt><code>for</code>, <code>in</code></dt>
+<dd>Goes over what a range, a list, a map, a set, a string or a sequence gives, an item at a time. <code>a..b</code> includes <code>b</code>, <code>a..&lt;b</code> stops before it.
+<pre>for (i in 0 ..&lt; 3) { write(i, " ") }    // 0 1 2</pre></dd>
+
+<dt><code>break</code>, <code>continue</code></dt>
+<dd><code>break</code> leaves the loop it is in; <code>continue</code> goes on to its next round.
+<pre>while (true) {
+  n += 1
+  if (n % 2 == 0) { continue }
+  if (n &gt; 5) { break }
+}</pre></dd>
+</dl>
+
+<h3 id="kw-errors">Errors</h3>
+<dl class="kw">
+<dt><code>throw</code></dt>
+<dd>Stops the code with an exception, any <code>Throwable</code>: one of the standard library's (see <code>errors.astra</code> below) or a class of the program's own that extends <code>Exception</code>.</dd>
+
+<dt><code>try</code>, <code>catch</code>, <code>finally</code></dt>
+<dd><code>try</code> runs a block; a <code>catch (e : Kind)</code> after it runs when the block throws an exception of that kind (<code>catch (e)</code> catches any <code>Exception</code>); <code>finally</code> runs last in every case, after any value to return is worked out.
+<pre>try {
+  risky(-1)
+} catch (e : IllegalArgumentException) {
+  print("caught", e.message)
+} finally {
+  print("always")
+}</pre></dd>
+</dl>
+
+<h3 id="kw-values">Values, tests and types</h3>
+<dl class="kw">
+<dt><code>true</code>, <code>false</code>, <code>null</code></dt>
+<dd>The two values of a <code>bool</code>, and the absence of a value. Only a type written with <code>?</code> (<code>string?</code>) holds <code>null</code>; <code>x ?: other</code> gives <code>other</code> when <code>x</code> is null, and <code>x?.name</code> gives null instead of failing.
+<pre>val maybe : string? = null
+maybe ?: "none"    // "none"</pre></dd>
+
+<dt><code>and</code>, <code>or</code></dt>
+<dd>Both, or either, of two conditions; the second is worked out only when the first does not already decide. <code>!</code> is not.
+<pre>n &gt; 0 and n &lt; 10</pre></dd>
+
+<dt><code>is</code></dt>
+<dd>Whether a value is of a type (<code>!is</code>: whether it is not). After a test that holds, the value is known to be of that type.
+<pre>if (anything is string) { print(anything.size) }</pre></dd>
+
+<dt><code>as</code></dt>
+<dd><code>value as Type</code> insists on the type, an error if it is not; <code>as?</code> gives null instead. In an <code>import</code>, <code>as</code> gives the module another name.
+<pre>val s = anything as string
+val notInt = anything as? int    // null</pre></dd>
+
+<dt><code>in</code></dt>
+<dd>Besides <code>for</code>: <code>x in collection</code> is whether the collection holds <code>x</code> (<code>!in</code>: whether it does not), and in a <code>when</code>, a branch for values in a range or a collection.</dd>
+
+<dt><code>accepts</code></dt>
+<dd>In a type argument of a list that may be changed: <code>open List&lt;accepts Button&gt;</code> takes a list of <code>Button</code> or of any type above it, to which a <code>Button</code> can be added.
+<pre>fun addButton(into : open List&lt;accepts Button&gt;) { into.add(Button()) }
+val widgets : open List&lt;Widget&gt; = []
+addButton(widgets)</pre></dd>
+
+<dt><code>open</code> (in a type)</dt>
+<dd>A list, map or set written plainly is one that may only be read; <code>open List&lt;T&gt;</code> is one that may be changed. In front of a declaration the word is an error (see below).</dd>
+
+<dt><code>default</code></dt>
+<dd>In an index, the value to give for a key a map does not have: <code>counts[word, default = 0]</code>.
+<pre>for (word in ["a", "b", "a"]) { counts[word] = counts[word, default = 0] + 1 }</pre></dd>
+
+<dt><code>it</code></dt>
+<dd>The one parameter of a lambda that names none.
+<pre>[1, 2, 3].map { it * 10 }    // [10, 20, 30]</pre></dd>
+</dl>
+
+<h3 id="kw-modules">Files and libraries</h3>
+<dl class="kw">
+<dt><code>import</code></dt>
+<dd>Brings in another file or library: <code>import NsText</code> reaches its names as <code>NsText.Block</code>, <code>import NsText.*</code> by their bare names, <code>import NsText as text</code> under a name of the importer's choosing. A path of folders is written with dots, or in quotes (<code>import "modules/strutil.astra"</code>). The standard library needs no import: every program has all of it.</dd>
+</dl>
+
+<h3 id="kw-refused">Words from other languages</h3>
+<p>These are not Astra's, and each is an error that says what Astra writes instead.</p>
+<table>
+<thead><tr><th>Written</th><th>What Astra says</th></tr></thead>
+<tbody>
+<tr><td><code>let x = 1</code></td><td>declare variables with <code>val</code> (immutable) or <code>var</code></td></tr>
+<tr><td><code>fn f() {}</code></td><td>declare functions with <code>fun</code></td></tr>
+<tr><td><code>0 until 5</code></td><td>a range that stops before its end is written <code>a..&lt;b</code></td></tr>
+<tr><td><code>open</code>, <code>final</code> class</td><td>every class can be subclassed and every member overridden</td></tr>
+<tr><td><code>sealed class</code></td><td>a fixed set of kinds is an <code>enum class</code>, and an <code>abstract class</code> can stand in for one</td></tr>
+<tr><td><code>companion object</code></td><td>written <code>static { }</code>, holding the same members</td></tr>
+<tr><td><code>operator fun plus</code></td><td>operators are declared with <code>op</code> (<code>op +(other) ...</code>)</td></tr>
+<tr><td><code>tailrec fun</code></td><td>written <code>tail fun</code></td></tr>
+<tr><td><code>reified T</code></td><td>not needed: type arguments are kept when the program runs, so <code>x is T</code> works in any generic function</td></tr>
+<tr><td><code>noinline</code>, <code>crossinline</code></td><td>not needed: an inline function's lambda parameters are worked out from what its body does with them</td></tr>
+</tbody>
+</table>
+
+<h2>The standard library</h2>
+<p>Every program has all of it, without an import. Each file below is shown in the order it is written, with its own headings; <a href="#api-types">Types and what they have</a> lists, for each type, where its members are. A declaration is shown as it is written, up to its body.</p>
+<!-- astra doc -->
+</main>
+</body>
+</html>

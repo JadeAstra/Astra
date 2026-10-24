@@ -9,10 +9,21 @@
 //   @Test @Timeout(500) fun quick() { ... }
 //   @Test fun writes(@TempDir dir : Path) { Path(dir, "a.txt").writeText("hi") }
 
+// Makes a function, or a method of a class, a test that `astra test` runs; it passes unless it
+// throws. It takes no parameters but those written @TempDir.
 annotation Test
+// Makes a function one that runs before each test of the file, or a method one that runs before
+// each test of its class, on the object made for it; where it throws, the test fails unrun.
 annotation BeforeTest
+// Makes a function one that runs after each test of the file, or a method one that runs after each
+// test of its class, on its object; it runs where the test failed too, and where it throws, the
+// test fails.
 annotation AfterTest
+// Makes a function one that runs once before all of the file's tests, or a static method one that
+// runs once before its class's tests; where it throws, that is a failure and those tests do not run.
 annotation BeforeAll
+// Makes a function one that runs once after all of the file's tests, or a static method one that
+// runs once after its class's tests; where it throws, that is a failure.
 annotation AfterAll
 // The longest the test may run, in milliseconds: once that is past it fails, stopped where it is.
 annotation Timeout(val millis : int)
@@ -21,19 +32,24 @@ annotation Timeout(val millis : int)
 annotation TempDir
 
 // -- What a test checks, as Kotlin's: each throws an AssertionError where it does not hold --
+// Each takes a `message` too, which when it is given begins the error's text.
 
 fun __failed(message : string?, what : string) : nothing {
   throw AssertionError(message == null ? what : message + ". " + what)
 }
 
+// Fails at once: throws an AssertionError with `message`, or with none.
 fun fail(message : string? = null) : nothing {
   throw AssertionError(message)
 }
 
+// Checks that `actual` is equal to `expected` by `==`, so that lists, sets and maps are compared by
+// what they hold; the error shows both.
 fun assertEquals(expected : any?, actual : any?, message : string? = null) {
   if (expected != actual) { __failed(message, "Expected <$expected>, actual <$actual>.") }
 }
 
+// Checks that `actual` is not equal to `illegal` by `==`.
 fun assertNotEquals(illegal : any?, actual : any?, message : string? = null) {
   if (illegal == actual) { __failed(message, "Illegal value: <$actual>.") }
 }
@@ -45,35 +61,44 @@ fun assertEquals(expected : float, actual : float, absoluteTolerance : float, me
   }
 }
 
+// Checks that `actual` and `expected` are the same by `===`, not merely equal.
 fun assertSame(expected : any?, actual : any?, message : string? = null) {
   if (expected !== actual) { __failed(message, "Expected <$expected>, actual <$actual> is not same.") }
 }
 
+// Checks that `actual` and `illegal` are not the same by `===`.
 fun assertNotSame(illegal : any?, actual : any?, message : string? = null) {
   if (illegal === actual) { __failed(message, "Expected not same as <$actual>.") }
 }
 
+// Checks that `actual` is true.
 fun assertTrue(actual : bool, message : string? = null) {
   if (!actual) { __failed(message, "Expected value to be true.") }
 }
 
+// Checks that `actual` is false.
 fun assertFalse(actual : bool, message : string? = null) {
   if (actual) { __failed(message, "Expected value to be false.") }
 }
 
+// Checks that `actual` is null; the error shows what it was.
 fun assertNull(actual : any?, message : string? = null) {
   if (actual != null) { __failed(message, "Expected value to be null, but was: <$actual>.") }
 }
 
+// Checks that `actual` is not null, and gives it back, typed as not null.
+//   val user = assertNotNull(findUser("ann"))
 fun <T> assertNotNull(actual : T?, message : string? = null) : T {
   if (actual == null) { __failed(message, "Expected value to be not null.") }
   return actual!!
 }
 
+// Checks that `items` has an item equal to `element`.
 fun <T> assertContains(items : List<T>, element : T, message : string? = null) {
   if (!items.contains(element)) { __failed(message, "Expected the collection to contain the element.\nCollection <$items>, element <$element>.") }
 }
 
+// Checks that `text` has `other` in it.
 fun assertContains(text : string, other : string, message : string? = null) {
   if (!text.contains(other)) { __failed(message, "Expected the char sequence to contain the substring.\nCharSequence <$text>, substring <$other>.") }
 }

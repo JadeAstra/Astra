@@ -2,6 +2,8 @@
 // The methods a map has besides the built-in ones. A function given to one of them takes an
 // entry, which has a `key` and a `value` and can be taken apart: { (key, value) -> ... }
 
+// What `key` holds; where it is not there or holds null, what `defaultValue()` gives, which is
+// put in under `key` first.
 inline fun <K, V> open Map<K, V>.getOrPut(key : K, defaultValue : () -> V) : V {
   val had = this[key]
   if (had != null) { return had }
@@ -10,6 +12,8 @@ inline fun <K, V> open Map<K, V>.getOrPut(key : K, defaultValue : () -> V) : V {
   return made
 }
 
+// What `key` holds, or what `defaultValue()` gives where it is not there or holds null; the map
+// is left as it is.
 inline fun <K, V> Map<K, V>.getOrElse(key : K, defaultValue : () -> V) : V {
   val had = this[key]
   return had == null ? defaultValue() : had
@@ -23,16 +27,19 @@ inline fun <K, V> open Map<K, V>.update(key : K, start : V, change : (V) -> V) :
   return value
 }
 
-// Takes another map, or a list of pairs.
+// Puts in every entry of `from`; a key the map has already takes `from`'s value.
 fun <K, V> open Map<K, V>.putAll(from : Map<K, V>) {
   for key in from.keys { this[key] = from[key] as V }
 }
 
+// Puts in each pair of `pairs`, in their order: a key that comes twice keeps the later value.
 fun <K, V> open Map<K, V>.putAll(pairs : List<Pair<K, V>>) {
   for (key, value) in pairs { this[key] = value }
 }
 
+// The map, or a new empty one when it is null.
 fun <K, V> Map<K, V>?.orEmpty() : Map<K, V> => this == null ? {:} : this
+// The map, or what `defaultValue()` gives when the map is empty.
 inline fun <K, V> Map<K, V>.ifEmpty(defaultValue : () -> Map<K, V>) : Map<K, V> => this.size == 0 ? defaultValue() : this
 
 // forEach { entry -> }, forEach { (key, value) -> } or forEach { key, value -> }: the function
@@ -41,14 +48,17 @@ inline fun <K, V> Map<K, V>.forEach(action : (MapEntry<K, V>) -> unit) {
   for entry in this.entries { action(entry) }
 }
 
+// Calls `action` with the key and the value of each entry, in the map's order.
 inline fun <K, V> Map<K, V>.forEach(action : (K, V) -> unit) {
   for entry in this.entries { action(entry.key, entry.value) }
 }
 
 // -- Asking about the entries --
 
+// Whether the map has any entries.
 fun <K, V> Map<K, V>.any() : bool => this.size > 0
 
+// Whether `predicate` is true of at least one entry; it stops at the first that it is true of.
 inline fun <K, V> Map<K, V>.any(predicate : (MapEntry<K, V>) -> bool) : bool {
   for entry in this.entries {
     if (predicate(entry)) { return true }
@@ -56,6 +66,7 @@ inline fun <K, V> Map<K, V>.any(predicate : (MapEntry<K, V>) -> bool) : bool {
   return false
 }
 
+// Whether `predicate` is true of every entry; true for an empty map.
 inline fun <K, V> Map<K, V>.all(predicate : (MapEntry<K, V>) -> bool) : bool {
   for entry in this.entries {
     if (!predicate(entry)) { return false }
@@ -63,8 +74,10 @@ inline fun <K, V> Map<K, V>.all(predicate : (MapEntry<K, V>) -> bool) : bool {
   return true
 }
 
+// Whether the map is empty.
 fun <K, V> Map<K, V>.none() : bool => this.size == 0
 
+// Whether `predicate` is true of no entry; true for an empty map.
 inline fun <K, V> Map<K, V>.none(predicate : (MapEntry<K, V>) -> bool) : bool {
   for entry in this.entries {
     if (predicate(entry)) { return false }
@@ -72,8 +85,10 @@ inline fun <K, V> Map<K, V>.none(predicate : (MapEntry<K, V>) -> bool) : bool {
   return true
 }
 
+// How many entries the map has: its size.
 fun <K, V> Map<K, V>.count() : int => this.size
 
+// How many entries `predicate` is true of.
 inline fun <K, V> Map<K, V>.count(predicate : (MapEntry<K, V>) -> bool) : int {
   var total = 0
   for entry in this.entries {
@@ -84,12 +99,14 @@ inline fun <K, V> Map<K, V>.count(predicate : (MapEntry<K, V>) -> bool) : int {
 
 // -- Making a list --
 
+// What `transform` gives for each entry, in the map's order, as a new list.
 inline fun <K, V, R> Map<K, V>.map(transform : (MapEntry<K, V>) -> R) : open List<R> {
   val out : open List<R> = []
   for entry in this.entries { out.add(transform(entry)) }
   return out
 }
 
+// What `transform` gives for each entry, the nulls left out, as a new list.
 inline fun <K, V, R> Map<K, V>.mapNotNull(transform : (MapEntry<K, V>) -> R?) : open List<R> {
   val out : open List<R> = []
   for entry in this.entries {
@@ -99,6 +116,7 @@ inline fun <K, V, R> Map<K, V>.mapNotNull(transform : (MapEntry<K, V>) -> R?) : 
   return out
 }
 
+// The items of the lists `transform` gives for each entry, one after the other, as a new list.
 inline fun <K, V, R> Map<K, V>.flatMap(transform : (MapEntry<K, V>) -> List<R>) : open List<R> {
   val out : open List<R> = []
   for entry in this.entries { out.addAll(transform(entry)) }
@@ -114,18 +132,22 @@ fun <K, V> Map<K, V>.toList() : open List<Pair<K, V>> {
 
 // -- Making another map --
 
+// A new map with the same keys, each holding what `transform` gives for its entry.
 inline fun <K, V, R> Map<K, V>.mapValues(transform : (MapEntry<K, V>) -> R) : open Map<K, R> {
   val out : open Map<K, R> = {:}
   for entry in this.entries { out[entry.key] = transform(entry) }
   return out
 }
 
+// A new map whose keys are what `transform` gives for each entry, with the same values. Where
+// two entries give the same key, the later one's value is kept.
 inline fun <K, V, R> Map<K, V>.mapKeys(transform : (MapEntry<K, V>) -> R) : open Map<R, V> {
   val out : open Map<R, V> = {:}
   for entry in this.entries { out[transform(entry)] = entry.value }
   return out
 }
 
+// The entries `predicate` is true of, in their order, as a new map.
 inline fun <K, V> Map<K, V>.filter(predicate : (MapEntry<K, V>) -> bool) : open Map<K, V> {
   val out : open Map<K, V> = {:}
   for entry in this.entries {
@@ -134,6 +156,7 @@ inline fun <K, V> Map<K, V>.filter(predicate : (MapEntry<K, V>) -> bool) : open 
   return out
 }
 
+// The entries `predicate` is false of, in their order, as a new map.
 inline fun <K, V> Map<K, V>.filterNot(predicate : (MapEntry<K, V>) -> bool) : open Map<K, V> {
   val out : open Map<K, V> = {:}
   for entry in this.entries {
@@ -142,6 +165,7 @@ inline fun <K, V> Map<K, V>.filterNot(predicate : (MapEntry<K, V>) -> bool) : op
   return out
 }
 
+// The entries whose key `predicate` is true of, as a new map.
 inline fun <K, V> Map<K, V>.filterKeys(predicate : (K) -> bool) : open Map<K, V> {
   val out : open Map<K, V> = {:}
   for entry in this.entries {
@@ -150,6 +174,7 @@ inline fun <K, V> Map<K, V>.filterKeys(predicate : (K) -> bool) : open Map<K, V>
   return out
 }
 
+// The entries whose value `predicate` is true of, as a new map.
 inline fun <K, V> Map<K, V>.filterValues(predicate : (V) -> bool) : open Map<K, V> {
   val out : open Map<K, V> = {:}
   for entry in this.entries {
@@ -165,12 +190,14 @@ fun <K, V> Map<K, V>.plus(pair : Pair<K, V>) : open Map<K, V> {
   return out
 }
 
+// A new map with each pair of `pairs` put in, in order; a key already there takes the pair's value.
 fun <K, V> Map<K, V>.plus(pairs : List<Pair<K, V>>) : open Map<K, V> {
   val out = this.toOpenMap()
   out.putAll(pairs)
   return out
 }
 
+// A new map with the entries of `other` put in; where both have a key, `other`'s value wins.
 fun <K, V> Map<K, V>.plus(other : Map<K, V>) : open Map<K, V> {
   val out = this.toOpenMap()
   out.putAll(other)
@@ -184,18 +211,27 @@ fun <K, V> Map<K, V>.minus(key : K) : open Map<K, V> {
   return out
 }
 
+// A new map without the keys in `keys`; a key the map does not have is passed over.
 fun <K, V> Map<K, V>.minus(keys : List<K>) : open Map<K, V> {
   val out = this.toOpenMap()
   for each in keys { out.remove(each) }
   return out
 }
 
+// A new map without the keys in the set `keys`.
 fun <K, V> Map<K, V>.minus(keys : Set<K>) : open Map<K, V> => this.minus(keys.toList())
 
 // -- Picking an entry --
 
+// The entry for which `selector` gives the most; the first such where several tie, and null for
+// an empty map.
 inline fun <K, V> Map<K, V>.maxByOrNull(selector : (MapEntry<K, V>) -> any?) : MapEntry<K, V>? => this.entries.maxByOrNull(selector)
+// The entry for which `selector` gives the least; the first such where several tie, and null for
+// an empty map.
 inline fun <K, V> Map<K, V>.minByOrNull(selector : (MapEntry<K, V>) -> any?) : MapEntry<K, V>? => this.entries.minByOrNull(selector)
+// The first entry in the map's order; null for an empty map.
 fun <K, V> Map<K, V>.firstOrNull() : MapEntry<K, V>? => this.entries.firstOrNull()
+// The first entry `predicate` is true of; null where there is none.
 inline fun <K, V> Map<K, V>.firstOrNull(predicate : (MapEntry<K, V>) -> bool) : MapEntry<K, V>? => this.entries.firstOrNull(predicate)
+// The sum of what `selector` gives for each entry; 0 for an empty map.
 inline fun <K, V, R : Number> Map<K, V>.sumOf(selector : (MapEntry<K, V>) -> R) : R => this.entries.sumOf(selector)

@@ -2,8 +2,7 @@
 // Threads share everything: a variable or an object is the same one on every thread. One
 // thread runs Astra code at a time, and they change places at calls and at the ends of loop
 // bodies, so anything longer than that which must not be interrupted holds a Lock's key. They
-// are for blocking work and ported code; workers and parallel sections use the cores. The work is
-// done by the built-in __thread (threads.cpp).
+// are for blocking work and ported code; workers and parallel sections use the cores.
 //
 //   val loading = thread(name = "loader") { load(file) }    // a Job of what the block gives
 //   loading.then { shown = it }                              // on the event loop, when it is done
@@ -11,9 +10,17 @@
 // A program ends when its script has finished, every thread that is not a daemon has too, and
 // the event loop has nothing left.
 
+// Inside Astra: the work is done by the built-in __thread (threads.cpp).
+
+// A thread of its own, running `task` or, in a class that extends Thread, its own run(), once
+// start() is called. thread { } is the shorter way, giving a Job of what the block returns.
 class Thread {
   static {
+    // How many Thread objects have been made, the main thread's among them once currentThread()
+    // has given it: the number in the name Thread-N of one given no name.
     var made = 0
+    // The thread running this code. On the main thread, a Thread named "main", made the first time
+    // it is asked for.
     fun currentThread() : Thread {
       var current : Thread? = __thread.current()
       if (current == null) {
@@ -37,7 +44,11 @@ class Thread {
     }
   }
 
+  // Its name: the one given, or Thread-N. The name it has at start() is the one the running
+  // thread is known by, as in the report of an error it does not catch.
   var name : string = ""
+  // Whether the thread is a daemon, which does not keep the program alive: false unless set
+  // before start().
   var isDaemon = false
   private var task : (suspend () -> any?)? = null
   private var id = 0      // 0 until it is started
@@ -55,6 +66,8 @@ class Thread {
     if (work != null) { work() }
   }
 
+  // Starts the thread running run(), and gives the thread itself. Starting it a second time is an
+  // IllegalStateException.
   fun start() : Thread {
     if (id != 0) { throw IllegalStateException("thread '$name' has already been started") }
     val self = this
@@ -71,6 +84,7 @@ class Thread {
     return status == 0
   }
 
+  // Whether the thread has started and not yet ended. The main thread's is true.
   val isAlive : bool
     get() => id != 0 and __thread.isAlive(id)
 
@@ -80,9 +94,12 @@ class Thread {
     if (id != 0) { __thread.interrupt(id) }
   }
 
+  // Whether the thread has been interrupted and has not yet seen it: asking here does not clear
+  // the mark. False before it starts and after it ends.
   val isInterrupted : bool
     get() => id != 0 and __thread.isInterrupted(id)
 
+  // The thread written with its name: Thread(main).
   override fun toString() : string => "Thread($name)"
 }
 
@@ -110,6 +127,8 @@ fun <T> thread(name : string? = null, daemon : bool = false, block : suspend () 
 // A result to come: from task { }, thread { }, a pool's submit { }, or made by hand, Job<int>(),
 // and given its value with complete(42) or its error with fail(e).
 
+// A result of type T to come, finished once: with a value, with an error, or cancelled.
+// Threads and tasks may wait for it with get(); then { } and onError { } run on the event loop.
 class Job<T> {
   private val lock = Lock()
   private var state = 0          // 0 not done, 1 done with a value, 2 failed, 3 cancelled
@@ -117,8 +136,10 @@ class Job<T> {
   private val whenDone : open List<() -> unit> = []
   internal var interrupter : (() -> unit)? = null   // what cancel(interrupt = true) does
 
+  // Whether it has finished: with a value, with an error, or cancelled.
   val isDone : bool
     get() => state != 0
+  // Whether it was cancelled.
   val isCancelled : bool
     get() => state == 3
   // Whether it failed, or was cancelled.
@@ -127,6 +148,8 @@ class Job<T> {
 
   // Each gives whether this is what finished it: false if it was finished already.
   fun complete(value : T) : bool => finish(1, value)
+  // Finishes it with `error`: get() then throws ExecutionException with `error` as its cause.
+  // False if it was finished already.
   fun fail(error : Throwable) : bool => finish(2, error)
   // With `interrupt`, the thread working on it is interrupted as well.
   fun cancel(interrupt : bool = false) : bool {
@@ -217,6 +240,7 @@ class Job<T> {
     return this
   }
 
+  // Job(running), Job(42) with its value, Job(failed: <the error>) or Job(cancelled).
   override fun toString() : string => state == 0 ? "Job(running)" : state == 1 ? "Job($held)" : state == 2 ? "Job(failed: $held)" : "Job(cancelled)"
 
   static {
@@ -288,9 +312,14 @@ fun __deadline(timeout : Duration) : float => clock() + timeout.inSeconds
 // again whenever another thread gives a key back: Java's wait and notify, with no notify to
 // forget. A thread that has the key may take it again. Nothing waits in a parallel section.
 
+// A lock with one key: useKey takes it, waiting while another thread holds it. A thread that
+// holds the key may take it again.
 class Lock {
   internal val tasks : open List<(bool) -> unit> = []   // the tasks waiting, each to be taken up
 
+  // Runs `block` holding the key, waiting for it if another thread holds it, and gives it back
+  // when the block ends, even by an error: gives what the block gives. Waiting threads and tasks
+  // look at their conditions again then. In a parallel section it is an IllegalStateException.
   inline fun <T> useKey(block : () -> T) : T {
     __thread.enter(this)
     try {
@@ -362,6 +391,7 @@ fun __lockWake(lock : Lock) {
 class LockBox<T>(private val value : T) {
   private val lock = Lock()
 
+  // Runs `block` with the value, holding the box's key: gives what the block gives.
   fun <R> useKey(block : (T) -> R) : R => lock.useKey { block(value) }
 }
 
@@ -387,6 +417,8 @@ suspend fun waitUntil(timeout : Duration? = null, condition : () -> bool) : bool
 // receive() waits for an item, and a for over a channel takes its items until it is closed and
 // empty. Waiting blocks a thread, and sets a task on the main thread aside.
 
+// Items handed from one thread or task to another, in order, each to one receiver: made with a
+// capacity, Channel<T>(2), or with none, Channel<T>.unbounded().
 class Channel<T> {
   private val lock = Lock()
   private val items : Deque<T> = Deque()
@@ -404,6 +436,7 @@ class Channel<T> {
   }
 
   static {
+    // A channel that holds any number of items: a send never waits.
     fun <T> unbounded() : Channel<T> => Channel<T>(int.maxValue)
   }
 
@@ -492,6 +525,7 @@ class Channel<T> {
     lock.useKey { closed = true }
   }
 
+  // Whether close() has been called; it may still hold items to receive.
   val isClosed : bool
     get() => closed
 
@@ -512,6 +546,7 @@ class Channel<T> {
     }
   }
 
+  // For a for: each item as it comes, waited for, until the channel is closed and empty.
   fun iterator() : __ChannelItems<T> => __ChannelItems(this)
 }
 
@@ -537,8 +572,12 @@ class __ChannelItems<T>(private val channel : Channel<T>) {
 // Threads take turns, so a pool overlaps waiting, not computing: tasks are the first choice for
 // plain waiting, and parallel sections and workers for computing.
 
+// Threads that run the jobs given to them, submit { } giving a Job of what a job returns. Close
+// it when it is done with: until then its threads may keep the program alive, unless it is made
+// with daemon = true.
 class ThreadPool : AutoCloseable {
   static {
+    // How many pools have been made, JobQueues among them: the number in the name pool-N.
     var made = 0
   }
 
@@ -712,6 +751,7 @@ class ThreadPool : AutoCloseable {
     }
   }
 
+  // Whether close() or closeNow() has been called: it takes no more jobs.
   val isClosed : bool
     get() => closed
 }
@@ -749,6 +789,8 @@ fun __threadJoin(thread : Thread) {
 //   repeat(3) { thread { work(); done.countDown() } }
 //   done.await(timeout = 10.seconds)
 
+// Opens once countDown() has been called `remaining` times, starting at 0 or more:
+// IllegalArgumentException if `remaining` is negative.
 class Countdown(private var remaining : int) {
   private val lock = Lock()
 
@@ -760,6 +802,7 @@ class Countdown(private var remaining : int) {
   val count : int
     get() => remaining
 
+  // Counts one down, waking those that await() once it reaches 0; at 0 it does nothing.
   fun countDown() {
     lock.useKey {
       if (remaining > 0) { remaining -= 1 }
@@ -790,10 +833,15 @@ class Countdown(private var remaining : int) {
 // cores contend, so the lambda only works out the new value from the old. For totals over all
 // items, count { }, sumOf { } and gather share nothing and are faster still.
 
+// A value threads and the cores of a parallel section change in one step each, `initial` to
+// begin with. In a parallel section only values are stored in one: storing an object, there, that
+// a core may still change is an IllegalStateException.
 class Atomic<T>(initial : T) {
   internal val cell : List<any?> = __atomic.make(initial)
 
+  // The value it holds now.
   fun get() : T => __atomic.get(cell) as T
+  // Sets the value it holds.
   fun set(value : T) {
     __atomic.set(cell, value)
   }
@@ -811,10 +859,14 @@ class Atomic<T>(initial : T) {
     }
   }
 
+  // The value it holds now, as text.
   override fun toString() : string => "${get()}"
 }
 
 // On an Atomic<int>, each giving the new value.
 fun Atomic<int>.increment() : int => __atomic.add(this.cell, 1)
+// Takes 1 off, giving the new value.
 fun Atomic<int>.decrement() : int => __atomic.add(this.cell, -1)
+// Adds `amount`, giving the new value: an ArithmeticException if the total does not fit in an
+// int, and nothing is changed.
 fun Atomic<int>.add(amount : int) : int => __atomic.add(this.cell, amount)

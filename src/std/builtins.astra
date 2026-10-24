@@ -1,126 +1,284 @@
-// ---- What the C++ provides, declared ----
+// ---- Built-in functions and types ----
 //
-// The built-in functions, and the methods and properties of the built-in types, are written
-// in C++ (src/builtins.cpp, src/stdlib.cpp, src/vm.cpp). They are declared here so that their
-// types and parameter names are known to the type checker. An `external` declaration has no
-// body and compiles to nothing; the compiler checks that the C++ has what it names, taking as
-// many arguments as it says.
-//
-// Where one name takes different shapes (`add(item)` and `add(index, item)`), each is declared:
-// the checker chooses the form a call means, and the C++ tells them apart when it runs.
+// The functions every program has, and the methods and properties of the built-in types:
+// strings, numbers, lists, maps, sets, ranges and bytes. Where one name takes different shapes
+// (`add(item)` and `add(index, item)`), each is listed, and a call means the one its arguments
+// fit.
+
+// Inside Astra: these are written in C++ (src/builtins.cpp, src/stdlib.cpp, src/vm.cpp) and
+// declared here so that their types and parameter names are known to the type checker. An
+// `external` declaration has no body and compiles to nothing; the compiler checks that the C++
+// has what it names, taking as many arguments as it says, and the C++ tells the shapes of one
+// name apart when it runs.
 
 // -- Functions --
 
+// Writes `items` to the output as text, a space between each two, and then a line end. A string
+// is written as it is; in a list or a map it is shown in quotes.
+//   print("total", 3, [1, 2])   // total 3 [1, 2]
 external fun print(vararg items : any?)
+// Writes `items` to the output as print does, but with nothing between them and no line end.
 external fun write(vararg items : any?)
+// The name of the type of `value`: "int", "float", "string", "bool", "char", "byte", "null",
+// "List", "Map", "Set", "Range", "Bytes", "Function", or the name of its class.
 external fun type(value : any?) : string
+// The ints from `first` up to `end`, not including `end`, going by `step`; with one argument,
+// from 0 up to that number. A negative `step` counts down. An IllegalArgumentException for a
+// `step` of 0.
+//   Range(5).toList()          // [0, 1, 2, 3, 4]
+//   Range(10, 0, -3).toList()  // [10, 7, 4, 1]
 external fun Range(first : int, end : int = 0, step : int = 1) : Range
+// New bytes: `Bytes(16)` is sixteen zeros, `Bytes([1, 2, 255])` the numbers of a list, and
+// `Bytes(other)` a copy of other bytes. An IllegalArgumentException for a negative size, a number
+// outside 0 to 255, or anything else; text becomes bytes with `toBytes()`.
 external fun Bytes(source : any) : Bytes
+// The arguments the program was started with, those after the script's name, as a new list.
 external fun args() : open List<string>
+// Nothing when `condition` is true; otherwise an AssertionError with `message`.
 external fun assert(condition : bool, message : string = "assertion failed")
 // The hash of several values together, wrapping at 32 bits inside, as Java's Objects.hash (D148).
 external fun hash(vararg values : any?) : int
 external fun __hashCode(value : any?) : int
+// A time in seconds, as a float, from a clock that only goes forward: the difference between two
+// readings is the time that passed. What it counts from is not fixed.
 external fun clock() : float
+// How `a` and `b` are ordered: negative, zero or positive, as a comparator gives. Numbers by
+// size, strings by their characters, chars by their numbers, false before true, and null before
+// everything else. A ClassCastException for two values that cannot be compared.
 external fun compareValues(a : any?, b : any?) : int
+// Ends the program at once, with `code` as its exit status; `finally` blocks do not run.
 external fun exit(code : int = 0) : nothing
+// Sends on at once whatever print and write have written. Output to a file or to another program
+// is otherwise sent in pieces, and at the latest when the program ends.
 external fun flush()
+// Writes `prompt`, then reads one line of input and gives it without its line end; null when the
+// input has ended. Other threads go on while it waits.
 external fun input(prompt : string = "") : string?
+// The largest of the values given, compared as compareValues does; the first of them where
+// several are as large.
+//   maxOf(3, 7, 2)   // 7
 external fun <T> maxOf(first : T, vararg rest : T) : T
+// The smallest of the values given, compared as compareValues does; the first of them where
+// several are as small.
 external fun <T> minOf(first : T, vararg rest : T) : T
 
 // -- string --
 
+// The number of characters.
 external val string.size : int
+// The position of the last character, `size - 1`: -1 for "".
 external val string.lastIndex : int
+// The positions of the characters, `0..<size`.
 external val string.indices : Range
+// The number of the first character, its Unicode code point: "A".code is 65. An
+// UnsupportedOperationException for "".
 external val string.code : int
+// The text with every letter in upper case, not only the ASCII ones.
 external fun string.upper() : string
+// The text with every letter in lower case, not only the ASCII ones.
 external fun string.lower() : string
+// The text without the spaces, tabs and line ends at its start and at its end.
 external fun string.trim() : string
+// The text without the spaces, tabs and line ends at its start.
 external fun string.trimStart() : string
+// The text without the spaces, tabs and line ends at its end.
 external fun string.trimEnd() : string
+// For text written over several lines in the source: the indentation shared by all the lines
+// with something on them taken away, and a first and a last line that are blank dropped.
 external fun string.trimIndent() : string
+// For text written over several lines in the source: on each line, the spaces and tabs up to
+// `marginPrefix` and the prefix itself taken away, and a first and a last line that are blank
+// dropped. A line without the prefix is kept as it is.
 external fun string.trimMargin(marginPrefix : string = "|") : string
+// The parts of the text between the places where `delimiter` is, as a new list; an empty
+// delimiter gives each character. With no argument at all, the parts between runs of whitespace,
+// none of them empty.
+//   "a,b,,c".split(",")   // ["a", "b", "", "c"]
+//   " a  b ".split()      // ["a", "b"]
 external fun string.split(delimiter : string = " ") : open List<string>
+// The parts of the text between the places where the character `delimiter` is, as a new list.
 external fun string.split(delimiter : char) : open List<string>
+// The lines of the text without their line ends ("\n" or "\r\n"), as a new list. Text that ends
+// in a line end gives an empty last line.
 external fun string.lines() : open List<string>
+// The text `times` times over; "" for 0. An IllegalArgumentException for a negative `times`.
 external fun string.repeat(times : int) : string
+// The characters in the opposite order.
 external fun string.reversed() : string
+// True when `other` is somewhere in the text; always true for "".
 external fun string.contains(other : string, ignoreCase : bool = false) : bool
+// True when the character `other` is in the text.
 external fun string.contains(other : char, ignoreCase : bool = false) : bool
+// True when the text begins with `prefix`.
 external fun string.startsWith(prefix : string, ignoreCase : bool = false) : bool
+// True when the text begins with the character `prefix`.
 external fun string.startsWith(prefix : char, ignoreCase : bool = false) : bool
+// True when the text ends with `suffix`.
 external fun string.endsWith(suffix : string, ignoreCase : bool = false) : bool
+// True when the text ends with the character `suffix`.
 external fun string.endsWith(suffix : char, ignoreCase : bool = false) : bool
+// The position where `other` first appears at or after `startIndex`, or -1 where it does not. A
+// negative `startIndex` is taken as 0.
 external fun string.indexOf(other : string, startIndex : int = 0, ignoreCase : bool = false) : int
+// The position where the character `other` first appears at or after `startIndex`, or -1.
 external fun string.indexOf(other : char, startIndex : int = 0, ignoreCase : bool = false) : int
+// The position where `other` last appears, beginning at or before `startIndex`, or -1 where it
+// does not. Without `startIndex` the whole text is searched, from its end; a negative one gives -1.
 external fun string.lastIndexOf(other : string, startIndex : int = 0, ignoreCase : bool = false) : int
+// The position where the character `other` last appears, at or before `startIndex` where one is
+// given, or -1.
 external fun string.lastIndexOf(other : char, startIndex : int = 0, ignoreCase : bool = false) : int
+// The text with every `oldValue` in it replaced by `newValue`; the text as it is when `oldValue`
+// is "".
 external fun string.replace(oldValue : string, newValue : string, ignoreCase : bool = false) : string
+// The text with every `oldChar` in it replaced by `newChar`.
 external fun string.replace(oldChar : char, newChar : char, ignoreCase : bool = false) : string
+// True when `other` is a string with the same characters; false for anything that is not a
+// string.
 external fun string.equals(other : any?, ignoreCase : bool = false) : bool
+// How the text is ordered against `other`, character by character by their numbers: negative,
+// zero or positive. "B" comes before "a" unless `ignoreCase`.
 external fun string.compareTo(other : string, ignoreCase : bool = false) : int
+// True when the text has no characters.
 external fun string.isEmpty() : bool
+// True when the text has at least one character.
 external fun string.isNotEmpty() : bool
+// True when the text is empty or only spaces, tabs and line ends.
 external fun string.isBlank() : bool
+// True when the text has something besides spaces, tabs and line ends.
 external fun string.isNotBlank() : bool
+// True when every character is a letter; false for "".
 external fun string.isLetter() : bool
+// True when every character is a digit; false for "".
 external fun string.isDigit() : bool
+// True when every character is a letter or a digit; false for "".
 external fun string.isLetterOrDigit() : bool
+// True when every character is whitespace: a space, a tab, a line end; false for "".
 external fun string.isWhitespace() : bool
+// True when every character is an upper-case letter; false for "", and for "A1".
 external fun string.isUpperCase() : bool
+// True when every character is a lower-case letter; false for "".
 external fun string.isLowerCase() : bool
+// The text made `size` characters long with `padChar` put before it; the text as it is when it
+// is that long already.
+//   "7".padStart(3, '0')   // "007"
 external fun string.padStart(size : int, padChar : char = ' ') : string
+// The text made `size` characters long with `padChar` put after it; the text as it is when it is
+// that long already.
 external fun string.padEnd(size : int, padChar : char = ' ') : string
+// The whole number the text spells in base `radix`, a sign allowed, spaces not. A
+// NumberFormatException for text that is not one or does not fit in an int; an
+// IllegalArgumentException for a radix outside 2 to 36.
+//   "ff".toInt(16)   // 255
 external fun string.toInt(radix : int = 10) : int
+// The whole number the text spells in base `radix`, or null where it is not one.
 external fun string.toIntOrNull(radix : int = 10) : int?
+// The whole number from 0 to 18446744073709551615 the text spells, as an int's 64 bits read as
+// unsigned (D44): "18446744073709551615" gives -1. A NumberFormatException for anything else.
 external fun string.parseUnsigned(radix : int = 10) : int
+// The number the text spells, such as "1.5", "-2" or "1e3"; a NumberFormatException for text
+// that is not one, spaces around it included.
 external fun string.toFloat() : float
+// The number the text spells, or null where it is not one.
 external fun string.toFloatOrNull() : float?
+// The text with each `%` item in it replaced by the next of `values`, as Kotlin's String.format:
+// `%[n$][flags][width][.precision]kind`. The kinds are d (a whole number), x X o (in hex or
+// octal), f e E g G (a fraction), s S (anything, as print shows it), c (a character), b (true
+// or false), `%%` and `%n`; the flags `-` (to the left), `0`, `+`, a space, and `,` (thousands).
+// An IllegalArgumentException for a bad item or too few values.
+//   "%d items, %.2f each".format(3, 1.5)   // "3 items, 1.50 each"
 external fun string.format(vararg values : any?) : string
+// The text as bytes, in UTF-8 or the character set given (D127).
 external fun string.toBytes(charset : Charset = Charset.utf8) : Bytes
 
 // -- List --
 
+// The number of items.
 external val List.size : int
+// The position of the last item, `size - 1`: -1 for an empty list.
 external val List.lastIndex : int
+// The positions of the items, `0..<size`.
 external val List.indices : Range
+// The type of item the list was made to hold, as a Type.
 external val List.itemType : Type    // what it was made to hold (M6.6): `int` for a List<int>, `any` where that was not said
+// Adds `item` at the end; gives true.
 external fun <T> open List<T>.add(item : T) : bool
+// Puts `item` in before the item at `index`, from 0 to `size` (the end); gives true. An
+// IndexOutOfBoundsException for any other `index`.
 external fun <T> open List<T>.add(index : int, item : T) : bool
-// `items` is anything a for loop takes
+// Adds `items` at the end; true if there were any. `items` is anything a for loop takes.
 external fun <T> open List<T>.addAll(items : any) : bool
+// Puts `items` in before the item at `index`, from 0 to `size`; true if there were any. An
+// IndexOutOfBoundsException for any other `index`.
 external fun <T> open List<T>.addAll(index : int, items : any) : bool
+// Puts `item` in before the item at `index`, from 0 to `size` (the end). An
+// IndexOutOfBoundsException for any other `index`.
 external fun <T> open List<T>.insert(index : int, item : T)
+// The item at `index`, from 0; unlike `list[i]`, never counted from the end. An
+// IndexOutOfBoundsException where there is none.
 external fun <T> List<T>.get(index : int) : T
+// The item at `index`, from 0, or null where there is none, as for a negative index.
 external fun <T> List<T>.getOrNull(index : int) : T?
+// Puts `item` at `index`, from 0, in place of the item there. An IndexOutOfBoundsException where
+// there is none.
 external fun <T> open List<T>.set(index : int, item : T)
+// Takes out the item at `index` and gives it; `^1` is the last. An IndexOutOfBoundsException
+// where there is none, as for a negative int.
 external fun <T> open List<T>.removeAt(index : Index) : T
+// Takes out the first item equal to `item`, compared with ==; true if there was one.
 external fun <T> open List<T>.remove(item : any?) : bool
+// Takes out the first item and gives it; a NoSuchElementException when the list is empty.
 external fun <T> open List<T>.removeFirst() : T
+// Takes out the last item and gives it; a NoSuchElementException when the list is empty.
 external fun <T> open List<T>.removeLast() : T
+// Takes out the first item and gives it; null when the list is empty.
 external fun <T> open List<T>.removeFirstOrNull() : T?
+// Takes out the last item and gives it; null when the list is empty.
 external fun <T> open List<T>.removeLastOrNull() : T?
+// Takes out every item.
 external fun <T> open List<T>.clear()
+// True when an item is equal to `item`, compared with ==.
 external fun <T> List<T>.contains(item : any?) : bool
+// The position of the first item equal to `item`, or -1 where there is none.
 external fun <T> List<T>.indexOf(item : any?) : int
+// The position of the last item equal to `item`, or -1 where there is none.
 external fun <T> List<T>.lastIndexOf(item : any?) : int
+// True when the list has no items.
 external fun <T> List<T>.isEmpty() : bool
+// True when the list has at least one item.
 external fun <T> List<T>.isNotEmpty() : bool
+// A new list with the same items, made to hold the same type; the items themselves are not copied.
 external fun <T> List<T>.toList() : open List<T>
+// A new list with the same items, made to hold the same type, as toList().
 external fun <T> List<T>.toOpenList() : open List<T>
 // A copy nobody may change, the lists, maps and sets in it copied so as well: what can be a key (D26).
 external fun <T> List<T>.frozen() : FrozenList<T>
+// A new list with the items in the opposite order; reverse() turns the list itself round.
 external fun <T> List<T>.reversed() : open List<T>
+// Turns the list round, in place: the last item first.
 external fun <T> open List<T>.reverse()
+// Sorts the list in place, keeping items that are equal in their order. Without `comparator`,
+// numbers by size, strings by their characters, chars by their numbers, and objects by their
+// compareTo; a ClassCastException for items that cannot be compared. `comparator(a, b)` gives a
+// negative number where `a` goes first, 0 where they are equal, and a positive number otherwise.
+//   names.sort { a, b -> a.size - b.size }
 external fun <T> open List<T>.sort(comparator : ((T, T) -> Number)? = null)
+// Sorts the list in place by what `selector` gives for each item, smallest first, keys compared as
+// compareValues does; items with equal keys stay in their order.
 external fun <T> open List<T>.sortBy(selector : (T) -> any?)            // each key worked out once, each item moved once
+// Sorts the list in place by what `selector` gives for each item, largest first; items with equal
+// keys stay in their order.
 external fun <T> open List<T>.sortByDescending(selector : (T) -> any?)
+// Replaces each item, in place, by what `transform` gives for it.
 external fun <T> open List<T>.replaceAll(transform : (T) -> T)          // each item by what transform gives for it, built in place
 // The items as text: names.join(", ") { it.upper() } (Kotlin's joinToString).
+// `separator` between the items, `prefix` and `postfix` around them, and where `limit` is 0 or
+// more, at most that many items followed by `truncated`. Each item is shown as `transform` makes
+// it, or as print shows it.
+//   [1, 2, 3, 4].join(limit = 2)   // "1, 2, ..."
 external fun <T> List<T>.join(separator : string = ", ", prefix : string = "", postfix : string = "", limit : int = -1,
                               truncated : string = "...", transform : ((T) -> any?)? = null) : string
+// Puts `item` in the place of every item.
 external fun <T> open List<T>.fill(item : T)
 
 // -- Set --
@@ -128,85 +286,160 @@ external fun <T> open List<T>.fill(item : T)
 // Each value once, in the order first added, two values the same one where a map would take
 // them as one key. Set() or Set(from): a list's items, a range's, a string's, another set's.
 external fun <T> Set(from : any? = null) : open Set<T>
+// The number of items.
 external val Set.size : int
+// The type of item the set was made to hold, as a Type: `any` where that was not said.
 external val Set.itemType : Type
+// Adds `item` where it is not there yet; true if it was not.
 external fun <T> open Set<T>.add(item : T) : bool                  // true if it was not there
+// Takes out `item`; true if it was there.
 external fun <T> open Set<T>.remove(item : T) : bool               // true if it was
+// True when `item` is in the set.
 external fun <T> Set<T>.contains(item : T) : bool
+// True when the set has no items.
 external fun <T> Set<T>.isEmpty() : bool
+// True when the set has at least one item.
 external fun <T> Set<T>.isNotEmpty() : bool
+// A copy nobody may change, the lists, maps and sets in it copied so as well (D26).
 external fun <T> Set<T>.frozen() : FrozenSet<T>
+// Takes out every item.
 external fun <T> open Set<T>.clear()
+// Adds each item of `from` (a list, a set, a range, a string, bytes or a map's entries) that is
+// not there yet; true if any was added.
 external fun <T> open Set<T>.addAll(from : any) : bool
+// Takes out each item that is in the list `from`; true if the set changed.
 external fun <T> open Set<T>.removeAll(from : List<T>) : bool
+// Takes out each item that is in the set `from`; true if the set changed.
 external fun <T> open Set<T>.removeAll(from : Set<T>) : bool
+// Takes out each item for which `predicate` is true; true if the set changed.
 external fun <T> open Set<T>.removeAll(predicate : (T) -> bool) : bool
+// Keeps only the items that are in the list `from`; true if the set changed.
 external fun <T> open Set<T>.retainAll(from : List<T>) : bool
+// Keeps only the items that are in the set `from`; true if the set changed.
 external fun <T> open Set<T>.retainAll(from : Set<T>) : bool
+// Keeps only the items for which `predicate` is true; true if the set changed.
 external fun <T> open Set<T>.retainAll(predicate : (T) -> bool) : bool
+// The items, in the order they were added, as a new list.
 external fun <T> Set<T>.toList() : open List<T>
+// The item added first; a NoSuchElementException when the set is empty.
 external fun <T> Set<T>.first() : T
+// The item added last; a NoSuchElementException when the set is empty.
 external fun <T> Set<T>.last() : T
 
 // -- Map --
 
+// The number of keys.
 external val Map.size : int
-// The keys and the entries are live views (D77): sets that show the map as it is, and through
-// which nothing is changed; the values a list of them as they are.
+// The keys, in the order they were first put in: a live view (D77), a set that shows the map as
+// it is, and through which nothing is changed.
 external val <K, V> Map<K, V>.keys : Set<K>
+// The values, in the order of their keys, as a list of them as they are now; it does not change
+// with the map.
 external val <K, V> Map<K, V>.values : List<V>
+// The entries, each a MapEntry with its `key` and `value`: a live view (D77), as `keys` is.
 external val <K, V> Map<K, V>.entries : Set<MapEntry<K, V>>
+// The type of key the map was made to hold, as a Type: `any` where that was not said.
 external val Map.keyType : Type
+// The type of value the map was made to hold, as a Type: `any` where that was not said.
 external val Map.valueType : Type
 // A whole entry, `"a" to 1` or a MapEntry; a key is asked of the keys, k in map.keys (D140).
 external fun <K, V> Map<K, V>.contains(entry : MapEntry<K, V>) : bool
+// True when the map holds the key of the pair `entry` with its value: `map.contains("a" to 1)`.
 external fun <K, V> Map<K, V>.contains(entry : Pair<K, V>) : bool
+// The value under `key`; where there is none, `defaultValue`, or null.
 external fun <K, V> Map<K, V>.get(key : K, defaultValue : V? = null) : V?
+// The value under `key`; a NoSuchElementException where there is none.
 external fun <K, V> Map<K, V>.getValue(key : K) : V
+// The value under `key`, or `defaultValue` where there is none.
 external fun <K, V> Map<K, V>.getOrDefault(key : K, defaultValue : V) : V
+// Puts `value` under `key`, and gives the value that was there, or null.
 external fun <K, V> open Map<K, V>.put(key : K, value : V) : V?
+// Puts `value` under `key`, as `map[key] = value` does.
 external fun <K, V> open Map<K, V>.set(key : K, value : V)
+// Takes out `key` and its value, and gives the value that was there, or null.
 external fun <K, V> open Map<K, V>.remove(key : any?) : V?
+// Takes out every key.
 external fun <K, V> open Map<K, V>.clear()
+// True when the map has no keys.
 external fun <K, V> Map<K, V>.isEmpty() : bool
+// True when the map has at least one key.
 external fun <K, V> Map<K, V>.isNotEmpty() : bool
+// A new map with the same keys and values, in the same order.
 external fun <K, V> Map<K, V>.toMap() : open Map<K, V>
+// A new map with the same keys and values, as toMap().
 external fun <K, V> Map<K, V>.toOpenMap() : open Map<K, V>
+// A copy nobody may change, the lists, maps and sets in it copied so as well: what can be a
+// key (D26).
 external fun <K, V> Map<K, V>.frozen() : FrozenMap<K, V>
 
 // -- Range --
 
+// How many numbers the range holds. An IllegalArgumentException for a range with an end counted
+// from the end (`2..^1`), until of(size) makes it plain.
 external val Range.size : int
+// The number the range starts at; an Index for one counted from the end.
 external val Range.start : int
+// The end as written: included for `0..10` and `10 downTo 0`, not for `0..<10` and `Range(0, 10)`;
+// an Index for one counted from the end.
 external val Range.end : int
+// How far apart the numbers are: negative for a range that counts down.
 external val Range.step : int
 // `0..10 step 2`, `10 downTo 0 step 3`: every so many of a range's numbers, from its first (D72).
 infix external fun Range.step(by : int) : Range
+// The numbers of the range, as a new list.
 external fun Range.toList() : open List<int>
+// True when `value` is an int the range holds; false for anything else, a float among them.
 external fun Range.contains(value : any?) : bool
+// The first number; a NoSuchElementException for an empty range.
 external fun Range.first() : int
+// The last number the range holds: 8 for `0..9 step 4`. A NoSuchElementException for an empty
+// range.
 external fun Range.last() : int
+// True when the range holds no numbers, as `Range(3, 1)` does.
 external fun Range.isEmpty() : bool
 
 // -- Bytes --
 
+// The number of bytes.
 external val Bytes.size : int
+// The bytes, as a new list.
 external fun Bytes.toList() : open List<byte>
+// The text these bytes spell, in UTF-8 or the character set given (D127). Bytes that are not
+// UTF-8 become the character U+FFFD.
 external fun Bytes.decodeToString(charset : Charset = Charset.utf8) : string
+// Puts `value` in every place, and gives the bytes themselves.
 external fun Bytes.fill(value : byte) : Bytes
+// The position of the first byte equal to `value`, or -1 where there is none.
 external fun Bytes.indexOf(value : byte) : int
+// True when a byte equal to `value` is there, given as a byte or an int; false for anything else.
 external fun Bytes.contains(value : any?) : bool
 // 16- and 32-bit numbers kept in the bytes (D19), at a position, the least significant byte
 // first unless bigEndian; read as an int, a float for float32.
+// int16 reads the signed 16-bit number at `at`, from -32768 to 32767. Each of these reads and
+// writes is an IndexOutOfBoundsException where the number would run past the end.
 external fun Bytes.int16(at : int, bigEndian : bool = false) : int
+// The unsigned 16-bit number at `at`, from 0 to 65535.
 external fun Bytes.uint16(at : int, bigEndian : bool = false) : int
+// The signed 32-bit number at `at`, from -2147483648 to 2147483647.
 external fun Bytes.int32(at : int, bigEndian : bool = false) : int
+// The unsigned 32-bit number at `at`, from 0 to 4294967295.
 external fun Bytes.uint32(at : int, bigEndian : bool = false) : int
+// The 32-bit float at `at`.
 external fun Bytes.float32(at : int, bigEndian : bool = false) : float
+// Writes `value` as a signed 16-bit number at `at`, and gives the bytes themselves. An
+// ArithmeticException where it is outside -32768 to 32767.
 external fun Bytes.putInt16(at : int, value : int, bigEndian : bool = false) : Bytes
+// Writes `value` as an unsigned 16-bit number at `at`, and gives the bytes themselves. An
+// ArithmeticException where it is outside 0 to 65535.
 external fun Bytes.putUint16(at : int, value : int, bigEndian : bool = false) : Bytes
+// Writes `value` as a signed 32-bit number at `at`, and gives the bytes themselves. An
+// ArithmeticException where it is outside -2147483648 to 2147483647.
 external fun Bytes.putInt32(at : int, value : int, bigEndian : bool = false) : Bytes
+// Writes `value` as an unsigned 32-bit number at `at`, and gives the bytes themselves. An
+// ArithmeticException where it is outside 0 to 4294967295.
 external fun Bytes.putUint32(at : int, value : int, bigEndian : bool = false) : Bytes
+// Writes `value` as a 32-bit float at `at`, as near as one can hold it, and gives the bytes
+// themselves.
 external fun Bytes.putFloat32(at : int, value : Number, bigEndian : bool = false) : Bytes
 
 // -- Positions --
@@ -214,7 +447,9 @@ external fun Bytes.putFloat32(at : int, value : Number, bigEndian : bool = false
 // A position (D146): an int from the start, or ^k from the end (`items[^1]` is the last). A
 // function taking an Index takes either; of(size) is the position it means in that many items.
 external fun Index.of(size : int) : int
+// True for a position counted from the end, `^k`; false for an int.
 external val Index.fromEnd : bool
+// The number written: `k` for `^k`, and the int itself for an int.
 external val Index.value : int
 // A range with an end counted from the end (`2..^1`) is a slice's bounds; of(size) makes it plain.
 external fun Range.of(size : int) : Range
@@ -224,114 +459,224 @@ external fun Range.of(size : int) : Range
 // A char is one character, a Unicode code point (D24): what s[i] gives. `c.code` is its number,
 // and `n.char` the character numbered n (D142).
 external val char.code : int
+// The character numbered by the int: `97.char` is 'a'. An IllegalArgumentException for a number
+// that is no character's, outside 0 to 1114111 or from 55296 to 57343.
 external val int.char : char
+// True when the character is a letter.
 external fun char.isLetter() : bool
+// True when the character is a digit.
 external fun char.isDigit() : bool
+// True when the character is a letter or a digit.
 external fun char.isLetterOrDigit() : bool
+// True when the character is whitespace: a space, a tab, a line end.
 external fun char.isWhitespace() : bool
+// True when the character is an upper-case letter.
 external fun char.isUpperCase() : bool
+// True when the character is a lower-case letter.
 external fun char.isLowerCase() : bool
+// The same letter in upper case; the char itself where there is none, or where it would be more
+// than one character.
 external fun char.upper() : char
+// The same letter in lower case; the char itself where there is none.
 external fun char.lower() : char
+// The number the digit stands for in base `radix`: '7' is 7, and in base 16, 'f' is 15. A
+// NumberFormatException for a char that is not a digit there; an IllegalArgumentException for a
+// radix outside 2 to 36.
 external fun char.digitToInt(radix : int = 10) : int
 // A byte holds 0 to 255 (D19); arithmetic on bytes gives an int.
+// toInt() gives the number the byte holds, as an int.
 external fun byte.toInt() : int
+// The int as a byte; an IllegalArgumentException where it is outside 0 to 255.
 external fun int.toByte() : byte
+// The low 8 bits of the int as a byte: 300 gives 44, and -1 gives 255.
 external fun int.toByteWrapped() : byte
 
 // -- int and float --
 
 // The coerce functions give one of the numbers as it was: an int where all of them are ints, a
 // float where all are floats, and either where they are mixed (`2.5.coerceIn(0, 1)` is 1).
+// coerceIn gives the number itself where it lies from `minimumValue` to `maximumValue`, and
+// otherwise the nearer of the two; an IllegalArgumentException where the maximum is the smaller.
 external fun int.coerceIn(minimumValue : int, maximumValue : int) : int
+// The number itself where the range holds it, and otherwise the range's smallest or largest
+// number, whichever is nearer. An IllegalArgumentException for an empty range.
 external fun int.coerceIn(range : Range) : int
+// The number itself where it lies from `minimumValue` to `maximumValue`, and otherwise the nearer
+// of the two, as it was given.
 external fun int.coerceIn(minimumValue : Number, maximumValue : Number) : Number
+// The number itself, or `minimumValue` where the number is smaller.
 external fun int.coerceAtLeast(minimumValue : int) : int
+// The number itself, or `minimumValue`, as it was given, where the number is smaller.
 external fun int.coerceAtLeast(minimumValue : Number) : Number
+// The number itself, or `maximumValue` where the number is larger.
 external fun int.coerceAtMost(maximumValue : int) : int
+// The number itself, or `maximumValue`, as it was given, where the number is larger.
 external fun int.coerceAtMost(maximumValue : Number) : Number
+// The int to the power `exponent`: an int for an int exponent of 0 or more, and otherwise a
+// float. An ArithmeticException where the int would not fit.
+//   2.pow(10)   // 1024
+//   2.pow(-1)   // 0.5
 external fun int.pow(exponent : Number) : Number
+// The remainder after dividing by `divisor`, with the divisor's sign: (-7).mod(3) is 2, where
+// `-7 % 3` is -1. An ArithmeticException for a divisor of 0.
 external fun int.mod(divisor : int) : int
+// The number itself where it lies from `minimumValue` to `maximumValue`, and otherwise the nearer
+// of the two; an IllegalArgumentException where the maximum is the smaller.
 external fun float.coerceIn(minimumValue : float, maximumValue : float) : float
+// The number itself where it lies from `minimumValue` to `maximumValue`, and otherwise the nearer
+// of the two, as it was given.
 external fun float.coerceIn(minimumValue : Number, maximumValue : Number) : Number
+// The number itself where it lies within the range's smallest and largest numbers, and otherwise
+// the nearer of those, an int. An IllegalArgumentException for an empty range.
 external fun float.coerceIn(range : Range) : Number
+// The number itself, or `minimumValue` where the number is smaller.
 external fun float.coerceAtLeast(minimumValue : float) : float
+// The number itself, or `minimumValue`, as it was given, where the number is smaller.
 external fun float.coerceAtLeast(minimumValue : Number) : Number
+// The number itself, or `maximumValue` where the number is larger.
 external fun float.coerceAtMost(maximumValue : float) : float
+// The number itself, or `maximumValue`, as it was given, where the number is larger.
 external fun float.coerceAtMost(maximumValue : Number) : Number
+// The number to the power `exponent`.
 external fun float.pow(exponent : Number) : float
+// The remainder after dividing by `divisor`, with the divisor's sign: (-7.5).mod(2) is 0.5. NaN
+// for a divisor of 0.
 external fun float.mod(divisor : Number) : float
+// The nearest whole number, a half going up: 2.5 gives 3 and -2.5 gives -2. An ArithmeticException
+// for NaN, or where it does not fit in an int.
 external fun Number.roundToInt() : int
+// The whole part, what is after the point dropped: -2.9 gives -2. An ArithmeticException where it
+// does not fit in an int, NaN and infinity among them.
 external fun Number.toInt() : int
+// The number as a float.
 external fun Number.toFloat() : float
+// The number as text, as print shows it; with `radix`, a whole number in that base, from 2 to 36:
+// `255.toString(16)` is "ff". A ClassCastException for a float with a radix.
 external fun Number.toString(radix : int = 10) : string
 // An int's 64 bits read as unsigned (D44); Kotlin's `ushr` is `>>>`.
+// toUnsignedString gives them as text in base `radix`: `(-1).toUnsignedString()` is
+// "18446744073709551615".
 external fun int.toUnsignedString(radix : int = 10) : string
+// How the int is ordered against `other`, both read as unsigned: -1, 0 or 1.
 external fun int.compareUnsigned(other : int) : int
+// The int divided by `divisor`, both read as unsigned; an ArithmeticException for a divisor of 0.
 external fun int.divideUnsigned(divisor : int) : int
+// The remainder of the int divided by `divisor`, both read as unsigned; an ArithmeticException for
+// a divisor of 0.
 external fun int.remainderUnsigned(divisor : int) : int
 // The low bits of an int, as the storage widths keep them (D148), read back as an int.
+// toInt16Wrapped keeps the low 16 bits as a signed number: 70000 gives 4464.
 external fun int.toInt16Wrapped() : int
+// The low 16 bits as an unsigned number, from 0 to 65535: -1 gives 65535.
 external fun int.toUint16Wrapped() : int
+// The low 32 bits as a signed number: 2147483648 gives -2147483648.
 external fun int.toInt32Wrapped() : int
+// The low 32 bits as an unsigned number, from 0 to 4294967295: -1 gives 4294967295.
 external fun int.toUint32Wrapped() : int
 // For 32-bit work ported from Kotlin (D148): the low 32 bits as a signed number, and their
 // rotations, each a signed 32-bit number as Kotlin's Int is.
 external fun int.wrap32() : int
+// The low 32 bits turned `count` places to the left, those leaving at the top coming back at the
+// bottom, as a signed 32-bit number. Only the low 5 bits of `count` count.
 external fun int.rotateLeft32(count : int) : int
+// The low 32 bits turned `count` places to the right, those leaving at the bottom coming back at
+// the top, as a signed 32-bit number. Only the low 5 bits of `count` count.
 external fun int.rotateRight32(count : int) : int
+// How the number is ordered against `other`, by size: -1, 0 or 1.
 external fun Number.compareTo(other : Number) : int
+// True for the float NaN, "not a number"; false for every int.
 external fun Number.isNaN() : bool
+// True for a float that is infinity or minus infinity; false for every int.
 external fun Number.isInfinite() : bool
+// True for every int, and for a float that is neither NaN nor infinite.
 external fun Number.isFinite() : bool
 
 // -- Math --
 
-// Its functions are the C++'s (src/builtins.cpp); `pi` and `e` are constants, written in
-// place of each read.
+// The mathematical functions. `pi` and `e` are constants, written in place of each read.
 external object Math {
+  // The ratio of a circle's circumference to its diameter.
   const pi = 3.141592653589793
+  // The base of natural logarithms.
   const e = 2.718281828459045
 
+  // The square root of `x`; NaN for a negative `x`.
   fun sqrt(x : Number) : float
+  // The sine of `x`, an angle in radians.
   fun sin(x : Number) : float
+  // The cosine of `x`, an angle in radians.
   fun cos(x : Number) : float
+  // The tangent of `x`, an angle in radians.
   fun tan(x : Number) : float
+  // The angle in radians, from -pi/2 to pi/2, whose sine is `x`; NaN outside -1 to 1.
   fun asin(x : Number) : float
+  // The angle in radians, from 0 to pi, whose cosine is `x`; NaN outside -1 to 1.
   fun acos(x : Number) : float
+  // The angle in radians, from -pi/2 to pi/2, whose tangent is `x`.
   fun atan(x : Number) : float
+  // The angle in radians, from -pi to pi, from the x axis to the point (`x`, `y`).
   fun atan2(y : Number, x : Number) : float
+  // The length of the hypotenuse, `sqrt(x * x + y * y)`, without overflow on the way.
   fun hypot(x : Number, y : Number) : float
+  // The natural logarithm of `x`; minus infinity for 0, NaN for a negative `x`.
   fun log(x : Number) : float
+  // The logarithm of `x` in base 10.
   fun log10(x : Number) : float
+  // The logarithm of `x` in base 2.
   fun log2(x : Number) : float
+  // e to the power `x`.
   fun exp(x : Number) : float
+  // `x` with what is after the point dropped, as a float: -2.7 gives -2.0.
   fun trunc(x : Number) : float
 
-  // The nearest int: below, above, or either way (halves away from zero).
+  // The nearest int at or below `x`: -2.5 gives -3. An ArithmeticException for NaN, infinity, or
+  // a float too large for an int; the same holds for ceil and round.
   fun floor(x : Number) : int
+  // The nearest int at or above `x`: -2.5 gives -2.
   fun ceil(x : Number) : int
+  // The nearest int, a half going away from zero: 2.5 gives 3 and -2.5 gives -3 (where
+  // roundToInt() gives -2).
   fun round(x : Number) : int
 
   // Of the kind given: an int for ints, a float for floats.
+  // abs gives the number without its sign; an ArithmeticException for `int.minValue`, whose
+  // positive does not fit in an int.
   fun abs(x : int) : int
+  // The float without its sign.
   fun abs(x : float) : float
+  // The number without its sign, an int for an int and a float for a float.
   fun abs(x : Number) : Number
+  // -1, 0 or 1, as `x` is negative, zero or positive.
   fun sign(x : int) : int
+  // -1.0 or 1.0 as `x` is negative or positive; `x` itself for 0.0, -0.0 and NaN.
   fun sign(x : float) : float
+  // The sign of `x`, an int for an int and a float for a float.
   fun sign(x : Number) : Number
+  // The smallest of the ints given.
   fun min(first : int, vararg rest : int) : int
+  // The smallest of the floats given.
   fun min(first : float, vararg rest : float) : float
+  // The smallest of the numbers given, as it was given; the first of them where several are as
+  // small.
   fun min(first : Number, vararg rest : Number) : Number
+  // The largest of the ints given.
   fun max(first : int, vararg rest : int) : int
+  // The largest of the floats given.
   fun max(first : float, vararg rest : float) : float
+  // The largest of the numbers given, as it was given; the first of them where several are as
+  // large.
   fun max(first : Number, vararg rest : Number) : Number
 
   // An int to a power of 0 or more is an int; anything else is a float.
+  // An ArithmeticException where an int result would not fit in an int.
   fun pow(base : Number, exponent : Number) : Number
 
-  // From 0.0 up to 1.0, not including 1.0; an int from `low` to `high`, both included.
+  // A random float from 0.0 up to 1.0, not including 1.0.
   fun random() : float
+  // A random int from `low` to `high`, both included; an IllegalArgumentException where `low` is
+  // greater than `high`.
   fun randomInt(low : int, high : int) : int
+  // Starts random() and randomInt() again from `value`: after the same seed, they give the same
+  // numbers in the same order.
   fun seed(value : int)
 }

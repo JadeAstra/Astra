@@ -4,32 +4,43 @@
 
 // -- Parts of the text --
 
+// The first `count` characters, or the whole string when it has fewer. A negative `count` is an
+// IllegalArgumentException.
 fun string.take(count : int) : string {
   if (count < 0) { throw IllegalArgumentException("take($count): the count cannot be negative") }
   return count >= this.size ? this : this[0..<count]
 }
 
+// The last `count` characters, or the whole string when it has fewer. A negative `count` is an
+// IllegalArgumentException.
 fun string.takeLast(count : int) : string {
   if (count < 0) { throw IllegalArgumentException("takeLast($count): the count cannot be negative") }
   return count >= this.size ? this : this[this.size - count..]
 }
 
+// All but the first `count` characters: "" when the string has no more than `count`. A negative
+// `count` is an IllegalArgumentException.
 fun string.drop(count : int) : string {
   if (count < 0) { throw IllegalArgumentException("drop($count): the count cannot be negative") }
   return count >= this.size ? "" : this[count..]
 }
 
+// All but the last `count` characters: "" when the string has no more than `count`. A negative
+// `count` is an IllegalArgumentException.
 fun string.dropLast(count : int) : string {
   if (count < 0) { throw IllegalArgumentException("dropLast($count): the count cannot be negative") }
   return count >= this.size ? "" : this[0..<this.size - count]
 }
 
+// The characters from the start for as long as `predicate` is true of them.
+//   "123abc".takeWhile { it.isDigit() }   // "123"
 fun string.takeWhile(predicate : (char) -> bool) : string {
   var index = 0
   while (index < this.size and predicate(this[index])) { index += 1 }
   return this[0..<index]
 }
 
+// The string from the first character for which `predicate` is false; "" when it is true of all.
 fun string.dropWhile(predicate : (char) -> bool) : string {
   var index = 0
   while (index < this.size and predicate(this[index])) { index += 1 }
@@ -44,27 +55,39 @@ fun string.substringBefore(delimiter : string, missingDelimiterValue : string? =
   return this[0..<at]
 }
 
+// What comes after the first `delimiter`; the whole string, or `missingDelimiterValue` when one is
+// given, if `delimiter` is not there.
 fun string.substringAfter(delimiter : string, missingDelimiterValue : string? = null) : string {
   val at = this.indexOf(delimiter)
   if (at < 0) { return missingDelimiterValue == null ? this : missingDelimiterValue }
   return this[at + delimiter.size..]
 }
 
+// What comes before the last `delimiter`; the whole string, or `missingDelimiterValue` when one is
+// given, if `delimiter` is not there.
 fun string.substringBeforeLast(delimiter : string, missingDelimiterValue : string? = null) : string {
   val at = this.lastIndexOf(delimiter)
   if (at < 0) { return missingDelimiterValue == null ? this : missingDelimiterValue }
   return this[0..<at]
 }
 
+// What comes after the last `delimiter`; the whole string, or `missingDelimiterValue` when one is
+// given, if `delimiter` is not there.
+//   "a/b/c.txt".substringAfterLast("/")   // "c.txt"
 fun string.substringAfterLast(delimiter : string, missingDelimiterValue : string? = null) : string {
   val at = this.lastIndexOf(delimiter)
   if (at < 0) { return missingDelimiterValue == null ? this : missingDelimiterValue }
   return this[at + delimiter.size..]
 }
 
+// The string without `prefix` at its start; the string as it is when it does not start with it.
 fun string.removePrefix(prefix : string) : string => this.startsWith(prefix) ? this[prefix.size..] : this
+// The string without `suffix` at its end; the string as it is when it does not end with it.
 fun string.removeSuffix(suffix : string) : string => this.endsWith(suffix) ? this[0..<this.size - suffix.size] : this
 
+// The string without `prefix` at its start and `suffix` at its end, when it has both and is long
+// enough for them not to overlap; otherwise the string as it is. `suffix` is `prefix` if not given.
+//   "\"quoted\"".removeSurrounding("\"")   // "quoted"
 fun string.removeSurrounding(prefix : string, suffix : string = prefix) : string {
   if (this.size >= prefix.size + suffix.size and this.startsWith(prefix) and this.endsWith(suffix)) {
     return this[prefix.size..<this.size - suffix.size]
@@ -84,6 +107,8 @@ fun string.chunked(size : int) : open List<string> {
   return out
 }
 
+// The string with the first `oldValue` in it put back as `newValue`; the string as it is when
+// `oldValue` is not there. An empty `oldValue` puts `newValue` at the start.
 fun string.replaceFirst(oldValue : string, newValue : string) : string {
   val at = this.indexOf(oldValue)
   return at < 0 ? this : this[0..<at] + newValue + this[at + oldValue.size..]
@@ -92,6 +117,7 @@ fun string.replaceFirst(oldValue : string, newValue : string) : string {
 // The text with its first character put through a function: name.replaceFirstChar { it.upper() }
 fun string.replaceFirstChar(transform : (char) -> any?) : string => this.size == 0 ? this : "${transform(this[0])}" + this[1..]
 
+// The longest start that this string and `other` have in common; "" when none.
 fun string.commonPrefixWith(other : string) : string {
   var index = 0
   while (index < this.size and index < other.size and this[index] == other[index]) { index += 1 }
@@ -100,11 +126,13 @@ fun string.commonPrefixWith(other : string) : string {
 
 // -- Characters --
 
+// The first character; a NoSuchElementException when the string is empty.
 fun string.first() : char {
   if (this.size == 0) { throw NoSuchElementException("first() of an empty string") }
   return this[0]
 }
 
+// The first character for which `predicate` is true; a NoSuchElementException when there is none.
 fun string.first(predicate : (char) -> bool) : char {
   for character in this {
     if (predicate(character)) { return character }
@@ -112,11 +140,13 @@ fun string.first(predicate : (char) -> bool) : char {
   throw NoSuchElementException("first(): no character of the string meets the condition")
 }
 
+// The last character; a NoSuchElementException when the string is empty.
 fun string.last() : char {
   if (this.size == 0) { throw NoSuchElementException("last() of an empty string") }
   return this[this.size - 1]
 }
 
+// The last character for which `predicate` is true; a NoSuchElementException when there is none.
 fun string.last(predicate : (char) -> bool) : char {
   var index = this.size - 1
   while (index >= 0) {
@@ -126,8 +156,10 @@ fun string.last(predicate : (char) -> bool) : char {
   throw NoSuchElementException("last(): no character of the string meets the condition")
 }
 
+// The first character, or null when the string is empty.
 fun string.firstOrNull() : char? => this.size == 0 ? null : this[0]
 
+// The first character for which `predicate` is true, or null when there is none.
 fun string.firstOrNull(predicate : (char) -> bool) : char? {
   for character in this {
     if (predicate(character)) { return character }
@@ -135,8 +167,10 @@ fun string.firstOrNull(predicate : (char) -> bool) : char? {
   return null
 }
 
+// The last character, or null when the string is empty.
 fun string.lastOrNull() : char? => this.size == 0 ? null : this[this.size - 1]
 
+// The last character for which `predicate` is true, or null when there is none.
 fun string.lastOrNull(predicate : (char) -> bool) : char? {
   var index = this.size - 1
   while (index >= 0) {
@@ -146,6 +180,8 @@ fun string.lastOrNull(predicate : (char) -> bool) : char? {
   return null
 }
 
+// The character at `index`, counted from 0; an IndexOutOfBoundsException when there is none.
+// Unlike s[i], it takes no position from the end (^1).
 fun string.get(index : int) : char {
   if (index < 0 or index >= this.size) {
     throw IndexOutOfBoundsException("get: index $index is out of range (length ${this.size})")
@@ -153,8 +189,10 @@ fun string.get(index : int) : char {
   return this[index]
 }
 
+// The character at `index`, counted from 0, or null when there is none.
 fun string.getOrNull(index : int) : char? => index >= 0 and index < this.size ? this[index] : null
 
+// The position of the first character for which `predicate` is true, or -1 when there is none.
 fun string.indexOfFirst(predicate : (char) -> bool) : int {
   var index = 0
   for character in this {
@@ -164,6 +202,7 @@ fun string.indexOfFirst(predicate : (char) -> bool) : int {
   return -1
 }
 
+// The position of the last character for which `predicate` is true, or -1 when there is none.
 fun string.indexOfLast(predicate : (char) -> bool) : int {
   var index = this.size - 1
   while (index >= 0) {
@@ -173,10 +212,12 @@ fun string.indexOfLast(predicate : (char) -> bool) : int {
   return -1
 }
 
+// Runs `action` on each character, in order.
 fun string.forEach(action : (char) -> unit) {
   for character in this { action(character) }
 }
 
+// Runs `action` on each character, in order, with its position (from 0) first.
 fun string.forEachIndexed(action : (int, char) -> unit) {
   var index = 0
   for character in this {
@@ -185,8 +226,10 @@ fun string.forEachIndexed(action : (int, char) -> unit) {
   }
 }
 
+// Whether the string has any characters at all.
 fun string.any() : bool => this.size > 0
 
+// Whether `predicate` is true of at least one character; false for an empty string.
 fun string.any(predicate : (char) -> bool) : bool {
   for character in this {
     if (predicate(character)) { return true }
@@ -194,6 +237,7 @@ fun string.any(predicate : (char) -> bool) : bool {
   return false
 }
 
+// Whether `predicate` is true of every character; true for an empty string.
 fun string.all(predicate : (char) -> bool) : bool {
   for character in this {
     if (!predicate(character)) { return false }
@@ -201,8 +245,10 @@ fun string.all(predicate : (char) -> bool) : bool {
   return true
 }
 
+// Whether the string is empty.
 fun string.none() : bool => this.size == 0
 
+// Whether `predicate` is true of no character; true for an empty string.
 fun string.none(predicate : (char) -> bool) : bool {
   for character in this {
     if (predicate(character)) { return false }
@@ -210,8 +256,10 @@ fun string.none(predicate : (char) -> bool) : bool {
   return true
 }
 
+// The number of characters, the same as `size`.
 fun string.count() : int => this.size
 
+// The number of characters for which `predicate` is true.
 fun string.count(predicate : (char) -> bool) : int {
   var total = 0
   for character in this {
@@ -236,6 +284,7 @@ fun string.filter(predicate : (char) -> bool) : string {
   return out.join("")
 }
 
+// The characters for which `predicate` is false, in their order, as a string.
 fun string.filterNot(predicate : (char) -> bool) : string {
   val out : open List<char> = []
   for character in this {
@@ -251,8 +300,11 @@ fun string.toList() : open List<char> {
   return out
 }
 
+// The characters, as a new list; the same as toList().
 fun string.toOpenList() : open List<char> => this.toList()
+// The characters, as a new list; the same as toList().
 fun string.toCharArray() : open List<char> => this.toList()
+// The characters, each once, as a new set.
 fun string.toSet() : open Set<char> => Set(this)
 
 // The number a digit stands for, or null: '7'.digitToIntOrNull() is 7 (digitToInt() is built in).
@@ -264,15 +316,23 @@ fun char.digitToIntOrNull(radix : int = 10) : int? {
 
 // -- Empty and missing text --
 
+// Whether the string is null, empty, or only spaces, tabs and line breaks.
 fun string?.isNullOrBlank() : bool => this == null or this.isBlank()
+// The string, or "" when it is null.
 fun string?.orEmpty() : string => this == null ? "" : this
+// The string, or what `defaultValue` gives when the string is empty. `defaultValue` runs only then.
 fun string.ifEmpty(defaultValue : () -> string) : string => this.size == 0 ? defaultValue() : this
+// The string, or what `defaultValue` gives when the string is blank (empty, or only spaces, tabs
+// and line breaks). `defaultValue` runs only then.
 fun string.ifBlank(defaultValue : () -> string) : string => this.isBlank() ? defaultValue() : this
 
 // -- To other types --
 // toInt, toIntOrNull, toFloat and toFloatOrNull are built in. Astra has one type for whole
 // numbers, 64 bits, and one for fractions, so Kotlin's toLong and toDouble are written so (D74).
 
+// Whether the string is "true", in any mix of capitals and small letters; false for anything else.
 fun string.toBoolean() : bool => this.lower() == "true"
+// The string's bytes in `charset`, UTF-8 if none is given; the same as toBytes(charset).
 fun string.encodeToByteArray(charset : Charset = Charset.utf8) : Bytes => this.toBytes(charset)
+// The string followed by `other` as print would show it: "a".plus(null) is "anull".
 fun string.plus(other : any?) : string => this + "$other"

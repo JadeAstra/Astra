@@ -8,21 +8,31 @@
 //
 //   val seen = Set<string>()        setOf(1, 2, 3)        [1, 2, 2].toSet()
 
+// True if every item of `from` is in the set; true for an empty `from`.
 fun <T> Set<T>.containsAll(from : List<T>) : bool => from.all { this.contains(it) }
+// True if every item of `from` is in the set; true for an empty `from`.
 fun <T> Set<T>.containsAll(from : Set<T>) : bool => from.toList().all { this.contains(it) }
+// Takes out the items for which `predicate` is true; true if it took any out.
 fun <T> open Set<T>.removeIf(predicate : (T) -> bool) : bool => this.removeAll(predicate)
 
+// The items in order as a new list, which can be changed; the same as `toList()`.
 fun <T> Set<T>.toOpenList() : open List<T> => this.toList()
+// A new set of the same items in the same order, which can be changed without changing this one.
 fun <T> Set<T>.toSet() : open Set<T> => Set(this)
+// A new set of the same items in the same order, which can be changed without changing this one.
 fun <T> Set<T>.toOpenSet() : open Set<T> => Set(this)
 
-// The sets made of both, of what is in both, and of what is only in this one.
+// A new set of this set's items followed by those of `other` (a list, a set or another collection)
+// that it does not have.
 fun <T> Set<T>.union(other : any) : open Set<T> {
   val out : open Set<T> = Set(this)
   out.addAll(other)
   return out
 }
 
+// A new set of the items of `other` (a list, a set or another collection) that are also in this
+// set, in the order they have in `other`.
+//   setOf(3, 1, 2).intersect([2, 3])   // {2, 3}
 fun <T> Set<T>.intersect(other : any) : open Set<T> {
   val out : open Set<T> = Set()
   for item in Set<T>(other) {
@@ -31,51 +41,81 @@ fun <T> Set<T>.intersect(other : any) : open Set<T> {
   return out
 }
 
+// A new set of this set's items that are not in `other` (a list, a set or another collection), in
+// this set's order.
 fun <T> Set<T>.subtract(other : any) : open Set<T> {
   val out : open Set<T> = Set(this)
   out.removeAll(Set<T>(other))
   return out
 }
 
+// A new set of these items and `item` at the end, unless it is one of them already; the set itself
+// is left as it is. The same as `set + item`.
 fun <T> Set<T>.plus(item : T) : open Set<T> => this + item
+// A new set of these items followed by those of `other` that are not among them; as `union`.
 fun <T> Set<T>.plus(other : List<T>) : open Set<T> => this.union(other)
+// A new set of these items followed by those of `other` that are not among them; as `union`.
 fun <T> Set<T>.plus(other : Set<T>) : open Set<T> => this.union(other)
+// A new set of these items without `item`; the set itself is left as it is. The same as
+// `set - item`.
 fun <T> Set<T>.minus(item : T) : open Set<T> => this - item
+// A new set of these items without those in `other`; as `subtract`.
 fun <T> Set<T>.minus(other : List<T>) : open Set<T> => this.subtract(other)
+// A new set of these items without those in `other`; as `subtract`.
 fun <T> Set<T>.minus(other : Set<T>) : open Set<T> => this.subtract(other)
 
-// What a list has for reading.
+// The first item, or null when the set is empty.
 fun <T> Set<T>.firstOrNull() : T? => this.isEmpty() ? null : this.first()
+// The first item for which `predicate` is true, or null when there is none.
 inline fun <T> Set<T>.firstOrNull(predicate : (T) -> bool) : T? => this.toList().firstOrNull(predicate)
+// The last item, or null when the set is empty.
 fun <T> Set<T>.lastOrNull() : T? => this.isEmpty() ? null : this.last()
+// The last item for which `predicate` is true, or null when there is none.
 inline fun <T> Set<T>.lastOrNull(predicate : (T) -> bool) : T? => this.toList().lastOrNull(predicate)
+// The first item for which `predicate` is true, or null when there is none; as `firstOrNull`.
 inline fun <T> Set<T>.find(predicate : (T) -> bool) : T? => this.toList().firstOrNull(predicate)
+// The only item; an IllegalArgumentException when the set is empty or has more than one.
 fun <T> Set<T>.single() : T => this.toList().single()
+// The only item, or null when the set is empty or has more than one.
 fun <T> Set<T>.singleOrNull() : T? => this.toList().singleOrNull()
+// Calls `action` with each item, in order.
 inline fun <T> Set<T>.forEach(action : (T) -> unit) {
   for item in this { action(item) }
 }
+// What `transform` gives for each item, in order, as a new list.
 inline fun <T, R> Set<T>.map(transform : (T) -> R) : open List<R> => this.toList().map(transform)
+// What `transform` gives for each item where that is not null, in order, as a new list.
 inline fun <T, R> Set<T>.mapNotNull(transform : (T) -> R?) : open List<R> => this.toList().mapNotNull(transform)
+// The items of the lists `transform` gives for each item, one list after another, as a new list.
 inline fun <T, R> Set<T>.flatMap(transform : (T) -> List<R>) : open List<R> => this.toList().flatMap(transform)
+// The items for which `predicate` is true, in their order, as a new list.
 inline fun <T> Set<T>.filter(predicate : (T) -> bool) : open List<T> => this.toList().filter(predicate)
+// The items for which `predicate` is false, in their order, as a new list.
 inline fun <T> Set<T>.filterNot(predicate : (T) -> bool) : open List<T> => this.toList().filterNot(predicate)
+// True if the set has any items.
 fun <T> Set<T>.any() : bool => this.isNotEmpty()
+// True if `predicate` is true for any item; it stops at the first for which it is.
 inline fun <T> Set<T>.any(predicate : (T) -> bool) : bool {
   for item in this {
     if (predicate(item)) { return true }
   }
   return false
 }
+// True if `predicate` is true for every item, stopping at the first for which it is not; true for
+// an empty set.
 inline fun <T> Set<T>.all(predicate : (T) -> bool) : bool {
   for item in this {
     if (!predicate(item)) { return false }
   }
   return true
 }
+// True if the set is empty.
 fun <T> Set<T>.none() : bool => this.isEmpty()
+// True if `predicate` is true for no item; true for an empty set.
 inline fun <T> Set<T>.none(predicate : (T) -> bool) : bool => !this.any(predicate)
+// The number of items, as `size`.
 fun <T> Set<T>.count() : int => this.size
+// The number of items for which `predicate` is true.
 inline fun <T> Set<T>.count(predicate : (T) -> bool) : int {
   var total = 0
   for item in this {
@@ -83,26 +123,60 @@ inline fun <T> Set<T>.count(predicate : (T) -> bool) : int {
   }
   return total
 }
+// `initial` combined with each item in turn by `operation(soFar, item)`; `initial` for an empty set.
+//   setOf(1, 2, 3).fold(10) { acc, x -> acc - x }   // 4
 inline fun <T, R> Set<T>.fold(initial : R, operation : (R, T) -> R) : R => this.toList().fold(initial, operation)
+// The sum of the items, which have to be numbers (a ClassCastException where they are not); 0 for
+// an empty set.
 fun <T> Set<T>.sum() : any? => (this.toList() as List<Number>).sum()
+// The sum of what `selector` gives for each item; 0 for an empty set.
 inline fun <T, R : Number> Set<T>.sumOf(selector : (T) -> R) : R => this.toList().sumOf(selector)
+// The largest item; a NoSuchElementException when the set is empty.
 fun <T> Set<T>.max() : T => this.toList().max()
+// The smallest item; a NoSuchElementException when the set is empty.
 fun <T> Set<T>.min() : T => this.toList().min()
+// The largest item, or null when the set is empty.
 fun <T> Set<T>.maxOrNull() : T? => this.toList().maxOrNull()
+// The smallest item, or null when the set is empty.
 fun <T> Set<T>.minOrNull() : T? => this.toList().minOrNull()
+// The largest of what `selector` gives for the items; a NoSuchElementException when the set is
+// empty.
 inline fun <T, R> Set<T>.maxOf(selector : (T) -> R) : R => this.toList().maxOf(selector)
+// The smallest of what `selector` gives for the items; a NoSuchElementException when the set is
+// empty.
 inline fun <T, R> Set<T>.minOf(selector : (T) -> R) : R => this.toList().minOf(selector)
+// The item for which `selector` gives the largest value, the first of them where several do; null
+// when the set is empty.
 inline fun <T> Set<T>.maxByOrNull(selector : (T) -> any?) : T? => this.toList().maxByOrNull(selector)
+// The item for which `selector` gives the smallest value, the first of them where several do; null
+// when the set is empty.
 inline fun <T> Set<T>.minByOrNull(selector : (T) -> any?) : T? => this.toList().minByOrNull(selector)
+// The items in ascending order, as a new list.
 fun <T> Set<T>.sorted() : open List<T> => this.toList().sorted()
+// The items in descending order, as a new list.
 fun <T> Set<T>.sortedDescending() : open List<T> => this.toList().sortedDescending()
+// The items in the ascending order of what `selector` gives for them, as a new list; those for
+// which it gives the same keep their order.
 fun <T> Set<T>.sortedBy(selector : (T) -> any?) : open List<T> => this.toList().sortedBy(selector)
+// The items in the descending order of what `selector` gives for them, as a new list; those for
+// which it gives the same keep their order.
 fun <T> Set<T>.sortedByDescending(selector : (T) -> any?) : open List<T> => this.toList().sortedByDescending(selector)
+// The items in the order `comparator` sets, as a new list: it gives a negative number, 0 or a
+// positive number as its first argument goes before, with or after its second.
 fun <T> Set<T>.sortedWith(comparator : (T, T) -> int) : open List<T> => this.toList().sortedWith(comparator)
+// A new map from each item to what `valueSelector` gives for it.
 inline fun <T, V> Set<T>.associateWith(valueSelector : (T) -> V) : open Map<T, V> => this.toList().associateWith(valueSelector)
+// A new map to each item from what `keySelector` gives for it; where two items give the same key,
+// the later one is kept.
 inline fun <T, K> Set<T>.associateBy(keySelector : (T) -> K) : open Map<K, T> => this.toList().associateBy(keySelector)
+// A new map from each key `keySelector` gives to the list of the items that give it, in their order.
 inline fun <T, K> Set<T>.groupBy(keySelector : (T) -> K) : open Map<K, open List<T>> => this.toList().groupBy(keySelector)
+// A pair of new lists: the items for which `predicate` is true, and those for which it is false.
 inline fun <T> Set<T>.partition(predicate : (T) -> bool) : Pair<List<T>, List<T>> => this.toList().partition(predicate)
+// The items as text, each as `transform` makes it when it is given, with `separator` between them
+// and `prefix` and `postfix` around; with a `limit` of 0 or more, only that many items, then
+// `truncated` where there were more.
+//   setOf(1, 2, 3).join(limit = 2)   // "1, 2, ..."
 fun <T> Set<T>.join(separator : string = ", ", prefix : string = "", postfix : string = "", limit : int = -1,
                     truncated : string = "...", transform : ((T) -> any?)? = null) : string {
   return this.toList().join(separator, prefix, postfix, limit, truncated, transform)
@@ -118,32 +192,44 @@ class Deque<T> {
   private var items : open List<T?> = []
   private var head = 0
 
+  // A deque of the items of `from` (a list, a set or another collection), front first; an empty one
+  // without it.
   fun init(from : any? = null) {
     if (from != null) { items.addAll(from) }
   }
 
+  // The number of items.
   val size : int
     get() => items.size - head
+  // The index of the back item, `size - 1`; -1 when the deque is empty.
   val lastIndex : int
     get() => items.size - head - 1
+  // The range of the indexes, `0 ..< size`.
   val indices : Range
     get() => 0..<(items.size - head)
+  // True if the deque has no items.
   fun isEmpty() : bool => items.size == head
+  // True if the deque has any items.
   fun isNotEmpty() : bool => items.size != head
 
+  // Adds `item` at the back.
   fun addLast(item : T) {
     items.add(item)
   }
 
+  // Adds `item` at the back, as `addLast`; always true.
   fun add(item : T) : bool {
     items.add(item)
     return true
   }
 
+  // Adds the items of `from` (a list, a set or another collection) at the back, in their order; true
+  // if there were any.
   fun addAll(from : any) : bool {
     return items.addAll(from)
   }
 
+  // Adds `item` at the front, so that it is `deque[0]`.
   fun addFirst(item : T) {
     if (head == 0) {
       // No room in front: make as much as the deque holds, so that it is seldom done.
@@ -157,6 +243,7 @@ class Deque<T> {
     items[head] = item
   }
 
+  // Takes out the front item and gives it; a NoSuchElementException when the deque is empty.
   fun removeFirst() : T {
     if (items.size == head) { throw NoSuchElementException("removeFirst() from an empty deque") }
     val item = items[head]
@@ -166,6 +253,7 @@ class Deque<T> {
     return item as T
   }
 
+  // Takes out the back item and gives it; a NoSuchElementException when the deque is empty.
   fun removeLast() : T {
     if (items.size == head) { throw NoSuchElementException("removeLast() from an empty deque") }
     val item = items.removeLast()
@@ -173,7 +261,9 @@ class Deque<T> {
     return item as T
   }
 
+  // Takes out the front item and gives it, or gives null when the deque is empty.
   fun removeFirstOrNull() : T? => items.size == head ? null : removeFirst()
+  // Takes out the back item and gives it, or gives null when the deque is empty.
   fun removeLastOrNull() : T? => items.size == head ? null : removeLast()
 
   // Gives back the room in front once it is most of the list.
@@ -187,17 +277,21 @@ class Deque<T> {
     }
   }
 
+  // The front item, left in; a NoSuchElementException when the deque is empty.
   fun first() : T {
     if (items.size == head) { throw NoSuchElementException("first() of an empty deque") }
     return items[head] as T
   }
 
+  // The back item, left in; a NoSuchElementException when the deque is empty.
   fun last() : T {
     if (items.size == head) { throw NoSuchElementException("last() of an empty deque") }
     return items[items.size - 1] as T
   }
 
+  // The front item, or null when the deque is empty.
   fun firstOrNull() : T? => items.size == head ? null : items[head]
+  // The back item, or null when the deque is empty.
   fun lastOrNull() : T? => items.size == head ? null : items[items.size - 1]
 
   // deque[0] is the front.
@@ -208,8 +302,11 @@ class Deque<T> {
     return items[head + index] as T
   }
 
+  // The item at `index` from the front, or null when there is none there.
   fun getOrNull(index : int) : T? => index >= 0 and index < items.size - head ? items[head + index] : null
 
+  // Puts `item` at `index` from the front, in place of the one there; an IndexOutOfBoundsException
+  // when there is none there.
   fun set(index : int, item : T) {
     if (index < 0 or index >= items.size - head) {
       throw IndexOutOfBoundsException("set: index $index is out of range (size ${items.size - head})")
@@ -217,9 +314,12 @@ class Deque<T> {
     items[head + index] = item
   }
 
+  // `deque[index]`: the item at `index` from the front, as `get`.
   op [](index : int) : T => get(index)
+  // `deque[index] = item`: puts `item` at `index` from the front, as `set`.
   op []=(index : int, item : T) { set(index, item) }
 
+  // The index from the front of the first item equal to `item`, or -1 when there is none.
   fun indexOf(item : T) : int {
     for index in head..<items.size {
       if (items[index] == item) { return index - head }
@@ -227,6 +327,7 @@ class Deque<T> {
     return -1
   }
 
+  // True if an item is equal to `item`.
   fun contains(item : T) : bool => indexOf(item) >= 0
 
   // Takes out the first item equal to this one. True if there was one.
@@ -238,6 +339,8 @@ class Deque<T> {
     return true
   }
 
+  // Takes out the item at `index` from the front and gives it; an IndexOutOfBoundsException when
+  // there is none there.
   fun removeAt(index : int) : T {
     val item = get(index)
     items.removeAt(head + index)
@@ -245,6 +348,7 @@ class Deque<T> {
     return item
   }
 
+  // Takes out all the items.
   fun clear() {
     items.clear()
     head = 0
@@ -259,27 +363,45 @@ class Deque<T> {
     for (i in head ..< items.size) { out.add(items[i] as T) }
     return out
   }
+  // The items front to back as a new list, which can be changed; the same as `toList()`.
   fun toOpenList() : open List<T> => toList()
 
+  // Calls `action` with each item, front to back, the items being those there when it began.
   fun forEach(action : (T) -> unit) { toList().forEach(action) }
+  // What `transform` gives for each item, front to back, as a new list.
   fun <R> map(transform : (T) -> R) : open List<R> => toList().map(transform)
+  // The items for which `predicate` is true, front to back, as a new list.
   fun filter(predicate : (T) -> bool) : open List<T> => toList().filter(predicate)
+  // True if the deque has any items.
   fun any() : bool => items.size != head
+  // True if `predicate` is true for any item.
   fun any(predicate : (T) -> bool) : bool => toList().any(predicate)
+  // True if `predicate` is true for every item; true for an empty deque.
   fun all(predicate : (T) -> bool) : bool => toList().all(predicate)
+  // True if the deque is empty.
   fun none() : bool => items.size == head
+  // True if `predicate` is true for no item; true for an empty deque.
   fun none(predicate : (T) -> bool) : bool => toList().none(predicate)
+  // The number of items, as `size`.
   fun count() : int => items.size - head
+  // The number of items for which `predicate` is true.
   fun count(predicate : (T) -> bool) : int => toList().count(predicate)
+  // The first item from the front for which `predicate` is true, or null when there is none.
   fun find(predicate : (T) -> bool) : T? => toList().firstOrNull(predicate)
+  // The items back to front, as a new list.
   fun reversed() : open List<T> => toList().reversed()
 
+  // The items front to back as text, as a list's `join` makes it: `separator` between them,
+  // `prefix` and `postfix` around, at most `limit` of them when that is 0 or more, then
+  // `truncated` where there were more.
   fun join(separator : string = ", ", prefix : string = "", postfix : string = "", limit : int = -1,
            truncated : string = "...", transform : ((T) -> any?)? = null) : string {
     return toList().join(separator, prefix, postfix, limit, truncated, transform)
   }
 
+  // True if `other` is a deque with equal items in the same order; a list is never equal to a deque.
   op ==(other : any?) : bool => other is Deque and other.toList() == toList()
+  // A hash of the items in order, the same as a list of them gives, so equal deques give equal ones.
   fun hashCode() : int => toList().hashCode()
 
   // As a list shows itself: [1, 2, 3]

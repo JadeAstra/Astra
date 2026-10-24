@@ -10,17 +10,29 @@
 //     own): checked. The compiler works out where one can go, and asks for it to be caught
 //     where nothing can pass it on (D35).
 
+// What can be thrown, the root of every exception and error. `message` says what went wrong and
+// may be null; `cause` is the Throwable that led to this one, if any.
 class Throwable(val message : string? = null, val cause : Throwable? = null) {
+  // The name of the class, then ": " and the message when there is one.
+  //   IllegalStateException("no file").toString()   // "IllegalStateException: no file"
   override fun toString() : string => message == null ? type(this) : type(this) + ": " + message
 }
 
+// What the program cannot go on from. A bare `catch (e)` does not catch one; only a catch that
+// names it, `catch (e : Error)` or `catch (e : Throwable)`, does.
 class Error(message : string? = null, cause : Throwable? = null) : Throwable(message, cause)
+// What a program can go on from, which a bare `catch (e)` catches. One that is not a
+// RuntimeException is checked: the compiler asks for it to be caught where nothing can pass it on.
 class Exception(message : string? = null, cause : Throwable? = null) : Throwable(message, cause)
+// A mistake in the program: unchecked, so it need not be caught or passed on.
 class RuntimeException(message : string? = null, cause : Throwable? = null) : Exception(message, cause)
 
 // -- Errors: the VM is in trouble --
 
+// The memory ran out. An Error, which a bare `catch (e)` does not catch.
 class OutOfMemoryError(message : string? = "out of memory") : Error(message)
+// The calls went too deep, as in a function that calls itself with no end. An Error, which a
+// bare `catch (e)` does not catch.
 class StackOverflowError(message : string? = "stack overflow") : Error(message)
 // Something wrong with the program as compiled, as against the program's own code.
 class InternalError(message : string? = null) : Error(message)

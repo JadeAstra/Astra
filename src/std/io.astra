@@ -7,8 +7,9 @@
 //   - in a task on the main thread the task is set aside meanwhile, and the event loop goes
 //     on, so a window stays live;
 //   - on the main thread outside a task it blocks the main thread.
-// The work is done by the built-in __io (io.cpp). What it hands out to stand for an open
-// file, process or socket is a handle of the C++'s own, an `any` to Astra.
+
+// Inside Astra: the work is done by the built-in __io (io.cpp). What it hands out to stand for
+// an open file, process or socket is a handle of the C++'s own, an `any` to Astra.
 
 // ---- Character sets (D127) ----
 // What text is read and written in. Astra's own text is UTF-8, the default everywhere; the
@@ -23,6 +24,7 @@ enum Charset { utf8, latin1, ascii, utf16le, utf16be }
 // ahead into a buffer of its own, so there is nothing to wrap it in.
 class Reader : AutoCloseable {
   private val handle : any
+  // What text is read in; a change takes effect from the next read.
   var charset : Charset         // what text is read or written in; it may change as the reading goes on
 
   fun init(handle : any, charset : Charset = Charset.utf8) {
@@ -35,6 +37,7 @@ class Reader : AutoCloseable {
 
   // Everything up to the end, as bytes or as text.
   fun readBytes() : Bytes throws IOException => __io.readAll(handle)
+  // Everything up to the end as text in `charset`; "" when nothing is left.
   fun readText() : string throws IOException => __io.readText(handle, charset)
 
   // The next line without its line end; null at the end.
@@ -51,6 +54,7 @@ class Reader : AutoCloseable {
     return lines
   }
 
+  // Calls `action` with each line that is left, without its line end, as it is read.
   fun forEachLine(action : (string) -> unit) throws IOException {
     while (true) {
       val line : string? = __io.readLine(handle, charset)
@@ -81,10 +85,12 @@ class Reader : AutoCloseable {
     }
   }
 
+  // Closes it; closing it again does nothing. A read after that is an IOException.
   override fun close() {
     __io.close(handle)
   }
 
+  // Whether it has not been closed yet.
   val isOpen : bool
     get() => __io.isOpen(handle)
 }
@@ -93,6 +99,7 @@ class Reader : AutoCloseable {
 // returns when the system has taken all of it, so flush() has nothing left to do.
 class Writer : AutoCloseable {
   private val handle : any
+  // What text is written in; a change takes effect from the next write.
   var charset : Charset         // what text is read or written in; it may change as the writing goes on
 
   fun init(handle : any, charset : Charset = Charset.utf8) {
@@ -105,30 +112,39 @@ class Writer : AutoCloseable {
     __io.write(handle, data, charset)
   }
 
+  // Writes `value` as print would show it (null as "null"), with no line end.
   fun print(value : any?) throws IOException {
     __io.write(handle, "$value", charset)
   }
 
+  // Writes `value` as print would show it, then "\n"; with no `value`, only the "\n".
   fun println(value : any? = "") throws IOException {
     __io.write(handle, "$value\n", charset)
   }
 
+  // Writes a line end, "\n".
   fun newLine() throws IOException {
     __io.write(handle, "\n", charset)
   }
 
+  // Writes `value` as print would show it and gives the writer, for more:
+  //   out.append("total: ").append(sum)
   fun append(value : any?) : Writer throws IOException {
     __io.write(handle, "$value", charset)
     return this
   }
 
+  // Does nothing: each write has already handed all of it to the system.
   fun flush() {
   }
 
+  // Closes it; closing it again does nothing. A write after that is an IOException. Closing a
+  // program's input is how it reads the end.
   override fun close() {
     __io.close(handle)
   }
 
+  // Whether it has not been closed yet.
   val isOpen : bool
     get() => __io.isOpen(handle)
 }
@@ -191,28 +207,36 @@ class Process {
     // What started this program: the path of its executable and, when it is a script run by
     // astra, the script. Process(Process.currentCommand() + ["--second"]) starts it again.
     fun currentCommand() : open List<string> => __io.selfCommand()
+    // The process id the system gave this program.
     fun currentPid() : int => __io.currentPid()
   }
 
   // What the program reads, writes and writes as errors, where each is a pipe.
   val input : Writer
     get() => toProgram ?: throw IllegalStateException("the program's input was not a pipe: start it with input = pipe to write to it")
+  // What the program writes, to read; an IllegalStateException where its output is not a pipe.
   val output : Reader
     get() => fromProgram ?: throw IllegalStateException("the program's output was not a pipe: start it with output = pipe to read it")
+  // What the program writes as errors, to read; an IllegalStateException where they are not a
+  // pipe.
   val error : Reader
     get() => fromErrors ?: throw IllegalStateException("the program's errors were not a pipe: start it with error = pipe to read them")
 
   // Waits for the program to end and gives its exit code; with a time limit, null if it is
   // still running when the time is up.
   fun waitFor() : int => __io.processWait(handle) as int
+  // Waits at most `timeout` for the program to end: its exit code, or null if it is still
+  // running then.
   fun waitFor(timeout : Duration) : int? => __io.processWait(handle, timeout.inWholeMilliseconds)
 
   // Its exit code once it has ended; null while it runs.
   val exitCode : int?
     get() => __io.processWait(handle, 0)
 
+  // Whether the program is still running.
   val isAlive : bool
     get() => __io.processAlive(handle)
+  // The process id the system gave the program; it can still be read after the program ends.
   val pid : int
     get() => __io.processId(handle)
 
@@ -294,22 +318,29 @@ class Socket : AutoCloseable {
   // What comes from the other side, and what goes to it.
   val reader : Reader
     get() { connected(); return input as Reader }
+  // What goes to the other side; an IllegalStateException while the socket is not connected.
   val writer : Writer
     get() { connected(); return output as Writer }
 
+  // Whether it has been connected; it stays true after close().
   val isConnected : bool
     get() => handle != null
+  // Whether it was connected and has been closed since; false for one never connected.
   val isClosed : bool
     get() => handle != null and !__io.isOpen(handle)
+  // The port of this end of the connection. An IllegalStateException while the socket is not
+  // connected, an IOException once it is closed.
   val localPort : int
     get() => __io.socketInfo(connected())[0] as int
+  // The address of the other side, as "127.0.0.1"; the same errors as localPort.
   val remoteAddress : string
     get() => __io.socketInfo(connected())[1] as string
+  // The port of the other side; the same errors as localPort.
   val port : int
     get() => __io.socketInfo(connected())[2] as int
 
-  // How long a read waits before it fails with a TimeoutException; null for as long as it
-  // takes (Java's soTimeout).
+  // How long a read waits before it fails with a SocketTimeoutException, an IOException; null
+  // for as long as it takes (Java's soTimeout). It can be set before connect().
   var readTimeout : Duration?
     get() => readLimit
     set(limit) {
@@ -323,6 +354,7 @@ class Socket : AutoCloseable {
     __io.shutdownOutput(connected())
   }
 
+  // Closes the connection; closing it again, or a socket never connected, does nothing.
   override fun close() {
     val held = handle
     if (held != null) { __io.close(held) }
@@ -346,8 +378,11 @@ class ServerSocket : AutoCloseable {
     this.handle = __io.listen(port, bindAddress, backlog)
   }
 
+  // The port it listens on, the one the system picked where it was made with port 0; an
+  // IOException once it is closed.
   val localPort : int
     get() => __io.socketInfo(handle)[0] as int
+  // Whether it has been closed.
   val isClosed : bool
     get() => !__io.isOpen(handle)
 

@@ -16,6 +16,8 @@ object EventLoop {
   // Runs the job once, `delay` from now, or again and again `period` apart. Each gives a Timer,
   // whose cancel() calls it off.
   fun after(delay : Duration, job : () -> unit) : Timer => Timer(__loop.timer(delay.inWholeMilliseconds, job))
+  // Runs the job every `period`, the first time one `period` from now, until the Timer is cancelled;
+  // a running timer keeps the program going.
   fun every(period : Duration, job : () -> unit) : Timer => Timer(__loop.timer(period.inWholeMilliseconds, job, period.inWholeMilliseconds))
 
   // Whether the code asking is running on the loop's thread.
@@ -30,7 +32,10 @@ object EventLoop {
   }
 }
 
+// A job EventLoop.after or EventLoop.every has set to run later.
 class Timer(private val id : int) {
+  // Calls the job off: it does not run again. Nothing happens when it has already run or been
+  // cancelled.
   fun cancel() {
     __loop.cancel(id)
   }
@@ -65,34 +70,46 @@ class Result<T> {
   }
 
   static {
+    // A Result that holds `value`.
     fun <T> success(value : T) : Result<T> => Result<T>(true, value)
+    // A Result that holds `error`, as if it had been thrown.
     fun <T> failure(error : Throwable) : Result<T> => Result<T>(false, error)
   }
+  // Whether it holds a value.
   val isSuccess : bool
     get() => ok
+  // Whether it holds an error.
   val isFailure : bool
     get() => !ok
+  // The value, or null when it holds an error.
   fun getOrNull() : T? => ok ? held as T : null
+  // The error, or null when it holds a value.
   fun exceptionOrNull() : Throwable? => ok ? null : held as Throwable
+  // The value, or `defaultValue` when it holds an error.
   fun getOrDefault(defaultValue : T) : T => ok ? held as T : defaultValue
+  // The value, or what `onFailure` gives for the error when it holds one.
   fun getOrElse(onFailure : (Throwable) -> T) : T => ok ? held as T : onFailure(held as Throwable)
 
+  // The value; when it holds an error, that error is thrown.
   fun getOrThrow() : T {
     // What it holds was caught where it was thrown; given again, it is not checked a second time.
     if (!ok) { __rethrow(held as Throwable) }
     return held as T
   }
 
+  // Runs `action` with the value when it holds one. Gives the Result itself, so calls can be chained.
   fun onSuccess(action : (T) -> unit) : Result<T> {
     if (ok) { action(held as T) }
     return this
   }
 
+  // Runs `action` with the error when it holds one. Gives the Result itself, so calls can be chained.
   fun onFailure(action : (Throwable) -> unit) : Result<T> {
     if (!ok) { action(held as Throwable) }
     return this
   }
 
+  // "Success(value)" or "Failure(error)".
   override fun toString() : string => ok ? "Success($held)" : "Failure($held)"
 }
 

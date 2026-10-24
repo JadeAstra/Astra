@@ -1,23 +1,27 @@
-// The standard library, the part written in Astra. These files are packed into astra.exe by
-// the build and loaded before every program, after the prelude in compiler.cpp. The names
-// are Kotlin's, so that code ported from it reads the same.
-//
-// Inside an extension function a bare name is looked for on `this` first. The library
-// writes `this.` out, which goes straight to the member.
+// The standard library, the part written in Astra. The names are Kotlin's, so that code
+// ported from it reads the same.
+
+// Inside Astra: these files are packed into astra.exe by the build and loaded before every
+// program, after the prelude in compiler.cpp. Inside an extension function a bare name is
+// looked for on `this` first; the library writes `this.` out, which goes straight to the member.
 
 // ---- Small values that functions hand out ----
 
 // Two values, made with `a to b` or Pair(a, b).
 value Pair<A, B>(val first : A, val second : B) {
+  // `first` and `second`, as a new list.
   fun toList() : open List<any?> => [first, second]
 }
 
+// Three values, made with Triple(a, b, c).
 value Triple<A, B, C>(val first : A, val second : B, val third : C) {
+  // `first`, `second` and `third`, as a new list.
   fun toList() : open List<any?> => [first, second, third]
 }
 
 // One key of a map with its value: what map.entries holds.
 value MapEntry<K, V>(val key : K, val value : V) {
+  // The key and its value, as a Pair.
   fun toPair() : Pair<K, V> => Pair(key, value)
 }
 
@@ -26,26 +30,34 @@ value IndexedValue<T>(val index : int, val value : T)
 
 // ---- Checks ----
 
-// Each throws an Error unless the condition holds. The message is a function, so that it is
-// only worked out when it is needed: require(n > 0) { "n is $n" }
+// Throws an IllegalArgumentException unless `condition` holds: for checking what a function is
+// given. The message is what `lazyMessage` gives, worked out only then, or "Failed requirement.":
+//   require(n > 0) { "n is $n" }
 fun require(condition : bool, lazyMessage : (() -> any?)? = null) {
   if (!condition) { throw IllegalArgumentException(lazyMessage == null ? "Failed requirement." : "${lazyMessage()}") }
 }
 
+// Throws an IllegalStateException unless `condition` holds: for the state things are in. The
+// message is what `lazyMessage` gives, worked out only then, or "Check failed.".
 fun check(condition : bool, lazyMessage : (() -> any?)? = null) {
   if (!condition) { throw IllegalStateException(lazyMessage == null ? "Check failed." : "${lazyMessage()}") }
 }
 
+// `value`, now known not to be null; an IllegalArgumentException when it is null, its message
+// what `lazyMessage` gives or "Required value was null.".
 fun <T> requireNotNull(value : T?, lazyMessage : (() -> any?)? = null) : T {
   if (value == null) { throw IllegalArgumentException(lazyMessage == null ? "Required value was null." : "${lazyMessage()}") }
   return value
 }
 
+// `value`, now known not to be null; an IllegalStateException when it is null, its message what
+// `lazyMessage` gives or "Required value was null.".
 fun <T> checkNotNull(value : T?, lazyMessage : (() -> any?)? = null) : T {
   if (value == null) { throw IllegalStateException(lazyMessage == null ? "Required value was null." : "${lazyMessage()}") }
   return value
 }
 
+// Throws an IllegalStateException with `message` as its text: error("no such user $name").
 fun error(message : any?) : nothing {
   throw IllegalStateException("$message")
 }
@@ -53,17 +65,22 @@ fun error(message : any?) : nothing {
 // What a for goes through, one item at a time, as Kotlin's: hasNext() says whether there is
 // another, next() gives it. A for over an object whose iterator() gives one goes through that.
 interface Iterator<T> {
+  // Whether there is another item.
   fun hasNext() : bool
+  // The next item, moving past it.
   fun next() : T
 }
 
+// Something a for can go through: each time, it gives an Iterator that goes through its items.
 interface Iterable<T> {
+  // A new Iterator, before the first item.
   fun iterator() : Iterator<T>
 }
 
 // Something to close when it is done with (D113): a stream, a socket. A class of someone
 // else's that has a close() is fitted to it with extend (D33).
 interface AutoCloseable {
+  // Lets go of what it holds; `use` calls it when its block ends.
   fun close()
 }
 
@@ -93,11 +110,16 @@ inline fun repeat(times : int, action : (int) -> unit) {
 
 // ---- Every value ----
 
+// The value as text, as "$value" gives it: "null" for null.
 fun any?.toString() : string => "$this"
+// Whether it is equal to `other`, as `==` says.
 fun any?.equals(other : any?) : bool => this == other
 // Equal values give equal hashes: by what they hold for strings, numbers, frozen collections,
 // data classes and values; an object of any other class by which object it is (D26).
 fun any?.hashCode() : int => __hashCode(this)
+// For a value whose class has no compareTo of its own: negative, zero or positive as it comes
+// before, with or after `other`. Numbers go by size, strings by their characters, chars by their
+// codes, false before true, and null before everything; other values are a ClassCastException.
 fun any.compareTo(other : any?) : int => compareValues(this, other)
 
 // The scope functions, copied into each call with their blocks (D58, D59): a bare `return` in
@@ -105,17 +127,23 @@ fun any.compareTo(other : any?) : int => compareValues(this, other)
 // `apply`, `run` and `with` run the block on it; `also` and `apply` give the value back, the
 // others the block's result. The value may be null, as T may stand for a type that takes it.
 inline fun <T, R> T.let(block : (T) -> R) : R => block(this)
+// Runs `block` with the value and gives the value back: for doing something on the way.
 inline fun <T> T.also(block : (T) -> unit) : T {
   block(this)
   return this
 }
+// Runs `block` on the value, as `this`, and gives the value back: for setting it up.
 inline fun <T> T.apply(block : T.() -> unit) : T {
   block(this)
   return this
 }
+// Runs `block` on the value, as `this`, and gives what the block gives.
 inline fun <T, R> T.run(block : T.() -> R) : R => block(this)
+// Runs `block` on `receiver`, as `this`, and gives what the block gives.
 inline fun <T, R> with(receiver : T, block : T.() -> R) : R => block(receiver)
+// The value if `predicate` holds for it, otherwise null.
 inline fun <T> T.takeIf(predicate : (T) -> bool) : T? => predicate(this) ? this : null
+// The value if `predicate` does not hold for it, otherwise null.
 inline fun <T> T.takeUnless(predicate : (T) -> bool) : T? => predicate(this) ? null : this
 
 // For a string, a list, a map or a set that may be null. It is one function for all of them,
@@ -153,17 +181,21 @@ fun <T> compareBy(vararg selectors : (T) -> any?) : (T, T) -> int {
   }
 }
 
+// Orders by what `selector` gives, largest first.
 fun <T> compareByDescending(selector : (T) -> any?) : (T, T) -> int => { a, b -> compareValues(selector(b), selector(a)) }
+// Orders values from smallest to largest, null first.
 fun <T> naturalOrder() : (T, T) -> int => { a, b -> compareValues(a, b) }
+// Orders values from largest to smallest, null last.
 fun <T> reverseOrder() : (T, T) -> int => { a, b -> compareValues(b, a) }
 
+// Calls a comparator: comparator.compare(a, b) is comparator(a, b).
 fun Function.compare(a : any?, b : any?) : int {
   val comparator = this
   return comparator(a, b)
 }
 
-// A comparator that falls back on a selector, or on another comparator, where this one
-// finds two values equal.
+// A comparator that falls back on what `selector` gives where this one finds two values
+// equal.
 fun <T> Function.thenBy(selector : (T) -> any?) : (T, T) -> int {
   val first = this
   return { a, b ->
@@ -172,6 +204,8 @@ fun <T> Function.thenBy(selector : (T) -> any?) : (T, T) -> int {
   }
 }
 
+// A comparator that falls back on what `selector` gives, largest first, where this one finds two
+// values equal.
 fun <T> Function.thenByDescending(selector : (T) -> any?) : (T, T) -> int {
   val first = this
   return { a, b ->
@@ -180,6 +214,7 @@ fun <T> Function.thenByDescending(selector : (T) -> any?) : (T, T) -> int {
   }
 }
 
+// A comparator that falls back on another `comparator` where this one finds two values equal.
 fun <T> Function.then(comparator : (T, T) -> int) : (T, T) -> int {
   val first = this
   return { a, b ->
@@ -188,6 +223,7 @@ fun <T> Function.then(comparator : (T, T) -> int) : (T, T) -> int {
   }
 }
 
+// The same comparator the other way round: what it put first comes last.
 fun <T> Function.reversed() : (T, T) -> int {
   val comparator = this
   return { a, b -> comparator(b, a) }
@@ -195,10 +231,15 @@ fun <T> Function.reversed() : (T, T) -> int {
 
 // ---- Making collections ----
 
+// A new list of `items`, in their order, which can be changed: listOf(1, 2, 3).
 fun <T> listOf(vararg items : T) : open List<T> => items
+// The same as listOf: a new list of `items` that can be changed.
 fun <T> mutableListOf(vararg items : T) : open List<T> => items
+// The same as listOf: a new list of `items` that can be changed.
 fun <T> arrayListOf(vararg items : T) : open List<T> => items
+// A new empty list, typed as one that is only read.
 fun <T> emptyList() : List<T> => []
+// A new list of the items that are not null, in their order.
 fun <T> listOfNotNull(vararg items : T?) : open List<T> => items.filterNotNull()
 
 // List(3) { it * 2 } is [0, 2, 4]: `size` items, each worked out from its position.
@@ -208,6 +249,7 @@ inline fun <T> List(size : int, init : (int) -> T) : open List<T> {
   return out
 }
 
+// The same as List(size, init): `size` items, each worked out from its position.
 inline fun <T> MutableList(size : int, init : (int) -> T) : open List<T> => List(size, init)
 
 // mapOf("a" to 1, "b" to 2)
@@ -217,15 +259,26 @@ fun <K, V> mapOf(vararg pairs : Pair<K, V>) : open Map<K, V> {
   return out
 }
 
+// The same as mapOf: a new map of `pairs` that can be changed, its keys in the order they came.
+// A key given twice keeps its first place and its last value.
 fun <K, V> mutableMapOf(vararg pairs : Pair<K, V>) : open Map<K, V> => mapOf(*pairs)
+// The same as mapOf: a new map of `pairs` that can be changed, its keys in the order they came.
 fun <K, V> hashMapOf(vararg pairs : Pair<K, V>) : open Map<K, V> => mapOf(*pairs)
+// The same as mapOf: a new map of `pairs` that can be changed, its keys in the order they came.
 fun <K, V> linkedMapOf(vararg pairs : Pair<K, V>) : open Map<K, V> => mapOf(*pairs)
+// A new empty map, typed as one that is only read.
 fun <K, V> emptyMap() : Map<K, V> => {:}
 
+// A new set of `items` that can be changed, each once, in the order they first came:
+//   setOf(3, 1, 3) is {3, 1}
 fun <T> setOf(vararg items : T) : open Set<T> => Set(items)
+// The same as setOf: a new set of `items` that can be changed, in the order they first came.
 fun <T> mutableSetOf(vararg items : T) : open Set<T> => Set(items)
+// The same as setOf: a new set of `items` that can be changed, in the order they first came.
 fun <T> hashSetOf(vararg items : T) : open Set<T> => Set(items)
+// The same as setOf: a new set of `items` that can be changed, in the order they first came.
 fun <T> linkedSetOf(vararg items : T) : open Set<T> => Set(items)
+// A new empty set, typed as one that is only read.
 fun <T> emptySet() : Set<T> => Set()
 
 // Each runs the lambda on a new collection, so that add(...), put(...) or append(...) inside
@@ -236,18 +289,22 @@ inline fun <T> buildList(builder : open List<T>.() -> unit) : open List<T> {
   return out
 }
 
+// Runs `builder` on a new map, so that put(key, value) inside it fills it, and gives the map.
 inline fun <K, V> buildMap(builder : open Map<K, V>.() -> unit) : open Map<K, V> {
   val out : open Map<K, V> = {:}
   with(out, builder)
   return out
 }
 
+// Runs `builder` on a new set, so that add(item) inside it fills it, and gives the set.
 inline fun <T> buildSet(builder : open Set<T>.() -> unit) : open Set<T> {
   val out : open Set<T> = Set()
   with(out, builder)
   return out
 }
 
+// Runs `builder` on a new StringBuilder, so that append(...) inside it builds the text, and gives
+// the text.
 inline fun buildString(builder : StringBuilder.() -> unit) : string {
   val out = StringBuilder()
   with(out, builder)

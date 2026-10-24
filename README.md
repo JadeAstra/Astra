@@ -51,6 +51,19 @@ astra check <file>                    check a source file's types, running nothi
 astra test [<file or folder>...]      run the tests (@Test) of the files, or of the files in
                                       the folders that have some (the current one if none)
 astra dis <file>                      list the bytecode of a source or bytecode file
+astra doc <file>... [-o <page.html>]  a reference page of the files' declarations, from the
+                                      comments above them (--template, --missing)
+```
+
+`astra doc` describes each declaration by the `//` comment written directly above it; a comment
+standing on its own (a blank line after it) is a heading, `// ---- Part ----` or `// -- Group --`,
+or text between them. Private and internal names are left out. `--missing` lists the
+declarations with no comment, and `--template page.html` puts the reference into a page of
+one's own where it says `<!-- astra doc -->`. [docs/language.html](docs/language.html), every
+keyword and the whole standard library, is made that way:
+
+```
+astra doc src/std/*.astra --template docs/language-template.html -o docs/language.html
 ```
 
 `astra build` bundles the file and everything it imports into one `.astc`, which runs without

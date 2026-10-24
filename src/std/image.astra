@@ -23,19 +23,28 @@ data TextMetrics(val width : int, val ascent : int, val descent : int, val heigh
 // This class holds what every kind has (its size, scale, place, clip, colour and font); each kind
 // draws the shapes, the text and the pictures, in its own pixels.
 abstract class Canvas {
-  // Its size, in units, and how many of its pixels make a unit.
+  // Its width, in units.
   val width : int
+  // Its height, in units.
   val height : int
+  // How many of its pixels make a unit: 1 for an image's canvas(), more on a dense screen (1.5, 2).
   val scale : Number
-  // Where its (0, 0) is in the pixels drawn on, and the part of them it may draw on.
+  // Where its (0, 0) is across the pixels drawn on, in pixels.
   protected val originX : int
+  // Where its (0, 0) is down the pixels drawn on, in pixels.
   protected val originY : int
+  // The first column of pixels it may draw on.
   protected val clipLeft : int
+  // The first row of pixels it may draw on.
   protected val clipTop : int
+  // The column just past the last one it may draw on.
   protected val clipRight : int
+  // The row just past the last one it may draw on.
   protected val clipBottom : int
 
+  // The colour that shapes and text are drawn in: black to begin with.
   var color : Color = Color.black
+  // The font that text is drawn in: Dialog at 12 to begin with.
   var font : Font = Font("Dialog", 12)
 
   fun init(width : int, height : int, scale : Number, originX : int, originY : int, clipLeft : int, clipTop : int, clipRight : int, clipBottom : int) {
@@ -53,6 +62,7 @@ abstract class Canvas {
   // How many pixels there are to a unit.
   val deviceScaleX : float
     get() => scale.toFloat()
+  // How many pixels there are to a unit down: the same as across, `scale`.
   val deviceScaleY : float
     get() => scale.toFloat()
 
@@ -97,27 +107,43 @@ abstract class Canvas {
 
   // -- Shapes --
 
+  // Fills the rectangle of `w` by `h` units whose top-left corner is at (`x`, `y`), in the
+  // canvas's colour.
   abstract fun fillRect(x : Number, y : Number, w : Number, h : Number)
+  // The outline of that rectangle, one unit thick, covering `w` + 1 by `h` + 1 units, as Java's does.
   abstract fun drawRect(x : Number, y : Number, w : Number, h : Number)
   // Makes a rectangle clear again: what is under the picture shows through it.
   abstract fun clearRect(x : Number, y : Number, w : Number, h : Number)
+  // Fills a rectangle with rounded corners, each corner a quarter of an oval `arcW` wide and `arcH`
+  // high.
   abstract fun fillRoundRect(x : Number, y : Number, w : Number, h : Number, arcW : Number, arcH : Number)
+  // The outline of a rectangle with rounded corners, one unit thick, covering `w` + 1 by `h` + 1
+  // units as drawRect does.
   abstract fun drawRoundRect(x : Number, y : Number, w : Number, h : Number, arcW : Number, arcH : Number)
+  // Fills the oval that fits inside the rectangle of `w` by `h` units at (`x`, `y`).
   abstract fun fillOval(x : Number, y : Number, w : Number, h : Number)
+  // The outline of that oval, one unit thick, covering `w` + 1 by `h` + 1 units.
   abstract fun drawOval(x : Number, y : Number, w : Number, h : Number)
+  // A line one unit thick from (`x1`, `y1`) to (`x2`, `y2`), both ends included.
   abstract fun drawLine(x1 : Number, y1 : Number, x2 : Number, y2 : Number)
-  // Through the points of two lists, the first `n` of them: open, closed, filled.
+  // Lines from point to point of (`xs[i]`, `ys[i]`), the first `n` of them or all when `n` is null,
+  // left open at the last point.
   abstract fun drawPolyline(xs : List<Number>, ys : List<Number>, n : int? = null)
+  // The same lines closed: a last one goes from the last point back to the first.
   abstract fun drawPolygon(xs : List<Number>, ys : List<Number>, n : int? = null)
+  // Fills the polygon whose corners are those points.
   abstract fun fillPolygon(xs : List<Number>, ys : List<Number>, n : int? = null)
 
-  // A shape's outline, or the whole of it (D106).
+  // A shape's outline: a Rect's or an Oval's, or a Line (D106); an IllegalArgumentException for
+  // any other shape.
   fun draw(shape : Shape) {
     if (shape is Rect) { drawRect(shape.x, shape.y, shape.width, shape.height) }
     else if (shape is Oval) { drawOval(shape.x, shape.y, shape.width, shape.height) }
     else if (shape is Line) { drawLine(shape.x1, shape.y1, shape.x2, shape.y2) }
     else { throw IllegalArgumentException("a canvas draws a Rect, an Oval or a Line, not $shape") }
   }
+  // The whole of a shape: a Rect or an Oval filled, a Line drawn; an IllegalArgumentException for
+  // any other shape.
   fun fill(shape : Shape) {
     if (shape is Rect) { fillRect(shape.x, shape.y, shape.width, shape.height) }
     else if (shape is Oval) { fillOval(shape.x, shape.y, shape.width, shape.height) }
@@ -151,7 +177,11 @@ abstract class Canvas {
                alpha : Number = 1.0) {
     drawPicturePart(picture, sourceX, sourceY, sourceW, sourceH, x, y, w, h, alpha)
   }
+  // What draw(picture, ...) asks of each kind of canvas: the picture at (`x`, `y`), at its own size or
+  // scaled into `w` by `h`, see-through by `alpha`.
   protected abstract fun drawPicture(picture : Drawable, x : Number, y : Number, w : Number?, h : Number?, alpha : Number)
+  // What drawPart asks of each kind of canvas: the part of `picture` from (`sourceX`, `sourceY`),
+  // `sourceW` by `sourceH` of its own pixels, put into `w` by `h` units at (`x`, `y`).
   protected abstract fun drawPicturePart(picture : Drawable, sourceX : Number, sourceY : Number, sourceW : Number, sourceH : Number, x : Number, y : Number,
                                          w : Number, h : Number, alpha : Number)
 
@@ -173,7 +203,9 @@ abstract class Canvas {
 // on any thread, so a worker can draw a thumbnail; Jade keeps a copy of it on the graphics card
 // for drawing it there, brought up to date from what has changed (D124).
 class Image : Drawable {
+  // Its width, in pixels.
   override val width : int
+  // Its height, in pixels.
   override val height : int
   internal var cells : Grid<Color>
   // A number raised by every change, and the rectangle changed since the card's copy was made:
@@ -224,16 +256,21 @@ class Image : Drawable {
     if (x < 0 or y < 0 or x >= width or y >= height) { throw outside(x, y) }
     return cells[x, y]
   }
+  // Sets a pixel to `color`, which takes its place, alpha and all, rather than being laid over it;
+  // an IndexOutOfBoundsException outside the image.
   op []=(x : int, y : int, color : Color) {
     if (x < 0 or y < 0 or x >= width or y >= height) { throw outside(x, y) }
     cells[x, y] = color
     changed(x, y, x + 1, y + 1)
   }
+  // The pixel at (`x`, `y`), as image[x, y] gives it.
   fun get(x : int, y : int) : Color => this[x, y]
   private fun outside(x : int, y : int) : IndexOutOfBoundsException => IndexOutOfBoundsException("pixel ($x, $y) is outside the image, which is $width by $height")
+  // Sets the pixel at (`x`, `y`) to `color`, as image[x, y] = color does.
   fun set(x : int, y : int, color : Color) {
     this[x, y] = color
   }
+  // The pixel at (`x`, `y`), or null outside the image.
   fun getOrNull(x : int, y : int) : Color? => cells.getOrNull(x, y)
 
   // All of them, to be read (D133): the same grid as the image's, costing no copy.
@@ -269,6 +306,7 @@ class Image : Drawable {
     __text.imageCrop(cells.cells, width, height, x, y, made.width, made.height, made.cells.cells)
     return made
   }
+  // A new image of the same size with the same pixels, changed apart from this one.
   fun copy() : Image => crop(0, 0, width, height)
 
   // The smallest rectangle outside which every pixel is `background`; null if all of them are.
@@ -282,11 +320,15 @@ class Image : Drawable {
   fun save(path : Path | string) throws IOException {
     (path is Path ? path : Path(path as string)).writeBytes(toPng())
   }
+  // The bytes of a PNG file of it. An image with no pixels (0 wide or 0 high) is an
+  // IllegalArgumentException, here and in save.
   fun toPng() : Bytes => __text.encodePng(cells.cells, width, height)
 
   // The same size and the same pixels.
   op ==(other : any?) : bool => other is Image and other.width == width and other.height == height and __text.imageSame(cells.cells, other.cells.cells)
+  // A hash of its width and height only: equal images give equal hashes.
   fun hashCode() : int => hash(width, height)
+  // Its size, as `Image(200 x 100)`.
   override fun toString() : string => "Image($width x $height)"
 
   // Says that the pixels from (left, top) up to (right, bottom) have changed.
@@ -311,6 +353,8 @@ class ImageCanvas : Canvas {
     this.image = image
   }
 
+  // An ImageCanvas over the same image at another place, with another clip: what sub and clipped
+  // give.
   protected override fun another(width : int, height : int, originX : int, originY : int, clipLeft : int, clipTop : int, clipRight : int, clipBottom : int) : Canvas =>
     ImageCanvas(image, width, height, scale, originX, originY, clipLeft, clipTop, clipRight, clipBottom)
 
@@ -321,50 +365,69 @@ class ImageCanvas : Canvas {
   private val pixels : List<Color>
     get() => image.cells.cells
 
+  // Fills the rectangle in the image's pixels, laid over what is there by the colour's alpha;
+  // nothing when `w` or `h` is 0 or less.
   override fun fillRect(x : Number, y : Number, w : Number, h : Number) {
     __text.canvasFillRect(pixels, image.width, image.height, scale, originX, originY, clipLeft, clipTop, clipRight, clipBottom, color.argb, x, y, w, h)
     drawn()
   }
+  // The rectangle's outline, one unit thick, covering `w` + 1 by `h` + 1 units; nothing when `w` or
+  // `h` is below 0.
   override fun drawRect(x : Number, y : Number, w : Number, h : Number) {
     __text.canvasDrawRect(pixels, image.width, image.height, scale, originX, originY, clipLeft, clipTop, clipRight, clipBottom, color.argb, x, y, w, h)
     drawn()
   }
+  // Makes the pixels of the rectangle clear, all four bytes 0, its edges on whole pixels, inside
+  // the clip.
   override fun clearRect(x : Number, y : Number, w : Number, h : Number) {
     __text.canvasClear(pixels, image.width, image.height, scale, originX, originY, clipLeft, clipTop, clipRight, clipBottom, x, y, w, h)
     drawn()
   }
+  // Fills a rectangle with rounded corners, smooth at its edges, laid over what is there.
   override fun fillRoundRect(x : Number, y : Number, w : Number, h : Number, arcW : Number, arcH : Number) {
     __text.canvasRoundRect(pixels, image.width, image.height, scale, originX, originY, clipLeft, clipTop, clipRight, clipBottom, color.argb, x, y, w, h, arcW, arcH, true)
     drawn()
   }
+  // The outline of a rectangle with rounded corners, one unit thick.
   override fun drawRoundRect(x : Number, y : Number, w : Number, h : Number, arcW : Number, arcH : Number) {
     __text.canvasRoundRect(pixels, image.width, image.height, scale, originX, originY, clipLeft, clipTop, clipRight, clipBottom, color.argb, x, y, w, h, arcW, arcH, false)
     drawn()
   }
+  // Fills the oval inside the rectangle, smooth at its edge, laid over what is there.
   override fun fillOval(x : Number, y : Number, w : Number, h : Number) {
     __text.canvasOval(pixels, image.width, image.height, scale, originX, originY, clipLeft, clipTop, clipRight, clipBottom, color.argb, x, y, w, h, true)
     drawn()
   }
+  // The outline of the oval inside the rectangle, one unit thick, covering `w` + 1 by `h` + 1 units.
   override fun drawOval(x : Number, y : Number, w : Number, h : Number) {
     __text.canvasOval(pixels, image.width, image.height, scale, originX, originY, clipLeft, clipTop, clipRight, clipBottom, color.argb, x, y, w, h, false)
     drawn()
   }
+  // A line one unit thick with square ends: one across or up and down sits on whole pixels, a
+  // slanted one has smooth edges.
   override fun drawLine(x1 : Number, y1 : Number, x2 : Number, y2 : Number) {
     __text.canvasLine(pixels, image.width, image.height, scale, originX, originY, clipLeft, clipTop, clipRight, clipBottom, color.argb, x1, y1, x2, y2)
     drawn()
   }
+  // Lines through the first `n` points, or all of them, left open; `n` is cut down to the shorter
+  // list, and fewer than 2 points draw nothing.
   override fun drawPolyline(xs : List<Number>, ys : List<Number>, n : int? = null) {
     __text.canvasPolygon(pixels, image.width, image.height, scale, originX, originY, clipLeft, clipTop, clipRight, clipBottom, color.argb, xs, ys, n ?: xs.size, false, false)
     drawn()
   }
+  // Lines through the first `n` points, or all of them, closed back to the first; fewer than 2
+  // points draw nothing.
   override fun drawPolygon(xs : List<Number>, ys : List<Number>, n : int? = null) {
     __text.canvasPolygon(pixels, image.width, image.height, scale, originX, originY, clipLeft, clipTop, clipRight, clipBottom, color.argb, xs, ys, n ?: xs.size, false, true)
     drawn()
   }
+  // Fills the polygon through the first `n` points, or all of them; fewer than 2 draw nothing.
   override fun fillPolygon(xs : List<Number>, ys : List<Number>, n : int? = null) {
     __text.canvasPolygon(pixels, image.width, image.height, scale, originX, originY, clipLeft, clipTop, clipRight, clipBottom, color.argb, xs, ys, n ?: xs.size, true, true)
     drawn()
   }
+  // Draws `text` in the canvas's font and colour, its baseline at `y`, and gives the width it took,
+  // in units rounded up.
   override fun drawString(text : string, x : Number, y : Number) : int {
     val device : int = __text.canvasText(pixels, image.width, image.height, scale, originX, originY, clipLeft, clipTop, clipRight, clipBottom, color.argb,
                                          font.engineHandle(scale), text, x, y)
@@ -372,10 +435,14 @@ class ImageCanvas : Canvas {
     return scale == 1 ? device : Math.ceil(device / scale.toFloat()).toInt()
   }
 
+  // Draws an Image, or a picture that can give one (a ToImage), at its own size in units or scaled
+  // into `w` by `h`; an IllegalArgumentException for a picture that can do neither.
   protected override fun drawPicture(picture : Drawable, x : Number, y : Number, w : Number?, h : Number?, alpha : Number) {
     val from = __imageOf(picture)
     drawPicturePart(picture, 0, 0, from.width, from.height, x, y, w ?: picture.width, h ?: picture.height, alpha)
   }
+  // Draws the part of the picture's pixels into the rectangle, smoothly when it is made larger or
+  // smaller; `alpha` is kept from 0.0 to 1.0, and nothing is drawn at 0 or for an empty part.
   protected override fun drawPicturePart(picture : Drawable, sourceX : Number, sourceY : Number, sourceW : Number, sourceH : Number, x : Number, y : Number,
                                          w : Number, h : Number, alpha : Number) {
     val from = __imageOf(picture)
@@ -396,5 +463,6 @@ fun __imageOf(picture : Drawable) : Image {
 // A picture kept somewhere other than in memory that can give its pixels as an Image: a Jade
 // Surface, from the graphics card.
 interface ToImage {
+  // Its pixels, as a new Image: a Surface's at its size in pixels.
   fun toImage() : Image
 }

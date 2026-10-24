@@ -8,42 +8,66 @@
 // Every call that waits or times takes one: delay, Thread.sleep, join, Job.get, a channel's
 // receive, Countdown.await, waitUntil, EventLoop.after and every, a pool's after and every.
 
+// A length of time, `inNanoseconds` nanoseconds long, positive, zero or negative; usually made
+// as 5.seconds, 16.milliseconds and the like. It reaches about 292 years either way: a length
+// past that is an ArithmeticException.
 value Duration(val inNanoseconds : int) {
+  // The two lengths added together.
   op +(other : Duration) : Duration => Duration(inNanoseconds + other.inNanoseconds)
+  // This length with the other taken off.
   op -(other : Duration) : Duration => Duration(inNanoseconds - other.inNanoseconds)
+  // The same length the other way: -(2.seconds) is -2s.
   op -() : Duration => Duration(-inNanoseconds)
+  // This length `times` over.
   op *(times : int) : Duration => Duration(inNanoseconds * times)
+  // This length `times` over, rounded to the nearest nanosecond.
   op *(times : float) : Duration => Duration(Math.round(inNanoseconds * times))
+  // This length in `by` parts, what is less than a nanosecond left out: 1.seconds / 3 is
+  // 333.333333ms. By 0 is an ArithmeticException.
   op /(by : int) : Duration => Duration(inNanoseconds / by)
+  // This length in `by` parts, rounded to the nearest nanosecond. By 0.0 is an
+  // ArithmeticException.
   op /(by : float) : Duration => Duration(Math.round(inNanoseconds / by))
   // How many times the other fits in this one.
   op /(other : Duration) : float => inNanoseconds.toFloat() / other.inNanoseconds.toFloat()
 
+  // Whether this length is shorter than the other.
   op <(other : Duration) : bool => inNanoseconds < other.inNanoseconds
+  // Whether this length is shorter than the other or as long.
   op <=(other : Duration) : bool => inNanoseconds <= other.inNanoseconds
+  // Whether this length is longer than the other.
   op >(other : Duration) : bool => inNanoseconds > other.inNanoseconds
+  // Whether this length is longer than the other or as long.
   op >=(other : Duration) : bool => inNanoseconds >= other.inNanoseconds
+  // -1, 0 or 1 as this length is shorter than the other, as long, or longer.
   fun compareTo(other : Duration) : int => inNanoseconds < other.inNanoseconds ? -1 : inNanoseconds > other.inNanoseconds ? 1 : 0
 
   // The length in each unit, with what is less than a whole one as a fraction.
   val inMicroseconds : float
     get() => inNanoseconds / 1000.0
+  // The length in milliseconds, with what is less than a whole one as a fraction.
   val inMilliseconds : float
     get() => inNanoseconds / 1000000.0
+  // The length in seconds, with what is less than a whole one as a fraction.
   val inSeconds : float
     get() => inNanoseconds / 1000000000.0
+  // The length in minutes, with what is less than a whole one as a fraction: 90.seconds is 1.5.
   val inMinutes : float
     get() => inNanoseconds / 60000000000.0
+  // The length in hours, with what is less than a whole one as a fraction.
   val inHours : float
     get() => inNanoseconds / 3600000000000.0
+  // The length in days, with what is less than a whole one as a fraction.
   val inDays : float
     get() => inNanoseconds / 86400000000000.0
   // In whole milliseconds, what is less than one left out: what waiting is counted in.
   val inWholeMilliseconds : int
     get() => inNanoseconds / 1000000
 
+  // Whether it is less than no time.
   val isNegative : bool
     get() => inNanoseconds < 0
+  // Whether it is no time at all.
   val isZero : bool
     get() => inNanoseconds == 0
 
@@ -71,6 +95,7 @@ value Duration(val inNanoseconds : int) {
   }
 
   static {
+    // No time at all: 0s.
     val zero = Duration(0)
   }
 }
@@ -84,32 +109,46 @@ fun __durationPart(n : int, size : int) : string {
   return digits.isEmpty() ? "$whole" : "${whole}.${digits}"
 }
 
+// This many nanoseconds, as a Duration.
 val int.nanoseconds : Duration
   get() => Duration(this)
+// This many microseconds, as a Duration.
 val int.microseconds : Duration
   get() => Duration(this * 1000)
+// This many milliseconds, as a Duration.
 val int.milliseconds : Duration
   get() => Duration(this * 1000000)
+// This many seconds, as a Duration.
 val int.seconds : Duration
   get() => Duration(this * 1000000000)
+// This many minutes, as a Duration.
 val int.minutes : Duration
   get() => Duration(this * 60000000000)
+// This many hours, as a Duration.
 val int.hours : Duration
   get() => Duration(this * 3600000000000)
+// This many days, as a Duration.
 val int.days : Duration
   get() => Duration(this * 86400000000000)
 
+// This many nanoseconds, rounded to the nearest one, as a Duration: 2.6.nanoseconds is 3ns.
 val float.nanoseconds : Duration
   get() => Duration(Math.round(this))
+// This many microseconds, rounded to the nearest nanosecond, as a Duration.
 val float.microseconds : Duration
   get() => Duration(Math.round(this * 1000.0))
+// This many milliseconds, rounded to the nearest nanosecond, as a Duration: 1.5.milliseconds.
 val float.milliseconds : Duration
   get() => Duration(Math.round(this * 1000000.0))
+// This many seconds, rounded to the nearest nanosecond, as a Duration: 0.25.seconds is 250ms.
 val float.seconds : Duration
   get() => Duration(Math.round(this * 1000000000.0))
+// This many minutes, rounded to the nearest nanosecond, as a Duration.
 val float.minutes : Duration
   get() => Duration(Math.round(this * 60000000000.0))
+// This many hours, rounded to the nearest nanosecond, as a Duration.
 val float.hours : Duration
   get() => Duration(Math.round(this * 3600000000000.0))
+// This many days, rounded to the nearest nanosecond, as a Duration.
 val float.days : Duration
   get() => Duration(Math.round(this * 86400000000000.0))

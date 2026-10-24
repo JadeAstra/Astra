@@ -71,6 +71,7 @@ add_library(astra_compiler OBJECT
   src/cache.cpp
   src/compiler.cpp
   src/command.cpp
+  src/doc.cpp
 )
 add_executable(astra src/main.cpp $<TARGET_OBJECTS:astra_core> $<TARGET_OBJECTS:astra_window> $<TARGET_OBJECTS:astra_compiler>)
 

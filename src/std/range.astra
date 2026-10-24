@@ -2,16 +2,19 @@
 // A range can be looped over, and has the methods of a list that only read: each makes a
 // list of its numbers where it needs one.
 
+// Calls `action` with each number of the range, in order.
 fun Range.forEach(action : (int) -> unit) {
   for number in this { action(number) }
 }
 
+// What `transform` gives for each number, in order, as a new list.
 fun <R> Range.map(transform : (int) -> R) : open List<R> {
   val out : open List<R> = []
   for number in this { out.add(transform(number)) }
   return out
 }
 
+// What `transform` gives for each number, the nulls left out, as a new list.
 fun <R> Range.mapNotNull(transform : (int) -> R?) : open List<R> {
   val out : open List<R> = []
   for number in this {
@@ -21,12 +24,14 @@ fun <R> Range.mapNotNull(transform : (int) -> R?) : open List<R> {
   return out
 }
 
+// The items of the lists `transform` gives for each number, one after the other, as a new list.
 fun <R> Range.flatMap(transform : (int) -> List<R>) : open List<R> {
   val out : open List<R> = []
   for number in this { out.addAll(transform(number)) }
   return out
 }
 
+// The numbers for which `predicate` is true, in their order, as a new list.
 fun Range.filter(predicate : (int) -> bool) : open List<int> {
   val out : open List<int> = []
   for number in this {
@@ -35,8 +40,10 @@ fun Range.filter(predicate : (int) -> bool) : open List<int> {
   return out
 }
 
+// Whether the range has any numbers.
 fun Range.any() : bool => this.size > 0
 
+// Whether `predicate` is true of at least one number; it stops at the first that it is true of.
 fun Range.any(predicate : (int) -> bool) : bool {
   for number in this {
     if (predicate(number)) { return true }
@@ -44,6 +51,7 @@ fun Range.any(predicate : (int) -> bool) : bool {
   return false
 }
 
+// Whether `predicate` is true of every number; true for an empty range.
 fun Range.all(predicate : (int) -> bool) : bool {
   for number in this {
     if (!predicate(number)) { return false }
@@ -51,8 +59,10 @@ fun Range.all(predicate : (int) -> bool) : bool {
   return true
 }
 
+// Whether the range is empty, as 1..0 is.
 fun Range.none() : bool => this.size == 0
 
+// Whether `predicate` is true of no number; true for an empty range.
 fun Range.none(predicate : (int) -> bool) : bool {
   for number in this {
     if (predicate(number)) { return false }
@@ -60,8 +70,10 @@ fun Range.none(predicate : (int) -> bool) : bool {
   return true
 }
 
+// How many numbers the range has: its size.
 fun Range.count() : int => this.size
 
+// How many numbers `predicate` is true of.
 fun Range.count(predicate : (int) -> bool) : int {
   var total = 0
   for number in this {
@@ -70,8 +82,10 @@ fun Range.count(predicate : (int) -> bool) : int {
   return total
 }
 
+// The first number, its start; null for an empty range.
 fun Range.firstOrNull() : int? => this.size == 0 ? null : this.start
 
+// The first number, in the range's order, for which `predicate` is true; null where there is none.
 fun Range.firstOrNull(predicate : (int) -> bool) : int? {
   for number in this {
     if (predicate(number)) { return number }
@@ -79,36 +93,52 @@ fun Range.firstOrNull(predicate : (int) -> bool) : int? {
   return null
 }
 
+// The same as firstOrNull(predicate).
 fun Range.find(predicate : (int) -> bool) : int? => this.firstOrNull(predicate)
 
+// The sum of the numbers; 0 for an empty range.
 fun Range.sum() : int {
   var total = 0
   for number in this { total += number }
   return total
 }
 
+// The sum of what `selector` gives for each number. An empty range gives the int 0, which is a
+// ClassCastException where `selector` gives floats.
 fun <R : Number> Range.sumOf(selector : (int) -> R) : R {
   var total : Number = 0
   for number in this { total += selector(number) }
   return total as R
 }
 
+// A new map from each number to what `valueSelector` gives for it, in the range's order.
+//   (1..3).associateWith { it * it }   // {1: 1, 2: 4, 3: 9}
 fun <V> Range.associateWith(valueSelector : (int) -> V) : open Map<int, V> {
   val out : open Map<int, V> = {:}
   for number in this { out[number] = valueSelector(number) }
   return out
 }
 
+// Whether the range has any numbers.
 fun Range.isNotEmpty() : bool => this.size > 0
+// The numbers last to first, as a new list: (1..3).reversed() is [3, 2, 1].
 fun Range.reversed() : open List<int> => this.toList().reversed()
+// The numbers in order, as a new list that can be changed.
 fun Range.toOpenList() : open List<int> => this.toList()
+// The numbers as a new set, in the range's order.
 fun Range.toSet() : open Set<int> => Set(this)
 
+// One of the numbers, picked at random, its step kept: (1..10 step 3).random() is 1, 4, 7 or 10.
+// A NoSuchElementException for an empty range.
 fun Range.random() : int {
   if (this.size == 0) { throw NoSuchElementException("random() of an empty range") }
   return this.start + Math.randomInt(0, this.size - 1) * this.step
 }
 
+// The numbers as text, as a list's join() gives them: `separator` between them, `prefix` and
+// `postfix` around them; with a `limit` of 0 or more, only the first `limit`, then `truncated`
+// where there are more. `transform`, when given, makes what is shown of each.
+//   (1..5).join(limit = 2)   // "1, 2, ..."
 fun Range.join(separator : string = ", ", prefix : string = "", postfix : string = "", limit : int = -1,
                truncated : string = "...", transform : ((int) -> any?)? = null) : string {
   return this.toList().join(separator, prefix, postfix, limit, truncated, transform)

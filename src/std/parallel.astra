@@ -21,8 +21,11 @@
 // (D96); the cores share the work out between them as they come free. What every core may
 // change is an Atomic, an `atomic var` field, a SharedMap or a SharedSet (D85, D92, D94);
 // gather gives each core a result of its own, merged at the end (D93).
-// The work is done by the built-in __parallel (parallel.cpp).
 
+// Inside Astra: the work is done by the built-in __parallel (parallel.cpp).
+
+// A list's items for every core to work on at once, from parallelStream(): the items
+// themselves, not copies. map, filter and the like give a new stream; toList() and the totals end one.
 class ParallelStream<T> {
   private val items : List<T>
 
@@ -45,6 +48,8 @@ class ParallelStream<T> {
   // What the function gives for each item, in the order of the items, as a stream to go on from.
   fun <R> map(transform : (T) -> R) : ParallelStream<R> => ParallelStream<R>(__parallel.run(items, transform, true))
 
+  // What the function gives for each item, the nulls left out, in the order of the items, as a
+  // stream to go on from.
   fun <R> mapNotNull(transform : (T) -> R?) : ParallelStream<R> {
     val made : open List<R?> = __parallel.run(items, transform, true)
     return ParallelStream(made.filterNotNull())
@@ -60,25 +65,45 @@ class ParallelStream<T> {
     return ParallelStream(out)
   }
 
+  // How many items there are.
   fun count() : int => items.size
+  // How many items `predicate` is true for, each tested on one of the cores.
   fun count(predicate : (T) -> bool) : int => tests(predicate).count { it }
+  // Whether `predicate` is true for any item; every item is tested, on the cores. False when
+  // there are none.
   fun any(predicate : (T) -> bool) : bool => tests(predicate).any { it }
+  // Whether `predicate` is true for every item; every item is tested, on the cores. True when
+  // there are none.
   fun all(predicate : (T) -> bool) : bool => tests(predicate).all { it }
+  // Whether `predicate` is true for no item; every item is tested, on the cores. True when there
+  // are none.
   fun none(predicate : (T) -> bool) : bool => !tests(predicate).any { it }
 
   private fun tests(predicate : (T) -> bool) : open List<bool> => __parallel.run(items, predicate, true)
 
+  // The total of what `selector` gives for each item, each worked out on one of the cores; 0 for none.
   fun <R : Number> sumOf(selector : (T) -> R) : R => (__parallel.run(items, selector, true) as List<R>).sum()
+  // The largest of what `selector` gives for each item, each worked out on one of the cores:
+  // NoSuchElementException when there are none.
   fun <R> maxOf(selector : (T) -> R) : R => (__parallel.run(items, selector, true) as List<R>).max()
+  // The smallest of what `selector` gives for each item, each worked out on one of the cores:
+  // NoSuchElementException when there are none.
   fun <R> minOf(selector : (T) -> R) : R => (__parallel.run(items, selector, true) as List<R>).min()
+  // The total of the items, which have to be numbers (ClassCastException otherwise); 0 for
+  // none.
   fun sum() : any? => (items as List<Number>).sum()
+  // The largest item, in natural order: NoSuchElementException when there are none.
   fun max() : T => items.max()
+  // The smallest item, in natural order: NoSuchElementException when there are none.
   fun min() : T => items.min()
 
   // The items as a list: after map or filter, what they came to.
   fun toList() : open List<T> => items.toList()
+  // The items as a new set, each once, in the order they first come.
   fun toSet() : open Set<T> => Set(items)
+  // The items in their natural order, as a new list.
   fun sorted() : open List<T> => items.sorted()
+  // The items as text, `separator` between each two: [3, 1].parallelStream().join() is "3, 1".
   fun join(separator : string = ", ") : string => items.join(separator)
 
   // What the function gives for each item, every list of them joined into one, in order.
@@ -119,7 +144,10 @@ class ParallelStream<T> {
   }
 }
 
+// A stream of the list's items for the cores to work on, the items themselves: what forEach
+// does to them it does to the list's.
 fun <T> List<T>.parallelStream() : ParallelStream<T> => ParallelStream(this)
+// A stream of the range's numbers, in order, for the cores to work on.
 fun Range.parallelStream() : ParallelStream<int> => ParallelStream(this.toList())
 
 // The buffer in as many parts as there are cores, each core given the positions of one part:
@@ -176,6 +204,7 @@ fun <T> __parallelSort(view : ListView<T>) {
 class ListView<T> {
   internal val list : open List<T>
   internal val start : int
+  // How many items the view has.
   val size : int
   internal var lent = false
 
@@ -186,13 +215,20 @@ class ListView<T> {
     this.size = size
   }
 
+  // The item at `index`, counted from the view's start: IndexOutOfBoundsException outside
+  // 0..<size.
   op [](index : int) : T => __parallel.viewGet(this, index) as T
+  // Sets the item at `index`, counted from the view's start, in the list itself:
+  // IndexOutOfBoundsException outside 0..<size. IllegalStateException while the view is split, or
+  // in a parallel section if the view is not this piece's own.
   op []=(index : int, item : T) {
     __parallel.viewSet(this, index, item)
   }
 
+  // The view's positions, 0..<size.
   val indices : Range
     get() => 0..<size
+  // Whether the view has no items.
   fun isEmpty() : bool => size == 0
 
   // Its first `mid` items and the rest, as two views, to the block; meanwhile this one is lent
@@ -212,8 +248,11 @@ class ListView<T> {
     __parallel.viewSort(this, null)
   }
 
+  // The view's items, copied into a new list.
   fun toList() : open List<T> => List(size) { this[it] }
+  // For a for: the view's items, copied into a list first.
   fun iterator() : List<T> => toList()
+  // The view's items written as a list: [1, 2].
   override fun toString() : string => "${toList()}"
 }
 
@@ -237,19 +276,27 @@ fun <T> open List<T>.splitAt(mid : int, block : (ListView<T>, ListView<T>) -> un
 // changed in the section. There is no shared list: cores adding as they finish would give a
 // different order each run; map, flatMap and gather collect results in order, with nothing shared.
 
+// A map any core of a parallel section may change, each change done whole. In a section, a key
+// or a value that is an object the core itself made, and may still change, is an
+// IllegalStateException.
 class SharedMap<K, V> {
   private val entries : any = __parallel.sharedMap()
 
+  // The key's value, or null if it has none.
   op [](key : K) : V? => __parallel.sharedGet(entries, key) as V?
+  // Sets the key's value.
   op []=(key : K, value : V) {
     __parallel.sharedPut(entries, key, value)
   }
+  // The key's value, or null if it has none: the same as [key].
   fun get(key : K) : V? => __parallel.sharedGet(entries, key) as V?
   // Sets the key's value, giving the one it had.
   fun put(key : K, value : V) : V? => __parallel.sharedPut(entries, key, value) as V?
   // Takes the key out, giving its value.
   fun remove(key : K) : V? => __parallel.sharedRemove(entries, key) as V?
+  // Whether the key has a value.
   fun containsKey(key : K) : bool => __parallel.sharedHas(entries, key)
+  // How many keys it holds now.
   val size : int
     get() => __parallel.sharedSize(entries)
 
@@ -275,9 +322,12 @@ class SharedMap<K, V> {
 
   // A copy of what it holds now, an ordinary map.
   fun toMap() : open Map<K, V> => __parallel.sharedCopy(entries) as open Map<K, V>
+  // What it holds now, written as a map: {"x": 1}.
   override fun toString() : string => "${toMap()}"
 }
 
+// A set any core of a parallel section may change, each change done whole. In a section, an
+// item that is an object the core itself made, and may still change, is an IllegalStateException.
 class SharedSet<T> {
   private val entries : any = __parallel.sharedMap()
 
@@ -285,11 +335,14 @@ class SharedSet<T> {
   fun add(item : T) : bool => __parallel.sharedAdd(entries, item, true)
   // Takes the item out: whether it was there.
   fun remove(item : T) : bool => __parallel.sharedRemove(entries, item) != null
+  // Whether the item is in it.
   fun contains(item : T) : bool => __parallel.sharedHas(entries, item)
+  // How many items it holds now.
   val size : int
     get() => __parallel.sharedSize(entries)
   // A copy of what it holds now, an ordinary set.
   fun toSet() : open Set<T> => Set((__parallel.sharedCopy(entries) as Map<T, bool>).keys)
+  // What it holds now, written as a set: {1, 2}.
   override fun toString() : string => "${toSet()}"
 }
 

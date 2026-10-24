@@ -1,16 +1,18 @@
 // ---- Lists ----
-// The methods a list has besides the built-in ones (add, get, slice, sort and so on, which
-// are in builtins.cpp and stdlib.cpp). Every method that takes a function is written here:
+// The methods a list has besides the built-in ones (add, get, slice, sort and so on). Every
+// method that takes a function is written here, in Astra:
 // the function then runs as part of the program, and a task can be set aside inside it.
 
 // -- The oldest ones --
 
+// What `transform` gives for each item, in order, as a new list.
 inline fun <T, R> List<T>.map(transform : (T) -> R) : open List<R> {
   val out : open List<R> = []
   for item in this { out.add(transform(item)) }
   return out
 }
 
+// The items for which `predicate` is true, in their order, as a new list.
 inline fun <T> List<T>.filter(predicate : (T) -> bool) : open List<T> {
   val out : open List<T> = []
   for item in this {
@@ -19,6 +21,7 @@ inline fun <T> List<T>.filter(predicate : (T) -> bool) : open List<T> {
   return out
 }
 
+// The first item for which `predicate` is true, or null when there is none (as firstOrNull).
 inline fun <T> List<T>.find(predicate : (T) -> bool) : T? {
   for item in this {
     if (predicate(item)) { return item }
@@ -34,6 +37,9 @@ inline fun <T> List<T>.reduce(operation : (T, T) -> T) : T {
   return result
 }
 
+// Combines the items from the first to the last, starting from `initial`: `result` becomes
+// `operation(result, item)` for each in turn. An empty list gives `initial`. The function comes
+// first here; fold takes `initial` first.
 inline fun <T, R> List<T>.reduce(operation : (R, T) -> R, initial : R) : R {
   var result = initial
   for item in this { result = operation(result, item) }
@@ -42,11 +48,13 @@ inline fun <T, R> List<T>.reduce(operation : (R, T) -> R, initial : R) : R {
 
 // -- The item at one end, or with a condition the nearest to that end that meets it --
 
+// The first item; a NoSuchElementException when the list is empty.
 fun <T> List<T>.first() : T {
   if (this.size == 0) { throw NoSuchElementException("first() of an empty list") }
   return this[0]
 }
 
+// The first item for which `predicate` is true; a NoSuchElementException when there is none.
 inline fun <T> List<T>.first(predicate : (T) -> bool) : T {
   for item in this {
     if (predicate(item)) { return item }
@@ -54,8 +62,10 @@ inline fun <T> List<T>.first(predicate : (T) -> bool) : T {
   throw NoSuchElementException("first(): no item of the list meets the condition")
 }
 
+// The first item, or null when the list is empty.
 fun <T> List<T>.firstOrNull() : T? => this.size == 0 ? null : this[0]
 
+// The first item for which `predicate` is true, or null when there is none.
 inline fun <T> List<T>.firstOrNull(predicate : (T) -> bool) : T? {
   for item in this {
     if (predicate(item)) { return item }
@@ -63,11 +73,14 @@ inline fun <T> List<T>.firstOrNull(predicate : (T) -> bool) : T? {
   return null
 }
 
+// The last item; a NoSuchElementException when the list is empty.
 fun <T> List<T>.last() : T {
   if (this.size == 0) { throw NoSuchElementException("last() of an empty list") }
   return this[this.size - 1]
 }
 
+// The last item for which `predicate` is true, looking from the end; a NoSuchElementException
+// when there is none.
 inline fun <T> List<T>.last(predicate : (T) -> bool) : T {
   var index = this.size - 1
   while (index >= 0) {
@@ -77,8 +90,10 @@ inline fun <T> List<T>.last(predicate : (T) -> bool) : T {
   throw NoSuchElementException("last(): no item of the list meets the condition")
 }
 
+// The last item, or null when the list is empty.
 fun <T> List<T>.lastOrNull() : T? => this.size == 0 ? null : this[this.size - 1]
 
+// The last item for which `predicate` is true, looking from the end, or null when there is none.
 inline fun <T> List<T>.lastOrNull(predicate : (T) -> bool) : T? {
   var index = this.size - 1
   while (index >= 0) {
@@ -90,10 +105,12 @@ inline fun <T> List<T>.lastOrNull(predicate : (T) -> bool) : T? {
 
 // -- Going through the items --
 
+// Calls `action` with each item, in order.
 inline fun <T> List<T>.forEach(action : (T) -> unit) {
   for item in this { action(item) }
 }
 
+// Calls `action` with the index of each item and the item, in order.
 inline fun <T> List<T>.forEachIndexed(action : (int, T) -> unit) {
   var index = 0
   for item in this {
@@ -102,6 +119,8 @@ inline fun <T> List<T>.forEachIndexed(action : (int, T) -> unit) {
   }
 }
 
+// Calls `action` with each item, in order, and gives the list itself, so that a chain of calls
+// can go on.
 inline fun <T> List<T>.onEach(action : (T) -> unit) : List<T> {
   for item in this { action(item) }
   return this
@@ -109,8 +128,11 @@ inline fun <T> List<T>.onEach(action : (T) -> unit) : List<T> {
 
 // -- Asking about the items --
 
+// True when the list has at least one item.
 fun <T> List<T>.any() : bool => this.size > 0
 
+// True when `predicate` is true for at least one item, stopping at the first; false for an empty
+// list.
 inline fun <T> List<T>.any(predicate : (T) -> bool) : bool {
   for item in this {
     if (predicate(item)) { return true }
@@ -118,6 +140,8 @@ inline fun <T> List<T>.any(predicate : (T) -> bool) : bool {
   return false
 }
 
+// True when `predicate` is true for every item, stopping at the first for which it is not; true
+// for an empty list.
 inline fun <T> List<T>.all(predicate : (T) -> bool) : bool {
   for item in this {
     if (!predicate(item)) { return false }
@@ -125,8 +149,11 @@ inline fun <T> List<T>.all(predicate : (T) -> bool) : bool {
   return true
 }
 
+// True when the list is empty.
 fun <T> List<T>.none() : bool => this.size == 0
 
+// True when `predicate` is true for no item, stopping at the first for which it is; true for an
+// empty list.
 inline fun <T> List<T>.none(predicate : (T) -> bool) : bool {
   for item in this {
     if (predicate(item)) { return false }
@@ -134,8 +161,10 @@ inline fun <T> List<T>.none(predicate : (T) -> bool) : bool {
   return true
 }
 
+// The number of items, as `size`.
 fun <T> List<T>.count() : int => this.size
 
+// The number of items for which `predicate` is true.
 inline fun <T> List<T>.count(predicate : (T) -> bool) : int {
   var total = 0
   for item in this {
@@ -144,6 +173,7 @@ inline fun <T> List<T>.count(predicate : (T) -> bool) : int {
   return total
 }
 
+// True when every one of `items` is in this list, compared with ==; true when `items` is empty.
 fun <T> List<T>.containsAll(items : List<T>) : bool {
   for item in items {
     if (!this.contains(item)) { return false }
@@ -151,13 +181,18 @@ fun <T> List<T>.containsAll(items : List<T>) : bool {
   return true
 }
 
+// True when every item of the set `items` is in this list; true when the set is empty.
 fun <T> List<T>.containsAll(items : Set<T>) : bool => this.containsAll(items.toList())
 
+// The list, or an empty list when it is null.
 fun <T> List<T>?.orEmpty() : List<T> => this == null ? [] : this
+// The list, or the list `defaultValue` gives when this one is empty; `defaultValue` is called
+// only then.
 inline fun <T> List<T>.ifEmpty(defaultValue : () -> List<T>) : List<T> => this.size == 0 ? defaultValue() : this
 
 // -- Finding --
 
+// The index of the first item for which `predicate` is true, or -1 when there is none.
 inline fun <T> List<T>.indexOfFirst(predicate : (T) -> bool) : int {
   var index = 0
   for item in this {
@@ -167,6 +202,7 @@ inline fun <T> List<T>.indexOfFirst(predicate : (T) -> bool) : int {
   return -1
 }
 
+// The index of the last item for which `predicate` is true, or -1 when there is none.
 inline fun <T> List<T>.indexOfLast(predicate : (T) -> bool) : int {
   var index = this.size - 1
   while (index >= 0) {
@@ -176,6 +212,7 @@ inline fun <T> List<T>.indexOfLast(predicate : (T) -> bool) : int {
   return -1
 }
 
+// The last item for which `predicate` is true, or null when there is none (as lastOrNull).
 inline fun <T> List<T>.findLast(predicate : (T) -> bool) : T? => this.lastOrNull(predicate)
 
 // The only item, or the only one that meets the condition.
@@ -184,18 +221,28 @@ fun <T> List<T>.single() : T {
   return this[0]
 }
 
+// The only item for which `predicate` is true; an IllegalArgumentException when there is none
+// or more than one. `predicate` is called for every item.
 inline fun <T> List<T>.single(predicate : (T) -> bool) : T => this.filter(predicate).single()
 
+// The only item, or null when the list is empty or has more than one.
 fun <T> List<T>.singleOrNull() : T? => this.size == 1 ? this[0] : null
 
+// The only item for which `predicate` is true, or null when there is none or more than one.
 inline fun <T> List<T>.singleOrNull(predicate : (T) -> bool) : T? => this.filter(predicate).singleOrNull()
 
+// The item at `index`, or what `defaultValue` gives for `index` when there is no item there (a
+// negative index among them).
 inline fun <T> List<T>.getOrElse(index : int, defaultValue : (int) -> T) : T => index >= 0 and index < this.size ? this[index] : defaultValue(index)
+// The item at `index`, as get; an IndexOutOfBoundsException when there is none, as for a
+// negative index.
 fun <T> List<T>.elementAt(index : int) : T => this.get(index)
+// The item at `index`, or null when there is none, as for a negative index.
 fun <T> List<T>.elementAtOrNull(index : int) : T? => this.getOrNull(index)
 
 // -- Making another list --
 
+// What `transform` gives for the index of each item and the item, in order, as a new list.
 inline fun <T, R> List<T>.mapIndexed(transform : (int, T) -> R) : open List<R> {
   val out : open List<R> = []
   var index = 0
@@ -206,6 +253,7 @@ inline fun <T, R> List<T>.mapIndexed(transform : (int, T) -> R) : open List<R> {
   return out
 }
 
+// What `transform` gives for each item, in order, with the nulls left out, as a new list.
 inline fun <T, R> List<T>.mapNotNull(transform : (T) -> R?) : open List<R> {
   val out : open List<R> = []
   for item in this {
@@ -215,6 +263,8 @@ inline fun <T, R> List<T>.mapNotNull(transform : (T) -> R?) : open List<R> {
   return out
 }
 
+// What `transform` gives for the index of each item and the item, in order, with the nulls left
+// out, as a new list.
 inline fun <T, R> List<T>.mapIndexedNotNull(transform : (int, T) -> R?) : open List<R> {
   val out : open List<R> = []
   var index = 0
@@ -226,18 +276,23 @@ inline fun <T, R> List<T>.mapIndexedNotNull(transform : (int, T) -> R?) : open L
   return out
 }
 
+// The items of the lists `transform` gives for each item, one list after another, as one new
+// list.
+//   ["a b", "c"].flatMap { it.split(" ") }   // ["a", "b", "c"]
 inline fun <T, R> List<T>.flatMap(transform : (T) -> List<R>) : open List<R> {
   val out : open List<R> = []
   for item in this { out.addAll(transform(item)) }
   return out
 }
 
+// The items of each list in this list of lists, one list after another, as one new list.
 fun <T> List<List<T>>.flatten() : open List<T> {
   val out : open List<T> = []
   for item in this { out.addAll(item) }
   return out
 }
 
+// The items for which `predicate` is false, in their order, as a new list.
 inline fun <T> List<T>.filterNot(predicate : (T) -> bool) : open List<T> {
   val out : open List<T> = []
   for item in this {
@@ -246,6 +301,7 @@ inline fun <T> List<T>.filterNot(predicate : (T) -> bool) : open List<T> {
   return out
 }
 
+// The items that are not null, in their order, as a new list.
 fun <T> List<T?>.filterNotNull() : open List<T> {
   val out : open List<T> = []
   for item in this {
@@ -254,6 +310,8 @@ fun <T> List<T?>.filterNotNull() : open List<T> {
   return out
 }
 
+// The items for which `predicate`, given the index of the item and the item, is true, in their
+// order, as a new list.
 inline fun <T> List<T>.filterIndexed(predicate : (int, T) -> bool) : open List<T> {
   val out : open List<T> = []
   var index = 0
@@ -274,26 +332,36 @@ inline fun <T> List<T>.partition(predicate : (T) -> bool) : Pair<List<T>, List<T
   return Pair(yes, no)
 }
 
+// The first `count` items as a new list, or all of them when there are fewer; an
+// IllegalArgumentException when `count` is negative.
 fun <T> List<T>.take(count : int) : open List<T> {
   if (count < 0) { throw IllegalArgumentException("take($count): the count cannot be negative") }
   return this[0..<Math.min(count, this.size)]
 }
 
+// The last `count` items as a new list, or all of them when there are fewer; an
+// IllegalArgumentException when `count` is negative.
 fun <T> List<T>.takeLast(count : int) : open List<T> {
   if (count < 0) { throw IllegalArgumentException("takeLast($count): the count cannot be negative") }
   return count >= this.size ? this.toList() : this[this.size - count..]
 }
 
+// The items after the first `count` as a new list, empty when there are no more; an
+// IllegalArgumentException when `count` is negative.
 fun <T> List<T>.drop(count : int) : open List<T> {
   if (count < 0) { throw IllegalArgumentException("drop($count): the count cannot be negative") }
   return count >= this.size ? [] : this[count..]
 }
 
+// The items before the last `count` as a new list, empty when there are no more; an
+// IllegalArgumentException when `count` is negative.
 fun <T> List<T>.dropLast(count : int) : open List<T> {
   if (count < 0) { throw IllegalArgumentException("dropLast($count): the count cannot be negative") }
   return count >= this.size ? [] : this[0..<this.size - count]
 }
 
+// The items from the start up to, not including, the first for which `predicate` is false, as a
+// new list.
 inline fun <T> List<T>.takeWhile(predicate : (T) -> bool) : open List<T> {
   val out : open List<T> = []
   for item in this {
@@ -303,6 +371,7 @@ inline fun <T> List<T>.takeWhile(predicate : (T) -> bool) : open List<T> {
   return out
 }
 
+// The items from the first for which `predicate` is false to the end, as a new list.
 inline fun <T> List<T>.dropWhile(predicate : (T) -> bool) : open List<T> {
   var index = 0
   while (index < this.size and predicate(this[index])) { index += 1 }
@@ -337,6 +406,8 @@ fun <T> List<T>.windowed(size : int, step : int = 1, partialWindows : bool = fal
 // Pairs each item with the one at the same position in `other`, as far as the shorter goes.
 fun <T, U> List<T>.zip(other : List<U>) : open List<Pair<T, U>> => this.zip(other) { a, b -> Pair(a, b) }
 
+// What `transform` gives for each item and the one at the same position in `other`, as far as
+// the shorter list goes, as a new list.
 inline fun <T, U, R> List<T>.zip(other : List<U>, transform : (T, U) -> R) : open List<R> {
   val out : open List<R> = []
   val count = this.size < other.size ? this.size : other.size
@@ -344,14 +415,20 @@ inline fun <T, U, R> List<T>.zip(other : List<U>, transform : (T, U) -> R) : ope
   return out
 }
 
+// Each item paired with the one after it, as a list of Pairs: one fewer than the items, and
+// empty for a list of fewer than two.
 fun <T> List<T>.zipWithNext() : open List<Pair<T, T>> => this.zipWithNext { a, b -> Pair(a, b) }
 
+// What `transform` gives for each item and the one after it, as a new list: one fewer than the
+// items, and empty for a list of fewer than two.
+//   [1, 4, 9].zipWithNext { a, b -> b - a }   // [3, 5]
 inline fun <T, R> List<T>.zipWithNext(transform : (T, T) -> R) : open List<R> {
   val out : open List<R> = []
   for index in 0..<this.size - 1 { out.add(transform(this[index], this[index + 1])) }
   return out
 }
 
+// Each item with its index, as a new list of IndexedValue(`index`, `value`).
 fun <T> List<T>.withIndex() : open List<IndexedValue<T>> {
   val out : open List<IndexedValue<T>> = []
   var index = 0
@@ -362,6 +439,8 @@ fun <T> List<T>.withIndex() : open List<IndexedValue<T>> {
   return out
 }
 
+// The items without repeats, each where it first comes, as a new list. Items count as the same
+// when they would be the same map key: 1 and 1.0 are one.
 fun <T> List<T>.distinct() : open List<T> {
   val seen : open Map<T, bool> = {:}
   val out : open List<T> = []
@@ -374,6 +453,8 @@ fun <T> List<T>.distinct() : open List<T> {
   return out
 }
 
+// The items whose key from `selector` has not come before, each where it first comes, as a new
+// list.
 inline fun <T> List<T>.distinctBy(selector : (T) -> any?) : open List<T> {
   val seen : open Map<any?, bool> = {:}
   val out : open List<T> = []
@@ -387,58 +468,79 @@ inline fun <T> List<T>.distinctBy(selector : (T) -> any?) : open List<T> {
   return out
 }
 
+// The items of this list and then those of `other`, as a new list; as `this + other`.
 fun <T> List<T>.plus(other : List<T>) : open List<T> => this + other
+// The items of this list and then `item`, as a new list.
 fun <T> List<T>.plus(item : T) : open List<T> => this + [item]
 
+// The items that are not in `other`, as a new list: every copy of an item in `other` is left out.
 fun <T> List<T>.minus(other : List<T>) : open List<T> => this.filter { !other.contains(it) }
+// The items that are not in the set `other`, as a new list: every copy of one is left out.
 fun <T> List<T>.minus(other : Set<T>) : open List<T> => this.filter { !other.contains(it) }
 
+// The list without the first item equal to `item`, as a new list; any other copies of it stay.
 fun <T> List<T>.minus(item : T) : open List<T> {
   val out = this.toList()
   out.remove(item)
   return out
 }
 
+// The items from the last to the first, as a new list: a copy, as reversed() gives, not a view
+// of this list.
 fun <T> List<T>.asReversed() : List<T> => this.reversed()
+// A copy of the list, one that can be changed; as toList.
 fun <T> List<T>.copyOf() : open List<T> => this.toList()
 
 // -- Order --
 
+// The items from the least to the greatest, as a new list. The sort is stable: equal items keep
+// their order.
 fun <T> List<T>.sorted() : open List<T> {
   val out = this.toList()
   out.sort()
   return out
 }
 
+// The items from the greatest to the least, as a new list; equal items keep their order.
 fun <T> List<T>.sortedDescending() : open List<T> => this.sortedWith { a, b -> compareValues(b, a) }
+// The items in the order of the key `selector` gives for each, the least first, as a new list.
+// Each key is worked out once, and items with equal keys keep their order.
 fun <T> List<T>.sortedBy(selector : (T) -> any?) : open List<T> {
   val out = this.toList()
   out.sortBy(selector)
   return out
 }
+// The items in the order of the key `selector` gives for each, the greatest first, as a new list.
+// Each key is worked out once, and items with equal keys keep their order.
 fun <T> List<T>.sortedByDescending(selector : (T) -> any?) : open List<T> {
   val out = this.toList()
   out.sortByDescending(selector)
   return out
 }
 
+// The items in the order `comparator` sets, as a new list: it is given two items and gives a
+// negative number when the first goes before the second. Equal items keep their order.
 fun <T> List<T>.sortedWith(comparator : (T, T) -> int) : open List<T> {
   val out = this.toList()
   out.sort(comparator)
   return out
 }
 
-// These sort the list itself. sortBy and sortByDescending are the C++'s (builtins.astra): each
+// These sort the list itself. sortBy and sortByDescending, which do too, are built in: each
 // item's key is worked out once, and each item moved once.
 
+// Sorts the list itself in the order `comparator` sets, as sort(comparator) does.
 fun <T> open List<T>.sortWith(comparator : (T, T) -> int) {
   this.sort(comparator)
 }
 
+// Sorts the list itself from the greatest to the least; equal items keep their order.
 fun <T> open List<T>.sortDescending() {
   this.sort { a, b -> compareValues(b, a) }
 }
 
+// Puts the items of the list itself in a random order, every order as likely. Math.seed makes
+// the order the same on every run.
 fun <T> open List<T>.shuffle() {
   var index = this.size - 1
   while (index > 0) {
@@ -450,12 +552,14 @@ fun <T> open List<T>.shuffle() {
   }
 }
 
+// The items in a random order, as a new list.
 fun <T> List<T>.shuffled() : open List<T> {
   val out = this.toList()
   out.shuffle()
   return out
 }
 
+// An item picked at random; a NoSuchElementException when the list is empty.
 fun <T> List<T>.random() : T {
   if (this.size == 0) { throw NoSuchElementException("random() of an empty list") }
   return this[Math.randomInt(0, this.size - 1)]
@@ -463,6 +567,9 @@ fun <T> List<T>.random() : T {
 
 // -- Working a value out of the items --
 
+// Combines the items from the first to the last, starting from `initial`: `result` becomes
+// `operation(result, item)` for each in turn. An empty list gives `initial`.
+//   [1, 2, 3].fold(0) { total, item -> total + item }   // 6
 inline fun <T, R> List<T>.fold(initial : R, operation : (R, T) -> R) : R {
   var result = initial
   for item in this { result = operation(result, item) }
@@ -476,14 +583,19 @@ fun <T : Number> List<T>.sum() : T {
   return total as T
 }
 
+// The sum of what `selector` gives for each item: an int when every one is an int, otherwise a
+// float; 0 for an empty list.
 inline fun <T, R : Number> List<T>.sumOf(selector : (T) -> R) : R {
   var total : Number = 0
   for item in this { total += selector(item) }
   return total as R
 }
 
+// The mean of the items, as a float.
 fun <T : Number> List<T>.average() : float => this.size == 0 ? float.nan : this.sum().toFloat() / this.size
 
+// The greatest item, the first of them if several are equal, or null when the list is empty.
+// Items that cannot be compared, such as a string and an int, give a ClassCastException.
 fun <T> List<T>.maxOrNull() : T? {
   if (this.size == 0) { return null }
   var best = this[0]
@@ -493,6 +605,8 @@ fun <T> List<T>.maxOrNull() : T? {
   return best
 }
 
+// The least item, the first of them if several are equal, or null when the list is empty.
+// Items that cannot be compared, such as a string and an int, give a ClassCastException.
 fun <T> List<T>.minOrNull() : T? {
   if (this.size == 0) { return null }
   var best = this[0]
@@ -502,11 +616,13 @@ fun <T> List<T>.minOrNull() : T? {
   return best
 }
 
+// The greatest item; a NoSuchElementException when the list is empty.
 fun <T> List<T>.max() : T {
   if (this.size == 0) { throw NoSuchElementException("max() of an empty list") }
   return this.maxOrNull() as T
 }
 
+// The least item; a NoSuchElementException when the list is empty.
 fun <T> List<T>.min() : T {
   if (this.size == 0) { throw NoSuchElementException("min() of an empty list") }
   return this.minOrNull() as T
@@ -527,6 +643,8 @@ inline fun <T> List<T>.maxByOrNull(selector : (T) -> any?) : T? {
   return best
 }
 
+// The item for which `selector` gives the least, the first of them if several, or null when the
+// list is empty.
 inline fun <T> List<T>.minByOrNull(selector : (T) -> any?) : T? {
   if (this.size == 0) { return null }
   var best = this[0]
@@ -541,11 +659,15 @@ inline fun <T> List<T>.minByOrNull(selector : (T) -> any?) : T? {
   return best
 }
 
+// The item for which `selector` gives the most, the first of them if several; a
+// NoSuchElementException when the list is empty.
 inline fun <T> List<T>.maxBy(selector : (T) -> any?) : T {
   if (this.size == 0) { throw NoSuchElementException("maxBy() of an empty list") }
   return this.maxByOrNull(selector) as T
 }
 
+// The item for which `selector` gives the least, the first of them if several; a
+// NoSuchElementException when the list is empty.
 inline fun <T> List<T>.minBy(selector : (T) -> any?) : T {
   if (this.size == 0) { throw NoSuchElementException("minBy() of an empty list") }
   return this.minByOrNull(selector) as T
@@ -562,6 +684,7 @@ inline fun <T, R> List<T>.maxOfOrNull(selector : (T) -> R) : R? {
   return most
 }
 
+// The least that `selector` gives for any item, or null when the list is empty.
 inline fun <T, R> List<T>.minOfOrNull(selector : (T) -> R) : R? {
   if (this.size == 0) { return null }
   var least = selector(this[0])
@@ -572,11 +695,13 @@ inline fun <T, R> List<T>.minOfOrNull(selector : (T) -> R) : R? {
   return least
 }
 
+// The most that `selector` gives for any item; a NoSuchElementException when the list is empty.
 inline fun <T, R> List<T>.maxOf(selector : (T) -> R) : R {
   if (this.size == 0) { throw NoSuchElementException("maxOf() of an empty list") }
   return this.maxOfOrNull(selector) as R
 }
 
+// The least that `selector` gives for any item; a NoSuchElementException when the list is empty.
 inline fun <T, R> List<T>.minOf(selector : (T) -> R) : R {
   if (this.size == 0) { throw NoSuchElementException("minOf() of an empty list") }
   return this.minOfOrNull(selector) as R
@@ -584,7 +709,8 @@ inline fun <T, R> List<T>.minOf(selector : (T) -> R) : R {
 
 // -- Maps and sets from a list --
 
-// A map from pairs: by the transform, or with no argument from a list that holds pairs.
+// A map from the Pair of a key and its value that `transform` gives for each item; where a key
+// comes again, the later value is kept. toMap does the same for a list that holds Pairs.
 inline fun <T, K, V> List<T>.associate(transform : (T) -> Pair<K, V>) : open Map<K, V> {
   val out : open Map<K, V> = {:}
   for item in this {
@@ -594,24 +720,31 @@ inline fun <T, K, V> List<T>.associate(transform : (T) -> Pair<K, V>) : open Map
   return out
 }
 
+// A map from a list of Pairs, each a key and its value; where a key comes again, the later value
+// is kept.
 fun <K, V> List<Pair<K, V>>.toMap() : open Map<K, V> {
   val out : open Map<K, V> = {:}
   for (key, value) in this { out[key] = value }
   return out
 }
 
+// A map from the key `keySelector` gives for each item to the item; of items with the same key,
+// the last is kept.
 inline fun <T, K> List<T>.associateBy(keySelector : (T) -> K) : open Map<K, T> {
   val out : open Map<K, T> = {:}
   for item in this { out[keySelector(item)] = item }
   return out
 }
 
+// A map from the key `keySelector` gives for each item to what `valueTransform` gives for it; of
+// items with the same key, the last is kept.
 inline fun <T, K, V> List<T>.associateBy(keySelector : (T) -> K, valueTransform : (T) -> V) : open Map<K, V> {
   val out : open Map<K, V> = {:}
   for item in this { out[keySelector(item)] = valueTransform(item) }
   return out
 }
 
+// A map from each item to what `valueSelector` gives for it.
 inline fun <T, V> List<T>.associateWith(valueSelector : (T) -> V) : open Map<T, V> {
   val out : open Map<T, V> = {:}
   for item in this { out[item] = valueSelector(item) }
@@ -621,6 +754,8 @@ inline fun <T, V> List<T>.associateWith(valueSelector : (T) -> V) : open Map<T, 
 // A map from each key to the list of items that gave it, or of what the transform makes of them.
 inline fun <T, K> List<T>.groupBy(keySelector : (T) -> K) : open Map<K, open List<T>> => this.groupBy(keySelector) { it }
 
+// A map from each key `keySelector` gives to the list of what `valueTransform` gives for the
+// items with that key, in their order.
 inline fun <T, K, V> List<T>.groupBy(keySelector : (T) -> K, valueTransform : (T) -> V) : open Map<K, open List<V>> {
   val out : open Map<K, open List<V>> = {:}
   for item in this {
@@ -629,25 +764,34 @@ inline fun <T, K, V> List<T>.groupBy(keySelector : (T) -> K, valueTransform : (T
   return out
 }
 
+// The items as a new set, each once. The set can be changed, as one from toOpenSet.
 fun <T> List<T>.toSet() : open Set<T> => Set(this)
+// The items as a new set that can be changed, each once; the same as toSet.
 fun <T> List<T>.toOpenSet() : open Set<T> => Set(this)
 
 // -- Changing the list itself --
 
+// Puts `item` at the front of the list.
 fun <T> open List<T>.addFirst(item : T) {
   this.insert(0, item)
 }
 
+// Puts `item` at the end of the list, as add.
 fun <T> open List<T>.addLast(item : T) {
   this.add(item)
 }
 
 // removeAll and retainAll take a condition or a collection of items. True if anything went.
 fun <T> open List<T>.removeAll(predicate : (T) -> bool) : bool => __keepOnly(this, this.filterNot(predicate))
+// Removes from the list every item that is in `items`; true if anything was removed.
 fun <T> open List<T>.removeAll(items : List<T>) : bool => __keepOnly(this, this.filter { !items.contains(it) })
+// Removes from the list every item that is in the set `items`; true if anything was removed.
 fun <T> open List<T>.removeAll(items : Set<T>) : bool => __keepOnly(this, this.filter { !items.contains(it) })
+// Keeps in the list only the items for which `predicate` is true; true if anything was removed.
 fun <T> open List<T>.retainAll(predicate : (T) -> bool) : bool => __keepOnly(this, this.filter(predicate))
+// Keeps in the list only the items that are in `items`; true if anything was removed.
 fun <T> open List<T>.retainAll(items : List<T>) : bool => __keepOnly(this, this.filter { items.contains(it) })
+// Keeps in the list only the items that are in the set `items`; true if anything was removed.
 fun <T> open List<T>.retainAll(items : Set<T>) : bool => __keepOnly(this, this.filter { items.contains(it) })
 
 // The list made to hold just `kept`; true if that changed it.
@@ -660,4 +804,6 @@ fun <T> __keepOnly(list : open List<T>, kept : List<T>) : bool {
   return changed
 }
 
+// Removes from the list the items for which `predicate` is true, as removeAll(predicate); true
+// if anything was removed.
 fun <T> open List<T>.removeIf(predicate : (T) -> bool) : bool => this.removeAll(predicate)

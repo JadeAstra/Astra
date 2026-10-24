@@ -22,19 +22,33 @@ value Color(val red : byte, val green : byte, val blue : byte, val alpha : byte 
     this(__colorFraction(red, "red"), __colorFraction(green, "green"), __colorFraction(blue, "blue"), __colorFraction(alpha, "alpha"))
 
   static {
+    // White: Color(255, 255, 255).
     val white = Color(255, 255, 255)
+    // Light grey: Color(192, 192, 192).
     val lightGray = Color(192, 192, 192)
+    // Grey: Color(128, 128, 128).
     val gray = Color(128, 128, 128)
+    // Dark grey: Color(64, 64, 64).
     val darkGray = Color(64, 64, 64)
+    // Black: Color(0, 0, 0).
     val black = Color(0, 0, 0)
+    // Red: Color(255, 0, 0).
     val red = Color(255, 0, 0)
+    // Pink: Color(255, 175, 175).
     val pink = Color(255, 175, 175)
+    // Orange: Color(255, 200, 0).
     val orange = Color(255, 200, 0)
+    // Yellow: Color(255, 255, 0).
     val yellow = Color(255, 255, 0)
+    // Green: Color(0, 255, 0).
     val green = Color(0, 255, 0)
+    // Magenta: Color(255, 0, 255).
     val magenta = Color(255, 0, 255)
+    // Cyan: Color(0, 255, 255).
     val cyan = Color(0, 255, 255)
+    // Blue: Color(0, 0, 255).
     val blue = Color(0, 0, 255)
+    // Nothing at all, wholly see-through: Color(0, 0, 0, 0).
     val clear = Color(0, 0, 0, 0)
 
     // "#RRGGBB" or "0xRRGGBB".
@@ -63,6 +77,8 @@ value Color(val red : byte, val green : byte, val blue : byte, val alpha : byte 
       }
       return 0xFF000000 | ((r * 255 + 0.5).toInt() << 16) | ((g * 255 + 0.5).toInt() << 8) | (b * 255 + 0.5).toInt()
     }
+    // The solid colour of a hue, a saturation and a brightness, each from 0.0 to 1.0; the hue
+    // goes round, so 1.25 is the same as 0.25.
     fun getHSBColor(hue : float, saturation : float, brightness : float) : Color => Color(Color.HSBtoRGB(hue, saturation, brightness))
     // The other way: [hue, saturation, brightness].
     fun RGBtoHSB(r : int, g : int, b : int) : List<float> {
@@ -88,18 +104,21 @@ value Color(val red : byte, val green : byte, val blue : byte, val alpha : byte 
   val argb : int
     get() => (alpha << 24) | (red << 16) | (green << 8) | blue
 
-  // A lighter and a darker shade, by the steps Java takes.
+  // A lighter shade, by the step Java takes: each part divided by 0.7, at most 255, with the
+  // same alpha; black becomes Color(3, 3, 3).
   fun brighter() : Color {
     val least = 3
     if (red == 0 and green == 0 and blue == 0) { return Color(least, least, least, alpha.toInt()) }
     val up = { v : int -> Math.min(((v > 0 and v < least ? least : v) / 0.7).toInt(), 255) }
     return Color(up(red.toInt()), up(green.toInt()), up(blue.toInt()), alpha.toInt())
   }
+  // A darker shade, by the step Java takes: each part times 0.7, rounded down, with the same alpha.
   fun darker() : Color => Color((red * 0.7).toInt(), (green * 0.7).toInt(), (blue * 0.7).toInt(), alpha.toInt())
 
   // The same colour, as see-through as `alpha` says.
   fun withAlpha(alpha : int) : Color => Color(red, green, blue, __colorPart(alpha, "alpha"))
 
+  // The colour as text, "Color(255, 128, 0)", with the alpha last when it is not 255: "Color(255, 128, 0, 128)".
   override fun toString() : string => alpha == 255 ? "Color($red, $green, $blue)" : "Color($red, $green, $blue, $alpha)"
 }
 
@@ -115,27 +134,33 @@ fun __colorFraction(value : float, part : string) : byte {
 
 // A point, in whole units.
 value Point(var x : int = 0, var y : int = 0) {
+  // Moves the point by `dx` across and `dy` down.
   mutating fun translate(dx : int, dy : int) {
     x += dx
     y += dy
   }
+  // Moves the point to `x`, `y`.
   mutating fun setLocation(x : int, y : int) {
     this.x = x
     this.y = y
   }
+  // The point as text: "Point(4, 1)".
   override fun toString() : string => "Point($x, $y)"
 }
 
 // A width and a height (Java's Dimension, D102).
 value Size(var width : int = 0, var height : int = 0) {
+  // Whether the size holds nothing: its width or its height is 0 or less.
   val isEmpty : bool
     get() => width <= 0 or height <= 0
+  // The size as text: "Size(30 x 40)".
   override fun toString() : string => "Size($width x $height)"
 }
 
 // Top, left, bottom, right: the order Java gives them in (D105); named arguments make it safe
 // either way, Insets(top = 4, right = 8).
 value Insets(var top : int = 0, var left : int = 0, var bottom : int = 0, var right : int = 0) {
+  // The insets as text: "Insets(top=1, left=2, bottom=3, right=4)".
   override fun toString() : string => "Insets(top=$top, left=$left, bottom=$bottom, right=$right)"
 }
 
@@ -145,31 +170,47 @@ interface Shape
 
 // A rectangle: its top left corner and its size, always all four (D104, D180).
 value Rect(var x : int, var y : int, var width : int, var height : int) : Shape {
+  // Whether the rectangle holds nothing: its width or its height is 0 or less.
   val isEmpty : bool
     get() => width <= 0 or height <= 0
+  // The top left corner, as a Point.
   val location : Point
     get() => Point(x, y)
+  // The width and the height, as a Size.
   val size : Size
     get() => Size(width, height)
+  // The left edge: `x`.
   val minX : int
     get() => x
+  // The top edge: `y`.
   val minY : int
     get() => y
+  // Just past the right edge: `x + width`.
   val maxX : int
     get() => x + width
+  // Just past the bottom edge: `y + height`.
   val maxY : int
     get() => y + height
+  // The middle across, `x + width / 2.0`.
   val centerX : float
     get() => x + width / 2.0
+  // The middle down, `y + height / 2.0`.
   val centerY : float
     get() => y + height / 2.0
 
-  // Whether a point, or the whole of another rectangle, is inside.
+  // Whether the point `px`, `py` is inside: on the left or the top edge it is, on the right or
+  // the bottom edge it is not. An empty rectangle holds no point.
   fun contains(px : int, py : int) : bool => width > 0 and height > 0 and px >= x and py >= y and px < x + width and py < y + height
+  // Whether the point `p` is inside, as for contains(p.x, p.y).
   fun contains(p : Point) : bool => contains(p.x, p.y)
+  // Whether the whole of the rectangle `w` by `h` at `rx`, `ry` is inside; never when either
+  // rectangle is empty.
   fun contains(rx : int, ry : int, w : int, h : int) : bool =>
     width > 0 and height > 0 and w > 0 and h > 0 and rx >= x and ry >= y and rx + w <= x + width and ry + h <= y + height
+  // Whether the whole of the rectangle `r` is inside; never when either rectangle is empty.
   fun contains(r : Rect) : bool => contains(r.x, r.y, r.width, r.height)
+  // Whether the two rectangles share any part; never when either is empty. Rectangles that
+  // only touch at an edge share none.
   fun intersects(other : Rect) : bool =>
     other.width > 0 and other.height > 0 and width > 0 and height > 0 and
     other.x < x + width and other.x + other.width > x and other.y < y + height and other.y + other.height > y
@@ -191,47 +232,59 @@ value Rect(var x : int, var y : int, var width : int, var height : int) : Shape 
     return Rect(left, top, right - left, bottom - top)
   }
 
+  // Moves the rectangle by `dx` across and `dy` down.
   mutating fun translate(dx : int, dy : int) {
     x += dx
     y += dy
   }
+  // Grows the rectangle by `horizontal` on the left and on the right, and by `vertical` at the
+  // top and at the bottom. Negative numbers shrink it, and can leave it empty.
   mutating fun grow(horizontal : int, vertical : int) {
     x -= horizontal
     y -= vertical
     width += 2 * horizontal
     height += 2 * vertical
   }
+  // Makes the rectangle the same as `r`.
   mutating fun setBounds(r : Rect) {
     setBounds(r.x, r.y, r.width, r.height)
   }
+  // Gives the rectangle a new top left corner and size.
   mutating fun setBounds(x : int, y : int, width : int, height : int) {
     this.x = x; this.y = y; this.width = width; this.height = height
   }
+  // Moves the top left corner to `x`, `y`, keeping the size.
   mutating fun setLocation(x : int, y : int) {
     this.x = x
     this.y = y
   }
+  // Gives the rectangle a new size, keeping its top left corner.
   mutating fun setSize(width : int, height : int) {
     this.width = width
     this.height = height
   }
 
+  // The rectangle as text: "Rect(10, 20, 30 x 40)".
   override fun toString() : string => "Rect($x, $y, $width x $height)"
 }
 
 // An oval filling a rectangle.
 value Oval(val x : float, val y : float, val width : float, val height : float) : Shape {
+  // The oval as text, by the rectangle it fills: "Oval(1.0, 2.0, 3.0 x 4.5)".
   override fun toString() : string => "Oval($x, $y, $width x $height)"
 }
 
 // A straight line from one point to another.
 value Line(val x1 : float, val y1 : float, val x2 : float, val y2 : float) : Shape {
+  // The line as text: "Line(1.0, 2.0 to 3.0, 4.0)".
   override fun toString() : string => "Line($x1, $y1 to $x2, $y2)"
 }
 
 // What a canvas draws as a picture (D106): an Image in memory, a Jade Surface on the graphics
 // card. Its size is in units.
 interface Drawable {
+  // The picture's width, in units (an Image's are its pixels).
   val width : int
+  // The picture's height, in units (an Image's are its pixels).
   val height : int
 }

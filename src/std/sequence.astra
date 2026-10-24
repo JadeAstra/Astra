@@ -17,6 +17,8 @@
 // asked for; toList, first, count, fold and the others ask for them. Each time a sequence is
 // gone over, it starts again from the beginning.
 
+// Items given one at a time, as they are asked for, by an iterator made afresh each time the
+// sequence is gone over. sequence { }, generateSequence, sequenceOf and asSequence() make one.
 class Sequence<T> {
   private val make : () -> Iterator<T>
 
@@ -25,15 +27,18 @@ class Sequence<T> {
     this.make = make
   }
 
+  // A new iterator over the items, from the beginning; `for item in sequence` uses it.
   fun iterator() : Iterator<T> => make()
 
   // -- What makes a new sequence, its items worked out as they are asked for --
 
+  // What `transform` gives for each item, worked out as the items are asked for.
   fun <R> map(transform : (T) -> R) : Sequence<R> => Sequence<R>({
     val items = make()
     __Pulled<R>({ items.hasNext() ? transform(items.next()) : __sequenceEnd })
   })
 
+  // What `transform` gives for each item and its position (from 0), worked out as asked for.
   fun <R> mapIndexed(transform : (int, T) -> R) : Sequence<R> => Sequence<R>({
     val items = make()
     var index = -1
@@ -43,6 +48,7 @@ class Sequence<T> {
     })
   })
 
+  // What `transform` gives for each item, leaving out the nulls, worked out as asked for.
   fun <R> mapNotNull(transform : (T) -> R?) : Sequence<R> => Sequence<R>({
     val items = make()
     __Pulled<R>({
@@ -58,6 +64,7 @@ class Sequence<T> {
     })
   })
 
+  // The items for which `predicate` is true, in their order, found as they are asked for.
   fun filter(predicate : (T) -> bool) : Sequence<T> => Sequence<T>({
     val items = make()
     __Pulled<T>({
@@ -73,6 +80,7 @@ class Sequence<T> {
     })
   })
 
+  // The items for which `predicate` is false, in their order, found as they are asked for.
   fun filterNot(predicate : (T) -> bool) : Sequence<T> => filter { !predicate(it) }
 
   // Each item's items, one sequence after another.
@@ -111,6 +119,8 @@ class Sequence<T> {
     })
   }
 
+  // The items from the start for as long as `predicate` is true of them; the sequence ends at the
+  // first item for which it is false.
   fun takeWhile(predicate : (T) -> bool) : Sequence<T> => Sequence<T>({
     val items = make()
     var going = true
@@ -140,6 +150,7 @@ class Sequence<T> {
     })
   }
 
+  // The items from the first one for which `predicate` is false, that one included.
   fun dropWhile(predicate : (T) -> bool) : Sequence<T> => Sequence<T>({
     val items = make()
     var dropping = true
@@ -174,6 +185,8 @@ class Sequence<T> {
   // Each item once, the first time it comes; those seen are kept to tell.
   fun distinct() : Sequence<T> => distinctBy { it }
 
+  // Each item whose `selector` key has not come before, the first time it comes; the keys seen are
+  // kept to tell.
   fun distinctBy(selector : (T) -> any?) : Sequence<T> => Sequence<T>({
     val items = make()
     val seen : open Map<any?, bool> = {:}
@@ -197,28 +210,33 @@ class Sequence<T> {
 
   // -- What asks for the items --
 
+  // All the items, asked for now, as a new list. An endless sequence never gets to the end.
   fun toList() : open List<T> {
     val out : open List<T> = []
     for item in this { out.add(item) }
     return out
   }
 
+  // All the items, each once, asked for now, as a new set.
   fun toSet() : open Set<T> {
     val out : open Set<T> = Set()
     for item in this { out.add(item) }
     return out
   }
 
+  // Runs `action` on each item, in order.
   fun forEach(action : (T) -> unit) {
     for item in this { action(item) }
   }
 
+  // The number of items; it asks for all of them.
   fun count() : int {
     var count = 0
     for item in this { count += 1 }
     return count
   }
 
+  // The number of items for which `predicate` is true; it asks for all of them.
   fun count(predicate : (T) -> bool) : int {
     var count = 0
     for item in this {
@@ -227,8 +245,10 @@ class Sequence<T> {
     return count
   }
 
+  // Whether the sequence has at least one item; it asks for the first only.
   fun any() : bool => iterator().hasNext()
 
+  // Whether `predicate` is true of at least one item; it stops at the first. False when empty.
   fun any(predicate : (T) -> bool) : bool {
     for item in this {
       if (predicate(item)) { return true }
@@ -236,6 +256,7 @@ class Sequence<T> {
     return false
   }
 
+  // Whether `predicate` is true of every item; it stops at the first that fails. True when empty.
   fun all(predicate : (T) -> bool) : bool {
     for item in this {
       if (!predicate(item)) { return false }
@@ -243,16 +264,20 @@ class Sequence<T> {
     return true
   }
 
+  // Whether the sequence has no items; it asks for the first only.
   fun none() : bool => !any()
 
+  // Whether `predicate` is true of no item; it stops at the first that it is true of.
   fun none(predicate : (T) -> bool) : bool => !any(predicate)
 
+  // The first item; a NoSuchElementException when the sequence is empty.
   fun first() : T {
     val items = iterator()
     if (!items.hasNext()) { throw NoSuchElementException("first() of an empty sequence") }
     return items.next()
   }
 
+  // The first item for which `predicate` is true; a NoSuchElementException when there is none.
   fun first(predicate : (T) -> bool) : T {
     for item in this {
       if (predicate(item)) { return item }
@@ -260,11 +285,13 @@ class Sequence<T> {
     throw NoSuchElementException("first(): no item of the sequence meets the condition")
   }
 
+  // The first item, or null when the sequence is empty.
   fun firstOrNull() : T? {
     val items = iterator()
     return items.hasNext() ? items.next() : null
   }
 
+  // The first item for which `predicate` is true, or null when there is none.
   fun firstOrNull(predicate : (T) -> bool) : T? {
     for item in this {
       if (predicate(item)) { return item }
@@ -272,8 +299,11 @@ class Sequence<T> {
     return null
   }
 
+  // The first item for which `predicate` is true, or null when there is none; the same as
+  // firstOrNull(predicate).
   fun find(predicate : (T) -> bool) : T? => firstOrNull(predicate)
 
+  // The last item, which asks for all of them; a NoSuchElementException when the sequence is empty.
   fun last() : T {
     val items = iterator()
     if (!items.hasNext()) { throw NoSuchElementException("last() of an empty sequence") }
@@ -282,6 +312,8 @@ class Sequence<T> {
     return last
   }
 
+  // The item at `index`, counted from 0, asking for the items up to it; an IndexOutOfBoundsException
+  // when there is none there or `index` is negative.
   fun elementAt(index : int) : T {
     if (index >= 0) {
       var at = 0
@@ -293,12 +325,16 @@ class Sequence<T> {
     throw IndexOutOfBoundsException("elementAt($index): the sequence has no item there")
   }
 
+  // `initial` put through `operation` with each item in turn, from the first: the result of each step
+  // and the item give the next.
   fun <R> fold(initial : R, operation : (R, T) -> R) : R {
     var result = initial
     for item in this { result = operation(result, item) }
     return result
   }
 
+  // The first item put through `operation` with each of the others in turn; an
+  // UnsupportedOperationException when the sequence is empty (fold takes a starting value).
   fun reduce(operation : (T, T) -> T) : T {
     val items = iterator()
     if (!items.hasNext()) { throw UnsupportedOperationException("reduce() of an empty sequence needs a starting value: fold(initial) { ... }") }
@@ -307,6 +343,8 @@ class Sequence<T> {
     return result
   }
 
+  // The sum of what `selector` gives for each item: an int if all are ints, a float if any is a
+  // float; 0 when the sequence is empty.
   fun <R : Number> sumOf(selector : (T) -> R) : R {
     var total : Number = 0
     for item in this { total += selector(item) }
@@ -318,10 +356,12 @@ class Sequence<T> {
            truncated : string = "...", transform : ((T) -> any?)? = null) : string =>
     (limit < 0 ? toList() : take(limit + 1).toList()).join(separator, prefix, postfix, limit, truncated, transform)
 
+  // "Sequence": it asks for none of the items. join() gives them as text.
   override fun toString() : string => "Sequence"
 }
 
-// A list of ints sums to an int, one with a float in it to a float.
+// The sum of the items, which asks for all of them: ints sum to an int, and with a float among them
+// to a float; 0 when the sequence is empty.
 fun <T : Number> Sequence<T>.sum() : T {
   var total : Number = 0
   for item in this { total += item }
@@ -341,10 +381,12 @@ class SequenceScope<T> {
     __task.yield()
   }
 
+  // Gives each item of `items` in turn, as yield does.
   suspend fun yieldAll(items : Sequence<T>) {
     for item in items { yield(item) }
   }
 
+  // Gives each item of `items` in turn, as yield does.
   suspend fun yieldAll(items : List<T>) {
     for item in items { yield(item) }
   }
@@ -376,8 +418,10 @@ fun <T> generateSequence(next : () -> T?) : Sequence<T> => Sequence<T>({
   })
 })
 
+// A sequence of the items given, in their order.
 fun <T> sequenceOf(vararg items : T) : Sequence<T> => items.asSequence()
 
+// A sequence with no items.
 fun <T> emptySequence() : Sequence<T> => Sequence<T>({ __Pulled<T>({ __sequenceEnd }) })
 
 // A list's items, read as they are asked for: a change to the list shows in what is still to come.
@@ -410,10 +454,14 @@ fun Range.asSequence() : Sequence<int> => Sequence<int>({
   })
 })
 
+// The set's items, in its order, as a sequence. They are copied when this is called, so a later
+// change to the set does not show.
 fun <T> Set<T>.asSequence() : Sequence<T> => this.toList().asSequence()
 
+// The characters, as a sequence. They are copied into a list when this is called.
 fun string.asSequence() : Sequence<char> => this.toList().asSequence()
 
+// The sequence itself.
 fun <T> Sequence<T>.asSequence() : Sequence<T> => this
 
 // -- How they are made --

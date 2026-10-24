@@ -24,9 +24,12 @@ class StringBuilder {
   // In characters.
   val size : int
     get() => count
+  // The position of the last character: one less than `size`, and -1 when the builder is empty.
   val lastIndex : int
     get() => count - 1
+  // Whether the builder has no text.
   fun isEmpty() : bool => count == 0
+  // Whether the builder has some text.
   fun isNotEmpty() : bool => count != 0
 
   // Adds a value as print would show it. Gives the builder, so that calls can be chained.
@@ -37,11 +40,14 @@ class StringBuilder {
     return this
   }
 
+  // Adds a value as print would show it, then a line break; with no value, only the line break.
+  // Gives the builder.
   fun appendLine(value : any? = "") : StringBuilder {
     append(value)
     return append("\n")
   }
 
+  // The text put together so far.
   fun toString() : string {
     if (parts.size == 0) { return "" }
     if (parts.size > 1) { replaceWith(parts.join("")) }
@@ -54,6 +60,7 @@ class StringBuilder {
     count = text.size
   }
 
+  // Takes all the text out, leaving the builder empty. Gives the builder.
   fun clear() : StringBuilder {
     parts.clear()
     count = 0
@@ -67,6 +74,9 @@ class StringBuilder {
     return this
   }
 
+  // Takes out the characters from `startIndex` up to, not including, `endIndex`; an `endIndex` past
+  // the end stops at the end. Gives the builder. A `startIndex` that is negative or past the end is
+  // an IndexOutOfBoundsException.
   fun deleteRange(startIndex : int, endIndex : int) : StringBuilder {
     val text = toString()
     val end = endIndex > text.size ? text.size : endIndex
@@ -74,8 +84,11 @@ class StringBuilder {
     return this
   }
 
+  // The same as deleteRange(startIndex, endIndex).
   fun delete(startIndex : int, endIndex : int) : StringBuilder => deleteRange(startIndex, endIndex)
+  // Takes out the character at `index`. Gives the builder.
   fun deleteAt(index : int) : StringBuilder => deleteRange(index, index + 1)
+  // Takes out the character at `index`; the same as deleteAt(index).
   fun deleteCharAt(index : int) : StringBuilder => deleteRange(index, index + 1)
 
   // Cuts the text down to `newLength` characters; a longer length leaves it as it is.
@@ -83,18 +96,28 @@ class StringBuilder {
     if (newLength < count) { replaceWith(toString()[0..<newLength]) }
   }
 
+  // Turns the text back to front. Gives the builder.
   fun reverse() : StringBuilder {
     replaceWith(toString().reversed())
     return this
   }
 
-  // A character, `sb[^1]` from the end, and a part, `sb[2..^1]`, as on a string (D146, D147).
+  // The character at `index`, counted from 0; an IndexOutOfBoundsException when there is none.
   fun get(index : int) : char => toString().get(index)
+  // The character at `index`, as on a string (D146): `sb[^1]` counts from the end. An
+  // IndexOutOfBoundsException when there is none.
   op [](index : Index) : char => toString()[index]
+  // The part of the text in `range`, as a string, as on a string (D147): `sb[2..^1]` is from the third
+  // character to the last.
   op [](range : Range) : string => toString()[range]
+  // The position of the first `text` at or after `startIndex`, or -1 when it is not there.
   fun indexOf(text : string, startIndex : int = 0) : int => toString().indexOf(text, startIndex)
+  // The position of the last `text`, or -1 when it is not there.
   fun lastIndexOf(text : string) : int => toString().lastIndexOf(text)
+  // Whether `text` is in the text so far.
   fun contains(text : string) : bool => toString().contains(text)
+  // Whether the text so far starts with `prefix`.
   fun startsWith(prefix : string) : bool => toString().startsWith(prefix)
+  // Whether the text so far ends with `suffix`.
   fun endsWith(suffix : string) : bool => toString().endsWith(suffix)
 }

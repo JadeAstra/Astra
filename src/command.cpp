@@ -48,6 +48,10 @@ extern StartFunction __xi_a[], __xi_z[];
 
 using namespace astra;
 
+namespace astra {
+int docCommand(const std::vector<std::string>& args);  // src/doc.cpp
+}
+
 namespace {
 
 // Reads a whole file as bytes; false if it cannot be opened.
@@ -234,6 +238,10 @@ const char* const kUsage =
     "  astra test [<file or folder>...]      run the tests (@Test) of the files, or of those in\n"
     "                                        the folders (the current one if none is given)\n"
     "  astra dis <file>                      list the bytecode of a source or bytecode file\n"
+    "  astra doc <file>... [-o <page.html>]  a reference page of the files' declarations, from the\n"
+    "                                        comments written above them; --template <page.html>\n"
+    "                                        puts it where that page says <!-- astra doc -->,\n"
+    "                                        --missing lists what has none\n"
     "  astra --version\n"
     "  astra --help\n";
 
@@ -1096,6 +1104,8 @@ int dispatch(const std::vector<std::string>& args) {
     }
 
     if (command == "test") return testFilesCommand(std::vector<std::string>(args.begin() + 1, args.end()));
+
+    if (command == "doc") return docCommand(std::vector<std::string>(args.begin() + 1, args.end()));
 
     if (command == "dis") {
         if (args.size() != 2) {
