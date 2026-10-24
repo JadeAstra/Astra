@@ -3,16 +3,17 @@
 # this runs each a few times and takes the best. With -Save, the times are kept as the
 # baseline; afterwards each run is shown against it.
 #
-#   powershell -ExecutionPolicy Bypass -File bench\run.ps1 [-Save] [-Runs 5] [-AnyCore]
+#   powershell -ExecutionPolicy Bypass -File bench\run.ps1 [-Save] [-Runs 5]
 #
 # Each run is kept on the fastest kind of core the processor has (bench\fastcores.ps1): on a
 # processor with performance and efficient cores, one put on an efficient core would measure
-# the core. -AnyCore leaves it to the system.
+# the core. There is no way to run them anywhere else; a processor whose kinds of core cannot be
+# read stops the run.
 
-param([string]$Astra = (Join-Path $PSScriptRoot '..\build\astra.exe'), [int]$Runs = 5, [switch]$Save, [switch]$AnyCore)
+param([string]$Astra = (Join-Path $PSScriptRoot '..\build\astra.exe'), [int]$Runs = 5, [switch]$Save)
 
 . (Join-Path $PSScriptRoot 'fastcores.ps1')
-$mask = if ($AnyCore) { 0 } else { Get-FastCoreMask }
+$mask = Get-FastCoreMask
 
 $baselineFile = Join-Path $PSScriptRoot 'baseline.txt'
 $baseline = @{}
