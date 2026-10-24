@@ -1,0 +1,61 @@
+// pts.insert(i, Point(...)) and pts.add(i, Point(...)) on a list of values (G7): the new item is
+// written where it goes, as pts.add(Point(...)) writes it at the end, with no box made first.
+// What is wrong is reported as before: the call and the insert take over.
+
+value Point(val x : int, val y : int)
+value Label(val text : string, val at : Point, val tags : List<string>)
+
+val pts : open List<Point> = []
+pts.insert(0, Point(1, 1))
+pts.insert(0, Point(0, 0))
+pts.insert(2, Point(3, 3))
+pts.insert(2, Point(2, 2))
+print(pts)   // expect: [Point(x=0, y=0), Point(x=1, y=1), Point(x=2, y=2), Point(x=3, y=3)]
+print(pts.add(1, Point(9, 9)), pts.add(pts.size, Point(4, 4)), pts.size)   // expect: true true 6
+print(pts[1], pts.last())   // expect: Point(x=9, y=9) Point(x=4, y=4)
+
+// The position is worked out first, then what the value is made of, as for any call.
+var step = 0
+fun next() : int {
+  step += 1
+  print("step", step)
+  return step
+}
+val order : open List<Point> = [Point(0, 0), Point(0, 0)]
+order.insert(next() - 1, Point(next(), next()))
+// expect: step 1
+// expect: step 2
+// expect: step 3
+print(order)   // expect: [Point(x=2, y=3), Point(x=0, y=0), Point(x=0, y=0)]
+
+// A position outside the list: nothing is put in, and the message is insert's or add's own.
+try { pts.insert(7, Point(5, 5)) } catch (e : Exception) { print(e.message) }   // expect: insert position 7 is out of range (size 6)
+try { pts.insert(-1, Point(5, 5)) } catch (e : Exception) { print(e.message) }   // expect: insert position -1 is out of range (size 6): a negative number is no position; the last is [^1]
+try { pts.add(9, Point(5, 5)) } catch (e : Exception) { print(e.message) }   // expect: add: index 9 is out of range (size 6)
+print(pts.size)   // expect: 6
+
+// A list that may hold null: the nulls after the new item move with it.
+val maybe : open List<Point?> = [null, Point(1, 1), null]
+maybe.insert(1, Point(7, 7))
+maybe.insert(0, Point(6, 6))
+print(maybe)   // expect: [Point(x=6, y=6), null, Point(x=7, y=7), Point(x=1, y=1), null]
+
+// Values that hold objects: kept alive in the list, through collections.
+val labels : open List<Label> = []
+for (i in 0 ..< 200) { labels.insert(labels.size / 2, Label("label $i", Point(i, -i), ["t$i"])) }
+var garbage = 0
+for (i in 0 ..< 200000) { garbage += "g$i".size }
+var sum = 0
+for (l in labels) { sum += l.at.x + l.tags.size }
+print(labels.size, sum, labels[0].text, labels[199].tags)   // expect: 200 20100 label 1 ["t0"]
+
+// Many, at the front and in the middle.
+val many : open List<Point> = []
+for (i in 0 ..< 1000) { many.insert(i % 3 == 0 ? 0 : many.size / 2, Point(i, 1)) }
+print(many.size, many.sumOf { it.x }, many.first(), many.count { it.y == 1 })   // expect: 1000 499500 Point(x=999, y=1) 1000
+
+// In a parallel section: a core puts new items in its own lists, and not in a shared one.
+val shared : open List<Point> = [Point(0, 0)]
+try { [1, 2, 3].parallelStream().forEach { shared.insert(0, Point(it, it)) } } catch (e : Exception) { print(e.message) }   // expect: a parallel section changes only the item it was given and what it makes itself: this List is shared with the other cores, so here it can be read and not changed
+val own = [1, 2, 3].parallelStream().map { val mine : open List<Point> = [Point(it, 0)]; mine.insert(0, Point(it * 10, 0)); mine.add(1, Point(-it, 0)); mine.map { p -> p.x } }.toList()
+print(own, shared.size)   // expect: [[10, -1, 1], [20, -2, 2], [30, -3, 3]] 1

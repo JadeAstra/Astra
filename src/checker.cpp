@@ -5834,13 +5834,16 @@ struct Checker::Impl {
     std::unordered_map<const Node*, ClassInfo*> constructedValues;
     std::unordered_set<const Node*> newValueAdds;
 
+    // `pts.insert(i, Point(1, 2))` and `pts.add(i, Point(1, 2))` are the same, at position i (G7).
     void noteNewValueAdded(const FuncInfo* f, const Type* receiver, const Args& args, const Node& at) {
-        if (!f->isExternal || f->name != "add" || receiver == nullptr || args.exprs.size() != 1 || args.spread) return;
+        if (!f->isExternal || receiver == nullptr || args.spread) return;
+        const bool add = f->name == "add" && (args.exprs.size() == 1 || args.exprs.size() == 2), insert = f->name == "insert" && args.exprs.size() == 2;
+        if (!add && !insert) return;
         const Type list = withNull(*receiver, false);
         if (list.kind != Type::List || list.args.size() != 1) return;
         const Type& item = list.args[0];
         if (item.kind != Type::Class || item.nullable || item.cls == nullptr || !item.cls->isValue) return;
-        auto made = constructedValues.find(static_cast<const Node*>(args.exprs[0].get()));
+        auto made = constructedValues.find(static_cast<const Node*>(args.exprs.back().get()));
         if (made != constructedValues.end() && made->second == item.cls) newValueAdds.insert(&at);
     }
 

@@ -227,6 +227,7 @@ const OpInfo kOps[] = {
     {"BUNDLE_VALUES", Operand::U8},
     {"MERGE_BUNDLE", Operand::None},
     {"FRAME_TYPES", Operand::None},
+    {"INSERT_NEW", Operand::U8I32},
 };
 
 const char* const kTypeNames[] = {"", "int", "float", "Number", "string", "bool", "List", "Map", "Range", "Function", "Bytes", "Type", "",
@@ -747,6 +748,11 @@ static int analyzeStack(FunctionProto& f, const Program& program, bool partial) 
                     if (depth < a + 2) fail("stack underflow");
                     flow(b, depth - a - 1);
                     break;
+                case Op::InsertNew:
+                    // As AddNew, with the position under the class; the high bit of argc is the result's.
+                    if (depth < (a & 0x7F) + 3) fail("stack underflow");
+                    flow(b, depth - (a & 0x7F) - 2);
+                    break;
                 case Op::WithTypes:
                     pops = 1;
                     break;
@@ -1213,6 +1219,9 @@ void disassembleFunction(const FunctionProto& f, const Program& program, std::os
             case Op::AddNew:
                 out << " argc=" << a << " -> " << b;
                 break;
+            case Op::InsertNew:
+                out << " argc=" << (a & 0x7F) << ((a & 0x80) != 0 ? " gives true" : "") << " -> " << b;
+                break;
             case Op::ObjectClass:
                 out << " " << a << " -> " << b;
                 break;
@@ -1306,7 +1315,7 @@ void disassemble(const Program& program, std::ostream& out) {
 namespace {
 
 const char kMagic[4] = {'A', 'S', 'T', 'R'};
-const uint8_t kFormatVersion = 21;
+const uint8_t kFormatVersion = 22;
 const int kMaxProtoNesting = 200;
 
 enum ConstantTag : uint8_t { TagInt = 0, TagFloat = 1, TagString = 2, TagChar = 3, TagByte = 4 };
@@ -1724,7 +1733,8 @@ int targetOperand(Op op) {
         case Op::JumpIfNull:
         case Op::JumpIfNotNull:
         case Op::TryBegin: return 1;
-        case Op::AddNew: return 2;
+        case Op::AddNew:
+        case Op::InsertNew: return 2;
         case Op::ObjectClass:
         case Op::CachedType:
         case Op::TagCollection:

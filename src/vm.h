@@ -331,6 +331,7 @@ public:
     void listSwap(ObjList* list, size_t i, size_t j);
     void markItems(ObjList* list);
     bool addNew(int argc);
+    bool insertNew(int argc, bool givesTrue);
     void makeFromHeader(ObjClass* cls, int argc, Value dest);
     void layInline(ObjClass* cls);
     void layFields(ObjClass* cls);

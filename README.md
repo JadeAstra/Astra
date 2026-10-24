@@ -1464,6 +1464,7 @@ and an item read from it is a value as any other.
 ```astra
 val pts : List<Point> = []
 pts.add(Point(1, 2))         // written straight into the list: no Point is made on its own
+pts.insert(0, Point(0, 0))   // the same, at a position (so is pts.add(0, Point(0, 0)))
 pts[0].x                     // read where it is
 pts.sortBy { it.x }          // each key worked out once, each point moved once
 val list : List<any> = pts

@@ -369,6 +369,11 @@ enum class Op : uint8_t {
     // The frame's own type arguments, whole, for the call that follows, as WithTypes would give
     // them (G3): `isA<T>(x)` inside `fun <T>`, with no type made or looked up.
     FrameTypes,         //                                 ->  (for the call that follows)
+    // `pts.insert(i, Point(1, 2))` and `pts.add(i, Point(1, 2))` (G7): as AddNew, the new item made at
+    // position i, an int from 0 to the list's size, and on at target with null, or with true for add
+    // (the high bit of argc); otherwise on, the stack as it was, to the call and the insert or the
+    // add, which say what is wrong.
+    InsertNew,          // u8 argc|0x80, i32 target        list position class args... -> [null or true, at target]
 
     Count_,
 };

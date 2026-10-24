@@ -6642,6 +6642,7 @@ void VM::run(int baseFrame) {
                     case Op::PlaceGlobal:
                     case Op::PlaceField:
                     case Op::PlaceIndex:
+                    case Op::InsertNew:
                         ip = placeInstruction(static_cast<Op>(ip[-1]), ip, frame);
                         break;
                     case Op::AddNew: {
@@ -7243,8 +7244,9 @@ Value VM::returnedRef(Value result, ptrdiff_t frameIndex) {
     return ownRef(result);
 }
 
-// The instructions that give a place (M6.6 part 4), kept out of run() so that what they need
-// does not weigh on the instructions run most. Gives where the next instruction is.
+// The instructions that give a place (M6.6 part 4), and InsertNew, which makes an item in its
+// place (G7), kept out of run() so that what they need does not weigh on the instructions run
+// most. Gives where the next instruction is.
 #ifdef _MSC_VER
 __declspec(noinline)
 #else
@@ -7317,10 +7319,52 @@ const uint8_t* VM::placeInstruction(Op op, const uint8_t* ip, CallFrame* frame) 
             }
             break;
         }
+        case Op::InsertNew: {
+            const int argc = *ip;
+            const int target = operandI32(ip + 1);
+            ip += 5;
+            if (insertNew(argc & 0x7F, (argc & 0x80) != 0)) ip = frame->closure->proto->code.data() + target;
+            break;
+        }
         default:
             break;
     }
     return ip;
+}
+
+// `pts.insert(i, Point(1, 2))` and `pts.add(i, Point(1, 2))` (Op::InsertNew, G7): as addNew, the
+// position under the class, an int from 0 to the list's size; the item is made at the end and
+// moved to its place, as an insert moves the items after it. Its result is null, as insert
+// gives, or true, as add(i, item) gives. False, with the stack as it was, where addNew does
+// nothing or the position is not one, and the call and the insert or add follow and say why.
+// Kept after run(), as addNew is before it, so that run() stays where it was (G7: numeric was 14%
+// slower with run() moved).
+bool VM::insertNew(int argc, bool givesTrue) {
+    Value* const args = sp_ - argc;
+    if (!args[-3].isObjType(ObjType::List)) return false;
+    ObjList* list = asList(args[-3]);
+    const Value position = args[-2];
+    if (list->store() != ListStore::Items || !position.isInt() || position.as.i < 0 || static_cast<uint64_t>(position.as.i) > list->pack->count)
+        return false;
+    const size_t at = static_cast<size_t>(position.as.i);
+    // The position taken from under the class for addNew, and put back if it does nothing.
+    std::memmove(args - 2, args - 1, static_cast<size_t>(argc + 1) * sizeof(Value));
+    sp_--;
+    if (!addNew(argc)) {
+        std::memmove(args - 1, args - 2, static_cast<size_t>(argc + 1) * sizeof(Value));
+        args[-2] = position;
+        sp_++;
+        return false;
+    }
+    PackedItems& pack = *list->pack;
+    const size_t width = pack.width;
+    std::rotate(pack.block.begin() + static_cast<std::ptrdiff_t>(at * width), pack.block.end() - static_cast<std::ptrdiff_t>(width), pack.block.end());
+    if (pack.nullable) {
+        for (size_t i = pack.count - 1; i > at; i--) setNullAt(list, i, nullAt(list, i - 1));
+        setNullAt(list, at, false);
+    }
+    if (!givesTrue) sp_[-1] = Value::null();
+    return true;
 }
 
 // The instructions of types when the program runs (M6.6 part 1), kept out of run()'s loop: they

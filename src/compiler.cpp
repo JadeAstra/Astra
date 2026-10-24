@@ -5098,29 +5098,33 @@ private:
     // `pts.add(Point(1, 2))` on a list of a value type (M6.6 part 3): the value is written into
     // a new item of the list where the list keeps its items packed and the type is made from
     // its header alone (AddNew); otherwise the call and the add as usual, which follow it.
+    // `pts.insert(i, Point(1, 2))` and `pts.add(i, Point(1, 2))` the same, at position i (InsertNew, G7).
     bool compileAddNew(const CallExpr& e, const MemberExpr& member) {
-        if (member.safe || member.name != "add" || e.args.size() != 1 || e.trailingLambda || e.namedCount > 0 || e.hasSpread)
+        const bool insert = e.args.size() == 2;  // insert(i, item), or add(i, item)
+        if (member.safe || (member.name != "add" && member.name != "insert") || (member.name == "insert" && !insert) || e.args.size() > 2 || e.trailingLambda || e.namedCount > 0 ||
+            e.hasSpread)
             return false;
         if (session_.checker == nullptr || !session_.checker->addsNewValue(e)) return false;
-        if (e.args[0]->kind != ExprKind::Call) return false;
-        const auto& made = static_cast<const CallExpr&>(*e.args[0]);
+        if (e.args.back()->kind != ExprKind::Call) return false;
+        const auto& made = static_cast<const CallExpr&>(*e.args.back());
         std::vector<RuntimeType> typeArgs;
-        if (made.namedCount > 0 || made.hasSpread || made.trailingLambda || made.args.size() > 0xFF ||
+        if (made.namedCount > 0 || made.hasSpread || made.trailingLambda || made.args.size() > (insert ? 0x7Fu : 0xFFu) ||
             session_.checker->typeArguments(made, typeArgs))
             return false;
         compileExpr(*member.object);
+        if (insert) compileExpr(*e.args[0]);
         compileCallee(made);
         compileArgs(made.args);
         line_ = made.line;
-        emit(Op::AddNew);
-        emitByte(static_cast<int>(made.args.size()));
+        emit(insert ? Op::InsertNew : Op::AddNew);
+        emitByte(static_cast<int>(made.args.size()) | (insert && member.name == "add" ? 0x80 : 0));
         const int skip = here();
         emitI32(0);
         emit(Op::Call);
         emitByte(static_cast<int>(made.args.size()));
         line_ = member.line;
         emit(Op::Invoke, stringConstant(calledName(e, member.name)));
-        emitByte(1);
+        emitByte(insert ? 2 : 1);
         patchJump(skip);
         return true;
     }
