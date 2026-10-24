@@ -3,3 +3,4 @@ build/
 *.exe
 .vs/
 spikes/m0/out/
+tools/cpucheck/*.zip

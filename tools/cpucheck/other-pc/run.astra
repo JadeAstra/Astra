@@ -1,0 +1,95 @@
+// Runs test.astra over and over, first alone, then beside burst.exe (32 threads that wake every
+// 50 ms, compute for 20 ms and sleep), each phase for a number of seconds, and says how many runs
+// failed in each. Writes everything to results.txt as well.
+//
+//   astra run.astra [--seconds 180] [--mask FFFF]
+//
+// --mask says which logical processors to use, as a hexadecimal mask; all of them by default.
+// On a processor with two kinds of core, give the fast kind's: FFFF on an i9-14900KF.
+// The programs are kept to those processors with Windows' own "start /affinity".
+
+val here = Path(Process.currentCommand()[1]).canonical().parent ?: Path(".")
+val astra = Process.currentCommand()[0]
+val burst = "${here.resolve("burst.exe")}"
+val test = "${here.resolve("test.astra")}"
+val log = here.resolve("results.txt")
+
+var seconds = 180
+var mask = ""
+val given = args()
+var i = 0
+while (i < given.size) {
+  when (given[i]) {
+    "--seconds" -> { seconds = given[i + 1].toInt(); i += 1 }
+    "--mask" -> { mask = given[i + 1]; i += 1 }
+    else -> { print("usage: astra run.astra [--seconds N] [--mask HEX]"); exit(2) }
+  }
+  i += 1
+}
+
+fun say(text : string) {
+  print(text)
+  flush()  // shown now, not when the program ends
+  log.appendText(text + "\n")
+}
+
+// What a command prints, trimmed.
+fun outputOf(vararg command : string) : string => Process.run(command).output.trim()
+
+// The words that run `program` with `arguments` on the processors of `mask`, waiting for it to end.
+fun pinned(program : string, arguments : List<string>) : List<string> =>
+  ["cmd", "/c", "start", "cpu check", "/b", "/wait", "/affinity", mask, program] + arguments
+
+// Runs test.astra again and again for `seconds`, beside burst.exe if `withLoad`; gives the failures.
+fun phase(title : string, withLoad : bool) : int {
+  val load : Process? = withLoad ? Process(pinned(burst, ["${seconds + 5}", "32"]), output = Stream.discard, error = Stream.discard) : null
+  say("== $title")
+  val end = clock() + seconds
+  var runs = 0
+  var failures = 0
+  while (clock() < end) {
+    // "start /wait" does not pass the exit code back, so a run has passed when it said "done",
+    // printed no WRONG line and no error; a crash prints none of them.
+    val result = Process.run(pinned(astra, [test]))
+    runs += 1
+    val errors = result.error.lines().filter { it.isNotBlank() }
+    val wrong = result.output.lines().filter { it.startsWith("WRONG") }
+    if (!result.output.contains("done") or errors.isNotEmpty() or wrong.isNotEmpty()) {
+      failures += 1
+      val at = errors.filter { it.trim().startsWith("at ") }
+      val message = errors.isEmpty() ? "did not finish (no \"done\" and no error message)" : errors[0].trim() + (at.isEmpty() ? "" : ", " + at[0].trim())
+      if (wrong.isNotEmpty()) { say("  run $runs: ${wrong.size} wrong result(s), first: ${wrong[0]}") }
+      if (errors.isNotEmpty() or !result.output.contains("done")) { say("  run $runs: $message") }
+    } else {
+      say("  run $runs: ok")
+    }
+  }
+  load?.kill()
+  say("  $failures of $runs runs failed")
+  return failures
+}
+
+log.deleteIfExists()
+val processors = outputOf("cmd", "/c", "echo %NUMBER_OF_PROCESSORS%").toInt()
+if (mask == "") {
+  var all = 0
+  for (k in 0 ..< processors) { all = all * 2 + 1 }
+  mask = all.toString(16).upper()
+}
+val name = outputOf("reg", "query", "HKLM\\HARDWARE\\DESCRIPTION\\System\\CentralProcessor\\0", "/v", "ProcessorNameString")
+val cpu = name.contains("REG_SZ") ? name[name.indexOf("REG_SZ") + 6..].trim() : name
+say("Processor: $cpu ($processors logical processors)")
+say("Windows: ${outputOf("cmd", "/c", "ver")}")
+say("Processors used: mask $mask; $seconds seconds per phase")
+say("")
+val alone = phase("test.astra alone", false)
+val loaded = phase("test.astra beside burst.exe", true)
+say("")
+if (alone == 0 and loaded == 0) {
+  say("No failures in either phase.")
+} else if (alone == 0) {
+  say("Failures only beside burst.exe.")
+} else {
+  say("Failures even alone.")
+}
+say("Results are in $log")

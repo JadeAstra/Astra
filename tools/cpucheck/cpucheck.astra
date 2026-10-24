@@ -1,0 +1,24 @@
+// Moves a million particles with every core, then draws them with one thread, over and over.
+// The answers never change, so any error here is wrong
+// (tools/cpucheck/cpucheck.ps1 runs it). The moving is additions only: nothing else, so that
+// each burst of work on the cores is long enough.
+
+value Particle(var x : float, var y : float, var dx : float, var dy : float) {
+  mutating fun step() {
+    var t = dx
+    t = t + dx + dy + dx + dy + dx + dy + dx + dy
+    x += t
+    y += dy
+  }
+}
+
+val n = 1000000
+val w = 1024
+val h = 768
+val ps : open List<Particle> = []
+for (i in 0 ..< n) { ps.add(Particle((i * 7919 % w) * 1.0, (i * 104729 % h) * 1.0, (i % 7) * 0.5 + 0.25, (i % 5) * 0.5 + 0.25)) }
+val pixels = Bytes(w * h)
+for (frame in 0 ..< 100000) {
+  ps.parallelStream().forEach { it.step() }
+  for (p in ps) { pixels[(p.y.toInt() % h) * w + p.x.toInt() % w] = 255 }
+}

@@ -1,0 +1,20 @@
+// Builds the same string over and over and compares it: "s" + "tri" + "n" + "g" is always
+// "string", so a working computer never prints a WRONG line. "done" at the end says it finished.
+
+fun check() {
+  val s = "string"
+  var wrong = 0
+  for (frame in 0 ..< 20) {
+    for (k in 0 ..< 3000000) {
+      val t = "${s[0]}tri${"n"}g"
+      if (s != t) {
+        wrong += 1
+        print("WRONG: '$s' != '$t'")
+        flush()
+      }
+    }
+  }
+  print("done, $wrong wrong")
+}
+
+check()
