@@ -1525,7 +1525,10 @@ but the time and the memory; with `ASTRA_COPY_READS=1` every read is a copy, for
 change made through `it` changes the item, as in a parallel section; a lambda that may change a
 list of the item's type, or gives `it` to a variable outside itself, is given a copy instead. On a
 list that may hold null, `it?.move()` and `pts[i]?.move()` pass by the null items and change the
-others where they are.
+others where they are. `filter`, `map`, `count`, `any`, `sumOf`, `first` and the like read the
+items where they are too, within a fifth of the loop written out by hand, unless the lambda may change a
+list, keeps the item or gives it back (then each item is copied, as it is handed over); what
+`first` and `find` give is a copy.
 
 Larger values kept in variables, arguments and results without a box come in the rest of M6.6
 ([value-lists.html](docs/value-lists.html)).

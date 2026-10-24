@@ -1,0 +1,56 @@
+// The standard library's list functions read the items of a list of values where they are,
+// where neither their own code nor the lambdas they are given may change a list, keep an item
+// or give one back (G15, 2026-10-24); elsewhere they copy, as before. Every line here gives
+// what it gave when each item was copied.
+
+value Point(var x : int, var y : int) {
+  mutating fun shift() { x += 100 }
+}
+
+val pts : open List<Point> = [Point(1, 10), Point(2, 20), Point(3, 30), Point(4, 40)]
+
+// Read where they are: the results, and the result list holds Points.
+print(pts.filter { it.x > 2 }, pts.count { it.x % 2 == 0 }, pts.any { it.y == 30 }, pts.all { it.x > 0 }, pts.none { it.x > 9 })
+// expect: [Point(x=3, y=30), Point(x=4, y=40)] 2 true true true
+print(pts.sumOf { it.x * it.y }, pts.map { it.x + it.y }, pts.filter { it.x > 2 }.itemType)   // expect: 300 [11, 22, 33, 44] Point
+
+// What first and find give back is a copy: a later change to the list leaves it as it was.
+val third = pts.first { it.x == 3 }
+val fourth = pts.find { it.x == 4 }
+pts[2] = Point(-3, -30)
+pts[3] = Point(-4, -40)
+print(third, fourth)   // expect: Point(x=3, y=30) Point(x=4, y=40)
+pts[2] = Point(3, 30)
+pts[3] = Point(4, 40)
+
+// A lambda that gives the item back: copies, kept apart from the list.
+val same = pts.map { it }
+val evens = pts.filter { it.x % 2 == 0 }
+pts[1] = Point(0, 0)
+print(same[1], evens[0])   // expect: Point(x=2, y=20) Point(x=2, y=20)
+pts[1] = Point(2, 20)
+
+// A lambda that keeps the item outside itself.
+var kept : Point? = null
+print(pts.count { kept = it; true })   // expect: 4
+pts[3] = Point(9, 9)
+print(kept)   // expect: Point(x=4, y=40)
+pts[3] = Point(4, 40)
+
+// A lambda that changes the list as it goes: each item as it was when its turn came.
+val seen : open List<int> = []
+print(pts.filter { seen.add(it.x); if (it.x == 1) { pts[1] = Point(7, 70) }; it.x > 2 })   // expect: [Point(x=7, y=70), Point(x=3, y=30), Point(x=4, y=40)]
+print(seen)   // expect: [1, 7, 3, 4]
+pts[1] = Point(2, 20)
+
+// A function given as a value, which may do anything: copies.
+val changer : (Point) -> bool = { p -> if (p.x == 2) { pts[2] = Point(5, 50) }; p.x > 2 }
+print(pts.filter(changer), pts.count(changer))   // expect: [Point(x=5, y=50), Point(x=4, y=40)] 2
+pts[2] = Point(3, 30)
+
+// A list that may hold null, and one of objects, as before.
+val holes : open List<Point?> = [Point(1, 1), null, Point(3, 3)]
+print(holes.filter { it != null and it.x > 1 }, holes.count { it == null }, holes.map { it?.x })   // expect: [Point(x=3, y=3)] 1 [1, null, 3]
+class Box(var n : int)
+val boxes = [Box(1), Box(2)]
+print(boxes.filter { it.n > 1 }.map { it.n }, boxes.sumOf { it.n })   // expect: [2] 3

@@ -2930,6 +2930,12 @@ struct Checker::Impl {
         declaringNames.push_back(v.name);
         Type value = v.init ? exprExpected(*v.init, declared) : unknownType();
         declaringNames.pop_back();
+        // `val out : open List<T> = []` in a generic function: the type it is declared as, for an
+        // inline function's body copied in where the call says what T is (G15).
+        if (v.init && v.init->kind == ExprKind::List && static_cast<const ListExpr&>(*v.init).items.empty() && silent == 0) {
+            const Type plain = withNull(declared, false);
+            if (plain.kind == Type::List && plain.args.size() == 1 && plain.args[0].kind == Type::TypeParam) declaredLiterals[v.init.get()] = plain;
+        }
         if (!global) {
             if (!v.pattern.empty()) noteKeeping(unknownType());  // its parts, whatever they are
             else noteKeeping(declared.known() ? declared : value);
@@ -2968,6 +2974,11 @@ struct Checker::Impl {
 
     void returnStmt(const ReturnStmt& r) {
         if (ctx == nullptr) return;
+        // `return item` of a loop's variable, leaving the function: the compiler copies what an
+        // inline function gives back (G15).
+        if (!ctx->isLambda && r.value && r.value->kind == ExprKind::Name)
+            if (Local* l = findLocal(static_cast<const NameExpr&>(*r.value).name); l != nullptr && l->loopOf != nullptr)
+                loopCandidates[l->loopOf].returnUses.insert(static_cast<const NameExpr*>(r.value.get()));
         // A bare return in a lambda copied into an inline function leaves the function around it,
         // whose type it is checked against (D59); in any other lambda the compiler refuses it.
         if (ctx->isLambda && !r.implicit && r.label.empty()) {
@@ -3258,8 +3269,10 @@ struct Checker::Impl {
                         report(*inner, "this 'it' is the inner lambda's, and the lambda around it uses an 'it' of its own: "
                                        "name one of them, as in rows.forEach { row -> row.cells.forEach { print(it) } } (D55)");
         }
-        for (const Type& given : returns)
+        for (const Type& given : returns) {
             if (given.kind == Type::Class && !given.nullable && given.cls != nullptr && given.cls->isValue) valueLambdas.insert(&d);
+            if (mayHoldValue(given)) givingLambdas.insert(&d);
+        }
         Type r = (!d.isLambda && c.returnKnown) ? c.expected : unknownType();
         if (d.isLambda && c.returnKnown) {
             r = c.expected;  // what it ends with was checked against this, and reported there
@@ -3666,6 +3679,7 @@ struct Checker::Impl {
     // list or map literal its item types.
     // The types list and map literals are made as, for the compiler (M6.6 part 1).
     std::unordered_map<const Expr*, Type> literalTypes;
+    std::unordered_map<const Expr*, Type> declaredLiterals;  // an empty list given a type naming a type parameter
 
     // A bare name that means nothing here: no variable, member, class or global.
     bool unresolvedName(const Expr& e) {
@@ -5146,6 +5160,7 @@ struct Checker::Impl {
         const void* key = nullptr;  // the function the loop is in
         Type item;
         std::unordered_set<const NameExpr*> uses, argUses;
+        std::unordered_set<const NameExpr*> returnUses;  // `return item`, from the function itself
         bool keptPast = false;  // noteKeptPastLoops
     };
     std::unordered_map<const ForInStmt*, LoopCandidate> loopCandidates;
@@ -5157,6 +5172,7 @@ struct Checker::Impl {
     };
     std::unordered_map<const FunctionDecl*, std::vector<ParamCandidate>> paramCandidates;
     std::unordered_set<const FunctionDecl*> valueLambdas;      // lambdas that give a value of a value type
+    std::unordered_set<const FunctionDecl*> givingLambdas;     // lambdas that may give one, an item where it is perhaps
     std::unordered_set<const AssignExpr*> builtInPlace;        // `pts[i] = f(...)`, f giving the list's item type
     std::set<std::pair<const FunctionDecl*, std::string>> placeParams;  // parameters changed through as places
 
@@ -9399,6 +9415,24 @@ bool Checker::loopPassesOn(const ForInStmt& loop) const {
 std::vector<int> Checker::paramsOwned(const FunctionDecl& fn) const { return impl_->paramsOwned(fn); }
 bool Checker::keepsOutside(const FunctionDecl& lambda) const { return impl_->keepingLambdas.count(&lambda) != 0; }
 
+// For a loop of an inline function's own body that hands its items to the lambdas it was given (G15).
+bool Checker::loopPassesAllOn(const ForInStmt& loop) const {
+    auto found = impl_->loopCandidates.find(&loop);
+    if (found == impl_->loopCandidates.end() || found->second.uses.empty()) return false;
+    const auto& c = found->second;
+    for (const NameExpr* use : c.uses)
+        if (c.argUses.count(use) == 0 && c.returnUses.count(use) == 0) return false;
+    return true;
+}
+bool Checker::changesLists(const FunctionDecl& fn, bool countGiven) const {
+    impl_->joinEffects();
+    auto found = impl_->effects.find(&fn);
+    if (found == impl_->effects.end()) return false;
+    const auto& e = found->second;
+    return e.any || !e.types.empty() || (countGiven && e.callsParams);
+}
+bool Checker::mayGiveValue(const FunctionDecl& lambda) const { return impl_->givingLambdas.count(&lambda) != 0; }
+
 // A method of a value type that is not mutating, run on an item where it is: copied as it
 // starts if it may change a list of its type, so that what it reads stays as it was.
 bool Checker::ownsThis(const FunctionDecl& fn) const {
@@ -9407,6 +9441,13 @@ bool Checker::ownsThis(const FunctionDecl& fn) const {
     const FuncInfo* f = found->second;
     if (f->owner == nullptr || !f->owner->isValue || f->isStatic || fn.isMutating || fn.name == "init") return false;
     return impl_->mayChangeLists(&fn, f->owner);
+}
+
+bool Checker::declaredLiteralType(const Expr& literal, RuntimeType& out) const {
+    auto found = impl_->declaredLiterals.find(&literal);
+    if (found == impl_->declaredLiterals.end()) return false;
+    out = runtimeTypeOf(found->second);
+    return out.kind != RuntimeType::Unknown;
 }
 
 bool Checker::literalType(const Expr& literal, RuntimeType& out) const {

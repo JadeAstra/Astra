@@ -168,6 +168,8 @@ public:
 
     // For a list or map literal: the type it is made as, where that is known.
     bool literalType(const Expr& literal, RuntimeType& out) const;
+    // `val out : open List<T> = []`: the type it is declared as, which names a type parameter.
+    bool declaredLiteralType(const Expr& literal, RuntimeType& out) const;
 
     // For a call of a generic function or class written in Astra: what it gives the type
     // parameters, in their order, an Unknown where that was not worked out.
@@ -268,6 +270,13 @@ public:
     std::vector<int> paramsOwned(const FunctionDecl& fn) const;
     // Whether a lambda gives a value to a variable of the code around it (`saved = it`).
     bool keepsOutside(const FunctionDecl& lambda) const;
+    // An inline function's own loop that may read its items where they are and hand them to the
+    // lambdas it was given (G15): every use of its variable an argument or what is returned; the
+    // lists a function or lambda may change, the functions it was given counted or not; and
+    // whether a lambda may give back a value (the item where it is, perhaps).
+    bool loopPassesAllOn(const ForInStmt& loop) const;
+    bool changesLists(const FunctionDecl& fn, bool countGiven) const;
+    bool mayGiveValue(const FunctionDecl& lambda) const;
     bool ownsThis(const FunctionDecl& fn) const;
 
     // Results built where they go (M6.6 part 4): whether a function or lambda gives a value of a

@@ -739,6 +739,7 @@ private:
         const FunctionDecl* fn = nullptr;
         int owner = 0;
         std::unordered_map<std::string, BoundLambda> lambdas;  // parameters given lambdas copied in
+        bool everyFunctionBound = true;                        // no parameter of a function type given a function value
         std::vector<int> exits;                                // its returns, to the end
         int baseSlot = 0;                                      // where its own locals start
         FinallyState* finallyAtEntry = nullptr;
@@ -899,6 +900,10 @@ private:
         const CodeScope caller = scopeNow();
         InlineFrame frame;
         frame.fn = &fn;
+        for (size_t p = 0; p < n; p++) {
+            const TypeAnnotation* t = p < fn.paramTypes.size() ? &fn.paramTypes[p] : nullptr;
+            if (!bound[p] && (t == nullptr || t->name.empty() || t->name == "Function" || !t->result.empty())) frame.everyFunctionBound = false;
+        }
         frame.owner = ++nextOwner_;
         if (std::vector<RuntimeType> args; session_.checker->typeArguments(e, args))
             for (size_t i = 0; i < fn.typeParams.size() && i < args.size(); i++)
@@ -971,9 +976,23 @@ private:
     // (value-lists.html section 8). The lambda takes a copy first where it may change a list of
     // the item's type or keeps it (compileLambdaCopy); what it gives back goes nowhere.
     bool handsItemToLambda(const ForInStmt& s) {
-        if (inlineDepth_ == 0 || copiedDepth_ > 0 || frame_ == nullptr || fs_->owner != frame_->owner || !s.pattern.empty() ||
-            !session_.checker->loopPassesOn(s))
+        if (inlineDepth_ == 0 || copiedDepth_ > 0 || frame_ == nullptr || fs_->owner != frame_->owner || !s.pattern.empty()) return false;
+        if (session_.checker->loopPassesOn(s) && forEachShape(s)) return true;
+        // Any other loop whose item goes only to calls and back as the function's result (filter,
+        // any, count, sumOf, map, first; G15): where neither the body nor a lambda it was given may
+        // change a list, and no lambda keeps the item or may give it back. What the body gives back
+        // is copied (compileInlineReturn), and what it adds to a list is copied in.
+        if (frame_->fn == nullptr || !frame_->everyFunctionBound || !session_.checker->loopPassesAllOn(s) ||
+            session_.checker->changesLists(*frame_->fn, false))
             return false;
+        for (const auto& [name, b] : frame_->lambdas)
+            if (session_.checker->changesLists(*b.lambda, true) || session_.checker->keepsOutside(*b.lambda) || session_.checker->mayGiveValue(*b.lambda))
+                return false;
+        return true;
+    }
+
+    // The loop's body calls a lambda copied in with the item, not using what it gives.
+    bool forEachShape(const ForInStmt& s) {
         for (const StmtPtr& st : s.body->statements) {
             if (st->kind != StmtKind::Expr) continue;
             const Expr& e = *static_cast<const ExprStmt&>(*st).expr;
@@ -1010,6 +1029,7 @@ private:
         if (inExpression) emitSettle(true);
         beginScope();
         const int result = addLocal("(inline value)", false, s, true);
+        emit(Op::OwnLocal, slotOf(result));  // an item of a list read where it is, given back: a copy (G15)
         const int open = emitPendingFinally(nullptr, frame.finallyAtEntry);
         for (int i = open; i > frame.tryDepth; i--) emit(Op::TryEnd);
         emit(Op::GetLocal, slotOf(result));
@@ -2690,6 +2710,29 @@ private:
     // Whether a type as written says more than its class or kind: type arguments to check, or
     // a type parameter, whose value the code is given when it runs.
     // In an inline function's body, the type argument the call gave one of its type parameters.
+    // A type naming an inline function's type parameters, in its body copied in, as the call
+    // made it: `List<T>` in filter's body is `List<Point>` (G15). False where something in it is
+    // not known as the program is compiled, a type parameter of the calling function say.
+    bool givenInFrame(RuntimeType& t) const {
+        if (t.kind == RuntimeType::TypeParam) {
+            const RuntimeType* given = inlineTypeArgument(t.typeParam);
+            if (given == nullptr || !concrete(*given)) return false;
+            const bool nullable = t.nullable;
+            t = *given;
+            t.nullable = t.nullable || nullable;
+            return true;
+        }
+        for (RuntimeType& a : t.args)
+            if (!givenInFrame(a)) return false;
+        return t.kind != RuntimeType::Unknown;
+    }
+    static bool concrete(const RuntimeType& t) {
+        if (t.kind == RuntimeType::TypeParam || t.kind == RuntimeType::Unknown) return false;
+        for (const RuntimeType& a : t.args)
+            if (!concrete(a)) return false;
+        return true;
+    }
+
     const RuntimeType* inlineTypeArgument(const std::string& name) const {
         if (frame_ == nullptr) return nullptr;
         auto found = frame_->typeArgs.find(name);
@@ -3625,7 +3668,7 @@ private:
         fs_->loop = &loop;
         line_ = s.line;
         // A list of values may hand the loop its items where they are (M6.6 part 4).
-        const bool inPlace = !counted && session_.checker != nullptr && (!inPlaceOff() || handsItemToLambda(s)) && session_.checker->loopsInPlace(s) &&
+        const bool inPlace = !counted && session_.checker != nullptr && (inPlaceOff() ? handsItemToLambda(s) : session_.checker->loopsInPlace(s)) &&
                              (!copyingReads() || session_.checker->loopPassesOn(s));
         // Two names taking the item apart, `for ((key, value) in map)`: both parts at once, with
         // nothing made for a map's entry (D64, D73).
@@ -5560,6 +5603,7 @@ private:
                 emit(Op::BuildList, static_cast<int>(e.items.size()));
                 RuntimeType made;
                 if (session_.checker->literalType(e, made)) emitTag(made, e);
+                else if (session_.checker->declaredLiteralType(e, made) && givenInFrame(made)) emitTag(made, e);
                 break;
             }
 
