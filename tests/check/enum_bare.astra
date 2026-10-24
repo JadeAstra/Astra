@@ -1,0 +1,23 @@
+// An entry of an enum may be written bare where that enum is expected. Anywhere else the full
+// name is needed, and a bare one is found when the program is checked (before, only when the
+// program came to it). tests/enum_bare.astra has the cases that are right.
+
+enum Way { up, down, left, right }
+enum Fill { NONE, HORIZONTAL, VERTICAL, BOTH }
+fun step(way : Way, fill : Fill = NONE) => "$way/$fill"
+class Cell(val content : string, var fill : Fill = NONE, var anchor : Way = up)
+fun untyped(x : any?) => x
+fun typedOther(n : int) => n
+fun takesShape(s : Cell) => s
+fun many(vararg ways : any) => ways
+
+untyped(up)          // check: there is nothing named 'up' here: no variable, function or class of that name is in reach
+print(up)            // check: there is nothing named 'up' here: no variable, function or class of that name is in reach
+typedOther(up)       // check: there is nothing named 'up' here: no variable, function or class of that name is in reach
+takesShape(up)       // check: there is nothing named 'up' here: no variable, function or class of that name is in reach
+many(left)           // check: there is nothing named 'left' here: no variable, function or class of that name is in reach
+step(sideways)       // check: 'sideways' is not an entry of enum Way, nor a variable
+step(up, left)       // check: 'left' is not an entry of enum Fill, nor a variable
+Cell("z", up)        // check: 'up' is not an entry of enum Fill, nor a variable
+step(up, NONE)
+Cell("y", BOTH, down)

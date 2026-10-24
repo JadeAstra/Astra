@@ -42,7 +42,6 @@ fun attempt(f : () -> any?) {
   }
 }
 print(attempt(fun() => 1 / 0))                // expect: error: division by zero
-print(attempt(fun() => nope))                 // expect: error: undefined variable 'nope'
 print(attempt(fun() => null.x))               // expect: error: undefined property 'x' on a value of type null
 print(attempt(fun() => unknown(5)()))                  // expect: error: cannot call a value of type int
 print(attempt(fun() => "a" - unknown(1)))              // expect: error: unsupported operand types for '-': string and int

@@ -30,7 +30,7 @@ print(Block(1).describe())              // expect: my block 1
 
 // Without .* nothing of the import is in reach by a bare name.
 print(NsText.Block("hi").describe(), text.words("a b c"), NsText.title, text.title)   // expect: text block: hi ["a", "b", "c"] text text
-try { words("x y") } catch (e) { print(e.message) }   // expect: undefined variable 'words'
+// A bare words("x y") is found when the program is checked (tests/error_ns_bare.astra).
 val made : text.Block = NsText.Block("typed")
 print(made is text.Block, made is NsText.Block, made is Block, Block(2) is text.Block)   // expect: true true false false
 fun show(block : NsText.Block) => block.content

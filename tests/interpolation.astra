@@ -62,9 +62,3 @@ fun describe(label : string, values : List) : string {
 }
 print(describe("list", [7, 8, 9]))              // expect: list has 3: 7 8 9
 
-// an unknown name is reported when the string is built
-try {
-  print("hello $nobody")
-} catch (e) {
-  print(e.message)                              // expect: undefined variable 'nobody'
-}

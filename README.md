@@ -1159,6 +1159,10 @@ A function or a lambda written inside a method reaches the object the same way. 
 that is run on another object (`panel.apply { ... }`) that object's members come first, then
 those of the object the method belongs to.
 
+A name that none of these declares is an error when the program is checked: a misspelling, or a
+name of another file that is not imported. Where the name is in reach only some other way, the
+error says how: `NsShapes.PI_ISH` after an import without `.*`, or that it is private to its file.
+
 A field's initial value can use the entries of the class header and the fields above it:
 
 ```astra
@@ -1612,11 +1616,13 @@ cell(label, fill = horizontal)      // by name too: the parameter says which enu
 ```
 
 With no such destination the full name is needed: `val x = up`, `print(up)` and
-`items.add(up)` are errors, since nothing says which enum is meant. A name that already means
-something (a variable, a member of the class, a global) keeps that meaning, so the bare name
-of an entry is only ever tried last. The destination decides, so two enums may share entry
-names. For an argument, the name is settled as it reaches the parameter, and a name that is
-not an entry of the parameter's enum is an error there.
+`items.add(up)` are errors, since nothing says which enum is meant. They are found when the
+program is checked, unless the function called, or the type of its parameter, is known only
+when it runs. A name that already means something (a variable, a member of the class, a
+global) keeps that meaning, so the bare name of an entry is only ever tried last. The
+destination decides, so two enums may share entry names. For an argument, the name is settled
+as it reaches the parameter, and a name that is not an entry of the parameter's enum is an
+error there.
 
 **Every `when` over an enum, an enum class, an enum interface or a bool covers every kind**
 (and `null`, for one that may be null) or has an `else`, whether it gives a value or not.

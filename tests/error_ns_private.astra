@@ -1,5 +1,5 @@
-// A private name stays in its file.
+// A private name stays in its file: using it from another is found when the program is checked.
 import NsShapes.*
-print(shapeSecret())                    // expect: shape's own, not for others
+print(shapeSecret())
 print(hidden())
-// expect runtime error: Uncaught IllegalStateException: undefined variable 'hidden'
+// expect compile error: error_ns_private.astra:4:7: error: 'hidden' is private to shape.astra, and in reach only there

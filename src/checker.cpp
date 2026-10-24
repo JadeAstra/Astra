@@ -384,6 +384,9 @@ struct Checker::Impl {
     Unit* unit = nullptr;
     FnCtx* ctx = nullptr;
     std::vector<std::unordered_map<std::string, Local>> scopes;
+    // The scopes around a class declared inside a function, or an object written where a value
+    // is: its methods reach the locals there, as a lambda does.
+    std::unordered_map<const ClassInfo*, std::vector<std::unordered_map<std::string, Local>>> scopesAroundClass;
     // Classes declared in a block, innermost last. Not cleared for a body checked inside the
     // block, so the methods of a local class see it, and so do the functions beside it.
     std::vector<std::unordered_map<std::string, ClassInfo*>> localClasses;
@@ -1223,6 +1226,30 @@ struct Checker::Impl {
             }
         }
         return nullptr;
+    }
+
+    // What to say of a bare name nothing in reach declares: where it is, if somewhere it cannot be
+    // reached from here.
+    std::string unknownNameMessage(const std::string& name) {
+        // Imported without .*: written after the import's name.
+        for (const ImportInfo& imp : unit->imports)
+            if (!imp.all && !imp.alias.empty() && findIn(imp.ns, name) != nullptr)
+                return "'" + name + "' is written " + imp.alias + "." + name + " here: the import has no .*, so its names are not in reach by themselves";
+        // Private to another file.
+        for (const auto& [file, names] : privates)
+            if (file != unit->fileKey && names.count(name) != 0) {
+                const size_t slash = file.find_last_of("/\\");
+                return "'" + name + "' is private to " + (slash == std::string::npos ? file : file.substr(slash + 1)) + ", and in reach only there";
+            }
+        return "there is nothing named '" + name + "' here: no variable, function or class of that name is in reach";
+    }
+
+    // `modules` in `modules.mathutil.double(4)` after `import modules.mathutil`: the first part of an
+    // import's dotted name.
+    bool importRoot(Unit& u, const std::string& name) {
+        for (const ImportInfo& imp : u.imports)
+            if (imp.alias.size() > name.size() && imp.alias.compare(0, name.size(), name) == 0 && imp.alias[name.size()] == '.') return true;
+        return false;
     }
 
     // `ui` in `ui.Button` after `import jade as ui`: the namespace, or null.
@@ -2129,6 +2156,8 @@ struct Checker::Impl {
             {"synchronized", "synchronized(x) { } is a Lock's useKey in Astra: val lock = Lock(), then lock.useKey { ... }; data reached only with the key is a LockBox(value) (D86)"},
             {"ReentrantLock", "a ReentrantLock is a Lock() in Astra, used with useKey { } (D86)"},
             {"startCoroutine", "startCoroutine is task { ... } in Astra, which gives a Job of what the block returns (D81)"},
+            {"bytes", "'bytes' is now written 'Bytes', as its type is (type names are Title case)"},
+            {"range", "'range' is now written 'Range', as its type is (type names are Title case)"},
             {"suspendCoroutine", "suspendCoroutine is suspendTask { resume -> ... } in Astra: resume(value) takes the task up again, resume.fail(e) throws e there (D81)"},
             {"Continuation", "a Continuation is suspendTask's resume in Astra, a plain function: resume(value), resume.fail(e) (D81)"},
             {"EmptyCoroutineContext", "a task needs no context in Astra: task { ... } (D81)"},
@@ -2870,6 +2899,7 @@ struct Checker::Impl {
                 k->outerThis = outerThisHere();
                 if (localClasses.empty()) push();
                 localClasses.back()[cs.name] = k;
+                scopesAroundClass[k] = scopes;
                 checkClass(k);
                 break;
             }
@@ -2892,7 +2922,11 @@ struct Checker::Impl {
         // A lazy starting value is worked out by whoever first reads it, which does not wait (D37).
         const NoWait wasWait = ctx != nullptr ? ctx->noWait : CanWait;
         if (v.isLazy && ctx != nullptr) ctx->noWait = LazyValue;
+        // Its own name, named in a lambda its value holds (`val id = timers.every { ... id ... }`): the
+        // lambda runs later, when the variable has its value.
+        declaringNames.push_back(v.name);
         Type value = v.init ? exprExpected(*v.init, declared) : unknownType();
+        declaringNames.pop_back();
         if (!global) {
             if (!v.pattern.empty()) noteKeeping(unknownType());  // its parts, whatever they are
             else noteKeeping(declared.known() ? declared : value);
@@ -3000,6 +3034,13 @@ struct Checker::Impl {
         if (std::exchange(bodyInside, false)) {
             scopes = savedScopes;
             tparams = savedParams.saved;
+        } else {
+            for (const ClassInfo* o = f->owner; o != nullptr; o = o->outer) {
+                auto around = scopesAroundClass.find(o);
+                if (around == scopesAroundClass.end()) continue;
+                scopes = around->second;
+                break;
+            }
         }
         unit = f->unit;
         FnCtx c;
@@ -3456,6 +3497,9 @@ struct Checker::Impl {
                 fc.cls = k;
                 fc.noWait = ObjectMade;
                 withCtx(fc, [&] {
+                    // The header's parameters that are not fields are in reach of the fields' values.
+                    for (const HeaderParam& h : c.header)
+                        if (!h.isField) declareLocal(h.name, resolve(h.type, *k->unit), true);
                     if (!field->type.present()) keptLambda(*field->init);
                     Type value = exprExpected(*field->init, declared);
                     if (field->type.present() && !fits(value, declared))
@@ -3518,7 +3562,11 @@ struct Checker::Impl {
             FnCtx fc;
             fc.cls = k;
             fc.noWait = ObjectMade;
-            withCtx(fc, [&] { blockMaybeCut(body->statements); });
+            withCtx(fc, [&] {
+                for (const HeaderParam& h : c.header)
+                    if (!h.isField) declareLocal(h.name, resolve(h.type, *k->unit), true);  // as for the fields
+                blockMaybeCut(body->statements);
+            });
         }
         if (c.hasSuperArgs && k->superclass != nullptr) {
             FnCtx fc;
@@ -3564,6 +3612,13 @@ struct Checker::Impl {
         auto savedNarrowed = std::move(narrowed);
         scopes.clear();
         narrowed.clear();
+        // A property of a class declared inside a function reaches the locals around it.
+        for (const ClassInfo* o = fn->owner; o != nullptr; o = o->outer) {
+            auto around = scopesAroundClass.find(o);
+            if (around == scopesAroundClass.end()) continue;
+            scopes = around->second;
+            break;
+        }
         unit = fn->unit;
         ctx = &c;
         push();
@@ -3584,6 +3639,14 @@ struct Checker::Impl {
         auto savedNarrowed = std::move(narrowed);
         scopes.clear();
         narrowed.clear();
+        // The code of a class declared inside a function (its fields' values, init and static
+        // blocks) reaches the locals around it, as its methods do.
+        for (const ClassInfo* o = c.cls; o != nullptr; o = o->outer) {
+            auto around = scopesAroundClass.find(o);
+            if (around == scopesAroundClass.end()) continue;
+            scopes = around->second;
+            break;
+        }
         ctx = &c;
         push();
         body();
@@ -3600,10 +3663,51 @@ struct Checker::Impl {
     // The types list and map literals are made as, for the compiler (M6.6 part 1).
     std::unordered_map<const Expr*, Type> literalTypes;
 
+    // A bare name that means nothing here: no variable, member, class or global.
+    bool unresolvedName(const Expr& e) {
+        if (e.kind != ExprKind::Name) return false;
+        const auto& n = static_cast<const NameExpr&>(e);
+        return meansGlobal(n) && findGlobal(*unit, n.name) == nullptr;
+    }
+
+    std::unordered_map<const Expr*, Type> ternaryExpected;  // a ? b : c where a type is expected
+
+    std::vector<std::string> declaringNames;  // the variables whose values are being checked
+
+    // `up` where a Way is expected: an entry of the enum, by its bare name, when the name means
+    // nothing else here (no variable, member, class or global).
+    bool bareEntry(const Expr& e, const Type& expected, Type& entry) {
+        if (e.kind != ExprKind::Name) return false;
+        const Type plain = withNull(expected, false);
+        if (plain.kind != Type::Class || plain.cls == nullptr || !plain.cls->isEnum) return false;
+        const auto& n = static_cast<const NameExpr&>(e);
+        if (plain.cls->statics.count(n.name) == 0 || !meansGlobal(n) || findGlobal(*unit, n.name) != nullptr) return false;
+        entry = plain;
+        return true;
+    }
+
     Type exprExpected(const Expr& e, const Type& expected) {
         // A kind of an enum class by its bare name, where one is expected (D39).
         if (const Type plain = withNull(expected, false); plain.kind == Type::Class && plain.cls != nullptr && plain.cls->isEnumClass)
             if (std::unique_ptr<Type> kind = bareKind(e, plain.cls)) return *kind;
+        // An entry of an enum by its bare name, where that enum is expected and the name means
+        // nothing else here: the value it takes settles it, as when the program runs.
+        if (Type entry; bareEntry(e, expected, entry)) return entry;
+        // One that is none of its entries, and nothing else here either.
+        if (const Type plain = withNull(expected, false); plain.kind == Type::Class && plain.cls != nullptr && plain.cls->isEnum && unresolvedName(e)) {
+            const std::string& n = static_cast<const NameExpr&>(e).name;
+            if (removedName(n).empty() && n.rfind("__", 0) != 0 && !importRoot(*unit, n)) {
+                report(e, "'" + n + "' is not an entry of enum " + plain.cls->name + ", nor a variable");
+                return plain;
+            }
+        }
+        // `flag ? up : down` where a Way is expected: each branch is, the same.
+        if (e.kind == ExprKind::Ternary) {
+            ternaryExpected[&e] = expected;
+            const Type made = exprExpectedLiteral(e, expected);
+            ternaryExpected.erase(&e);
+            return made;
+        }
         // A lambda where an interface with one abstract method goes: an object of it (D28).
         if (e.kind == ExprKind::Function)
             if (const Type plain = withNull(expected, false); plain.kind == Type::Class && plain.cls != nullptr && plain.cls->isInterface) {
@@ -3813,11 +3917,14 @@ struct Checker::Impl {
                 std::unordered_map<std::string, Type> yes, no;
                 narrowFrom(*t.condition, true, yes);
                 narrowFrom(*t.condition, false, no);
+                const auto wanted = ternaryExpected.find(&e);
                 narrowed.push_back(yes);
-                Type a = expr(*t.then);
+                Type a;
+                if (!(wanted != ternaryExpected.end() && bareEntry(*t.then, wanted->second, a))) a = expr(*t.then);
                 narrowed.pop_back();
                 narrowed.push_back(no);
-                Type b = expr(*t.otherwise);
+                Type b;
+                if (!(wanted != ternaryExpected.end() && bareEntry(*t.otherwise, wanted->second, b))) b = expr(*t.otherwise);
                 narrowed.pop_back();
                 return common(a, b);
             }
@@ -3937,6 +4044,7 @@ struct Checker::Impl {
                 const auto& o = static_cast<const ObjectExpr&>(e);
                 ClassInfo* k = gatherClass(*o.cls, unit, ctx ? ctx->cls : nullptr);
                 k->outerThis = outerThisHere();
+                scopesAroundClass[k] = scopes;
                 checkClass(k);
                 resolveSupers(k);
                 // Its own class: what it adds, and what every type it is made from has.
@@ -4126,6 +4234,11 @@ struct Checker::Impl {
                         Type t = resolve(c.type, *unit);
                         if (t.known()) narrow[static_cast<const NameExpr&>(*w.subject).name] = t;
                     }
+                    // `when (this) { is Circle -> ... }`: the object itself, as an if narrows it.
+                    if (w.subject && w.subject->kind == ExprKind::This && !c.negated && b.conditions.size() == 1 && thisType().known()) {
+                        Type t = resolve(c.type, *unit);
+                        if (t.known()) narrow[thisKey()] = t;
+                    }
                 } else if (c.value) {
                     if (w.subject && c.kind == WhenCondition::Kind::Value) noteCovered(*c.value, subject, covered);
                     Type t = w.subject && c.kind == WhenCondition::Kind::Value && subject.kind == Type::Class && subject.cls &&
@@ -4260,7 +4373,9 @@ struct Checker::Impl {
         if (escape) return unknownType();
         if (ctx != nullptr && ctx->cls != nullptr) {
             if (!ctx->isStatic) {
-                Member m = lookupMember(selfType(ctx->cls), n.name);
+                // The object as a test narrowed it, if one did (`when (this) { is Sub -> its own field }`).
+                const Type self = thisType();
+                Member m = lookupMember(self.kind == Type::Class && !self.nullable ? self : selfType(ctx->cls), n.name);
                 noteKeyMember(m, n.name);
                 if (m.field) {
                     if (ClassInfo* t = insideObject(ctx->cls, fieldType(m.field))) fieldCandidates[&n] = IndexCandidate{effectKey(), t};
@@ -4270,12 +4385,34 @@ struct Checker::Impl {
                     noteCallThrows(m.getter, nullptr, noArgs(), nullptr, n);
                     return subst(resultOf(m.getter), m.env);
                 }
+                // A field of the class or one above, where a method of the same name came first:
+                // as a value, the name is the field.
+                if (!m.methods.empty()) {
+                    auto own = ctx->cls->fields.find(n.name);
+                    if (own != ctx->cls->fields.end()) return fieldType(own->second);
+                    bool asked = false;
+                    if (ClassInfo* above = fieldAbove(ctx->cls, n.name, asked)) return fieldType(above->fields[n.name]);
+                    return unknownType();  // the method, bound to the object
+                }
+                // Every entry of an enum has its name and its place (D48), in its own code too.
+                if (n.name == "name" || n.name == "ordinal")
+                    for (ClassInfo* c = ctx->cls; c != nullptr; c = c->superclass)
+                        if (c->isEnum) return Type::of(n.name == "name" ? Type::String : Type::Int);
             }
             for (ClassInfo* c = ctx->cls; c != nullptr; c = c->outer) {
                 auto s = c->statics.find(n.name);
                 if (s != c->statics.end()) return fieldType(noteConst(n, s->second));
                 auto nested = c->nested.find(n.name);
                 if (nested != c->nested.end()) return nested->second->isObject ? classType(nested->second) : unknownType();
+            }
+            // An object or a class written inside a method reaches the members of the object that
+            // method runs on (D57), innermost first.
+            for (const auto& [label, around] : ctx->cls->outerThis) {
+                if (!around.known()) return unknownType();
+                Member m = lookupMember(around, n.name);
+                if (m.field) return subst(fieldType(m.field), m.env);
+                if (m.getter) return subst(resultOf(m.getter), m.env);
+                if (!m.methods.empty()) return unknownType();
             }
         }
         if (const GlobalSym* g = findGlobal(*unit, n.name)) {
@@ -4287,6 +4424,12 @@ struct Checker::Impl {
             }
         } else if (std::string advice = removedName(n.name); !advice.empty()) {
             report(n, advice);
+        } else if (silent == 0 && bareArguments.count(&n) == 0 && n.name.rfind("__", 0) != 0 &&
+                   !importRoot(*unit, n.name) &&
+                   std::find(declaringNames.begin(), declaringNames.end(), n.name) == declaringNames.end()) {  // __jade and the like are the runtime's, made when it starts
+            // Nothing of that name anywhere in reach: a misspelling, or a function of another
+            // file not imported. Found here, not when the program comes to it.
+            report(n, unknownNameMessage(n.name));
         }
         return unknownType();
     }
@@ -4304,10 +4447,19 @@ struct Checker::Impl {
                 if (!c->isLambda) break;
                 continue;
             }
-            const Type& r = c->receiver;
+            // An extension's own receiver as a test narrowed it (`when (this) { is Circle -> radius }`).
+            Type r = c->receiver;
+            if (c == ctx && !c->isLambda) {
+                const Type t = thisType();
+                if (t.kind == Type::Class && !t.nullable) r = t;
+            }
             if (r.kind == Type::Class && !r.nullable) {
                 Member m = lookupMember(r, name);
-                if (m.found() && hiddenHere(m)) m = Member{};
+                if (m.found() && hiddenHere(m)) {
+                    // There, but not for this code: the program says so when it reaches it.
+                    escape = true;
+                    return nullptr;
+                }
                 if (m.field) {
                     receiverHit = std::make_unique<Type>(subst(fieldType(m.field), m.env));
                     return receiverHit.get();
@@ -4451,9 +4603,17 @@ struct Checker::Impl {
     }
 
     Type binary(const BinaryExpr& b) {
-        Type l = expr(*b.left);
-        Type r = expr(*b.right);
         const TokenType op = b.op;
+        // `way == up`: an enum's entry by its bare name, compared with a value of that enum.
+        const bool equality = op == TokenType::EqEq || op == TokenType::BangEq || op == TokenType::EqEqEq || op == TokenType::BangEqEq;
+        Type l, r;
+        if (equality && unresolvedName(*b.left)) {
+            r = expr(*b.right);
+            if (!bareEntry(*b.left, r, l)) l = expr(*b.left);
+        } else {
+            l = expr(*b.left);
+            if (!(equality && bareEntry(*b.right, l, r))) r = expr(*b.right);
+        }
         // Two bundles added: the names of both, the right one's winning (D143).
         if (op == TokenType::Plus && withNull(l, false).kind == Type::Bundle && withNull(r, false).kind == Type::Bundle) {
             Type made = withNull(l, false);
@@ -5984,6 +6144,9 @@ struct Checker::Impl {
                     if (given != nullptr && given->paramOf != nullptr) effects[effectKeyHere()].callsParams = true;
                     else effects[effectKeyHere()].any = true;
                 }
+                // A bare name that means nothing here reaches the parameter as a name, which only an
+                // enum's parameter settles (as one of its entries): for any other, it is reported.
+                if (!settlesBareName(want)) bareArguments.erase(args.exprs[i].get());
                 types[i] = exprExpected(*args.exprs[i], expected);
                 passedUse = nullptr;
                 unify(want, types[i], env, vars);
@@ -7484,7 +7647,25 @@ struct Checker::Impl {
         return true;
     }
 
+    // Bare names written as a call's arguments: one that means nothing here is passed on as a name,
+    // for the parameter it reaches to settle (an enum's entry), so it is no error.
+    std::unordered_set<const Expr*> bareArguments;
+
+    // Whether a parameter of this type may take a bare name as an entry of an enum: an enum, a
+    // union with one in it (`Stream | Path`), or a type not known until the program runs.
+    bool settlesBareName(const Type& t) {
+        const Type plain = withNull(t, false);
+        if (plain.unknown() || plain.kind == Type::TypeParam) return true;
+        if (plain.kind == Type::Class) return plain.cls == nullptr || plain.cls->isEnum;
+        if (plain.kind == Type::Union)
+            for (const Type& m : plain.args)
+                if (settlesBareName(m)) return true;
+        return false;
+    }
+
     Type call(const CallExpr& c) {
+        for (const ExprPtr& a : c.args)
+            if (a->kind == ExprKind::Name) bareArguments.insert(a.get());
         if (Type changed; atomicCompareAndSet(c, changed)) return changed;
         if (Type made; bundleCall(c, made)) return made;
         if (c.callee->kind == ExprKind::Name) {
@@ -7572,16 +7753,27 @@ struct Checker::Impl {
                 if (!g->funcs.empty()) return callFunctions(g->funcs, c, n, {}, nullptr);
                 if (g->var != nullptr) return callValue(fieldType(g->var), c, n);
             }
-            for (const ExprPtr& a : c.args) expr(*a);
             // The free conversion functions that went for members (D142, D74).
+            std::string gone;
             if (n == "char" || n == "chr")
-                report(c, n + "(n) is written n.char: the character numbered n, as c.code is the number of the character c");
+                gone = n + "(n) is written n.char: the character numbered n, as c.code is the number of the character c";
             else if (n == "ord")
-                report(c, "ord(c) is written c.code: the number of the character c, as n.char is the character numbered n");
+                gone = "ord(c) is written c.code: the number of the character c, as n.char is the character numbered n";
             else if (n == "len" || n == "str" || n == "int" || n == "float")
-                report(c, goneAdvice(n));
-            else if (std::string advice = removedName(n); !advice.empty())
-                report(c, advice);
+                gone = goneAdvice(n);
+            else
+                gone = removedName(n);
+            if (!gone.empty()) {
+                for (const ExprPtr& a : c.args) expr(*a);
+                report(*c.callee, gone);
+                return unknownType();
+            }
+            // Whatever else the name stands for as a value (a member of the object a local class
+            // was made in, a field of the object as a test narrowed it), called; or nothing in
+            // reach, which name() reports.
+            const Type value = name(static_cast<const NameExpr&>(*c.callee));
+            if (!value.unknown()) return callValue(value, c, n);
+            for (const ExprPtr& a : c.args) expr(*a);
             return unknownType();
         }
         if (c.callee->kind == ExprKind::Member) {

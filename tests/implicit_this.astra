@@ -228,20 +228,7 @@ class Runner(val action : (int) -> int) {
 }
 print(Runner(fun(n) => n + 1).go(5))        // expect: 16
 
-// What is nowhere to be found is reported as before.
-class Lost {
-  val here = 1
-  fun find() => nowhere
-  fun call() => nothing(1)
-}
-try { Lost().find() } catch (e) { print(e.message) }   // expect: undefined variable 'nowhere'
-try { Lost().call() } catch (e) { print(e.message) }   // expect: undefined variable 'nothing'
-class LostChild : Lost {
-  override fun find() => nowhereElse
-  fun assign() { nowhereElse = 1 }
-}
-try { LostChild().find() } catch (e) { print(e.message) }     // expect: undefined variable 'nowhereElse'
-try { LostChild().assign() } catch (e) { print(e.message) }   // expect: undefined variable 'nowhereElse'
+// What is nowhere to be found is reported when the program is checked: tests/check/unknown_names.astra.
 
 // A class in a function, using that function's variables and its own members.
 fun make(step : int) {

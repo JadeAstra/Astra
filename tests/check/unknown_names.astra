@@ -1,0 +1,43 @@
+// A name that nothing in reach declares is found when the program is checked (before, only when
+// the program came to it). Each `// check:` names a report expected on its line.
+
+print(noSuchThing("x"))                    // check: there is nothing named 'noSuchThing' here: no variable, function or class of that name is in reach
+fun f() : int => noSuchFunction(1)         // check: there is nothing named 'noSuchFunction' here: no variable, function or class of that name is in reach
+val y = noSuchValue + 1                    // check: there is nothing named 'noSuchValue' here: no variable, function or class of that name is in reach
+print("hello $nobody")                     // check: there is nothing named 'nobody' here: no variable, function or class of that name is in reach
+fun attempt(block : () -> any) => block()
+print(attempt(fun() => nope))              // check: there is nothing named 'nope' here: no variable, function or class of that name is in reach
+val z = "a".let { noSuchLet(it) }          // check: there is nothing named 'noSuchLet' here: no variable, function or class of that name is in reach
+
+// Inside a class, where its members and those above it are in reach, and nothing else of that name.
+class Lost {
+  val here = 1
+  fun find() => nowhere                    // check: there is nothing named 'nowhere' here: no variable, function or class of that name is in reach
+  fun call() => nothing(1)                 // check: there is nothing named 'nothing' here: no variable, function or class of that name is in reach
+}
+class LostChild : Lost {
+  override fun find() => nowhereElse       // check: there is nothing named 'nowhereElse' here: no variable, function or class of that name is in reach
+  fun assign() { nowhereElse = 1 }         // check: there is nothing named 'nowhereElse' here: no variable, function or class of that name is in reach
+  fun found() => here
+}
+
+// What is in reach is not reported: locals around a class written inside a function, the members
+// of the object such a class was made in, a method as a value, an enum's entry by its bare name
+// where the enum is expected, and a field a method of the same name hides.
+enum Way { up, down }
+class Base { var size = 0 }
+class Sized : Base() {
+  fun size(n : int) { size = n }
+}
+class Outer(val label : string) {
+  fun one() => 1
+  fun bound() => one
+  fun make(extra : int) : any {
+    val local = 2
+    class Inner { fun total() => local + extra + one() + label.size }
+    return object { val sum = local + extra + label.size }
+  }
+}
+fun pick(flag : bool) : Way => flag ? up : down
+val w : Way = up
+print(w == down, pick(true), Sized().size, Outer("ab").bound()())

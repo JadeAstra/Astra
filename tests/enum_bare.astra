@@ -106,21 +106,12 @@ print(loud, shadowed(Way.left))             // expect: the global loud [left, do
 try { describeTone(unknown(loud)) } catch (e) { print(e.message) }   // expect: argument 'tone' of describeTone() must be Tone, got string
 print(describeTone(Tone.loud), describeTone(soft))   // expect: loud soft
 
-// With no enum-typed destination the full name is needed.
+// With no enum-typed destination the full name is needed: a bare one is found when the program is
+// checked (tests/check/enum_bare.astra), unless what is called is not known until it runs.
 fun untyped(x : any?) => x
-fun typedOther(n : int) => n
-fun takesShape(s : Cell) => s
-try { untyped(up) } catch (e) { print(e.message) }       // expect: undefined variable 'up'
-try { print(up) } catch (e) { print(e.message) }         // expect: undefined variable 'up'
-try { [].add(down) } catch (e) { print(e.message) }     // expect: undefined variable 'down'
-try { typedOther(up) } catch (e) { print(e.message) }    // expect: undefined variable 'up'
-try { takesShape(up) } catch (e) { print(e.message) }    // expect: undefined variable 'up'
-try { step(sideways) } catch (e) { print(e.message) }    // expect: 'sideways' is not an entry of enum Way
-try { step(up, left) } catch (e) { print(e.message) }    // expect: 'left' is not an entry of enum Fill
-try { Cell("z", up) } catch (e) { print(e.message) }     // expect: 'up' is not an entry of enum Fill
 try { unknown(untyped)(1, up) } catch (e) { print(e.message) }    // expect: untyped() expects 1 argument(s) but got 2
+try { [].add(down) } catch (e) { print(e.message) }     // expect: undefined variable 'down'
 fun many(vararg ways : any) => ways
-try { many(up, down) } catch (e) { print(e.message) }    // expect: undefined variable 'up'
 print(many(Way.up, Way.down))               // expect: [up, down]
 
 // After a failed call, later calls are unaffected.

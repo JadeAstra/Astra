@@ -1,5 +1,6 @@
-// An import without .* does not bring names in: they are written with its name in front.
+// An import without .* does not bring names in: they are written with its name in front. A bare
+// one is found when the program is checked.
 import NsShapes
-print(NsShapes.PI_ISH)                 // expect: 3
+print(NsShapes.PI_ISH)
 print(PI_ISH)
-// expect runtime error: Uncaught IllegalStateException: undefined variable 'PI_ISH'
+// expect compile error: error_ns_bare.astra:5:7: error: 'PI_ISH' is written NsShapes.PI_ISH here: the import has no .*, so its names are not in reach by themselves

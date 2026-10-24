@@ -34,6 +34,7 @@ print("${[1, "two"]} ${{k: "v"}} ${null}")   // expect: [1, "two"] {"k": "v"} nu
 // program runs, `and` and `or` give one of their operands.
 print(unknown(null) or unknown("default"))   // expect: default
 print(unknown(0) or unknown("x"))            // expect: 0
+fun boom() : bool { throw IllegalStateException("the right side ran") }
 print(false and boom())                   // expect: false
 print(unknown(1) and unknown(2), unknown(null) and unknown(2))   // expect: 2 null
 print(true ? "yes" : "no", false ? 1 : 2)    // expect: yes 2
