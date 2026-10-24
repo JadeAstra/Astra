@@ -215,15 +215,21 @@ inline fun <T> List<T>.indexOfLast(predicate : (T) -> bool) : int {
 // The last item for which `predicate` is true, or null when there is none (as lastOrNull).
 inline fun <T> List<T>.findLast(predicate : (T) -> bool) : T? => this.lastOrNull(predicate)
 
-// The only item, or the only one that meets the condition.
+// The only item: a NoSuchElementException when the list is empty, an IllegalArgumentException
+// when it has more than one, as in Kotlin.
 fun <T> List<T>.single() : T {
+  if (this.size == 0) { throw NoSuchElementException("single(): the list is empty") }
   if (this.size != 1) { throw IllegalArgumentException("single(): expected one item but found ${this.size}") }
   return this[0]
 }
 
-// The only item for which `predicate` is true; an IllegalArgumentException when there is none
-// or more than one. `predicate` is called for every item.
-inline fun <T> List<T>.single(predicate : (T) -> bool) : T => this.filter(predicate).single()
+// The only item for which `predicate` is true: a NoSuchElementException when there is none, an
+// IllegalArgumentException when there are more. `predicate` is called for every item.
+inline fun <T> List<T>.single(predicate : (T) -> bool) : T {
+  val found = this.filter(predicate)
+  if (found.size == 0) { throw NoSuchElementException("single(): no item meets the condition") }
+  return found.single()
+}
 
 // The only item, or null when the list is empty or has more than one.
 fun <T> List<T>.singleOrNull() : T? => this.size == 1 ? this[0] : null

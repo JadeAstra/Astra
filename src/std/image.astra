@@ -326,8 +326,8 @@ class Image : Drawable {
 
   // The same size and the same pixels.
   op ==(other : any?) : bool => other is Image and other.width == width and other.height == height and __text.imageSame(cells.cells, other.cells.cells)
-  // A hash of its width and height only: equal images give equal hashes.
-  fun hashCode() : int => hash(width, height)
+  // A hash of its size and its pixels: equal images give equal hashes. It reads every pixel.
+  fun hashCode() : int => hash(width, height, __text.imageHash(cells.cells))
   // Its size, as `Image(200 x 100)`.
   override fun toString() : string => "Image($width x $height)"
 

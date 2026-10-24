@@ -57,7 +57,12 @@ value Color(val red : byte, val green : byte, val blue : byte, val alpha : byte 
       return Color(digits.toInt(16))
     }
     // From hue, saturation and brightness, each from 0.0 to 1.0, as one number (0xFFRRGGBB).
+    // The hue goes round, so 1.25 is the same as 0.25; a saturation or a brightness outside 0.0
+    // to 1.0, or a hue that is not a number or is infinite, is an IllegalArgumentException.
     fun HSBtoRGB(hue : float, saturation : float, brightness : float) : int {
+      if (!hue.isFinite()) { throw IllegalArgumentException("a colour's hue is a number that goes round, not $hue") }
+      __colorFraction(saturation, "saturation", "")
+      __colorFraction(brightness, "brightness", "")
       var r = brightness
       var g = brightness
       var b = brightness
@@ -80,8 +85,11 @@ value Color(val red : byte, val green : byte, val blue : byte, val alpha : byte 
     // The solid colour of a hue, a saturation and a brightness, each from 0.0 to 1.0; the hue
     // goes round, so 1.25 is the same as 0.25.
     fun getHSBColor(hue : float, saturation : float, brightness : float) : Color => Color(Color.HSBtoRGB(hue, saturation, brightness))
-    // The other way: [hue, saturation, brightness].
+    // The other way: [hue, saturation, brightness], from parts each from 0 to 255.
     fun RGBtoHSB(r : int, g : int, b : int) : List<float> {
+      __colorPart(r, "red")
+      __colorPart(g, "green")
+      __colorPart(b, "blue")
       val most = Math.max(r, Math.max(g, b))
       val least = Math.min(r, Math.min(g, b))
       val brightness = most / 255.0
@@ -127,8 +135,9 @@ fun __colorPart(value : int, part : string) : byte {
   return value.toByte()
 }
 
-fun __colorFraction(value : float, part : string) : byte {
-  if (value < 0.0 or value > 1.0) { throw IllegalArgumentException("a colour's $part as a fraction is from 0.0 to 1.0, not $value") }
+// A part from 0.0 to 1.0 as a byte; NaN is outside, as any other number not in that range.
+fun __colorFraction(value : float, part : string, asWhat : string = " as a fraction") : byte {
+  if (!(value >= 0.0 and value <= 1.0)) { throw IllegalArgumentException("a colour's $part$asWhat is from 0.0 to 1.0, not $value") }
   return Math.round(value * 255).toInt().toByte()
 }
 

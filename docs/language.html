@@ -507,7 +507,7 @@ addButton(widgets)</pre></dd>
 <li><a href="#Sequence"><code>Sequence</code></a> (40)</li>
 <li><a href="#SequenceScope"><code>SequenceScope</code></a> (4)</li>
 <li><a href="#ServerSocket"><code>ServerSocket</code></a> (5)</li>
-<li><a href="#Set.size"><code>Set</code></a> (76)</li>
+<li><a href="#Set.size"><code>Set</code></a> (78)</li>
 <li><a href="#Shape"><code>Shape</code></a> (1)</li>
 <li><a href="#SharedMap"><code>SharedMap</code></a> (12)</li>
 <li><a href="#SharedSet"><code>SharedSet</code></a> (7)</li>
@@ -2107,13 +2107,13 @@ Color(1.0, 0.5, 0.0)          parts from 0.0 to 1.0        color.argb, 0xAARRGGB
 <p>&quot;#RRGGBB&quot; or &quot;0xRRGGBB&quot;.</p>
 </div>
 <div class="entry member" id="Color.HSBtoRGB"><code class="sig">fun HSBtoRGB(hue : float, saturation : float, brightness : float) : int</code><a class="anchor" href="#Color.HSBtoRGB">#</a>
-<p>From hue, saturation and brightness, each from 0.0 to 1.0, as one number (0xFFRRGGBB).</p>
+<p>From hue, saturation and brightness, each from 0.0 to 1.0, as one number (0xFFRRGGBB). The hue goes round, so 1.25 is the same as 0.25; a saturation or a brightness outside 0.0 to 1.0, or a hue that is not a number or is infinite, is an IllegalArgumentException.</p>
 </div>
 <div class="entry member" id="Color.getHSBColor"><code class="sig">fun getHSBColor(hue : float, saturation : float, brightness : float) : Color</code><a class="anchor" href="#Color.getHSBColor">#</a>
 <p>The solid colour of a hue, a saturation and a brightness, each from 0.0 to 1.0; the hue goes round, so 1.25 is the same as 0.25.</p>
 </div>
 <div class="entry member" id="Color.RGBtoHSB"><code class="sig">fun RGBtoHSB(r : int, g : int, b : int) : List&lt;float&gt;</code><a class="anchor" href="#Color.RGBtoHSB">#</a>
-<p>The other way: [hue, saturation, brightness].</p>
+<p>The other way: [hue, saturation, brightness], from parts each from 0 to 255.</p>
 </div>
 <div class="entry member" id="Color.argb"><code class="sig">val argb : int</code><a class="anchor" href="#Color.argb">#</a>
 <p>The colour as one number, 0xAARRGGBB: Color(argb, true) makes it again.</p>
@@ -2550,7 +2550,7 @@ image.save(Path(&quot;out.png&quot;))
 <p>The same size and the same pixels.</p>
 </div>
 <div class="entry member" id="Image.hashCode"><code class="sig">fun hashCode() : int</code><a class="anchor" href="#Image.hashCode">#</a>
-<p>A hash of its width and height only: equal images give equal hashes.</p>
+<p>A hash of its size and its pixels: equal images give equal hashes. It reads every pixel.</p>
 </div>
 <div class="entry member" id="Image.toString"><code class="sig">override fun toString() : string</code><a class="anchor" href="#Image.toString">#</a>
 <p>Its size, as <code>Image(200 x 100)</code>.</p>
@@ -2913,10 +2913,10 @@ while (true) {
 <p>The last item for which <code>predicate</code> is true, or null when there is none (as lastOrNull).</p>
 </div>
 <div class="entry" id="List.single"><code class="sig">fun &lt;T&gt; List&lt;T&gt;.single() : T</code><a class="anchor" href="#List.single">#</a>
-<p>The only item, or the only one that meets the condition.</p>
+<p>The only item: a NoSuchElementException when the list is empty, an IllegalArgumentException when it has more than one, as in Kotlin.</p>
 </div>
 <div class="entry" id="List.single-2"><code class="sig">inline fun &lt;T&gt; List&lt;T&gt;.single(predicate : (T) -&gt; bool) : T</code><a class="anchor" href="#List.single-2">#</a>
-<p>The only item for which <code>predicate</code> is true; an IllegalArgumentException when there is none or more than one. <code>predicate</code> is called for every item.</p>
+<p>The only item for which <code>predicate</code> is true: a NoSuchElementException when there is none, an IllegalArgumentException when there are more. <code>predicate</code> is called for every item.</p>
 </div>
 <div class="entry" id="List.singleOrNull"><code class="sig">fun &lt;T&gt; List&lt;T&gt;.singleOrNull() : T?</code><a class="anchor" href="#List.singleOrNull">#</a>
 <p>The only item, or null when the list is empty or has more than one.</p>
@@ -3995,10 +3995,16 @@ print(squares.filter { it % 3 == 0 }.take(5).toList())     // [9, 36, 81, 144, 2
 <p>The first item for which <code>predicate</code> is true, or null when there is none; as <code>firstOrNull</code>.</p>
 </div>
 <div class="entry" id="Set.single"><code class="sig">fun &lt;T&gt; Set&lt;T&gt;.single() : T</code><a class="anchor" href="#Set.single">#</a>
-<p>The only item; an IllegalArgumentException when the set is empty or has more than one.</p>
+<p>The only item: a NoSuchElementException when the set is empty, an IllegalArgumentException when it has more than one, as in Kotlin.</p>
+</div>
+<div class="entry" id="Set.single-2"><code class="sig">inline fun &lt;T&gt; Set&lt;T&gt;.single(predicate : (T) -&gt; bool) : T</code><a class="anchor" href="#Set.single-2">#</a>
+<p>The only item for which <code>predicate</code> is true: a NoSuchElementException when there is none, an IllegalArgumentException when there are more. <code>predicate</code> is called for every item.</p>
 </div>
 <div class="entry" id="Set.singleOrNull"><code class="sig">fun &lt;T&gt; Set&lt;T&gt;.singleOrNull() : T?</code><a class="anchor" href="#Set.singleOrNull">#</a>
 <p>The only item, or null when the set is empty or has more than one.</p>
+</div>
+<div class="entry" id="Set.singleOrNull-2"><code class="sig">inline fun &lt;T&gt; Set&lt;T&gt;.singleOrNull(predicate : (T) -&gt; bool) : T?</code><a class="anchor" href="#Set.singleOrNull-2">#</a>
+<p>The only item for which <code>predicate</code> is true, or null when there is none or more than one.</p>
 </div>
 <div class="entry" id="Set.forEach"><code class="sig">inline fun &lt;T&gt; Set&lt;T&gt;.forEach(action : (T) -&gt; unit)</code><a class="anchor" href="#Set.forEach">#</a>
 <p>Calls <code>action</code> with each item, in order.</p>

@@ -42,3 +42,30 @@ val named = Thread({ }, "loader")
 val first = Thread({ })
 val second = Thread({ })
 print(named.name, first.name, second.name)   // expect: loader Thread-1 Thread-2
+
+// An image's hash comes from its pixels as well as its size, as its == does.
+val dot = Image(3, 2)
+val same = Image(3, 2)
+val other = Image(3, 2)
+dot[1, 1] = Color.red
+same[1, 1] = Color.red
+other[2, 0] = Color.red
+print(dot == same, dot.hashCode() == same.hashCode(), dot == other, dot.hashCode() == other.hashCode(), dot.copy().hashCode() == dot.hashCode())   // expect: true true false false true
+
+// A colour's saturation and brightness are from 0.0 to 1.0; its hue goes round, but is a number.
+print(Color.HSBtoRGB(1.25, 1.0, 1.0) == Color.HSBtoRGB(0.25, 1.0, 1.0), Color.getHSBColor(0.0, 1.0, 1.0))   // expect: true Color(255, 0, 0)
+try { Color.HSBtoRGB(0.5, 1.5, 1.0) } catch (e : IllegalArgumentException) { print(e.message) }   // expect: a colour's saturation is from 0.0 to 1.0, not 1.5
+try { Color.getHSBColor(0.5, 1.0, -0.1) } catch (e : IllegalArgumentException) { print(e.message) }   // expect: a colour's brightness is from 0.0 to 1.0, not -0.1
+try { Color.HSBtoRGB(0.0 / 0.0, 1.0, 1.0) } catch (e : IllegalArgumentException) { print(e.message) }   // expect: a colour's hue is a number that goes round, not nan
+try { Color.RGBtoHSB(0, 256, 0) } catch (e : IllegalArgumentException) { print(e.message) }   // expect: a colour's green is from 0 to 255, not 256
+try { Color(0.0 / 0.0, 0.0, 0.0) } catch (e : IllegalArgumentException) { print(e.message) }   // expect: a colour's red as a fraction is from 0.0 to 1.0, not nan
+
+// single() of nothing is a NoSuchElementException, and of more than one an IllegalArgumentException, as in Kotlin.
+val noWords : Set<string> = setOf()
+try { noWords.single() } catch (e : NoSuchElementException) { print(e.message) }   // expect: single(): the set is empty
+try { setOf(1, 2).single() } catch (e : IllegalArgumentException) { print(e.message) }   // expect: single(): expected one item but found 2
+try { none.single() } catch (e : NoSuchElementException) { print(e.message) }   // expect: single(): the list is empty
+try { [1, 2, 3].single { it > 5 } } catch (e : NoSuchElementException) { print(e.message) }   // expect: single(): no item meets the condition
+try { [1, 2, 3].single { it > 1 } } catch (e : IllegalArgumentException) { print(e.message) }   // expect: single(): expected one item but found 2
+try { setOf(1, 2).single { it > 5 } } catch (e : NoSuchElementException) { print(e.message) }   // expect: single(): no item meets the condition
+print(setOf(4).single(), setOf(1, 2, 3).single { it == 2 }, [5].single())   // expect: 4 2 5

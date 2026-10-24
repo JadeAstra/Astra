@@ -74,10 +74,20 @@ fun <T> Set<T>.lastOrNull() : T? => this.isEmpty() ? null : this.last()
 inline fun <T> Set<T>.lastOrNull(predicate : (T) -> bool) : T? => this.toList().lastOrNull(predicate)
 // The first item for which `predicate` is true, or null when there is none; as `firstOrNull`.
 inline fun <T> Set<T>.find(predicate : (T) -> bool) : T? => this.toList().firstOrNull(predicate)
-// The only item; an IllegalArgumentException when the set is empty or has more than one.
-fun <T> Set<T>.single() : T => this.toList().single()
+// The only item: a NoSuchElementException when the set is empty, an IllegalArgumentException
+// when it has more than one, as in Kotlin.
+fun <T> Set<T>.single() : T {
+  if (this.size == 0) { throw NoSuchElementException("single(): the set is empty") }
+  if (this.size != 1) { throw IllegalArgumentException("single(): expected one item but found ${this.size}") }
+  return this.first()
+}
+// The only item for which `predicate` is true: a NoSuchElementException when there is none, an
+// IllegalArgumentException when there are more. `predicate` is called for every item.
+inline fun <T> Set<T>.single(predicate : (T) -> bool) : T => this.toList().single(predicate)
 // The only item, or null when the set is empty or has more than one.
 fun <T> Set<T>.singleOrNull() : T? => this.toList().singleOrNull()
+// The only item for which `predicate` is true, or null when there is none or more than one.
+inline fun <T> Set<T>.singleOrNull(predicate : (T) -> bool) : T? => this.toList().singleOrNull(predicate)
 // Calls `action` with each item, in order.
 inline fun <T> Set<T>.forEach(action : (T) -> unit) {
   for item in this { action(item) }
