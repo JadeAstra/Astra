@@ -8,6 +8,7 @@
 
 #include "gl.h"  // brings in windows.h
 
+#include <delayimp.h>
 #include <shellapi.h>
 #include <windowsx.h>
 
@@ -370,6 +371,18 @@ public:
     std::map<HWND, WinWindow*> windows;
 
     bool start(std::string& error) {
+        // opengl32.dll is delay-loaded (CMakeLists.txt): each of its functions is found the first
+        // time it is called, through a stub the linker writes. lld-link's (LLD 19) gives the
+        // loader none of the room a called function may use, and the loader's first stores land on
+        // the saved second float argument: the process's first glClearColor(0, 0, 0, 0) set green
+        // to whatever a register held, and a new surface came out green in about a third of the
+        // runs of the Clang build (jade_canvas.astra). Every function is found here instead, before
+        // any is called, whichever linker made the program. The name is as the import library
+        // has it, which the look-up matches exactly. A program that does not delay-load it (the
+        // proof build) has nothing to find; one that cannot load it is told so below, when the
+        // first context is made.
+        __HrLoadAllImportsForDll("OPENGL32.dll");
+
         // Sizes follow each screen's own density, and Windows tells us when a window moves
         // to a screen of another.
         if (!SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2)) SetProcessDPIAware();

@@ -90,6 +90,9 @@ if(WIN32)
   foreach(linked astra astra_proof astra_proof_plain)
     target_link_libraries(${linked} PRIVATE opengl32 ws2_32 shell32)
   endforeach()
+  # __HrLoadAllImportsForDll, which the native layer calls whether or not the program
+  # delay-loads OpenGL (only astra does, below).
+  target_link_libraries(astra_proof PRIVATE delayimp)
 endif()
 
 # astra looks for libraries such as Jade only in the lib folder beside itself, so every
@@ -107,7 +110,10 @@ if(MSVC)
   # The parser and compiler recurse over nested source; give them room.
   target_link_options(astra PRIVATE /STACK:16777216)
   # OpenGL and the shell are loaded when first used, not when astra starts: loading
-  # opengl32.dll costs about 57 ms, which every script paid, window or not.
+  # opengl32.dll costs about 57 ms, which every script paid, window or not. A delay-loaded DLL
+  # whose functions take float arguments is loaded whole before any is called
+  # (__HrLoadAllImportsForDll): lld-link's stub for a first call can lose the second float
+  # argument (src/jade/platform_win.cpp, WinPlatform::start).
   target_link_libraries(astra PRIVATE delayimp)
   target_link_options(astra PRIVATE /DELAYLOAD:opengl32.dll /DELAYLOAD:shell32.dll)
 else()
