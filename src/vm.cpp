@@ -7358,7 +7358,16 @@ bool VM::insertNew(int argc, bool givesTrue) {
     }
     PackedItems& pack = *list->pack;
     const size_t width = pack.width;
-    std::rotate(pack.block.begin() + static_cast<std::ptrdiff_t>(at * width), pack.block.end() - static_cast<std::ptrdiff_t>(width), pack.block.end());
+    // The new item kept aside, the items after `at` moved on by one in one move, and the item put
+    // in the gap (std::rotate swaps byte by byte: twice as slow at the front of a long list).
+    uint8_t* const base = pack.block.data();
+    const size_t last = (pack.count - 1) * width;
+    uint8_t small[256];
+    std::vector<uint8_t> large;
+    uint8_t* const made = width <= sizeof small ? small : (large.resize(width), large.data());
+    std::memcpy(made, base + last, width);
+    std::memmove(base + (at + 1) * width, base + at * width, last - at * width);
+    std::memcpy(base + at * width, made, width);
     if (pack.nullable) {
         for (size_t i = pack.count - 1; i > at; i--) setNullAt(list, i, nullAt(list, i - 1));
         setNullAt(list, at, false);
