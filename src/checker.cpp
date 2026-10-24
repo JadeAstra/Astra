@@ -1745,6 +1745,62 @@ struct Checker::Impl {
     std::map<std::pair<ClassInfo*, std::string>, std::vector<FuncInfo*>> formsAboveKnown, familyKnown;
 
     // The forms of a method name the classes directly above a class have.
+    // A field or property of a class or interface above `k`, by name: the class that has it, and
+    // whether it only asks for one (an interface's with no getter, an abstract one).
+    ClassInfo* fieldAbove(ClassInfo* k, const std::string& name, bool& asked) {
+        resolveSupers(k);
+        std::vector<ClassInfo*> supers = k->interfaces;
+        if (k->superclass != nullptr) supers.insert(supers.begin(), k->superclass);
+        for (ClassInfo* s : supers) {
+            if (s->unknownSuper) return nullptr;
+            auto found = s->fields.find(name);
+            if (found != s->fields.end()) {
+                const VarStmt* d = found->second->decl;
+                asked = d != nullptr && (d->isAbstract || (s->isInterface && d->getter == nullptr && !d->init));
+                return s;
+            }
+            if (ClassInfo* higher = fieldAbove(s, name, asked)) return higher;
+        }
+        return nullptr;
+    }
+
+    void overridesMarked(const ClassStmt& c, ClassInfo* k) {
+        auto who = [](const ClassInfo* owner) { return std::string(owner->isInterface ? "interface " : "abstract class ") + owner->name; };
+        for (const auto& m : c.methods) {
+            if (m->isStatic || m->generated || m->accessor != FunctionDecl::Accessor::None || m->name == "init") continue;
+            auto known = funcOf.find(m.get());
+            if (known == funcOf.end()) continue;
+            const std::vector<FuncInfo*> above = formsAbove(k, m->name);
+            if (m->isOverride) {
+                if (above.empty() && m->name != "toString" && m->name != "==")
+                    report(*m, "'" + m->name + "' in class " + k->name + " is marked override, but there is nothing of that name for it to replace");
+                continue;
+            }
+            FuncInfo* same = nullptr;
+            for (FuncInfo* g : above)
+                if (same == nullptr && sameForm(known->second, g)) same = g;
+            if (same == nullptr || same->owner == nullptr) continue;
+            const bool asked = same->decl != nullptr && (same->decl->isAbstract || (same->owner->isInterface && same->decl->body.empty()));
+            report(*m, "'" + m->name + "' in class " + k->name +
+                           (asked ? " is what " + who(same->owner) + " asks for" : std::string(" takes the place of the one it inherits")) +
+                           "; write override in front of it");
+        }
+        for (size_t i = 0; i < c.fields.size(); i++) {
+            const auto& f = c.fields[i];
+            // A data class extending another starts its header with the other's fields, passed up
+            // to it: the same fields, not ones in their place (D65).
+            if (i < c.headerFieldCount && k->isData && k->superclass != nullptr && k->superclass->isData) continue;
+            bool asked = false;
+            ClassInfo* owner = fieldAbove(k, f->name, asked);
+            if (f->isOverride && owner == nullptr)
+                report(*f, "'" + f->name + "' in class " + k->name + " is marked override, but there is nothing of that name for it to replace");
+            else if (!f->isOverride && owner != nullptr)
+                report(*f, "'" + f->name + "' in class " + k->name +
+                               (asked ? " is what " + who(owner) + " asks for" : std::string(" takes the place of the one it inherits")) +
+                               "; write override in front of it");
+        }
+    }
+
     std::vector<FuncInfo*> formsAbove(ClassInfo* k, const std::string& name) {
         auto known = formsAboveKnown.find({k, name});
         if (known != formsAboveKnown.end()) return known->second;
@@ -3345,6 +3401,10 @@ struct Checker::Impl {
                 report(c, "value " + k->name + " holds itself, and would have no end: make the field that holds it nullable, " +
                               k->name + "?, which keeps it in a box");
         }
+        // A member that takes the place of one from above, or supplies what an interface or an
+        // abstract class asks for, says override; one that says it has something to replace.
+        // Found here, where the program used to find it only when the class was made.
+        if (!k->isEnum && !k->unknownSuper) overridesMarked(c, k);
         // A method written override takes the place of a form above with its parameters.
         for (const auto& m : c.methods) {
             if (!m->isOverride || m->isStatic || m->accessor != FunctionDecl::Accessor::None || m->name == "init") continue;
@@ -3830,6 +3890,7 @@ struct Checker::Impl {
                 const auto& i = static_cast<const IsExpr&>(e);
                 const Type value = expr(*i.value);
                 if (resolveAgainst(i.type, value).kind == Type::Union) report(i.type, unionTested());  // `x is Click` for an Event (D39)
+                objectTested(i.type, resolve(i.type, *unit));
                 if (i.type.isOpen) notMadeOpen(value, resolve(i.type, *unit), i, "is");
                 return Type::of(Type::Bool);
             }
@@ -4053,6 +4114,7 @@ struct Checker::Impl {
             for (const WhenCondition& c : b.conditions) {
                 if (c.kind == WhenCondition::Kind::Is) {
                     if (w.subject) resolveAgainst(c.type, subject);  // `is Click` over an Event (D39)
+                    objectTested(c.type, w.subject ? resolveAgainst(c.type, subject) : resolve(c.type, *unit));
                     if (w.subject && !c.negated) {
                         const Type kind = resolve(c.type, *unit);
                         if (kind.kind == Type::Class && kind.cls != nullptr && !kind.nullable) coveredKinds.push_back(kind.cls);
@@ -6145,6 +6207,7 @@ struct Checker::Impl {
         auto envOfForm = [&](size_t i) -> const Env& { return envs != nullptr && i < envs->size() ? (*envs)[i] : env; };
         if (fs.size() == 1) checkInfixCall(fs[0], c);
         if (fs.size() == 1) noteSelfCall(fs[0], c);
+        if (fs.size() == 1 && fs[0]->isExtension && fs[0]->receiver.nullable) chosenForms[&c] = fs[0];  // as below
         if (fs.size() == 1) return callWith(fs[0], args, c.typeArgs, envOfForm(0), receiver, c, what + "(...)");
         // Forms with the same receiver and parameters are one form declared in several places:
         // the nearest is the one meant, as for any name.
@@ -6165,6 +6228,9 @@ struct Checker::Impl {
         }
         if (forms.size() == 1) checkInfixCall(forms[0], c);
         if (forms.size() == 1) noteSelfCall(forms[0], c);
+        // An extension that takes null (`string?.orEmpty()`) is called by its own name: on null,
+        // where every type's of that name would fit, the program could not choose.
+        if (forms.size() == 1 && forms[0]->isExtension && forms[0]->receiver.nullable) chosenForms[&c] = forms[0];
         if (forms.size() == 1) return callWith(forms[0], args, c.typeArgs, formEnvs[0], receiver, c, what + "(...)");
         size_t index = 0;
         auto envOfChosen = [&](size_t i) -> const Env& { return formEnvs[i]; };
@@ -7213,6 +7279,14 @@ struct Checker::Impl {
     }
 
     // A union has nothing of its own when the program runs (D40).
+    // `x is Close` where Close is an object: is asks for a class, and an object is a value, one of
+    // its own; when the program ran, the test failed with a ClassCastException.
+    void objectTested(const TypeAnnotation& at, const Type& t) {
+        if (t.kind != Type::Class || t.cls == nullptr || !t.cls->isObject) return;
+        report(at, "'" + t.cls->name + "' is an object, the one value of its kind, not a class: test for it with ==, or in a when "
+                       "write it as the branch itself (" + t.cls->name + " -> ...)");
+    }
+
     static std::string unionTested() {
         return "a union is not tested as a whole: nothing of it is kept when the program runs; test its types one by one, " +
                std::string("with is or a when (D40)");

@@ -16,8 +16,8 @@
 // start() is called. thread { } is the shorter way, giving a Job of what the block returns.
 class Thread {
   static {
-    // How many Thread objects have been made, the main thread's among them once currentThread()
-    // has given it: the number in the name Thread-N of one given no name.
+    // How many threads have been given no name of their own: the number in the name Thread-N of
+    // the last. The main thread, and one given a name, are not counted.
     var made = 0
     // The thread running this code. On the main thread, a Thread named "main", made the first time
     // it is asked for.
@@ -56,7 +56,7 @@ class Thread {
   // Thread(task) or Thread(task, name); a class that extends Thread gives none and replaces run().
   fun init(task : (suspend () -> any?)? = null, name : string? = null) {
     this.task = task
-    Thread.made += 1
+    if (name == null) { Thread.made += 1 }
     this.name = name ?: "Thread-${Thread.made}"
   }
 

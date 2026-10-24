@@ -53,14 +53,6 @@ abstract class Event {
 print(Event.Click(1) is Event, Event.Key(13).code)   // expect: true 13
 try { Event() } catch (e) { print(e.message) }   // expect: Event is abstract and cannot be created; create a class that extends it
 
-// override has to have something to replace.
-try {
-  class Wrong : Shape("wrong") {
-    override fun area() => 0
-    override val sides = 0
-    override fun aera() => 0
-  }
-} catch (e) { print(e.message) }            // expect: 'aera' in class Wrong is marked override, but there is nothing of that name for it to replace
 class Plain {
   fun greet() => "hello"
   var size = 1

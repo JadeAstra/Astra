@@ -344,11 +344,11 @@ class Sequence<T> {
   }
 
   // The sum of what `selector` gives for each item: an int if all are ints, a float if any is a
-  // float; 0 when the sequence is empty.
+  // float; for an empty sequence a zero of the kind `selector` gives, 0 or 0.0.
   fun <R : Number> sumOf(selector : (T) -> R) : R {
     var total : Number = 0
     for item in this { total += selector(item) }
-    return total as R
+    return total is R ? total as R : total.toFloat() as R
   }
 
   // The items as text, as a list's join gives them; with a limit, only so many are asked for.
@@ -361,11 +361,11 @@ class Sequence<T> {
 }
 
 // The sum of the items, which asks for all of them: ints sum to an int, and with a float among them
-// to a float; 0 when the sequence is empty.
+// to a float; for an empty sequence a zero of its item type, 0 or 0.0.
 fun <T : Number> Sequence<T>.sum() : T {
   var total : Number = 0
   for item in this { total += item }
-  return total as T
+  return total is T ? total as T : total.toFloat() as T
 }
 
 // -- Making a sequence --

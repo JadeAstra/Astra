@@ -1,0 +1,18 @@
+// `is` asks for a class; an object is a value, the one of its kind, tested for with == or written
+// as a when's branch itself. Before, the test failed only when the program came to it.
+
+enum class Event {
+  class Click(val x : int) : Event()
+  object Close : Event()
+}
+fun handle(e : Event) : string => when (e) {
+  is Event.Click -> "click"
+  is Event.Close -> "close"                 // check: 'Event.Close' is an object, the one value of its kind, not a class: test for it with ==, or in a when write it as the branch itself (Event.Close -> ...)
+}
+fun right(e : Event) : string => when (e) {
+  is Event.Click -> "click"
+  Event.Close -> "close"
+}
+val e : Event = Event.Close
+print(e is Event.Close)                     // check: 'Event.Close' is an object, the one value of its kind, not a class: test for it with ==, or in a when write it as the branch itself (Event.Close -> ...)
+print(e == Event.Close, e is Event.Click)

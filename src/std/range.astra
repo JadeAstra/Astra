@@ -103,12 +103,12 @@ fun Range.sum() : int {
   return total
 }
 
-// The sum of what `selector` gives for each number. An empty range gives the int 0, which is a
-// ClassCastException where `selector` gives floats.
+// The sum of what `selector` gives for each number; for an empty range a zero of the kind
+// `selector` gives, 0 or 0.0.
 fun <R : Number> Range.sumOf(selector : (int) -> R) : R {
   var total : Number = 0
   for number in this { total += selector(number) }
-  return total as R
+  return total is R ? total as R : total.toFloat() as R
 }
 
 // A new map from each number to what `valueSelector` gives for it, in the range's order.

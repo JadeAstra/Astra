@@ -3192,8 +3192,9 @@ opportunity, which is slow but useful for finding memory bugs when changing the 
   is asked of Windows for characters outside ASCII. There are no regular expressions yet.
 - `keys`, `values` and `entries` of a map are lists made when they are asked for: changing
   one does not change the map.
-- `orEmpty()` cannot be called on `null` itself, since strings, lists and maps each have one
-  and `null` does not say which is meant; write `text ?: ""` or `items ?: []`.
+- `orEmpty()` on a variable that may be null is the one of its type (`string?`, `List<T>?`,
+  `Map<K, V>?`). On a value whose type does not say (`any?`, or `null` written as it is), null
+  does not tell which of them is meant, and the call fails; write `text ?: ""` or `items ?: []`.
 - A compiled `.astc` file carries the Astra-written part of the standard library, about 160 KB.
 - The access words on a member (`private`, `protected`, `internal`, `private set`) are
   checked when the line runs, not when the program is compiled.

@@ -1,0 +1,44 @@
+// A member that takes the place of one from above, or supplies what an interface or an abstract
+// class asks for, says override; one that says it must have something to replace. Found when the
+// program is checked (before, only when the class was made). Each `// check:` names a report
+// expected on its line. tests/override_required.astra has the cases that are right.
+
+class Base(val id : int) {
+  var size = 1
+  val label
+    get() => "base $id"
+  fun greet() => "hello"
+}
+interface Shape {
+  val name : string
+  fun area()
+  fun describe() => "$name of area ${area()}"
+}
+abstract class Tool { abstract fun use() }
+class Animal {
+  var legs : int = 4
+}
+
+// Methods.
+class A1 : Base(1) { fun greet() => "hi" }                 // check: 'greet' in class A1 takes the place of the one it inherits; write override in front of it
+class A2 : Base(1) { override fun gret() => "hi" }         // check: 'gret' in class A2 is marked override, but there is nothing of that name for it to replace
+
+// Fields and properties, the header's fields included.
+class B1 : Base(1) { var size = 2 }                        // check: 'size' in class B1 takes the place of the one it inherits; write override in front of it
+class B2 : Base(1) { val label get() => "b" }              // check: 'label' in class B2 takes the place of the one it inherits; write override in front of it
+class B3(override val weight : int) : Base(1)              // check: 'weight' in class B3 is marked override, but there is nothing of that name for it to replace
+class Clash : Animal { var legs : int = 2 }                // check: 'legs' in class Clash takes the place of the one it inherits; write override in front of it
+
+// What an interface or an abstract class asks for, and what comes with an interface.
+class C1 : Shape { val name = "c"; override fun area() => 1 }                    // check: 'name' in class C1 is what interface Shape asks for; write override in front of it
+class C2 : Shape { override val name = "c"; fun area() => 1 }                    // check: 'area' in class C2 is what interface Shape asks for; write override in front of it
+class C3(override val name : string) : Shape { override fun area() => 1; fun describe() => "mine" }   // check: 'describe' in class C3 takes the place of the one it inherits; write override in front of it
+class D1 : Tool { fun use() => 1 }                         // check: 'use' in class D1 is what abstract class Tool asks for; write override in front of it
+
+// Inside a function, as anywhere.
+fun make() {
+  class Wrong : Tool {
+    override fun use() => 0
+    override fun aera() => 0                               // check: 'aera' in class Wrong is marked override, but there is nothing of that name for it to replace
+  }
+}

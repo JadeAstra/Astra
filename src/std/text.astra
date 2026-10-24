@@ -75,10 +75,13 @@ class StringBuilder {
   }
 
   // Takes out the characters from `startIndex` up to, not including, `endIndex`; an `endIndex` past
-  // the end stops at the end. Gives the builder. A `startIndex` that is negative or past the end is
-  // an IndexOutOfBoundsException.
+  // the end stops at the end. Gives the builder. A `startIndex` that is negative, past the end or
+  // after `endIndex` is an IndexOutOfBoundsException.
   fun deleteRange(startIndex : int, endIndex : int) : StringBuilder {
     val text = toString()
+    if (startIndex < 0 or startIndex > text.size or startIndex > endIndex) {
+      throw IndexOutOfBoundsException("deleteRange($startIndex, $endIndex) is out of range for a text of ${text.size} characters")
+    }
     val end = endIndex > text.size ? text.size : endIndex
     replaceWith(text[0..<startIndex] + text[end..])
     return this
@@ -86,10 +89,14 @@ class StringBuilder {
 
   // The same as deleteRange(startIndex, endIndex).
   fun delete(startIndex : int, endIndex : int) : StringBuilder => deleteRange(startIndex, endIndex)
-  // Takes out the character at `index`. Gives the builder.
-  fun deleteAt(index : int) : StringBuilder => deleteRange(index, index + 1)
+  // Takes out the character at `index`. Gives the builder. An `index` that is negative, or not
+  // below the size, is an IndexOutOfBoundsException.
+  fun deleteAt(index : int) : StringBuilder {
+    if (index < 0 or index >= count) { throw IndexOutOfBoundsException("index $index is out of range for a text of $count characters") }
+    return deleteRange(index, index + 1)
+  }
   // Takes out the character at `index`; the same as deleteAt(index).
-  fun deleteCharAt(index : int) : StringBuilder => deleteRange(index, index + 1)
+  fun deleteCharAt(index : int) : StringBuilder => deleteAt(index)
 
   // Cuts the text down to `newLength` characters; a longer length leaves it as it is.
   fun setLength(newLength : int) {

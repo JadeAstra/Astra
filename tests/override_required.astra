@@ -1,5 +1,6 @@
 // A member that takes the place of one from above, or supplies what an interface or an
-// abstract class asks for, says override. One that says it must have something to replace.
+// abstract class asks for, says override. One that says it must have something to replace. The
+// mistakes are found when the program is checked: tests/check/override.astra; here, what is right.
 
 class Base(val id : int) {
   var size = 1
@@ -21,31 +22,13 @@ fun attempt(make : () -> any?) {
 }
 
 // Methods.
-print(attempt(fun() { class A : Base(1) { fun greet() => "hi" } }))
-// expect: 'greet' in class A takes the place of the one it inherits; write override in front of it
 print(attempt(fun() { class A : Base(1) { override fun greet() => "hi" } }))   // expect: ok
-print(attempt(fun() { class A : Base(1) { override fun gret() => "hi" } }))
-// expect: 'gret' in class A is marked override, but there is nothing of that name for it to replace
 print(attempt(fun() { class A : Base(1) { fun wave() => "new, so no word" } }))   // expect: ok
 
 // Fields and properties, the header's fields included.
-print(attempt(fun() { class B : Base(1) { var size = 2 } }))
-// expect: 'size' in class B takes the place of the one it inherits; write override in front of it
-print(attempt(fun() { class B : Base(1) { val label get() => "b" } }))
-// expect: 'label' in class B takes the place of the one it inherits; write override in front of it
 print(attempt(fun() { class B(override var size : int) : Base(1) { override val label get() => "b $size" } }))   // expect: ok
-print(attempt(fun() { class B(override val weight : int) : Base(1) }))
-// expect: 'weight' in class B is marked override, but there is nothing of that name for it to replace
 
 // What an interface or an abstract class asks for, and what comes with an interface.
-print(attempt(fun() { class C : Shape { val name = "c"; override fun area() => 1 } }))
-// expect: 'name' in class C is what interface Shape asks for; write override in front of it
-print(attempt(fun() { class C : Shape { override val name = "c"; fun area() => 1 } }))
-// expect: 'area' in class C is what interface Shape asks for; write override in front of it
-print(attempt(fun() { class C(override val name : string) : Shape { override fun area() => 1; fun describe() => "mine" } }))
-// expect: 'describe' in class C takes the place of the one it inherits; write override in front of it
-print(attempt(fun() { class D : Tool { fun use() => 1 } }))
-// expect: 'use' in class D is what abstract class Tool asks for; write override in front of it
 print(attempt(fun() {
   class C(override val name : string) : Shape {
     override fun area() => 2

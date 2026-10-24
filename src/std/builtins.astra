@@ -90,12 +90,13 @@ external fun string.trimIndent() : string
 // `marginPrefix` and the prefix itself taken away, and a first and a last line that are blank
 // dropped. A line without the prefix is kept as it is.
 external fun string.trimMargin(marginPrefix : string = "|") : string
-// The parts of the text between the places where `delimiter` is, as a new list; an empty
-// delimiter gives each character. With no argument at all, the parts between runs of whitespace,
-// none of them empty.
-//   "a,b,,c".split(",")   // ["a", "b", "", "c"]
+// The words of the text: the parts between runs of whitespace, none of them empty, as a new list.
 //   " a  b ".split()      // ["a", "b"]
-external fun string.split(delimiter : string = " ") : open List<string>
+external fun string.split() : open List<string>
+// The parts of the text between the places where `delimiter` is, as a new list; an empty
+// delimiter gives each character.
+//   "a,b,,c".split(",")   // ["a", "b", "", "c"]
+external fun string.split(delimiter : string) : open List<string>
 // The parts of the text between the places where the character `delimiter` is, as a new list.
 external fun string.split(delimiter : char) : open List<string>
 // The lines of the text without their line ends ("\n" or "\r\n"), as a new list. Text that ends
@@ -123,11 +124,12 @@ external fun string.indexOf(other : string, startIndex : int = 0, ignoreCase : b
 // The position where the character `other` first appears at or after `startIndex`, or -1.
 external fun string.indexOf(other : char, startIndex : int = 0, ignoreCase : bool = false) : int
 // The position where `other` last appears, beginning at or before `startIndex`, or -1 where it
-// does not. Without `startIndex` the whole text is searched, from its end; a negative one gives -1.
-external fun string.lastIndexOf(other : string, startIndex : int = 0, ignoreCase : bool = false) : int
+// does not. Without `startIndex` (or with null) the whole text is searched, from its end; a
+// negative one gives -1.
+external fun string.lastIndexOf(other : string, startIndex : int? = null, ignoreCase : bool = false) : int
 // The position where the character `other` last appears, at or before `startIndex` where one is
 // given, or -1.
-external fun string.lastIndexOf(other : char, startIndex : int = 0, ignoreCase : bool = false) : int
+external fun string.lastIndexOf(other : char, startIndex : int? = null, ignoreCase : bool = false) : int
 // The text with every `oldValue` in it replaced by `newValue`; the text as it is when `oldValue`
 // is "".
 external fun string.replace(oldValue : string, newValue : string, ignoreCase : bool = false) : string
@@ -219,9 +221,9 @@ external fun <T> open List<T>.insert(index : int, item : T)
 external fun <T> List<T>.get(index : int) : T
 // The item at `index`, from 0, or null where there is none, as for a negative index.
 external fun <T> List<T>.getOrNull(index : int) : T?
-// Puts `item` at `index`, from 0, in place of the item there. An IndexOutOfBoundsException where
-// there is none.
-external fun <T> open List<T>.set(index : int, item : T)
+// Puts `item` at `index`, from 0, in place of the item there, and gives the item that was there. An
+// IndexOutOfBoundsException where there is none.
+external fun <T> open List<T>.set(index : int, item : T) : T
 // Takes out the item at `index` and gives it; `^1` is the last. An IndexOutOfBoundsException
 // where there is none, as for a negative int.
 external fun <T> open List<T>.removeAt(index : Index) : T

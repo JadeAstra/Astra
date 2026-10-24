@@ -81,8 +81,12 @@ class ParallelStream<T> {
 
   private fun tests(predicate : (T) -> bool) : open List<bool> => __parallel.run(items, predicate, true)
 
-  // The total of what `selector` gives for each item, each worked out on one of the cores; 0 for none.
-  fun <R : Number> sumOf(selector : (T) -> R) : R => (__parallel.run(items, selector, true) as List<R>).sum()
+  // The total of what `selector` gives for each item, each worked out on one of the cores; for
+  // none, a zero of the kind `selector` gives, 0 or 0.0.
+  fun <R : Number> sumOf(selector : (T) -> R) : R {
+    val total : Number = (__parallel.run(items, selector, true) as List<R>).sum()
+    return total is R ? total as R : total.toFloat() as R
+  }
   // The largest of what `selector` gives for each item, each worked out on one of the cores:
   // NoSuchElementException when there are none.
   fun <R> maxOf(selector : (T) -> R) : R => (__parallel.run(items, selector, true) as List<R>).max()

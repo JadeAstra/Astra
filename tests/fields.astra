@@ -178,13 +178,6 @@ plain.on = true
 print(plain.on, plain.created)          // expect: true now
 print(attempt(fun() => unknown(Plain)(1)))       // expect: Plain() takes no arguments but got 1
 
-// declaring a field that a superclass already has
-print(attempt(fun() {
-  class Clash : Animal {
-    var legs : int = 2
-  }
-}))                                     // expect: 'legs' in class Clash takes the place of the one it inherits; write override in front of it
-
 // subclasses inherit the restriction, even if they declare nothing themselves
 class Kitten : Animal {
   fun init(name : string) {

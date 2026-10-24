@@ -744,6 +744,10 @@ private:
         FinallyState* finallyAtEntry = nullptr;
         int tryDepth = 0;
         std::unique_ptr<ClassState> cls;                       // a member's class, as its body sees it
+        // The call's type arguments, by the function's type parameters, where the checker worked
+        // them out: `x is R` in the body tests against the type the call means (sumOf on an
+        // empty list gives a float zero for a selector that gives floats).
+        std::unordered_map<std::string, RuntimeType> typeArgs;
     };
     int thisSlot_ = -1;
     std::vector<int> implicitSlots_;
@@ -895,6 +899,14 @@ private:
         InlineFrame frame;
         frame.fn = &fn;
         frame.owner = ++nextOwner_;
+        if (std::vector<RuntimeType> args; session_.checker->typeArguments(e, args))
+            for (size_t i = 0; i < fn.typeParams.size() && i < args.size(); i++)
+                if (args[i].kind == RuntimeType::TypeParam) {
+                    // One of an inline function's own, from the call in its body: the type that call gave it.
+                    if (const RuntimeType* outer = inlineTypeArgument(args[i].typeParam)) frame.typeArgs[fn.typeParams[i].name] = *outer;
+                } else if (args[i].kind != RuntimeType::Unknown) {
+                    frame.typeArgs[fn.typeParams[i].name] = args[i];
+                }
         inlineBodies_.insert(frame.owner);
         frame.finallyAtEntry = fs_->finally;
         frame.tryDepth = fs_->tryDepth;
@@ -2589,9 +2601,14 @@ private:
         if (t.nullable) shape += '?';
         if (t.typeParam) {
             TypeParamPlace place;
+            std::string part;
+            std::vector<TypeOperand> operands;
             if (findTypeParam(t.name, place)) {
                 emitTypeParam(place, t);
                 shape += 'P';
+            } else if (const RuntimeType* given = inlineTypeArgument(t.name);
+                       given != nullptr && shapeOf(*given, part, operands) && emitShape(part, operands, t)) {
+                shape += 'P';  // the type the inline call gave it, made here
             } else {
                 shape += 'a';
             }
@@ -2642,11 +2659,18 @@ private:
 
     // Whether a type as written says more than its class or kind: type arguments to check, or
     // a type parameter, whose value the code is given when it runs.
+    // In an inline function's body, the type argument the call gave one of its type parameters.
+    const RuntimeType* inlineTypeArgument(const std::string& name) const {
+        if (frame_ == nullptr) return nullptr;
+        auto found = frame_->typeArgs.find(name);
+        return found != frame_->typeArgs.end() ? &found->second : nullptr;
+    }
+
     bool hasTypeArguments(const TypeAnnotation& written_) const {
         const TypeAnnotation& t = written(written_);
         if (t.name == "|") return false;
         TypeParamPlace place;
-        if (t.typeParam) return findTypeParam(t.name, place);
+        if (t.typeParam) return findTypeParam(t.name, place) || inlineTypeArgument(t.name) != nullptr;
         return !t.args.empty() && t.result.empty();
     }
 

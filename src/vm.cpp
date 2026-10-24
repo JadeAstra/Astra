@@ -774,6 +774,10 @@ Value VM::callOn(Value receiver, Value callee, int argc, const Value* args) {
 // found under its own name, the name with its signature, for calls that know which they mean.
 void VM::addExtensionForm(Table& table, ObjString* name, Value function) {
     ObjClosure* added = asClosure(function);
+    // Under its own name always, whether or not the name has other forms: a call the checker
+    // has told which form it means names it so (one with a receiver that takes null, which null
+    // alone could not choose).
+    if (!added->proto->signature.empty()) table.set(intern(name->utf8() + added->proto->signature), function);
     const Value* existing = table.find(name);
     if (existing == nullptr || !existing->isObjType(ObjType::Closure) || added->proto->signature.empty()) {
         table.set(name, function);
@@ -6593,6 +6597,9 @@ void VM::run(int baseFrame) {
                                                                     : before->isObj() && owner.isObj() && before->as.obj == owner.as.obj);
                             nullExtensions_.set(name, same ? function : Value::boolean(false));
                             if (before == nullptr) nullExtensionOwners_.set(name, owner);
+                            // Under its own name as well, which a call the checker could tell names.
+                            if (const std::string& signature = asClosure(function)->proto->signature; !signature.empty())
+                                nullExtensions_.set(intern(name->utf8() + signature), function);
                         }
                         hasExtensions_ = true;
                         break;

@@ -1,0 +1,44 @@
+// Edge cases of the standard library found while describing it for docs/language.html (2026-10-24).
+
+// orEmpty() on null, where the variable's type says which orEmpty is meant.
+var s : string? = null
+var l : List<int>? = null
+var m : Map<string, int>? = null
+fun text(x : string?) : string => x.orEmpty()
+print(s.orEmpty() == "", l.orEmpty().size, m.orEmpty().size, text(null) == "", text("a"))   // expect: true 0 0 true a
+print("ab".orEmpty(), [1].orEmpty(), {"a": 1}.orEmpty())   // expect: ab [1] {"a": 1}
+
+// average() of nothing is NaN.
+val none : List<int> = []
+print(none.average().isNaN(), [1, 2].average())   // expect: true 1.5
+
+// A sum of nothing is a zero of the kind the items or the selector give.
+val noFloats : List<float> = []
+val noInts : Set<int> = setOf()
+val noEntries : Map<string, int> = {:}
+print(noFloats.sum(), none.sum(), none.sumOf { it * 0.5 }, none.sumOf { it }, noInts.sumOf { it * 0.5 })   // expect: 0.0 0 0.0 0 0.0
+print(noEntries.sumOf { it.value * 0.5 }, (1..<1).sumOf { it * 0.5 }, none.asSequence().sumOf { it * 0.5 }, noFloats.asSequence().sum())   // expect: 0.0 0.0 0.0 0.0
+print(none.parallelStream().sumOf { it * 0.5 }, [1.5, 2.0].sum(), [1, 2].sumOf { it * 2 }, (1..3).sumOf { it * 0.5 })   // expect: 0.0 3.5 6 3.0
+
+// A StringBuilder's ranges are checked.
+val sb = StringBuilder("abcdef")
+try { sb.deleteRange(3, 1) } catch (e : IndexOutOfBoundsException) { print(e.message) }   // expect: deleteRange(3, 1) is out of range for a text of 6 characters
+try { sb.deleteAt(6) } catch (e : IndexOutOfBoundsException) { print(e.message) }   // expect: index 6 is out of range for a text of 6 characters
+try { sb.deleteCharAt(-1) } catch (e : IndexOutOfBoundsException) { print(e.message) }   // expect: index -1 is out of range for a text of 6 characters
+print(sb.deleteAt(0).toString(), sb.deleteRange(1, 99).toString())   // expect: bcdef b
+
+// split() with no delimiter, and lastIndexOf without a start, as they are declared.
+print(" a  b ".split(), "a,b,,c".split(","), "a b".split(' '))   // expect: ["a", "b"] ["a", "b", "", "c"] ["a", "b"]
+print("Hello, World".lastIndexOf("o"), "Hello, World".lastIndexOf("o", 5), "Hello, World".lastIndexOf("O", ignoreCase = true), "Hello".lastIndexOf('l', null))   // expect: 8 4 8 3
+
+// set gives the item it replaced.
+val letters : open List<string> = ["a", "b"]
+val replaced = letters.set(0, "z")
+print(replaced, letters)   // expect: a ["z", "b"]
+
+// The main thread, and threads given names, take no number of the Thread-N names.
+print(Thread.currentThread().name)   // expect: main
+val named = Thread({ }, "loader")
+val first = Thread({ })
+val second = Thread({ })
+print(named.name, first.name, second.name)   // expect: loader Thread-1 Thread-2

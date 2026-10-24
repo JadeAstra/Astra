@@ -576,23 +576,24 @@ inline fun <T, R> List<T>.fold(initial : R, operation : (R, T) -> R) : R {
   return result
 }
 
-// A list of ints sums to an int, one with a float in it to a float.
+// A list of ints sums to an int, one with a float in it to a float; an empty list to a zero of
+// its item type, 0 or 0.0.
 fun <T : Number> List<T>.sum() : T {
   var total : Number = 0
   for item in this { total += item }
-  return total as T
+  return total is T ? total as T : total.toFloat() as T
 }
 
 // The sum of what `selector` gives for each item: an int when every one is an int, otherwise a
-// float; 0 for an empty list.
+// float; for an empty list a zero of the kind `selector` gives, 0 or 0.0.
 inline fun <T, R : Number> List<T>.sumOf(selector : (T) -> R) : R {
   var total : Number = 0
   for item in this { total += selector(item) }
-  return total as R
+  return total is R ? total as R : total.toFloat() as R
 }
 
-// The mean of the items, as a float.
-fun <T : Number> List<T>.average() : float => this.size == 0 ? float.nan : this.sum().toFloat() / this.size
+// The mean of the items, as a float; NaN (`isNaN()` is true) for an empty list.
+fun <T : Number> List<T>.average() : float => this.size == 0 ? 0.0 / 0.0 : this.sum().toFloat() / this.size
 
 // The greatest item, the first of them if several are equal, or null when the list is empty.
 // Items that cannot be compared, such as a string and an int, give a ClassCastException.

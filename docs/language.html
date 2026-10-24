@@ -540,7 +540,7 @@ addButton(widgets)</pre></dd>
 <li><a href="#char.code"><code>char</code></a> (11)</li>
 <li><a href="#float.coerceIn"><code>float</code></a> (16)</li>
 <li><a href="#int.char"><code>int</code></a> (31)</li>
-<li><a href="#string.size"><code>string</code></a> (102)</li>
+<li><a href="#string.size"><code>string</code></a> (103)</li>
 </ul>
 <section class="file" id="file-builtins-astra">
 <h2>builtins.astra</h2>
@@ -633,13 +633,17 @@ Range(10, 0, -3).toList()  // [10, 7, 4, 1]
 <div class="entry" id="string.trimMargin"><code class="sig">fun string.trimMargin(marginPrefix : string = &quot;|&quot;) : string</code><a class="anchor" href="#string.trimMargin">#</a>
 <p>For text written over several lines in the source: on each line, the spaces and tabs up to <code>marginPrefix</code> and the prefix itself taken away, and a first and a last line that are blank dropped. A line without the prefix is kept as it is.</p>
 </div>
-<div class="entry" id="string.split"><code class="sig">fun string.split(delimiter : string = &quot; &quot;) : open List&lt;string&gt;</code><a class="anchor" href="#string.split">#</a>
-<p>The parts of the text between the places where <code>delimiter</code> is, as a new list; an empty delimiter gives each character. With no argument at all, the parts between runs of whitespace, none of them empty.</p>
-<pre>&quot;a,b,,c&quot;.split(&quot;,&quot;)   // [&quot;a&quot;, &quot;b&quot;, &quot;&quot;, &quot;c&quot;]
-&quot; a  b &quot;.split()      // [&quot;a&quot;, &quot;b&quot;]
+<div class="entry" id="string.split"><code class="sig">fun string.split() : open List&lt;string&gt;</code><a class="anchor" href="#string.split">#</a>
+<p>The words of the text: the parts between runs of whitespace, none of them empty, as a new list.</p>
+<pre>&quot; a  b &quot;.split()      // [&quot;a&quot;, &quot;b&quot;]
 </pre>
 </div>
-<div class="entry" id="string.split-2"><code class="sig">fun string.split(delimiter : char) : open List&lt;string&gt;</code><a class="anchor" href="#string.split-2">#</a>
+<div class="entry" id="string.split-2"><code class="sig">fun string.split(delimiter : string) : open List&lt;string&gt;</code><a class="anchor" href="#string.split-2">#</a>
+<p>The parts of the text between the places where <code>delimiter</code> is, as a new list; an empty delimiter gives each character.</p>
+<pre>&quot;a,b,,c&quot;.split(&quot;,&quot;)   // [&quot;a&quot;, &quot;b&quot;, &quot;&quot;, &quot;c&quot;]
+</pre>
+</div>
+<div class="entry" id="string.split-3"><code class="sig">fun string.split(delimiter : char) : open List&lt;string&gt;</code><a class="anchor" href="#string.split-3">#</a>
 <p>The parts of the text between the places where the character <code>delimiter</code> is, as a new list.</p>
 </div>
 <div class="entry" id="string.lines"><code class="sig">fun string.lines() : open List&lt;string&gt;</code><a class="anchor" href="#string.lines">#</a>
@@ -675,10 +679,10 @@ Range(10, 0, -3).toList()  // [10, 7, 4, 1]
 <div class="entry" id="string.indexOf-2"><code class="sig">fun string.indexOf(other : char, startIndex : int = 0, ignoreCase : bool = false) : int</code><a class="anchor" href="#string.indexOf-2">#</a>
 <p>The position where the character <code>other</code> first appears at or after <code>startIndex</code>, or -1.</p>
 </div>
-<div class="entry" id="string.lastIndexOf"><code class="sig">fun string.lastIndexOf(other : string, startIndex : int = 0, ignoreCase : bool = false) : int</code><a class="anchor" href="#string.lastIndexOf">#</a>
-<p>The position where <code>other</code> last appears, beginning at or before <code>startIndex</code>, or -1 where it does not. Without <code>startIndex</code> the whole text is searched, from its end; a negative one gives -1.</p>
+<div class="entry" id="string.lastIndexOf"><code class="sig">fun string.lastIndexOf(other : string, startIndex : int? = null, ignoreCase : bool = false) : int</code><a class="anchor" href="#string.lastIndexOf">#</a>
+<p>The position where <code>other</code> last appears, beginning at or before <code>startIndex</code>, or -1 where it does not. Without <code>startIndex</code> (or with null) the whole text is searched, from its end; a negative one gives -1.</p>
 </div>
-<div class="entry" id="string.lastIndexOf-2"><code class="sig">fun string.lastIndexOf(other : char, startIndex : int = 0, ignoreCase : bool = false) : int</code><a class="anchor" href="#string.lastIndexOf-2">#</a>
+<div class="entry" id="string.lastIndexOf-2"><code class="sig">fun string.lastIndexOf(other : char, startIndex : int? = null, ignoreCase : bool = false) : int</code><a class="anchor" href="#string.lastIndexOf-2">#</a>
 <p>The position where the character <code>other</code> last appears, at or before <code>startIndex</code> where one is given, or -1.</p>
 </div>
 <div class="entry" id="string.replace"><code class="sig">fun string.replace(oldValue : string, newValue : string, ignoreCase : bool = false) : string</code><a class="anchor" href="#string.replace">#</a>
@@ -790,8 +794,8 @@ Range(10, 0, -3).toList()  // [10, 7, 4, 1]
 <div class="entry" id="List.getOrNull"><code class="sig">fun &lt;T&gt; List&lt;T&gt;.getOrNull(index : int) : T?</code><a class="anchor" href="#List.getOrNull">#</a>
 <p>The item at <code>index</code>, from 0, or null where there is none, as for a negative index.</p>
 </div>
-<div class="entry" id="List.set"><code class="sig">fun &lt;T&gt; open List&lt;T&gt;.set(index : int, item : T)</code><a class="anchor" href="#List.set">#</a>
-<p>Puts <code>item</code> at <code>index</code>, from 0, in place of the item there. An IndexOutOfBoundsException where there is none.</p>
+<div class="entry" id="List.set"><code class="sig">fun &lt;T&gt; open List&lt;T&gt;.set(index : int, item : T) : T</code><a class="anchor" href="#List.set">#</a>
+<p>Puts <code>item</code> at <code>index</code>, from 0, in place of the item there, and gives the item that was there. An IndexOutOfBoundsException where there is none.</p>
 </div>
 <div class="entry" id="List.removeAt"><code class="sig">fun &lt;T&gt; open List&lt;T&gt;.removeAt(index : Index) : T</code><a class="anchor" href="#List.removeAt">#</a>
 <p>Takes out the item at <code>index</code> and gives it; <code>^1</code> is the last. An IndexOutOfBoundsException where there is none, as for a negative int.</p>
@@ -3066,13 +3070,13 @@ while (true) {
 </pre>
 </div>
 <div class="entry" id="List.sum"><code class="sig">fun &lt;T : Number&gt; List&lt;T&gt;.sum() : T</code><a class="anchor" href="#List.sum">#</a>
-<p>A list of ints sums to an int, one with a float in it to a float.</p>
+<p>A list of ints sums to an int, one with a float in it to a float; an empty list to a zero of its item type, 0 or 0.0.</p>
 </div>
 <div class="entry" id="List.sumOf"><code class="sig">inline fun &lt;T, R : Number&gt; List&lt;T&gt;.sumOf(selector : (T) -&gt; R) : R</code><a class="anchor" href="#List.sumOf">#</a>
-<p>The sum of what <code>selector</code> gives for each item: an int when every one is an int, otherwise a float; 0 for an empty list.</p>
+<p>The sum of what <code>selector</code> gives for each item: an int when every one is an int, otherwise a float; for an empty list a zero of the kind <code>selector</code> gives, 0 or 0.0.</p>
 </div>
 <div class="entry" id="List.average"><code class="sig">fun &lt;T : Number&gt; List&lt;T&gt;.average() : float</code><a class="anchor" href="#List.average">#</a>
-<p>The mean of the items, as a float.</p>
+<p>The mean of the items, as a float; NaN (<code>isNaN()</code> is true) for an empty list.</p>
 </div>
 <div class="entry" id="List.maxOrNull"><code class="sig">fun &lt;T&gt; List&lt;T&gt;.maxOrNull() : T?</code><a class="anchor" href="#List.maxOrNull">#</a>
 <p>The greatest item, the first of them if several are equal, or null when the list is empty. Items that cannot be compared, such as a string and an int, give a ClassCastException.</p>
@@ -3335,7 +3339,7 @@ val totals = orders.parallelStream().map { priceOf(it) }.toList()
 <p>Whether <code>predicate</code> is true for no item; every item is tested, on the cores. True when there are none.</p>
 </div>
 <div class="entry member" id="ParallelStream.sumOf"><code class="sig">fun &lt;R : Number&gt; sumOf(selector : (T) -&gt; R) : R</code><a class="anchor" href="#ParallelStream.sumOf">#</a>
-<p>The total of what <code>selector</code> gives for each item, each worked out on one of the cores; 0 for none.</p>
+<p>The total of what <code>selector</code> gives for each item, each worked out on one of the cores; for none, a zero of the kind <code>selector</code> gives, 0 or 0.0.</p>
 </div>
 <div class="entry member" id="ParallelStream.maxOf"><code class="sig">fun &lt;R&gt; maxOf(selector : (T) -&gt; R) : R</code><a class="anchor" href="#ParallelStream.maxOf">#</a>
 <p>The largest of what <code>selector</code> gives for each item, each worked out on one of the cores: NoSuchElementException when there are none.</p>
@@ -3566,7 +3570,7 @@ pages.parallelStream().forEach { page -&gt; for (link in page.links) { seen.add(
 <p>The sum of the numbers; 0 for an empty range.</p>
 </div>
 <div class="entry" id="Range.sumOf"><code class="sig">fun &lt;R : Number&gt; Range.sumOf(selector : (int) -&gt; R) : R</code><a class="anchor" href="#Range.sumOf">#</a>
-<p>The sum of what <code>selector</code> gives for each number. An empty range gives the int 0, which is a ClassCastException where <code>selector</code> gives floats.</p>
+<p>The sum of what <code>selector</code> gives for each number; for an empty range a zero of the kind <code>selector</code> gives, 0 or 0.0.</p>
 </div>
 <div class="entry" id="Range.associateWith"><code class="sig">fun &lt;V&gt; Range.associateWith(valueSelector : (int) -&gt; V) : open Map&lt;int, V&gt;</code><a class="anchor" href="#Range.associateWith">#</a>
 <p>A new map from each number to what <code>valueSelector</code> gives for it, in the range's order.</p>
@@ -3866,7 +3870,7 @@ print(squares.filter { it % 3 == 0 }.take(5).toList())     // [9, 36, 81, 144, 2
 <p>The first item put through <code>operation</code> with each of the others in turn; an UnsupportedOperationException when the sequence is empty (fold takes a starting value).</p>
 </div>
 <div class="entry member" id="Sequence.sumOf"><code class="sig">fun &lt;R : Number&gt; sumOf(selector : (T) -&gt; R) : R</code><a class="anchor" href="#Sequence.sumOf">#</a>
-<p>The sum of what <code>selector</code> gives for each item: an int if all are ints, a float if any is a float; 0 when the sequence is empty.</p>
+<p>The sum of what <code>selector</code> gives for each item: an int if all are ints, a float if any is a float; for an empty sequence a zero of the kind <code>selector</code> gives, 0 or 0.0.</p>
 </div>
 <div class="entry member" id="Sequence.join"><code class="sig">fun join(separator : string = &quot;, &quot;, prefix : string = &quot;&quot;, postfix : string = &quot;&quot;, limit : int = -1, truncated : string = &quot;...&quot;, transform : ((T) -&gt; any?)? = null) : string</code><a class="anchor" href="#Sequence.join">#</a>
 <p>The items as text, as a list's join gives them; with a limit, only so many are asked for.</p>
@@ -3875,7 +3879,7 @@ print(squares.filter { it % 3 == 0 }.take(5).toList())     // [9, 36, 81, 144, 2
 <p>&quot;Sequence&quot;: it asks for none of the items. join() gives them as text.</p>
 </div>
 <div class="entry" id="Sequence.sum"><code class="sig">fun &lt;T : Number&gt; Sequence&lt;T&gt;.sum() : T</code><a class="anchor" href="#Sequence.sum">#</a>
-<p>The sum of the items, which asks for all of them: ints sum to an int, and with a float among them to a float; 0 when the sequence is empty.</p>
+<p>The sum of the items, which asks for all of them: ints sum to an int, and with a float among them to a float; for an empty sequence a zero of its item type, 0 or 0.0.</p>
 </div>
 <h4>Making a sequence</h4>
 <div class="entry" id="SequenceScope"><code class="sig">class SequenceScope&lt;T&gt;</code><a class="anchor" href="#SequenceScope">#</a>
@@ -4636,13 +4640,13 @@ print(out.toString())
 <p>Positions count characters, as in a string.</p>
 </div>
 <div class="entry member" id="StringBuilder.deleteRange"><code class="sig">fun deleteRange(startIndex : int, endIndex : int) : StringBuilder</code><a class="anchor" href="#StringBuilder.deleteRange">#</a>
-<p>Takes out the characters from <code>startIndex</code> up to, not including, <code>endIndex</code>; an <code>endIndex</code> past the end stops at the end. Gives the builder. A <code>startIndex</code> that is negative or past the end is an IndexOutOfBoundsException.</p>
+<p>Takes out the characters from <code>startIndex</code> up to, not including, <code>endIndex</code>; an <code>endIndex</code> past the end stops at the end. Gives the builder. A <code>startIndex</code> that is negative, past the end or after <code>endIndex</code> is an IndexOutOfBoundsException.</p>
 </div>
 <div class="entry member" id="StringBuilder.delete"><code class="sig">fun delete(startIndex : int, endIndex : int) : StringBuilder</code><a class="anchor" href="#StringBuilder.delete">#</a>
 <p>The same as deleteRange(startIndex, endIndex).</p>
 </div>
 <div class="entry member" id="StringBuilder.deleteAt"><code class="sig">fun deleteAt(index : int) : StringBuilder</code><a class="anchor" href="#StringBuilder.deleteAt">#</a>
-<p>Takes out the character at <code>index</code>. Gives the builder.</p>
+<p>Takes out the character at <code>index</code>. Gives the builder. An <code>index</code> that is negative, or not below the size, is an IndexOutOfBoundsException.</p>
 </div>
 <div class="entry member" id="StringBuilder.deleteCharAt"><code class="sig">fun deleteCharAt(index : int) : StringBuilder</code><a class="anchor" href="#StringBuilder.deleteCharAt">#</a>
 <p>Takes out the character at <code>index</code>; the same as deleteAt(index).</p>
@@ -4690,7 +4694,7 @@ loading.then { shown = it }                              // on the event loop, w
 <p>A thread of its own, running <code>task</code> or, in a class that extends Thread, its own run(), once start() is called. thread { } is the shorter way, giving a Job of what the block returns.</p>
 </div>
 <div class="entry member" id="Thread.made"><code class="sig">var made</code><a class="anchor" href="#Thread.made">#</a>
-<p>How many Thread objects have been made, the main thread's among them once currentThread() has given it: the number in the name Thread-N of one given no name.</p>
+<p>How many threads have been given no name of their own: the number in the name Thread-N of the last. The main thread, and one given a name, are not counted.</p>
 </div>
 <div class="entry member" id="Thread.currentThread"><code class="sig">fun currentThread() : Thread</code><a class="anchor" href="#Thread.currentThread">#</a>
 <p>The thread running this code. On the main thread, a Thread named &quot;main&quot;, made the first time it is asked for.</p>
