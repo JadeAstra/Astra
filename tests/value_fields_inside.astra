@@ -1,0 +1,89 @@
+// Fields of a value type kept inside their objects (G16, 2026-10-24): one whose type is worked
+// out rather than written, one that may be null (its slot holds null, or where the value is),
+// and objects made before the field's type exists, which keep boxes while later ones keep the
+// value inside. None of this shows: the output is what it was with every such field in a box.
+
+value Rect(var x : int, var y : int, var w : int, var h : int) {
+  mutating fun grow(by : int) { w += by; h += by }
+}
+fun makeRect(n : int) : Rect => Rect(n, n, n, n)
+
+// A type worked out, not written.
+class Worked(seed : int) {
+  var bounds = makeRect(seed)
+  var copyOf = bounds
+}
+val w = Worked(2)
+w.bounds.grow(1)
+w.bounds.x = 9
+print(w.bounds, w.copyOf)   // expect: Rect(x=9, y=2, w=3, h=3) Rect(x=2, y=2, w=2, h=2)
+w.copyOf = w.bounds
+w.bounds.grow(5)
+print(w.bounds, w.copyOf)   // expect: Rect(x=9, y=2, w=8, h=8) Rect(x=9, y=2, w=3, h=3)
+
+// One that may be null.
+class Maybe {
+  var damage : Rect? = null
+  var last = if (true) { makeRect(1) } else { null }
+}
+val m = Maybe()
+print(m.damage, m.damage?.w, m.last)   // expect: null null Rect(x=1, y=1, w=1, h=1)
+m.damage = makeRect(3)
+m.damage?.grow(2)
+print(m.damage, m.damage?.w)   // expect: Rect(x=3, y=3, w=5, h=5) 5
+val kept = m.damage
+m.damage = null
+print(m.damage, kept, m.damage?.w)   // expect: null Rect(x=3, y=3, w=5, h=5) null
+m.damage = Rect(1, 2, 3, 4)
+m.damage?.grow(10)
+print(m.damage)   // expect: Rect(x=1, y=2, w=13, h=14)
+m.last = null
+print(m.last)   // expect: null
+m.last = m.damage
+m.damage?.grow(1)
+print(m.last, m.damage)   // expect: Rect(x=1, y=2, w=13, h=14) Rect(x=1, y=2, w=14, h=15)
+val ms = (0..<5).map { Maybe() }
+for (i in ms.indices) { if (i % 2 == 0) { ms[i].damage = makeRect(i) } }
+print(ms.map { it.damage?.x ?: -1 })   // expect: [0, -1, 2, -1, 4]
+
+// An object made before the value type of its fields exists keeps them in boxes; the objects
+// made after keep them inside.
+class Holder {
+  var n = 1
+  var r : Later? = null
+  var other : Later? = null
+}
+val early = Holder()
+value Later(var a : int, var b : int, var c : int) {
+  mutating fun bump() { a += 10 }
+}
+early.r = Later(1, 2, 3)
+early.r?.bump()
+early.other = early.r
+early.r?.bump()
+val late = Holder()
+late.r = Later(4, 5, 6)
+late.r?.bump()
+late.other = late.r
+late.r?.bump()
+print(early.r, early.other, early.n)   // expect: Later(a=21, b=2, c=3) Later(a=11, b=2, c=3) 1
+print(late.r, late.other, late.n)   // expect: Later(a=24, b=5, c=6) Later(a=14, b=5, c=6) 1
+val all = [early, late, Holder()]
+all[2].r = Later(7, 8, 9)
+print(all.map { (it.r?.a ?: 0) + (it.other?.a ?: 0) })   // expect: [32, 38, 7]
+late.r = null
+early.r = null
+print(late.r, early.r, late.other, early.other)   // expect: null null Later(a=14, b=5, c=6) Later(a=11, b=2, c=3)
+
+// A value kept inside that holds objects of its own: they live while it does, through many
+// collections, and are let go when the field is given null.
+value Tag(val name : string, var count : int)
+class Labelled { var tag : Tag? = null }
+val labels = (0..<200).map { Labelled() }
+for (round in 0..<50) {
+  for (i in labels.indices) {
+    labels[i].tag = i % 3 == 0 ? null : Tag("tag " + (i * round).toString(), round)
+  }
+  val junk = (0..<200).map { "x" + it.toString() }
+}
+print(labels[1].tag, labels[3].tag, labels.count { it.tag != null })   // expect: Tag(name="tag 49", count=49) null 133

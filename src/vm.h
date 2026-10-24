@@ -497,6 +497,7 @@ public:
     // Runs one of the instructions of types (MakeType to InstanceTypeArg); gives where the next one is.
     const uint8_t* typeInstruction(Op op, const uint8_t* ip, CallFrame* frame);
     const uint8_t* placeInstruction(Op op, const uint8_t* ip, CallFrame* frame);
+    void classFinished();
     Value returnedRef(Value result, ptrdiff_t frameIndex);
     // Whether the caller of `frame` keeps what it returns where it is (Op::WithRefResult).
     bool keptAsItIs(const CallFrame* frame) {
@@ -911,6 +912,7 @@ private:
     int coreIndex_ = -1;                   // which core's VM this is
     std::shared_ptr<ParallelPool> parallelPool_;
     std::mutex internMutex_;       // cores intern strings in the root's table
+    std::atomic<uint64_t> classesFinished_{0};  // the root's: classes made so far (VM::layInline)
     uint64_t extensionEpoch_ = 0;  // goes up when an extension function is added
     // In a section over the parts of a buffer, or over a list of values (M6.6 part 4): the bytes
     // or the list this core may write the part of, and that part. Of such a list it reads only

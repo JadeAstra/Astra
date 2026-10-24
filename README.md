@@ -1468,7 +1468,10 @@ is kept depends on its size, and the program sees no difference:
   passing and keeping one allocates nothing.
 - **A field of a larger value type** in an object of a class is kept inside the object: a
   component's `bounds` is 32 bytes of the component, given a new value by copying the bytes in,
-  or by building the new one there (`bounds = Rect(x, y, w, h)`).
+  or by building the new one there (`bounds = Rect(x, y, w, h)`). So is one whose type is worked
+  out (`var bounds = other.bounds`), and one that may be null (`var damage : Rect? = null`),
+  which marks null in its slot. An object made before such a field's value type exists keeps
+  its value in a box.
 - **Anywhere else** a larger value is kept in a box of its own, one allocation of 56 bytes for a
   `Point` where an object of a class takes 80.
 

@@ -23,6 +23,7 @@ struct RuntimeType {
     const Namespace* ns = nullptr;
     std::string privateFile;
     std::string global;
+    bool value = false;     // a class that is a value type
     std::string typeParam;  // a type parameter: its name
     std::vector<RuntimeType> args;
 };
@@ -265,6 +266,8 @@ public:
     // A field written without its type: the type the checker works out for it, where that is an
     // int, a float or a bool, so that its objects keep it as a payload (M6.6 part 6).
     bool inferredFieldType(const VarStmt& field, RuntimeType& out) const;
+    // A field with no type written whose value is of a value type, null or not (G16).
+    bool inferredValueFieldType(const VarStmt& field, RuntimeType& out) const;
     bool loopsInPlace(const ForInStmt& loop) const;
     bool loopPassesOn(const ForInStmt& loop) const;  // its variable's one use is to be passed on
     std::vector<int> paramsOwned(const FunctionDecl& fn) const;

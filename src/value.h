@@ -926,6 +926,9 @@ struct ObjClass final : Obj {
     std::vector<InlineField> inlineFields;
     uint32_t inlineSlots = 0;
     std::atomic<bool> inlineLaid{false};
+    // How many classes had been finished when the layout was last tried and a field's value
+    // type did not exist yet (G16): it is tried again once another class is.
+    std::atomic<uint64_t> inlineTriedAt{~uint64_t{0}};
 
     // Where its objects keep their fields (M6.6 part 6, FieldDecl::slot): how many slots of
     // values, and how many bytes of payloads, with their bits, begin the inline part.

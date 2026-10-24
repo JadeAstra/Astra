@@ -3030,38 +3030,55 @@ void VM::makeFromHeader(ObjClass* cls, int argc, Value dest) {
     sp_ = args;
 }
 
+// A class finished: one more for VM::layInline to wait for. Kept out of run().
+#ifdef _MSC_VER
+__declspec(noinline)
+#else
+__attribute__((noinline))
+#endif
+void VM::classFinished() {
+    (root_ != nullptr ? *root_ : *this).classesFinished_.fetch_add(1, std::memory_order_acq_rel);
+}
+
 // Which of a class's fields are kept inside its objects (M6.6 part 5, value-lists.html section
-// 4): those whose type is a value type kept in a box elsewhere, neither null nor small, laid out
-// one after another after the object's other slots. Worked out when the first object of the
-// class is made; a field whose type names a class that does not exist yet keeps its value in a
-// box, as any other field does.
+// 4): those whose type is a value type kept in a box elsewhere, not small, laid out one after
+// another after the object's other slots. One that may be null is kept there too (G16): its slot
+// holds a Ref to it, or null. Worked out when the first object of the class is made where every
+// class those fields name exists; until then, objects are made with no room for any of them and
+// keep their values in boxes, and the layout is tried again once another class has been made.
 void VM::layInline(ObjClass* cls) {
     if (!cls->fieldsLaid.load(std::memory_order_acquire)) layFields(cls);
+    VM& root = root_ != nullptr ? *root_ : *this;
+    const uint64_t finished = root.classesFinished_.load(std::memory_order_acquire);
+    if (cls->inlineTriedAt.load(std::memory_order_acquire) == finished) return;  // still waiting for a class
     std::vector<ObjClass::InlineField> fields;
     std::vector<int32_t> offsets(cls->declared.size(), -1);
     uint32_t at = 0;
+    bool waiting = false;
     for (size_t i = 0; i < cls->declared.size(); i++) {
         FieldDecl& declared = cls->declared[i];
-        if ((declared.type & kTypeMask) != kTypeInstance || (declared.type & kTypeNullable) != 0) continue;
+        if ((declared.type & kTypeMask) != kTypeInstance) continue;
         ObjClass* type = declared.typeClass;
-        if (type == nullptr) {
-            try {
-                type = fieldClass(declared);
-            } catch (AstraThrow&) {
-                continue;  // not there yet
-            }
+        const ValueLayout* layout = nullptr;
+        try {
+            if (type == nullptr) type = fieldClass(declared);
+            if (type->isValue) layout = &layoutOf(type);
+        } catch (AstraThrow&) {
+            waiting = true;  // not there yet
+            continue;
         }
-        if (!type->isValue) continue;
-        const ValueLayout& layout = layoutOf(type);
-        if (type->smallId != 0) continue;  // kept in the value itself already
+        if (layout == nullptr || type->smallId != 0) continue;  // not a value type, or kept in the value itself
         at = (at + 7) / 8 * 8;
         offsets[i] = static_cast<int32_t>(at);
-        fields.push_back({at, layout.size, type});
-        at += layout.size;
+        fields.push_back({at, layout->size, type});
+        at += layout->size;
     }
-    VM& root = root_ != nullptr ? *root_ : *this;
     std::lock_guard<std::mutex> hold(root.internMutex_);
     if (cls->inlineLaid.load(std::memory_order_acquire)) return;
+    if (waiting) {
+        cls->inlineTriedAt.store(finished, std::memory_order_release);
+        return;
+    }
     for (size_t i = 0; i < offsets.size(); i++) cls->declared[i].inlineOffset = offsets[i];
     cls->inlineFields = std::move(fields);
     cls->inlineSlots = (at + sizeof(Value) - 1) / sizeof(Value);
@@ -3607,6 +3624,13 @@ void VM::setProperty(Value obj, ObjString* name, Value value) {
                 // A value kept inside the object: its bytes copied in (M6.6 part 5).
                 const int64_t at = decl->slot;
                 const uint32_t offset = static_cast<uint32_t>(decl->inlineOffset);
+                if (value.isNull()) {
+                    // One that may be null (G16), given null: the slot says so, and the bytes are
+                    // cleared, holding nothing for the collector.
+                    std::memset(instance->inlineData() + offset, 0, instance->cls->inlineFieldAt(offset)->size);
+                    instance->fields()[at] = Value::null();
+                    return;
+                }
                 ValueField whole;
                 whole.kind = ValueField::Nested;
                 whole.cls = instance->cls->inlineFieldAt(offset)->cls;
@@ -5243,13 +5267,15 @@ void VM::run(int baseFrame) {
                                 const Value field = *reinterpret_cast<const Value*>(reinterpret_cast<const uint8_t*>(instance) + ((seen >> 16) & 0xFFFF));
                                 if (field.kind == ValueKind::Ref && static_cast<Op>(ip[-1]) < Op::GetPropRef) {
                                     // A value kept inside the object, read through at once with
-                                    // the fields read from it next (`comp.bounds.width`).
-                                    if (const Op after = static_cast<Op>(ip[4]); after == Op::GetProp || after == Op::GetOwn) {
+                                    // the fields read from it next (`comp.bounds.width`); also
+                                    // past a `?.`, the value being there (`comp.damage?.width`, G16).
+                                    const uint8_t* next = static_cast<Op>(ip[4]) == Op::JumpIfNull ? ip + 4 + 1 + 4 : ip + 4;
+                                    if (const Op after = static_cast<Op>(*next); after == Op::GetProp || after == Op::GetOwn) {
                                         ValueField whole;
                                         whole.kind = ValueField::Nested;
                                         whole.cls = refClass(field);
                                         Value read;
-                                        ip = readThrough(refBytes(field), &whole, ip + 4, consts, read);
+                                        ip = readThrough(refBytes(field), &whole, next, consts, read);
                                         sp[-1] = read;
                                         continue;
                                     }
@@ -5455,7 +5481,7 @@ void VM::run(int baseFrame) {
                             } else if ((seen & 2) != 0) {
                                 // A value kept inside the object, given another of its type (M6.6
                                 // part 5): its bytes copied in, from a box or from where it is.
-                                if (static_cast<uint32_t>(seen >> 32) == instance->shape && instance->core == coreId_ && field->isRef()) {
+                                if (static_cast<uint32_t>(seen >> 32) == instance->shape && instance->core == coreId_ && field->isRef() && field->as.obj == instance) {
                                     const Value value = sp[-1];
                                     const ObjClass::InlineField* inside = instance->cls->inlineFieldAt(field->refOffset);
                                     const uint8_t* from = value.isObjType(ObjType::Value) && asValue(value)->cls == inside->cls ? asValue(value)->data()
@@ -6772,6 +6798,7 @@ void VM::run(int baseFrame) {
                         ObjClass* cls = asClass(sp_[-1]);
                         // Whether the class's own code may use every member its objects have:
                         // then nothing has to be looked up for it (see CHECK_ACCESS).
+                        classFinished();
                         cls->accessAllOwn = cls->accessSharedOwn = true;
                         for (uint32_t at = 0; at < cls->accessMarks.capacity(); at++) {
                             const Table::Entry& entry = cls->accessMarks.entries()[at];

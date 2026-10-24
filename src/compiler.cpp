@@ -2726,6 +2726,12 @@ private:
             if (!givenInFrame(a)) return false;
         return t.kind != RuntimeType::Unknown;
     }
+    // A list of a value type, which keeps its items packed rather than a box for each. Only such a
+    // list is given its type where nothing asked for it: typing `List(n) { 0 }` in an inline body
+    // that way made bench/jade_layout 8% slower (2026-10-24).
+    static bool packs(const RuntimeType& t) {
+        return t.kind == RuntimeType::List && t.args.size() == 1 && t.args[0].kind == RuntimeType::Class && t.args[0].value;
+    }
     static bool concrete(const RuntimeType& t) {
         if (t.kind == RuntimeType::TypeParam || t.kind == RuntimeType::Unknown) return false;
         for (const RuntimeType& a : t.args)
@@ -4582,8 +4588,16 @@ private:
                 // `var total = 0`: an int, a float or a bool by what it is given, so that the
                 // objects keep it as a payload (M6.6 part 6).
                 RuntimeType inferred;
-                if (session_.checker->inferredFieldType(f, inferred))
+                if (session_.checker->inferredFieldType(f, inferred)) {
                     flags = inferred.kind == RuntimeType::Int ? kTypeInt : inferred.kind == RuntimeType::Float ? kTypeFloat : kTypeBool;
+                } else if (session_.checker->inferredValueFieldType(f, inferred)) {
+                    // `var bounds = other.bounds`: a value type's, as the checker works it out,
+                    // so that the object can keep it inside itself (G16).
+                    if (const GlobalName* global = classGlobal(inferred); global != nullptr) {
+                        emitClassThunk(global->slot, inferred.global);
+                        flags = kTypeInstance | (inferred.nullable ? kTypeNullable : 0);
+                    }
+                }
             }
             emit(Op::DeclareField);
             emitU16(stringConstant(storedName(f)));
@@ -4677,6 +4691,39 @@ private:
 
     // Emits a closure that returns the class called `className`. A field's class type is
     // resolved through one on first use, so it can name a class declared further down.
+    // The global a class of a type is kept in, or null.
+    const GlobalName* classGlobal(const RuntimeType& t) {
+        if (t.kind != RuntimeType::Class) return nullptr;
+        const GlobalName* global = nullptr;
+        if (!t.privateFile.empty()) {
+            auto& file = session_.privates_[t.privateFile];
+            if (auto found = file.find(t.global); found != file.end()) global = &found->second;
+        } else if (t.ns != nullptr) {
+            if (auto found = t.ns->names.find(t.global); found != t.ns->names.end()) global = &found->second;
+        }
+        return global != nullptr && global->slot >= 0 ? global : nullptr;
+    }
+
+    // As emitTypeThunk, for a class known by the global it is kept in.
+    void emitClassThunk(int slot, const std::string& className) {
+        FunctionState state;
+        state.enclosing = fs_;
+        state.kind = FunctionKind::Function;
+        state.proto = newProto();
+        state.proto->name = "<type " + className + ">";
+        state.proto->source = file_;
+        state.scopeDepth = 1;
+        state.add(Local{"", 1, VarInfo{}});
+        fs_ = &state;
+        emit(Op::GetGlobal, slot);
+        emit(Op::Return);
+        finish(state);
+        fs_ = state.enclosing;
+        const int index = static_cast<int>(fs_->proto->protos.size());
+        fs_->proto->protos.push_back(state.proto);
+        emit(Op::Closure, index);
+    }
+
     void emitTypeThunk(const std::string& className, const Node& at) {
         FunctionState state;
         state.enclosing = fs_;
@@ -5603,7 +5650,7 @@ private:
                 emit(Op::BuildList, static_cast<int>(e.items.size()));
                 RuntimeType made;
                 if (session_.checker->literalType(e, made)) emitTag(made, e);
-                else if (session_.checker->declaredLiteralType(e, made) && givenInFrame(made)) emitTag(made, e);
+                else if (session_.checker->declaredLiteralType(e, made) && givenInFrame(made) && packs(made)) emitTag(made, e);
                 break;
             }
 

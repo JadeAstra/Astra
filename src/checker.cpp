@@ -5187,10 +5187,10 @@ struct Checker::Impl {
     // An item of a list of values read where it is (GetIndexRef): where nothing the code does
     // may change a list of its type.
     // A field of a value type kept inside its object (M6.6 part 5): one of an object of a class,
-    // whose declared type is a value type, not null. Its type, or null for any other field.
+    // whose declared type is a value type, null or not (G16). Its type, or null for any other field.
     static ClassInfo* insideObject(const ClassInfo* owner, const Type& field) {
         if (owner == nullptr || owner->isValue) return nullptr;
-        if (field.kind != Type::Class || field.nullable || field.cls == nullptr || !field.cls->isValue) return nullptr;
+        if (field.kind != Type::Class || field.cls == nullptr || !field.cls->isValue) return nullptr;
         return field.cls;
     }
     std::unordered_map<const Node*, IndexCandidate> fieldCandidates;
@@ -9148,6 +9148,7 @@ RuntimeType runtimeTypeOf(const Type& t) {
             if (t.cls == nullptr || t.cls->unit == nullptr || t.cls->decl == nullptr || !t.cls->global || t.cls->isObject) return RuntimeType{};
             r.kind = RuntimeType::Class;
             r.global = t.cls->name;  // `Outer.Inner` for one declared inside another
+            r.value = t.cls->isValue;
             r.ns = t.cls->unit->ns;
             if (t.cls->decl->visibility == GlobalName::Private) r.privateFile = t.cls->unit->fileKey;
             for (const Type& arg : t.args) {
@@ -9396,6 +9397,18 @@ bool Checker::inferredFieldType(const VarStmt& field, RuntimeType& out) const {
     if (t.nullable || (t.kind != Type::Int && t.kind != Type::Float && t.kind != Type::Bool)) return false;
     out = runtimeTypeOf(t);
     return true;
+}
+
+bool Checker::inferredValueFieldType(const VarStmt& field, RuntimeType& out) const {
+    if (impl_->fieldByDecl.empty())
+        for (const auto& f : impl_->fieldStore)
+            if (f->decl != nullptr) impl_->fieldByDecl[f->decl] = f.get();
+    auto found = impl_->fieldByDecl.find(&field);
+    if (found == impl_->fieldByDecl.end() || found->second->typeWritten || found->second->state != 2) return false;
+    const Type& t = found->second->type;
+    if (t.kind != Type::Class || t.cls == nullptr || !t.cls->isValue || !t.args.empty()) return false;
+    out = runtimeTypeOf(t);
+    return out.kind == RuntimeType::Class;
 }
 
 bool Checker::returnsValue(const FunctionDecl& fn) const {
