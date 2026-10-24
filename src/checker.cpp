@@ -2623,7 +2623,18 @@ struct Checker::Impl {
         pop();
     }
 
+    // A statement that holds no others of its own (an expression, a declaration, a return, a
+    // throw): a region (G10). Those that do (if, loops, try, blocks) are made of such regions.
     void stmt(const Stmt& s) {
+        if (s.kind == StmtKind::Expr || s.kind == StmtKind::Var || s.kind == StmtKind::Return || s.kind == StmtKind::Throw) {
+            RegionScope region(*this, &s, Region::Statement);
+            stmtItself(s);
+            return;
+        }
+        stmtItself(s);
+    }
+
+    void stmtItself(const Stmt& s) {
         switch (s.kind) {
             case StmtKind::Expr:
                 expr(*static_cast<const ExprStmt&>(s).expr);
@@ -2637,7 +2648,10 @@ struct Checker::Impl {
                 break;
             case StmtKind::If: {
                 const auto& i = static_cast<const IfStmt&>(s);
-                condition(*i.condition, "an if");
+                {
+                    RegionScope test(*this, i.condition.get(), Region::Statement);
+                    condition(*i.condition, "an if");
+                }
                 std::unordered_map<std::string, Type> yes, no;
                 narrowFrom(*i.condition, true, yes);
                 narrowFrom(*i.condition, false, no);
@@ -2674,11 +2688,16 @@ struct Checker::Impl {
             }
             case StmtKind::While: {
                 const auto& w = static_cast<const WhileStmt&>(s);
+                RegionScope loop(*this, &w, Region::Loop);
                 if (w.doWhile) {
                     block(w.body->statements);
+                    RegionScope test(*this, w.condition.get(), Region::Statement);
                     condition(*w.condition, "a do-while");
                 } else {
-                    condition(*w.condition, "a while");
+                    {
+                        RegionScope test(*this, w.condition.get(), Region::Statement);
+                        condition(*w.condition, "a while");
+                    }
                     std::unordered_map<std::string, Type> yes;
                     narrowFrom(*w.condition, true, yes);
                     narrowed.push_back(yes);
@@ -2691,7 +2710,11 @@ struct Checker::Impl {
             }
             case StmtKind::ForIn: {
                 const auto& f = static_cast<const ForInStmt&>(s);
-                Type over = expr(*f.iterable);
+                Type over = unknownType();
+                {
+                    RegionScope list(*this, f.iterable.get(), Region::Statement);
+                    over = expr(*f.iterable);
+                }
                 if (f.iterable->kind == ExprKind::Range) {
                     // A range with an end counted from the end is a slice's bounds, with no numbers of its own (D146).
                     const auto& r = static_cast<const RangeExpr&>(*f.iterable);
@@ -2713,8 +2736,7 @@ struct Checker::Impl {
                 }
                 // What the body may change is noted for the loop as well as for the function
                 // around (M6.6 part 4): an item is read where it is while the body runs.
-                const void* around = effectKeyHere();
-                activeLoops.push_back({effectKey(), &f, scopes.size()});
+                const void* around = beginRegion(&f, Region::Loop, &f);
                 push();
                 if (f.pattern.empty()) {
                     declareLocal(f.variable, item, true);
@@ -2730,16 +2752,7 @@ struct Checker::Impl {
                 }
                 for (const StmtPtr& st : f.body->statements) stmt(*st);
                 pop();
-                activeLoops.pop_back();
-                if (auto body = effects.find(&f); body != effects.end()) {
-                    const Effects inside = body->second;  // copied: effects may grow and move below
-                    Effects& outer = effects[around];
-                    outer.any = outer.any || inside.any;
-                    outer.callsParams = outer.callsParams || inside.callsParams;
-                    outer.types.insert(inside.types.begin(), inside.types.end());
-                    outer.calls.insert(outer.calls.end(), inside.calls.begin(), inside.calls.end());
-                    outer.methodCalls.insert(outer.methodCalls.end(), inside.methodCalls.begin(), inside.methodCalls.end());
-                }
+                endRegion(around);
                 break;
             }
             case StmtKind::Return:
@@ -2824,6 +2837,10 @@ struct Checker::Impl {
         const NoWait wasWait = ctx != nullptr ? ctx->noWait : CanWait;
         if (v.isLazy && ctx != nullptr) ctx->noWait = LazyValue;
         Type value = v.init ? exprExpected(*v.init, declared) : unknownType();
+        if (!global) {
+            if (!v.pattern.empty()) noteKeeping(unknownType());  // its parts, whatever they are
+            else noteKeeping(declared.known() ? declared : value);
+        }
         if (v.isLazy && ctx != nullptr) ctx->noWait = wasWait;
         if (!v.pattern.empty()) {
             std::vector<Type> parts = partsOf(value, v.pattern.size());
@@ -4656,35 +4673,120 @@ struct Checker::Impl {
         return unit;
     }
 
-    // The for loops being checked, the innermost last: the function each is in, and how many
-    // scopes there were around it. What the innermost loop of the code being checked may change
-    // is noted for it, and for the loops and the function around when it ends.
-    struct ActiveLoop {
+    // The regions being checked, the innermost last (G10): the for and while loops, and the
+    // statements, each with the function it is in and how many scopes there were around it. What
+    // the code may change is noted for the innermost region it is in, and for the regions and the
+    // function around when each ends. An item of a list of values is read where it is when
+    // nothing the region that holds it runs may change a list of its type: a statement for an
+    // item used at once (`pts[i].x`, `f(pts[i])`), a loop or the function for one kept in a
+    // variable.
+    struct Region {
+        enum Kind { Loop, Statement };
         const void* fn;
-        const ForInStmt* loop;
+        const void* key;  // the loop, the statement, or the condition or the list a loop goes over
         size_t depth;
+        Kind kind;
+        const ForInStmt* forIn;  // a for loop's, whose LoopCandidate it is
     };
-    std::vector<ActiveLoop> activeLoops;
+    std::vector<Region> regions;
+    std::unordered_map<const void*, const void*> statementAround;  // the statement a statement is inside, in its function
+    std::unordered_set<const void*> keepingStatements;  // those that give a variable that may hold a value its value
+    std::unordered_set<const void*> keptPastLoops;      // loops an item read in them may be kept past
+
     const void* effectKeyHere() const {
         const void* fn = effectKey();
-        if (!activeLoops.empty() && activeLoops.back().fn == fn) return activeLoops.back().loop;
+        if (!regions.empty() && regions.back().fn == fn) return regions.back().key;
         return fn;
+    }
+
+    // A region begun: what is noted from here on is noted for it. Gives the key of the code
+    // around, which ends it.
+    const void* beginRegion(const void* key, Region::Kind kind, const ForInStmt* forIn = nullptr) {
+        const void* around = effectKeyHere();
+        const void* fn = effectKey();
+        if (kind == Region::Statement)
+            for (auto r = regions.rbegin(); r != regions.rend() && r->fn == fn; ++r)
+                if (r->kind == Region::Statement) {
+                    statementAround[key] = r->key;
+                    break;
+                }
+        regions.push_back(Region{fn, key, scopes.size(), kind, forIn});
+        return around;
+    }
+
+    // The innermost region ended: what it may change, the code around may change too.
+    void endRegion(const void* around) {
+        const void* key = regions.back().key;
+        regions.pop_back();
+        auto body = effects.find(key);
+        if (body == effects.end()) return;
+        const Effects inside = body->second;  // copied: effects may grow and move below
+        Effects& outer = effects[around];
+        outer.any = outer.any || inside.any;
+        outer.callsParams = outer.callsParams || inside.callsParams;
+        outer.types.insert(inside.types.begin(), inside.types.end());
+        outer.calls.insert(outer.calls.end(), inside.calls.begin(), inside.calls.end());
+        outer.methodCalls.insert(outer.methodCalls.end(), inside.methodCalls.begin(), inside.methodCalls.end());
+    }
+
+    struct RegionScope {
+        Impl& self;
+        const void* around;
+        RegionScope(Impl& s, const void* key, Region::Kind kind, const ForInStmt* forIn = nullptr) : self(s), around(s.beginRegion(key, kind, forIn)) {}
+        ~RegionScope() { self.endRegion(around); }
+        RegionScope(const RegionScope&) = delete;
+        RegionScope& operator=(const RegionScope&) = delete;
+    };
+
+    // Whether a variable of this type may hold a value of a value type, and so an item read where
+    // it is: a value type, an interface one may have, or a type not known.
+    static bool mayHoldValue(const Type& t) {
+        if (!t.known()) return true;
+        switch (t.kind) {
+            case Type::Bool: case Type::Int: case Type::Float: case Type::Number: case Type::String: case Type::Bytes: case Type::Range:
+            case Type::TypeValue: case Type::List: case Type::Map: case Type::Function: case Type::Unit: case Type::Null: case Type::Nothing:
+                return false;
+            case Type::Class:
+                return t.cls == nullptr || t.cls->isValue || t.cls->isInterface;
+            default:
+                return true;
+        }
+    }
+
+    // The statement being checked gives a variable that may hold a value its value: an item read
+    // in it, or in a statement inside it, may be what is kept, so it is judged by its loop.
+    void noteKeeping(const Type& type) {
+        if (!mayHoldValue(type)) return;
+        const void* fn = effectKey();
+        for (auto r = regions.rbegin(); r != regions.rend() && r->fn == fn; ++r)
+            if (r->kind == Region::Statement) {
+                keepingStatements.insert(r->key);
+                return;
+            }
+    }
+    bool keeping(const void* statement) const {
+        for (const void* s = statement; s != nullptr;) {
+            if (keepingStatements.count(s) != 0) return true;
+            auto around = statementAround.find(s);
+            s = around != statementAround.end() ? around->second : nullptr;
+        }
+        return false;
     }
 
     // `kept = p` in a loop, to a variable from outside it that may hold a value: an item read
     // where it is might be kept past the loop, so the loops it is in are judged by the whole
     // function instead.
     void noteKeptPastLoops(const std::string& name, const Type& type) {
-        if (activeLoops.empty()) return;
-        if (type.known() && type.kind != Type::Any && type.kind != Type::TypeParam &&
-            !(type.kind == Type::Class && type.cls != nullptr && type.cls->isValue))
-            return;
+        if (regions.empty() || !mayHoldValue(type)) return;
         size_t at = scopes.size();
         while (at > 0 && scopes[at - 1].count(name) == 0) at--;
         if (at == 0) return;
         const void* fn = effectKey();
-        for (const ActiveLoop& l : activeLoops)
-            if (l.fn == fn && at - 1 < l.depth) loopCandidates[l.loop].keptPast = true;
+        for (const Region& r : regions)
+            if (r.kind == Region::Loop && r.fn == fn && at - 1 < r.depth) {
+                keptPastLoops.insert(r.key);
+                if (r.forIn != nullptr) loopCandidates[r.forIn].keptPast = true;
+            }
     }
 
     // A change to a list of `list`'s type: of its value type's lists, or, for a list that may be
@@ -4791,8 +4893,12 @@ struct Checker::Impl {
     }
 
     struct IndexCandidate {
-        const void* key = nullptr;
+        const void* key = nullptr;  // the function
         ClassInfo* type = nullptr;
+        // pts[i] only (G10): the statement it is in, where that alone decides (not in a lambda),
+        // and the loops it is in within its function, the innermost first.
+        const void* statement = nullptr;
+        std::vector<const void*> loops;
     };
     std::unordered_map<const IndexExpr*, IndexCandidate> indexCandidates;
 
@@ -4839,9 +4945,16 @@ struct Checker::Impl {
         return found != fieldCandidates.end() && !mayChangeLists(found->second.key, found->second.type);
     }
 
+    // An item read at once is judged by its statement; one its statement may keep in a variable,
+    // by the innermost loop it is not kept past, or else by the function (G10).
     bool readsInPlace(const IndexExpr& i) {
         auto found = indexCandidates.find(&i);
-        return found != indexCandidates.end() && !mayChangeLists(found->second.key, found->second.type);
+        if (found == indexCandidates.end()) return false;
+        const IndexCandidate& c = found->second;
+        if (c.statement != nullptr && !keeping(c.statement)) return !mayChangeLists(c.statement, c.type);
+        for (const void* loop : c.loops)
+            if (keptPastLoops.count(loop) == 0) return !mayChangeLists(loop, c.type);
+        return !mayChangeLists(c.key, c.type);
     }
 
     // A for loop's variable the item itself, where the list keeps values: where nothing the code
@@ -4932,7 +5045,10 @@ struct Checker::Impl {
             targetName = n.name;
             local = findLocal(n.name);
             target = local != nullptr ? local->type : name(n);
-            if (local != nullptr) noteKeptPastLoops(n.name, local->type);
+            if (local != nullptr) {
+                noteKeptPastLoops(n.name, local->type);
+                if (a.op == TokenType::Eq) noteKeeping(local->type);
+            }
             // The name of a class, an object or a function is never given a value; the compiler
             // says so, which tells more than what the value's type is.
             if (local == nullptr) {
@@ -5544,7 +5660,16 @@ struct Checker::Impl {
         }
         if (!i.defaultValue && obj.kind == Type::List && !obj.nullable && obj.args.size() == 1 && obj.args[0].kind == Type::Class &&
             obj.args[0].cls != nullptr && obj.args[0].cls->isValue)
-            indexCandidates[&i] = IndexCandidate{effectKey(), obj.args[0].cls};
+        {
+            IndexCandidate c{effectKey(), obj.args[0].cls};
+            const bool inLambda = ctx != nullptr && ctx->isLambda;
+            if (!inLambda)
+                for (auto r = regions.rbegin(); r != regions.rend() && r->fn == c.key; ++r) {
+                    if (r->kind == Region::Loop) c.loops.push_back(r->key);
+                    else if (c.statement == nullptr && c.loops.empty()) c.statement = r->key;
+                }
+            indexCandidates[&i] = std::move(c);
+        }
         if (i.defaultValue) {
             // `counts[word, default = 0]`: the entry, or the start value; never null (L118).
             const bool map = obj.kind == Type::Map && !obj.nullable;
@@ -7611,6 +7736,11 @@ struct Checker::Impl {
     // A file's top level, in order, then its functions, classes and extensions.
     void checkUnit(Unit* u) {
         unit = u;
+        // What this file's code may change joins what was joined before: a file checked after
+        // another was compiled (the standard library from source, then the program) would be
+        // judged by effects joined without it, and items read in place where a call changes their
+        // list (found with G10's test, 2026-10-24).
+        effectsJoined = false;
         FnCtx top;
         top.topLevel = true;
         ctx = &top;

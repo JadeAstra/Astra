@@ -1,0 +1,136 @@
+// pts[i] read where it is, judged by the code that may run while it is used (G10): an item used
+// at once by its statement, one kept in a variable by its loop, or else by the function. Each
+// case here prints what a copy would show; tests/run.ps1 runs it with every read copied too.
+
+value P(val x : int, val y : int)
+
+fun list() : open List<P> => [P(1, 10), P(2, 20), P(3, 30)]
+
+// Read in place: a sort later in the function changes nothing these reads see.
+fun atOnce(pts : open List<P>, sortToo : bool) : int {
+  var sum = 0
+  for (i in 0 ..< pts.size) { sum += pts[i].x + pts[i].y }      // used at once
+  var best = 0
+  for (i in 0 ..< pts.size) { val p = pts[i]; if (p.y > best) { best = p.y } }   // kept, in its loop
+  var n = 0
+  while (n < pts.size) { val p = pts[n]; sum += p.x; n += 1 }   // kept, in a while loop
+  if (sortToo) { pts.sortBy { -it.x } }
+  return sum + best
+}
+print(atOnce(list(), true), atOnce(list(), false))   // expect: 102 102
+
+// Copied: the list changes while the item is still to be used.
+fun straight() {
+  val pts = list()
+  val p = pts[0]
+  pts.reverse()
+  print(p, pts[0])
+}
+straight()   // expect: P(x=1, y=10) P(x=3, y=30)
+
+fun sameLoop() {
+  val pts = list()
+  for (k in 0 ..< 2) {
+    val p = pts[0]
+    pts.reverse()
+    print(p)
+  }
+}
+sameLoop()
+// expect: P(x=1, y=10)
+// expect: P(x=3, y=30)
+
+fun keptPast() {
+  val pts = list()
+  var kept = P(0, 0)
+  for (i in 0 ..< pts.size) { kept = pts[i] }
+  pts.reverse()
+  print(kept)
+}
+keptPast()   // expect: P(x=3, y=30)
+
+fun keptPastWhile() {
+  val pts = list()
+  var kept = P(0, 0)
+  var i = 0
+  while (i < pts.size) { kept = pts[i]; i += 1 }
+  pts.sortBy { it.y }
+  pts.reverse()
+  print(kept)
+}
+keptPastWhile()   // expect: P(x=3, y=30)
+
+// The change in the same statement as the read, or in what it calls.
+fun reversed(pts : open List<P>) : int {
+  pts.reverse()
+  return 0
+}
+fun show(p : P, n : int) { print(p, n) }
+fun sameStatement() {
+  val pts = list()
+  show(pts[0], reversed(pts))
+}
+sameStatement()   // expect: P(x=1, y=10) 0
+
+fun sortsThenShows(p : P, pts : open List<P>) {
+  pts.sortBy { -it.x }
+  print(p)
+}
+fun passedOn() {
+  val pts = list()
+  sortsThenShows(pts[0], pts)
+}
+passedOn()   // expect: P(x=1, y=10)
+
+// Kept by way of an if, a when or an elvis, or in a variable of an interface it has.
+interface Named { fun name() : string }
+value Q(val n : int) : Named { override fun name() : string => "q$n" }
+fun throughExpressions(flag : bool) {
+  val pts = list()
+  val a = if (flag) { pts[0] } else { pts[1] }
+  val b = flag ? pts[1] : pts[2]
+  val maybe : List<P?> = [null, P(7, 70)]
+  val c = maybe[0] ?: pts[2]
+  pts.reverse()
+  print(a, b, c)
+  val qs : open List<Q> = [Q(1), Q(2)]
+  val named : Named = qs[0]
+  qs.reverse()
+  print(named.name())
+}
+throughExpressions(true)
+// expect: P(x=1, y=10) P(x=2, y=20) P(x=3, y=30)
+// expect: q1
+
+// A when's own variable lives for the when, which is one statement.
+fun inWhen() {
+  val pts = list()
+  when (val p = pts[0]) {
+    else -> {
+      pts.reverse()
+      print(p)
+    }
+  }
+}
+inWhen()   // expect: P(x=1, y=10)
+
+// In a lambda: judged by the lambda as a whole, as before.
+fun inLambda() {
+  val pts = list()
+  val shown : open List<string> = []
+  (0 ..< 1).forEach {
+    val p = pts[0]
+    pts.reverse()
+    shown.add("$p")
+  }
+  print(shown)
+}
+inLambda()   // expect: ["P(x=1, y=10)"]
+
+// At the top level of the file: the same rules, the file being one function.
+val top = list()
+var topSum = 0
+for (i in 0 ..< top.size) { topSum += top[i].x }
+val firstTop = top[0]
+top.reverse()
+print(topSum, firstTop)   // expect: 6 P(x=1, y=10)

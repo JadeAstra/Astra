@@ -1498,9 +1498,11 @@ first.move()                 // an error: first is a val, not a place
 Reading a value does not copy it where nothing can change it meanwhile: `pts[i]`, a loop's
 item and a lambda's `it` are read where they are in the list when the checker sees that
 nothing which may remove, insert, sort or replace items of such a list runs while they are in
-use. Otherwise, and wherever a value is kept (in a field, a list, a variable a lambda holds),
-it is copied. The program sees no difference but the time and the memory; with
-`ASTRA_COPY_READS=1` every read is a copy, for testing that.
+use. In use means: for an item used at once (`pts[i].x`, `f(pts[i])`), its statement; for one
+kept in a variable, the loop it is in, or the whole function when it may outlive the loop. A
+`sortBy` after a loop leaves the loop's reads alone. Otherwise, and wherever a value is kept
+(in a field, a list, a variable a lambda holds), it is copied. The program sees no difference
+but the time and the memory; with `ASTRA_COPY_READS=1` every read is a copy, for testing that.
 
 Larger values kept in variables, arguments and results without a box come in the rest of M6.6
 ([value-lists.html](docs/value-lists.html)).
