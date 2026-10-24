@@ -264,6 +264,21 @@ foreach ($entry in $checked) {
     }
 }
 
+# Every public declaration of the standard library is described by a comment above it, which
+# `astra doc` puts in docs/language.html: one with none is listed here. (Not there when the tests
+# are copied elsewhere.)
+$standardLibrary = Join-Path $PSScriptRoot '..\src\std'
+if (Test-Path $standardLibrary) {
+    $files = @(Get-ChildItem (Join-Path $standardLibrary '*.astra') | Sort-Object Name | ForEach-Object { $_.FullName })
+    $run = Invoke-Astra (@('doc', '--missing') + $files) $Astra $tmp $env:ASTRA_CACHE
+    $undescribed = @($run.Lines | Where-Object { $_ -ne '' })
+    if ($run.Code -eq 0 -and $undescribed.Count -eq 0) {
+        $passed++
+    } else {
+        $failures += "the standard library described [astra doc --missing]`n    $(($undescribed + $run.Error) -join "`n    ")"
+    }
+}
+
 # The shell: each tests\shell\*.shell file is typed into it, line by line. Its `// expect:`
 # lines are what the shell prints, and its `// expect error:` lines the errors, each in order.
 foreach ($test in Get-ChildItem (Join-Path $PSScriptRoot 'shell\*.shell') | Sort-Object Name) {
