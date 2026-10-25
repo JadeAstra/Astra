@@ -257,6 +257,7 @@ void VM::refreshFromRoot() {
     errorClass_ = root_->errorClass_;
     for (size_t k = 0; k < static_cast<size_t>(Thrown::Count_); k++) thrownClasses_[k] = root_->thrownClasses_[k];
     mapEntryClass_ = root_->mapEntryClass_;
+    classOfFn_ = root_->classOfFn_;
     viewClass_ = root_->viewClass_;
     hasExtensions_ = root_->hasExtensions_;
     if (extensionEpoch_ != root_->extensionEpoch_) {

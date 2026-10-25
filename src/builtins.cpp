@@ -243,10 +243,6 @@ void registerGlobals(VM& vm) {
 
 
 
-    vm.defineNative("type", 1, 1, [](VM& vm, int, Value* args) -> Value {
-        return Value::object(vm.intern(vm.typeName(args[0])));
-    });
-
     vm.defineNative("clock", 0, 0, [](VM&, int, Value*) -> Value {
         auto now = std::chrono::steady_clock::now().time_since_epoch();
         return Value::number(std::chrono::duration<double>(now).count());

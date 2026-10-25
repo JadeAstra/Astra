@@ -214,7 +214,7 @@ val nested = grid("outer") {
 }
 nested.layout(300, 200)
 print(inner.parent!!.id, inner.parent!!.parent!!.id, nested.parent, inner.windowPosition(), nested.find("inner") === inner, nested.find("nothing"))   // expect: middle outer null Point(24, 13) true null
-print(nested.descendants().map { it.id ?: type(it.content) }, (nested.content as GridPane).viewId, Jade.registeredGrids().size >= 2)   // expect: ["outer", "middle", "inner"] outer true
+print(nested.descendants().map { it.id ?: (it.content)#.name }, (nested.content as GridPane).viewId, Jade.registeredGrids().size >= 2)   // expect: ["outer", "middle", "inner"] outer true
 print(checks, failed)   // expect: 17 []
 
 // What JadeUI keeps to the library is kept from the program: an internal member, and the

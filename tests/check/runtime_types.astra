@@ -1,0 +1,9 @@
+// A type as the program runs is a Class (D162): x#, int#, items.itemType. Type is the standard
+// library's own, and type(x) is gone for x#.name (G24).
+
+val items = [1, 2]
+val kind : Type? = null           // check: a type as the program runs is a Class: x#, int#, items.itemType (D162)
+print(items is Type)               // check: a type as the program runs is a Class: x#, int#, items.itemType (D162)
+print(type(items))                 // check: type(x) is written x#.name, the name of x's class; x# is the class itself (D74, G24)
+val right : Class = items.itemType
+print(right == int#, items#.name, right.name, items#.typeArguments[0] == int#)

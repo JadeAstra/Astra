@@ -14,7 +14,7 @@ tryToMake("a petabyte of bytes") { Bytes(1 << 50) }              // expect: a pe
 tryToMake("a petabyte of text") { "x".repeat(1 << 50) }          // expect: a petabyte of text: out of memory
 
 // It is an Error: a catch naming Error or Throwable catches it, and a bare catch does not (D151).
-try { Bytes(1 << 50) } catch (e : Throwable) { print(type(e), e is OutOfMemoryError) }   // expect: OutOfMemoryError true
+try { Bytes(1 << 50) } catch (e : Throwable) { print(e#.name, e is OutOfMemoryError) }   // expect: OutOfMemoryError true
 
 // And the program goes on as before.
 val after = Bytes(16)

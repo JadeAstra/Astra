@@ -19,9 +19,6 @@
 external fun print(vararg items : any?)
 // Writes `items` to the output as print does, but with nothing between them and no line end.
 external fun write(vararg items : any?)
-// The name of the type of `value`: "int", "float", "string", "bool", "char", "byte", "null",
-// "List", "Map", "Set", "Range", "Bytes", "Function", or the name of its class.
-external fun type(value : any?) : string
 // The ints from `first` up to `end`, not including `end`, going by `step`; with one argument,
 // from 0 up to that number. A negative `step` counts down. An IllegalArgumentException for a
 // `step` of 0.
@@ -202,7 +199,7 @@ external val List.lastIndex : int
 // The positions of the items, `0..<size`.
 external val List.indices : Range
 // The type of item the list was made to hold, as a Type.
-external val List.itemType : Type    // what it was made to hold (M6.6): `int` for a List<int>, `any` where that was not said
+external val List.itemType : Class    // what it was made to hold (M6.6, D162): `int#` for a List<int>, `any#` where that was not said
 // Adds `item` at the end; gives true.
 external fun <T> open List<T>.add(item : T) : bool
 // Puts `item` in before the item at `index`, from 0 to `size` (the end); gives true. An
@@ -291,7 +288,7 @@ external fun <T> Set(from : any? = null) : open Set<T>
 // The number of items.
 external val Set.size : int
 // The type of item the set was made to hold, as a Type: `any` where that was not said.
-external val Set.itemType : Type
+external val Set.itemType : Class
 // Adds `item` where it is not there yet; true if it was not.
 external fun <T> open Set<T>.add(item : T) : bool                  // true if it was not there
 // Takes out `item`; true if it was there.
@@ -341,9 +338,9 @@ external val <K, V> Map<K, V>.values : Values<V>
 // The entries, each a MapEntry with its `key` and `value`: a live view (D77), as `keys` is.
 external val <K, V> Map<K, V>.entries : Set<MapEntry<K, V>>
 // The type of key the map was made to hold, as a Type: `any` where that was not said.
-external val Map.keyType : Type
+external val Map.keyType : Class
 // The type of value the map was made to hold, as a Type: `any` where that was not said.
-external val Map.valueType : Type
+external val Map.valueType : Class
 // A whole entry, `"a" to 1` or a MapEntry; a key is asked of the keys, k in map.keys (D140).
 external fun <K, V> Map<K, V>.contains(entry : MapEntry<K, V>) : bool
 // True when the map holds the key of the pair `entry` with its value: `map.contains("a" to 1)`.

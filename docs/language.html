@@ -533,7 +533,7 @@ addButton(widgets)</pre></dd>
 <li><a href="#Typeface"><code>Typeface</code></a> (28)</li>
 <li><a href="#UncheckedIOException"><code>UncheckedIOException</code></a> (1)</li>
 <li><a href="#UnsupportedOperationException"><code>UnsupportedOperationException</code></a> (1)</li>
-<li><a href="#Values.size"><code>Values</code></a> (50)</li>
+<li><a href="#Values.size"><code>Values</code></a> (51)</li>
 <li><a href="#Worker"><code>Worker</code></a> (8)</li>
 <li><a href="#WorkerParent"><code>WorkerParent</code></a> (4)</li>
 <li><a href="#Writer"><code>Writer</code></a> (10)</li>
@@ -556,9 +556,6 @@ addButton(widgets)</pre></dd>
 </div>
 <div class="entry" id="write"><code class="sig">fun write(vararg items : any?)</code><a class="anchor" href="#write">#</a>
 <p>Writes <code>items</code> to the output as print does, but with nothing between them and no line end.</p>
-</div>
-<div class="entry" id="type"><code class="sig">fun type(value : any?) : string</code><a class="anchor" href="#type">#</a>
-<p>The name of the type of <code>value</code>: &quot;int&quot;, &quot;float&quot;, &quot;string&quot;, &quot;bool&quot;, &quot;char&quot;, &quot;byte&quot;, &quot;null&quot;, &quot;List&quot;, &quot;Map&quot;, &quot;Set&quot;, &quot;Range&quot;, &quot;Bytes&quot;, &quot;Function&quot;, or the name of its class.</p>
 </div>
 <div class="entry" id="Range"><code class="sig">fun Range(first : int, end : int = 0, step : int = 1) : Range</code><a class="anchor" href="#Range">#</a>
 <p>The ints from <code>first</code> up to <code>end</code>, not including <code>end</code>, going by <code>step</code>; with one argument, from 0 up to that number. A negative <code>step</code> counts down. An IllegalArgumentException for a <code>step</code> of 0.</p>
@@ -769,7 +766,7 @@ Range(10, 0, -3).toList()  // [10, 7, 4, 1]
 <div class="entry" id="List.indices"><code class="sig">val List.indices : Range</code><a class="anchor" href="#List.indices">#</a>
 <p>The positions of the items, <code>0..&lt;size</code>.</p>
 </div>
-<div class="entry" id="List.itemType"><code class="sig">val List.itemType : Type</code><a class="anchor" href="#List.itemType">#</a>
+<div class="entry" id="List.itemType"><code class="sig">val List.itemType : Class</code><a class="anchor" href="#List.itemType">#</a>
 <p>The type of item the list was made to hold, as a Type.</p>
 </div>
 <div class="entry" id="List.add"><code class="sig">fun &lt;T&gt; open List&lt;T&gt;.add(item : T) : bool</code><a class="anchor" href="#List.add">#</a>
@@ -876,7 +873,7 @@ Range(10, 0, -3).toList()  // [10, 7, 4, 1]
 <div class="entry" id="Set.size"><code class="sig">val Set.size : int</code><a class="anchor" href="#Set.size">#</a>
 <p>The number of items.</p>
 </div>
-<div class="entry" id="Set.itemType"><code class="sig">val Set.itemType : Type</code><a class="anchor" href="#Set.itemType">#</a>
+<div class="entry" id="Set.itemType"><code class="sig">val Set.itemType : Class</code><a class="anchor" href="#Set.itemType">#</a>
 <p>The type of item the set was made to hold, as a Type: <code>any</code> where that was not said.</p>
 </div>
 <div class="entry" id="Set.add"><code class="sig">fun &lt;T&gt; open Set&lt;T&gt;.add(item : T) : bool</code><a class="anchor" href="#Set.add">#</a>
@@ -943,10 +940,10 @@ Range(10, 0, -3).toList()  // [10, 7, 4, 1]
 <div class="entry" id="Map.entries"><code class="sig">val &lt;K, V&gt; Map&lt;K, V&gt;.entries : Set&lt;MapEntry&lt;K, V&gt;&gt;</code><a class="anchor" href="#Map.entries">#</a>
 <p>The entries, each a MapEntry with its <code>key</code> and <code>value</code>: a live view, as <code>keys</code> is.</p>
 </div>
-<div class="entry" id="Map.keyType"><code class="sig">val Map.keyType : Type</code><a class="anchor" href="#Map.keyType">#</a>
+<div class="entry" id="Map.keyType"><code class="sig">val Map.keyType : Class</code><a class="anchor" href="#Map.keyType">#</a>
 <p>The type of key the map was made to hold, as a Type: <code>any</code> where that was not said.</p>
 </div>
-<div class="entry" id="Map.valueType"><code class="sig">val Map.valueType : Type</code><a class="anchor" href="#Map.valueType">#</a>
+<div class="entry" id="Map.valueType"><code class="sig">val Map.valueType : Class</code><a class="anchor" href="#Map.valueType">#</a>
 <p>The type of value the map was made to hold, as a Type: <code>any</code> where that was not said.</p>
 </div>
 <div class="entry" id="Map.contains"><code class="sig">fun &lt;K, V&gt; Map&lt;K, V&gt;.contains(entry : MapEntry&lt;K, V&gt;) : bool</code><a class="anchor" href="#Map.contains">#</a>
@@ -3602,8 +3599,8 @@ pages.parallelStream().forEach { page -&gt; for (link in page.links) { seen.add(
 <h3>Reflection</h3>
 <p><code>Image#</code> is the class named Image and <code>x#</code> the class of the object x: a Class. It tells the class's name, what it extends and implements and the type arguments it was given, and lists its fields, methods and constructors, as far as the code where the <code>#</code> is written may use them: what a class keeps private is listed only to that class's own code. A member listed is read, set or called by its name, through what lists it.</p>
 <p>What a method or constructor called this way throws arrives wrapped in a checked InvocationTargetException, the original in <code>cause</code>. A call the member cannot take, as one with too few arguments or of the wrong types, or on an object of another class, is an IllegalArgumentException of its own.</p>
-<div class="entry" id="Class"><code class="sig">class Class(val type : Type, private val asker : any? = null)</code><a class="anchor" href="#Class">#</a>
-<p>A class, or a built-in type, as <code>Image#</code> or <code>x#</code> gives it; <code>type</code> is the type it stands for, with its type arguments (the class of a Box&lt;int&gt; is Box&lt;int&gt;). What it lists is what the code where the <code>#</code> is written may use.</p>
+<div class="entry" id="Class"><code class="sig">class Class(internal val type : Type, private val asker : any? = null)</code><a class="anchor" href="#Class">#</a>
+<p>A class, or a built-in type, as <code>Image#</code> or <code>x#</code> gives it, with its type arguments (the class of a Box&lt;int&gt; is Box&lt;int&gt;), and as <code>items.itemType</code> gives what a list was made to hold: a type as the program runs is always a Class. What it lists is what the code where the <code>#</code> is written may use. <code>type</code> is the type it stands for, which only the standard library sees.</p>
 </div>
 <div class="entry member" id="Class.name"><code class="sig">val name : string</code><a class="anchor" href="#Class.name">#</a>
 <p>The class's name, or a built-in type's: &quot;Circle&quot;, &quot;int&quot;, &quot;List&quot;.</p>
@@ -3614,8 +3611,8 @@ pages.parallelStream().forEach { page -&gt; for (link in page.links) { seen.add(
 <div class="entry member" id="Class.interfaces"><code class="sig">val interfaces : List&lt;Class&gt;</code><a class="anchor" href="#Class.interfaces">#</a>
 <p>Every interface it implements: those of the classes above it, those the interfaces extend, and those an extend fitted it to.</p>
 </div>
-<div class="entry member" id="Class.typeArguments"><code class="sig">val typeArguments : List&lt;Type&gt;</code><a class="anchor" href="#Class.typeArguments">#</a>
-<p>What it was given: <code>[int]</code> for the class of a Box&lt;int&gt;; none for <code>Box#</code>.</p>
+<div class="entry member" id="Class.typeArguments"><code class="sig">val typeArguments : List&lt;Class&gt;</code><a class="anchor" href="#Class.typeArguments">#</a>
+<p>What it was given, as classes: <code>[int#]</code> for the class of a Box&lt;int&gt;; none for <code>Box#</code>.</p>
 </div>
 <div class="entry member" id="Class.kinds"><code class="sig">val kinds : List&lt;Class&gt;</code><a class="anchor" href="#Class.kinds">#</a>
 <p>The kinds of an enum class, in the order they are written: none for any other.</p>
@@ -3662,8 +3659,8 @@ pages.parallelStream().forEach { page -&gt; for (link in page.links) { seen.add(
 <div class="entry member" id="Field.name"><code class="sig">val name : string</code><a class="anchor" href="#Field.name">#</a>
 <p>Its name, as written in the class.</p>
 </div>
-<div class="entry member" id="Field.type"><code class="sig">val type : Type</code><a class="anchor" href="#Field.type">#</a>
-<p>What it holds: <code>any?</code> where its type cannot be named as the program runs.</p>
+<div class="entry member" id="Field.type"><code class="sig">val type : Class</code><a class="anchor" href="#Field.type">#</a>
+<p>What it holds, as a class: <code>any?</code> where its type cannot be named as the program runs.</p>
 </div>
 <div class="entry member" id="Field.annotations"><code class="sig">val annotations : List&lt;any&gt;</code><a class="anchor" href="#Field.annotations">#</a>
 <p>The annotations written on it, in their order.</p>
@@ -3689,8 +3686,8 @@ pages.parallelStream().forEach { page -&gt; for (link in page.links) { seen.add(
 <div class="entry member" id="Parameter.name"><code class="sig">val name : string</code><a class="anchor" href="#Parameter.name">#</a>
 <p>Its name, as written in the declaration.</p>
 </div>
-<div class="entry member" id="Parameter.type"><code class="sig">val type : Type</code><a class="anchor" href="#Parameter.type">#</a>
-<p>The type an argument for it has to be.</p>
+<div class="entry member" id="Parameter.type"><code class="sig">val type : Class</code><a class="anchor" href="#Parameter.type">#</a>
+<p>The type an argument for it has to be, as a class.</p>
 </div>
 <div class="entry member" id="Parameter.isOptional"><code class="sig">val isOptional : bool</code><a class="anchor" href="#Parameter.isOptional">#</a>
 <p>Whether a call may leave it out, for its default.</p>
@@ -3713,8 +3710,8 @@ pages.parallelStream().forEach { page -&gt; for (link in page.links) { seen.add(
 <div class="entry member" id="Method.parameters"><code class="sig">val parameters : List&lt;Parameter&gt;</code><a class="anchor" href="#Method.parameters">#</a>
 <p>Its parameters, in their order.</p>
 </div>
-<div class="entry member" id="Method.result"><code class="sig">val result : Type?</code><a class="anchor" href="#Method.result">#</a>
-<p>What it gives; null where it gives nothing.</p>
+<div class="entry member" id="Method.result"><code class="sig">val result : Class?</code><a class="anchor" href="#Method.result">#</a>
+<p>What it gives, as a class; null where it gives nothing.</p>
 </div>
 <div class="entry member" id="Method.annotations"><code class="sig">val annotations : List&lt;any&gt;</code><a class="anchor" href="#Method.annotations">#</a>
 <p>The annotations written on it, in their order.</p>
@@ -5079,6 +5076,9 @@ all.sum()   all.sortedBy { -it }   for price in prices.values { ... }
 </pre>
 <div class="entry" id="Values.size"><code class="sig">val Values.size : int</code><a class="anchor" href="#Values.size">#</a>
 <p>The number of values, as the map's size.</p>
+</div>
+<div class="entry" id="Values.itemType"><code class="sig">val Values.itemType : Class</code><a class="anchor" href="#Values.itemType">#</a>
+<p>The class of value the map was made to hold: <code>int#</code> for a Map&lt;string, int&gt;'s.</p>
 </div>
 <div class="entry" id="Values.isEmpty"><code class="sig">fun &lt;T&gt; Values&lt;T&gt;.isEmpty() : bool</code><a class="anchor" href="#Values.isEmpty">#</a>
 <p>True if the map has no values.</p>

@@ -163,7 +163,7 @@ object Settings {
 Settings.raise().raise(2)
 print(Settings.volume, Settings.loud, Settings.describe())   // expect: 8 true volume 8 of 10
 Settings.level = 3
-print(Settings.volume, Settings.loud, Settings.changes, type(Settings), Settings is any)   // expect: 3 false 1 Settings true
+print(Settings.volume, Settings.loud, Settings.changes, Settings#.name, Settings is any)   // expect: 3 false 1 Settings true
 
 // It is a value like any other, and there is only the one.
 val same = Settings

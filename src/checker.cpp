@@ -1406,7 +1406,11 @@ struct Checker::Impl {
             else if (n == "bool") t.kind = Type::Bool;
             else if (n == "Bytes") t.kind = Type::Bytes;
             else if (n == "Range") t.kind = Type::Range;
-            else if (n == "Type") t.kind = Type::TypeValue;
+            else if (n == "Type") {
+                // A type as the program runs is a Class (D162): Type is the standard library's own.
+                t.kind = Type::TypeValue;
+                if (!u.prelude) report(a, "a type as the program runs is a Class: x#, int#, items.itemType (D162)");
+            }
             else if (n == "any") t.kind = Type::Any;
             else if (n == "unit" || n == "Unit") t.kind = Type::Unit;
             else if (n == "nothing" || n == "Nothing") t.kind = Type::Nothing;
@@ -2179,6 +2183,7 @@ struct Checker::Impl {
             {"ReentrantLock", "a ReentrantLock is a Lock() in Astra, used with useKey { } (D86)"},
             {"startCoroutine", "startCoroutine is task { ... } in Astra, which gives a Job of what the block returns (D81)"},
             {"bytes", "'bytes' is now written 'Bytes', as its type is (type names are Title case)"},
+            {"type", "type(x) is written x#.name, the name of x's class; x# is the class itself (D74, G24)"},
             {"Deque", "a Deque is now written Deck: a queue open at both ends, with addFirst, addLast, removeFirst and removeLast (D183)"},
             {"ArrayDeque", "an ArrayDeque is a Deck in Astra: a queue open at both ends, with addFirst, addLast, removeFirst and removeLast (D183)"},
             {"range", "'range' is now written 'Range', as its type is (type names are Title case)"},

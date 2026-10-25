@@ -19,7 +19,7 @@ print(hello(), hello("ignored"))                  // expect: hello hello
 // The empty lambda does nothing; {:} is the empty map.
 val nothing = {}
 val empty = {:}
-print(nothing(), nothing(1), type(nothing), type(empty), empty)   // expect: null null Function Map {}
+print(nothing(), nothing(1), nothing#.name, empty#.name, empty)   // expect: null null Function Map {}
 
 // Maps with entries are still maps.
 val ages = { "Ann": 9, bob: 10, 3: "three", [1 + 1]: "two" }

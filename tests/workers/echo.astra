@@ -40,7 +40,7 @@ Worker.parent!!.onMessage = { message ->
     message.add("changed in the worker")
     Worker.parent!!.post(seen.size)
   } else {
-    Worker.parent!!.post([type(message), message])
+    Worker.parent!!.post([message == null ? "null" : message#.name, message])
   }
 }
 

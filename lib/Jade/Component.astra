@@ -450,7 +450,7 @@ class Component {
     return Point(x, y)
   }
 
-  override fun toString() : string => "Component(" + (id ?: type(content)) + ")"
+  override fun toString() : string => "Component(" + (id ?: content#.name) + ")"
 }
 
 internal class PositionalChild(val child : Component, val offsetX : int, val offsetY : int)

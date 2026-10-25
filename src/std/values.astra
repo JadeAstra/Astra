@@ -13,6 +13,8 @@
 
 // The number of values, as the map's size.
 external val Values.size : int
+// The class of value the map was made to hold: `int#` for a Map<string, int>'s.
+external val Values.itemType : Class
 // True if the map has no values.
 external fun <T> Values<T>.isEmpty() : bool
 // True if the map has any values.

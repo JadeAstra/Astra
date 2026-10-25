@@ -1835,7 +1835,9 @@ a class's fields only where reflection is used, and of its methods and construct
 `methods`, `method`, `constructors` or `call` is.
 
 `x.class`, `Image.class` and `Image.className` are gone, for `x#`, `Image#` and `Image#.name`;
-`class` may be a member's name (`token.class`). `type(x)` still gives the name of a value's type.
+`class` may be a member's name (`token.class`), and `type(x)` is gone for `x#.name`. A type as the
+program runs is always a `Class`: `items.itemType`, `map.keyType` and `map.valueType` give one, as
+do `Box<int>#.typeArguments` and a field's `type`, so `items.itemType == int#` (D162).
 
 ### Annotations
 
@@ -2226,7 +2228,7 @@ of the library is built into the runtime and the rest is written in Astra itself
 (`src/std/*.astra`), mostly as extension functions, and carried inside `astra.exe`.
 `examples\words.astra` puts a good part of it to work on a piece of text.
 
-**Functions:** `print(...)`, `write(...)` (no newline), `input(prompt?)`, `type(x)`,
+**Functions:** `print(...)`, `write(...)` (no newline), `input(prompt?)`,
 `Range(end)` / `Range(start, end, step?)`,
 `assert(cond, message?)`, `clock()`, `args()`, `exit(code?)`, `hash(a, b, ...)`,
 `Bytes(size | list)`, `with(object, lambda)`, `repeat(times) { index -> }`, `flush()`

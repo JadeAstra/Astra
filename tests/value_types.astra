@@ -45,7 +45,7 @@ print(ps, ps.contains(Point(2, 2)), ps.indexOf(Point(2, 2)))   // expect: [Point
 
 // Its type, as any object's.
 val thing : any = a
-print(thing is Point, thing is Rect, type(a))   // expect: true false Point
+print(thing is Point, thing is Rect, a#.name)   // expect: true false Point
 
 // Fields that may be null, and of any type, kept as the value they are.
 value Flags(val on : bool, val count : int?, val label : string?, val extra : any? = null)

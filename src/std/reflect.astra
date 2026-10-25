@@ -29,10 +29,11 @@ external fun __memberCall(obj : any, name : string, args : List<any?>) : any?
 // rights to the members the class keeps.
 fun __classOf(type : Type, asker : any) : Class => Class(type, asker)
 
-// A class, or a built-in type, as `Image#` or `x#` gives it; `type` is the type it stands for,
-// with its type arguments (the class of a Box<int> is Box<int>). What it lists is what the code
-// where the `#` is written may use.
-class Class(val type : Type, private val asker : any? = null) {
+// A class, or a built-in type, as `Image#` or `x#` gives it, with its type arguments (the class of
+// a Box<int> is Box<int>), and as `items.itemType` gives what a list was made to hold (D162): a
+// type as the program runs is always a Class. What it lists is what the code where the `#` is
+// written may use. `type` is the type it stands for, which only the standard library sees.
+class Class(internal val type : Type, private val asker : any? = null) {
   // The class's name, or a built-in type's: "Circle", "int", "List".
   val name : string
     get() => __typeName(type)
@@ -49,9 +50,9 @@ class Class(val type : Type, private val asker : any? = null) {
   val interfaces : List<Class>
     get() => __typeInterfaces(type).map { Class(it, asker) }
 
-  // What it was given: `[int]` for the class of a Box<int>; none for `Box#`.
-  val typeArguments : List<Type>
-    get() => __typeArguments(type)
+  // What it was given, as classes: `[int#]` for the class of a Box<int>; none for `Box#`.
+  val typeArguments : List<Class>
+    get() => __typeArguments(type).map { Class(it, asker) }
 
   // The kinds of an enum class (D39), in the order they are written: none for any other.
   val kinds : List<Class>
@@ -113,8 +114,9 @@ class Class(val type : Type, private val asker : any? = null) {
 class Field(val owner : Class, entry : List<any?>) {
   // Its name, as written in the class.
   val name : string = entry[0] as string
-  // What it holds: `any?` where its type cannot be named as the program runs.
-  val type : Type = entry[1] as Type
+  internal val rawType : Type = entry[1] as Type
+  // What it holds, as a class: `any?` where its type cannot be named as the program runs.
+  val type : Class = Class(rawType)
   private val flags : int = entry[2] as int
   // The annotations written on it, in their order.
   val annotations : List<any> = entry[3] as List<any>
@@ -138,7 +140,7 @@ class Field(val owner : Class, entry : List<any?>) {
   fun set(obj : any, value : any?) throws InvocationTargetException {
     require(owner.isInstance(obj)) { "$obj is not an object of ${owner.name}" }
     require(isMutable) { "${owner.name}.$name cannot be set here" }
-    require(__typeHas(type, value)) { "${owner.name}.$name holds $type, which $value is not" }
+    require(__typeHas(rawType, value)) { "${owner.name}.$name holds $type, which $value is not" }
     try {
       __memberSet(obj, name, value)
     } catch (e) {
@@ -156,8 +158,9 @@ class Field(val owner : Class, entry : List<any?>) {
 class Parameter(entry : List<any?>) {
   // Its name, as written in the declaration.
   val name : string = entry[0] as string
-  // The type an argument for it has to be.
-  val type : Type = entry[1] as Type
+  internal val rawType : Type = entry[1] as Type
+  // The type an argument for it has to be, as a class.
+  val type : Class = Class(rawType)
   // Whether a call may leave it out, for its default.
   val isOptional : bool = entry[2] as bool
   // The annotations written on it, in their order.
@@ -176,7 +179,7 @@ fun __checkArguments(what : string, parameters : List<Parameter>, args : List<an
     "$what takes " + (required == parameters.size ? "${parameters.size}" : "$required to ${parameters.size}") + " arguments, not ${args.size}"
   }
   for (i in args.indices) {
-    require(__typeHas(parameters[i].type, args[i])) { "$what: ${parameters[i].name} is ${parameters[i].type}, which ${args[i]} is not" }
+    require(__typeHas(parameters[i].rawType, args[i])) { "$what: ${parameters[i].name} is ${parameters[i].type}, which ${args[i]} is not" }
   }
 }
 
@@ -188,8 +191,9 @@ class Method(val owner : Class, entry : List<any?>) {
   private val key : string = entry[1] as string
   // Its parameters, in their order.
   val parameters : List<Parameter> = (entry[2] as List<List<any?>>).map { Parameter(it) }
-  // What it gives; null where it gives nothing.
-  val result : Type? = entry[3] as Type?
+  private val rawResult : Type? = entry[3] as Type?
+  // What it gives, as a class; null where it gives nothing.
+  val result : Class? = rawResult == null ? null : Class(rawResult)
   // The annotations written on it, in their order.
   val annotations : List<any> = entry[4] as List<any>
 

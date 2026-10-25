@@ -82,13 +82,13 @@ print(anyDeeper is ListBase<string>, anyDeeper is ListBase<int>)   // expect: tr
 val bases : any = [ib, Base(4)]
 print(bases is List<Base<int>>, bases is List<Base<string>>)   // expect: true false
 
-// What a list or map was made to hold, as a value: a Type.
+// What a list or map was made to hold, as a value: a Class, as int# is (D162).
 val names : List<string> = []
 val ages = {"ann": 31, "bo": 4}
 print(ints.itemType, circles.itemType, names.itemType, ages.keyType, ages.valueType)   // expect: int Circle string string int
 print([].itemType, ints.itemType == listOfOne(2).itemType, ints.itemType == names.itemType)   // expect: any true false
-val kind : Type = ints.itemType
-print(kind is Type, 1 is Type, kind)   // expect: true false int
+val kind : Class = ints.itemType
+print(kind is Class, 1 is Class, kind, kind == int#, kind.name, ages.valueType == int#, circles.itemType == Circle#)   // expect: true false int true int true true
 
 // A list or map the C++ gives has the type its declaration says, worked out at the call.
 print("a,b".split(",").itemType, ints.reversed().itemType, circles[0..<1].itemType)   // expect: string int Circle

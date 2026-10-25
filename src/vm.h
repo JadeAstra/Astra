@@ -963,6 +963,11 @@ private:
     ObjClass* errorClass_ = nullptr;
     ObjClass* thrownClasses_[static_cast<size_t>(Thrown::Count_)] = {};
     ObjClass* mapEntryClass_ = nullptr;  // MapEntry, from the standard library: what a map's entries are
+    Value classOfFn_ = Value::null();    // Class, from the standard library: what a type is made into (D162)
+  public:
+    // A type as the program sees it (D162): the Class the standard library makes of it.
+    Value classValue(ObjTypeInfo* type);
+  private:
     ObjClass* viewClass_ = nullptr;      // ListView, from the standard library: what splitAt hands out (D96)
     ObjString* opNames_[static_cast<int>(Op::Count_)] = {};
 

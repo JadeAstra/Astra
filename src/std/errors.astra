@@ -15,7 +15,7 @@
 class Throwable(val message : string? = null, val cause : Throwable? = null) {
   // The name of the class, then ": " and the message when there is one.
   //   IllegalStateException("no file").toString()   // "IllegalStateException: no file"
-  override fun toString() : string => message == null ? type(this) : type(this) + ": " + message
+  override fun toString() : string => message == null ? this#.name : this#.name + ": " + message
 }
 
 // What the program cannot go on from. A bare `catch (e)` does not catch one; only a catch that

@@ -12,7 +12,7 @@ try { 5.coerceAtLeast(unknown("x")) } catch (e) { print(e.message) }  // expect:
 
 // Rounding and converting. A half rounds up; toInt drops what is after the point.
 print(2.4.roundToInt(), 2.5.roundToInt(), (-2.5).roundToInt(), (-2.6).roundToInt(), 7.roundToInt(), 1e10.roundToInt())   // expect: 2 3 -2 -3 7 10000000000
-print(2.9.toInt(), (-2.9).toInt(), 7.toInt(), 7.toFloat(), 7.toFloat(), 2.5.toInt(), type(7.toFloat()), type(2.9.toInt()))   // expect: 2 -2 7 7.0 7.0 2 float int
+print(2.9.toInt(), (-2.9).toInt(), 7.toInt(), 7.toFloat(), 7.toFloat(), 2.5.toInt(), (7.toFloat())#.name, (2.9.toInt())#.name)   // expect: 2 -2 7 7.0 7.0 2 float int
 print((-7).absoluteValue, 7.absoluteValue, (-2.5).absoluteValue, (-7).sign, 0.sign, 3.sign, (-0.5).sign)   // expect: 7 7 2.5 -1 0 1 -1.0
 print(2.pow(10), 2.pow(-1), 2.5.pow(2), 9.pow(0.5), (-7).mod(3), 7.mod(-3), 7.mod(3), 7.5.mod(2))   // expect: 1024 0.5 6.25 3.0 2 -2 1 1.5
 print(1.compareTo(2), 2.5.compareTo(2), 3.compareTo(3.0), 65.char, 0x1F600.char.toString().size)   // expect: -1 1 0 A 1

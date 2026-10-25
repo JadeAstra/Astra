@@ -6,7 +6,7 @@ fun kind(block : () -> unit) : string {
     block()
     return "nothing"
   } catch (e : Throwable) {
-    return type(e)
+    return e#.name
   }
 }
 val unknown = { value -> value }
@@ -41,7 +41,7 @@ fun which(t : Throwable) : string {
   } catch (e : IllegalArgumentException) {
     return "argument"
   } catch (e) {
-    return "other " + type(e)
+    return "other " + e#.name
   } catch (e : Error) {
     return "error"
   }

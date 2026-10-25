@@ -2,7 +2,7 @@
 
 val zeros = Bytes(4)
 val data = Bytes([1, 2, 255])
-print(zeros, data, data.size, data.size, data[0], data[2], data[^1], zeros is Bytes, [1] is Bytes, type(data))   // expect: Bytes[0, 0, 0, 0] Bytes[1, 2, 255] 3 3 1 255 255 true false Bytes
+print(zeros, data, data.size, data.size, data[0], data[2], data[^1], zeros is Bytes, [1] is Bytes, data#.name)   // expect: Bytes[0, 0, 0, 0] Bytes[1, 2, 255] 3 3 1 255 255 true false Bytes
 
 // A value whose type the checker does not see, for testing the checks made when running.
 val unknown = { value -> value }

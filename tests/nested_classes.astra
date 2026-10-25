@@ -34,7 +34,7 @@ class Event(val source : string) {
 val click = Event.Click("button", 3, 4)
 val key = Event.Key("field", 13)
 print(click.describe(), key.describe(), Event.Hover("panel").describe())   // expect: click at 3,4 from button key 13 from field event from panel
-print(click is Event.Click, click is Event, key is Event.Click, click.isClick(), key.isClick(), type(click))   // expect: true true false true false Click
+print(click is Event.Click, click is Event, key is Event.Click, click.isClick(), key.isClick(), click#.name)   // expect: true true false true false Click
 print(Event.click(1, 2).describe(), Event.Phase.entries, click.phase, Event.Phase.bubble.ordinal)   // expect: click at 1,2 from factory [capture, target, bubble] target 2
 Event.Bus.post(click)
 print(Event.Bus.post(key), Event.Bus.log)   // expect: 2 ["click at 3,4 from button", "key 13 from field"]

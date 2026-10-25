@@ -8,7 +8,7 @@ enum Way { up, down, left, right }
 val w = Way.left
 print(w, w.name, w.ordinal, Way.up.ordinal, Way.right.ordinal)   // expect: left left 2 0 3
 print(Way.entries, Way.entries.size, Way.entries[1] === Way.down)   // expect: [up, down, left, right] 4 true
-print(w == Way.left, w != Way.left, w === Way.left, w == Way.up, w is Way, "left" is Way, type(w))   // expect: true false true false true false Way
+print(w == Way.left, w != Way.left, w === Way.left, w == Way.up, w is Way, "left" is Way, w#.name)   // expect: true false true false true false Way
 print("going $w", [Way.up, Way.down], {"way": Way.right})   // expect: going left [up, down] {"way": right}
 
 // In a when, and as a declared type.
@@ -122,7 +122,7 @@ var key : SortKey = size
 key = name
 print(key, key == SortKey.name, Way#.name, Planet#.name, Planet.EARTH.name)   // expect: name true Way Planet EARTH
 class Plain
-print(Plain#.name, type(Plain()), Plain().let { type(it) })   // expect: Plain Plain Plain
+print(Plain#.name, (Plain())#.name, Plain().let { it#.name })   // expect: Plain Plain Plain
 try { print(Plain.name) } catch (e) { print(e.message) }   // expect: undefined static member 'name' on class Plain
 
 // An enum may put its own `entries`, `name` or `ordinal` in place of the given one by saying

@@ -46,7 +46,7 @@ val point = object {
   val y = 4
   fun length() => x + y
 }
-print(point.x, point.length(), type(point))   // expect: 3 7 object
+print(point.x, point.length(), point#.name)   // expect: 3 7 object
 
 // Passed straight to a function, and several made in a loop.
 fun fire(listener : Listener, times : int) {

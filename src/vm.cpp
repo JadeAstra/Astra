@@ -712,6 +712,7 @@ Value VM::runModule(int index) {
             if (program_->globalNames[i] == "RuntimeException" && errorClass_ == nullptr) errorClass_ = asClass(globals_[i]);
             if (program_->globalNames[i] == "MapEntry" && globals_[i].isObjType(ObjType::Class) && mapEntryClass_ == nullptr)
                 mapEntryClass_ = asClass(globals_[i]);
+            if (program_->globalNames[i] == "Class" && globals_[i].isObjType(ObjType::Class) && classOfFn_.isNull()) classOfFn_ = globals_[i];
             if (program_->globalNames[i] == "ListView" && globals_[i].isObjType(ObjType::Class) && viewClass_ == nullptr)
                 viewClass_ = asClass(globals_[i]);
         }
@@ -2351,19 +2352,19 @@ Value VM::getProperty(Value obj, ObjString* name) {
                 if (name == names.indices)
                     return Value::object(alloc<ObjRange>(int64_t{0}, static_cast<int64_t>(asList(obj)->size()), int64_t{1}, false));
                 if (name == names.lastIndex) return Value::integer(static_cast<int64_t>(asList(obj)->size()) - 1);
-                if (name == names.itemType) return Value::object(typeArgument(asList(obj)->type, 0));  // M6.6 part 1
+                if (name == names.itemType) return classValue(typeArgument(asList(obj)->type, 0));  // M6.6 part 1, D162
                 break;
             case ObjType::Map:
                 if (name == names.size) return Value::integer(static_cast<int64_t>(asMap(obj)->map.size()));
-                if (name == names.keyType) return Value::object(typeArgument(asMap(obj)->type, 0));
-                if (name == names.valueType) return Value::object(typeArgument(asMap(obj)->type, 1));
+                if (name == names.keyType) return classValue(typeArgument(asMap(obj)->type, 0));
+                if (name == names.valueType) return classValue(typeArgument(asMap(obj)->type, 1));
                 if (name == names.keys) return mapView(asMap(obj), false);  // live views (D77)
                 if (name == names.values) return mapValues(asMap(obj));  // a live view (G22)
                 if (name == names.entries) return mapView(asMap(obj), true);
                 break;
             case ObjType::Set:
                 if (name == names.size) return Value::integer(static_cast<int64_t>(setSize(asSet(obj))));
-                if (name == names.itemType) return Value::object(typeArgument(asSet(obj)->type, 0));
+                if (name == names.itemType) return classValue(typeArgument(asSet(obj)->type, 0));
                 break;
             case ObjType::Range: {
                 ObjRange* range = asRange(obj);
@@ -3498,6 +3499,12 @@ void VM::nameEntry(ObjInstance* entry, ObjString* name, int ordinal) {
     entry->setField(names.entryOrdinal, Value::integer(ordinal));
     if (cls->getters.find(names.name) == nullptr) entry->setField(names.name, Value::object(name));
     if (cls->getters.find(names.ordinal) == nullptr) entry->setField(names.ordinal, Value::integer(ordinal));
+}
+
+Value VM::classValue(ObjTypeInfo* type) {
+    if (classOfFn_.isNull()) return Value::object(type);  // the standard library not loaded yet
+    Value args[2] = {Value::object(type), Value::null()};
+    return call(classOfFn_, 2, args);
 }
 
 Value VM::makeEntry(Value key, Value value) {

@@ -10,7 +10,7 @@ print(v, v.x, v.y)                               // expect: (4, 6.5) 4 6.5
 class Student(var name : string, var grade : int)
 val s = Student("Ann", 9)
 s.grade += 1
-print(s.name, s.grade, s is Student, type(s))    // expect: Ann 10 true Student
+print(s.name, s.grade, s is Student, s#.name)    // expect: Ann 10 true Student
 
 // A value whose type the checker does not see, for testing the checks made when running.
 val unknown = { value -> value }

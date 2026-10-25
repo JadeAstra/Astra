@@ -50,6 +50,6 @@ print(a)                                 // expect: 1
   print(a)                               // expect: shadow
 }
 print(a)                                 // expect: 1
-print(type(1), type(1.0), type("s"), type(null), type(true), type([]), type({:}), type(print), type(0..<1))
-// expect: int float string null bool List Map Function Range
+print((1)#.name, (1.0)#.name, ("s")#.name, (true)#.name, ([])#.name, ({:})#.name, print#.name, (0..<1)#.name)
+// expect: int float string bool List Map Function Range
 print("42".toInt() + 1, "1.5".toFloat() * 2, 3.9.toInt(), (-3.9).toInt(), "${12}!")   // expect: 43 3.0 3 -3 12!

@@ -14,7 +14,7 @@ print(p, p.x, p.lengthSquared())        // expect: Point(3, 4) 3 25
 p.x = 10
 p.z = "new field"
 print(p.x, p.z)                         // expect: 10 new field
-print(type(p), p is Point, Point)       // expect: Point true <class Point>
+print(p#.name, p is Point, Point)       // expect: Point true <class Point>
 
 class Shape {
   var name : string
@@ -100,7 +100,7 @@ print(Early(true).flag, Early(false).extra)   // expect: true true
 class A { fun hello() { return "A.hello" } }
 class B : A {
   override fun hello() {
-    var f = fun() => super.hello() + " via " + type(this)
+    var f = fun() => super.hello() + " via " + this#.name
     return f()
   }
 }
