@@ -183,7 +183,9 @@ ObjTypeInfo* VM::typeOfValue(const Value& v) {
         case ObjType::String: return plain(kTypeString);
         case ObjType::List: return asList(v)->type != nullptr ? asList(v)->type : typeOf(kTypeList, false, nullptr, {any});
         case ObjType::Map: return asMap(v)->type != nullptr ? asMap(v)->type : typeOf(kTypeMap, false, nullptr, {any, any});
-        case ObjType::Set: return asSet(v)->type != nullptr ? asSet(v)->type : typeOf(kTypeSet, false, nullptr, {any});
+        case ObjType::Set:
+            if (asSet(v)->type != nullptr) return asSet(v)->type;
+            return typeOf(asSet(v)->values ? kTypeValues : kTypeSet, false, nullptr, {any});
         case ObjType::Range: return plain(kTypeRange);
         case ObjType::Bytes: return plain(kTypeBytes);
         case ObjType::Closure:
@@ -427,6 +429,10 @@ ObjTypeInfo* VM::typeFromShape(const std::string& shape, size_t& at, const Value
         case 'S': {
             ObjTypeInfo* item = typeFromShape(shape, at, operand);
             return typeOf(kTypeSet, nullable, nullptr, {item});
+        }
+        case 'V': {
+            ObjTypeInfo* item = typeFromShape(shape, at, operand);
+            return typeOf(kTypeValues, nullable, nullptr, {item});
         }
         case 'M': {
             ObjTypeInfo* key = typeFromShape(shape, at, operand);
@@ -837,7 +843,7 @@ const Value* VM::findExtension(Value receiver, const ObjString* name) const {
                 case ObjType::String: found = typeExtensions_[kTypeString].find(name); break;
                 case ObjType::List: found = typeExtensions_[kTypeList].find(name); break;
                 case ObjType::Map: found = typeExtensions_[kTypeMap].find(name); break;
-                case ObjType::Set: found = typeExtensions_[kTypeSet].find(name); break;
+                case ObjType::Set: found = typeExtensions_[asSet(receiver)->values ? kTypeValues : kTypeSet].find(name); break;
                 case ObjType::Range: found = typeExtensions_[kTypeRange].find(name); break;
                 case ObjType::Bytes: found = typeExtensions_[kTypeBytes].find(name); break;
                 case ObjType::Closure:
@@ -1250,7 +1256,7 @@ std::string VM::typeName(Value v) const {
         case ObjType::String: return "string";
         case ObjType::List: return "List";
         case ObjType::Map: return "Map";
-        case ObjType::Set: return "Set";
+        case ObjType::Set: return asSet(v)->values ? "Values" : "Set";
         case ObjType::Range: return "Range";
         case ObjType::Bytes: return "Bytes";
         case ObjType::Closure:
@@ -2226,9 +2232,21 @@ bool VM::equals(Value a, Value b, int depth) {
                    x->startFromEnd == y->startFromEnd && x->endFromEnd == y->endFromEnd;
         }
         case ObjType::Set: {
-            // The same items, whatever their order.
             const ObjSet* x = asSet(a);
             const ObjSet* y = asSet(b);
+            if (x->values != y->values) return false;
+            if (x->values) {
+                // A map's values (G22): the same values in the same order, as for lists.
+                const std::vector<Value> xs = setItems(x);
+                TempVector keepX(*this, const_cast<std::vector<Value>&>(xs));
+                const std::vector<Value> ys = setItems(y);
+                TempVector keepY(*this, const_cast<std::vector<Value>&>(ys));
+                if (xs.size() != ys.size()) return false;
+                for (size_t i = 0; i < xs.size(); i++)
+                    if (!equals(xs[i], ys[i])) return false;
+                return true;
+            }
+            // The same items, whatever their order.
             if (setSize(x) != setSize(y)) return false;
             const std::vector<Value> items = setItems(x);
             TempVector keep(*this, const_cast<std::vector<Value>&>(items));
@@ -2340,7 +2358,7 @@ Value VM::getProperty(Value obj, ObjString* name) {
                 if (name == names.keyType) return Value::object(typeArgument(asMap(obj)->type, 0));
                 if (name == names.valueType) return Value::object(typeArgument(asMap(obj)->type, 1));
                 if (name == names.keys) return mapView(asMap(obj), false);  // live views (D77)
-                if (name == names.values) return mapValues(asMap(obj));
+                if (name == names.values) return mapValues(asMap(obj));  // a live view (G22)
                 if (name == names.entries) return mapView(asMap(obj), true);
                 break;
             case ObjType::Set:
@@ -2455,7 +2473,8 @@ const ValueLayout& VM::layoutOf(ObjClass* cls) {
             field.cls = fieldClass(declared);
             field.kind = !nullable && field.cls->isValue ? ValueField::Nested : ValueField::Object;
         } else if (id == kTypeString || id == kTypeList || id == kTypeMap || id == kTypeRange || id == kTypeBytes ||
-                   id == kTypeFunction || id == kTypeType || id == kTypeSet || id == kTypeFrozenList || id == kTypeFrozenMap || id == kTypeFrozenSet) {
+                   id == kTypeFunction || id == kTypeType || id == kTypeSet || id == kTypeFrozenList || id == kTypeFrozenMap || id == kTypeFrozenSet ||
+                   id == kTypeValues) {
             field.kind = ValueField::Object;  // null is a null pointer, where the type takes it
         } else {
             field.kind = ValueField::Any;  // Number, and an int, float or bool that may be null
@@ -3526,14 +3545,13 @@ Value VM::mapKeys(ObjMap* map) {
     return Value::object(list);
 }
 
+// A map's values (G22): a Values, a live view of them as a keys view is of its keys.
 Value VM::mapValues(ObjMap* map) {
-    ObjTypeInfo* const type = mapPartType(map, 1);
-    ObjList* list = alloc<ObjList>();
-    for (const ValueMap::Entry& entry : map->map.entries())
-        if (entry.live) list->values().push_back(entry.value);
-    account(list->values().size() * sizeof(Value));
-    typeList(list, type);
-    return Value::object(list);
+    ObjTypeInfo* item = mapPartType(map, 1);
+    ObjSet* view = newSet(typeOf(kTypeValues, false, nullptr, {item != nullptr && !item->args.empty() ? item->args[0] : typeOf(0, true, nullptr, {})}));
+    view->viewOf = map;
+    view->values = true;
+    return Value::object(view);
 }
 
 // Runs what works out a class's static values, if it has not run yet, superclasses first.
@@ -3974,10 +3992,11 @@ bool VM::matchesType(const Value& v, uint8_t type, const ObjClass* cls) const {
         case kTypeString: return v.isString();
         case kTypeList: return v.isObjType(ObjType::List);
         case kTypeMap: return v.isObjType(ObjType::Map);
-        case kTypeSet: return v.isObjType(ObjType::Set);
+        case kTypeSet: return v.isObjType(ObjType::Set) && !asSet(v)->values;
+        case kTypeValues: return v.isObjType(ObjType::Set) && asSet(v)->values;
         case kTypeFrozenList: return v.isObjType(ObjType::List) && v.as.obj->frozen != 0;
         case kTypeFrozenMap: return v.isObjType(ObjType::Map) && v.as.obj->frozen != 0;
-        case kTypeFrozenSet: return v.isObjType(ObjType::Set) && v.as.obj->frozen != 0;
+        case kTypeFrozenSet: return v.isObjType(ObjType::Set) && !asSet(v)->values && v.as.obj->frozen != 0;
         case kTypeRange: return v.isObjType(ObjType::Range);
         case kTypeBytes: return v.isObjType(ObjType::Bytes);
         case kTypeChar: return v.isChar();
@@ -4195,6 +4214,12 @@ Value VM::mapView(ObjMap* map, bool entries) {
 
 bool VM::setContains(const ObjSet* set, Value item) {
     if (!set->view()) return set->items.find(item) != nullptr;
+    if (set->values) {
+        // A value is there when some key has it: each looked at in turn.
+        for (const ValueMap::Entry& entry : set->viewOf->map.entries())
+            if (entry.live && equals(entry.value, item)) return true;
+        return false;
+    }
     if (!set->entries) return set->viewOf->map.find(item) != nullptr;
     // An entry, a MapEntry or a pair, is there when its key is, with its value.
     if (!item.isObjType(ObjType::Value) && !item.isSmall() && !item.isRef()) return false;
@@ -4206,7 +4231,7 @@ bool VM::setContains(const ObjSet* set, Value item) {
 }
 
 AstraThrow VM::viewChanged(const ObjSet* view) {
-    return runtimeError(Thrown::UnsupportedOperationException, std::string("a map's ") + (view->entries ? "entries" : "keys") +
+    return runtimeError(Thrown::UnsupportedOperationException, std::string("a map's ") + (view->values ? "values" : view->entries ? "entries" : "keys") +
                         " show the map and cannot be changed through it: change the map, with remove, removeAll { (k, v) -> } or retainAll");
 }
 
@@ -4277,6 +4302,14 @@ void VM::refuseKey(const Value& key) {
 
 Value VM::frozenCopy(Value v, int depth) {
     if (!v.isObj() || v.as.obj->frozen != 0) return v;
+    if (v.isObjType(ObjType::Set) && asSet(v)->values) {
+        // A map's values (G22), frozen: a list of them as they are.
+        ObjList* list = newList(*this);
+        TempRoot keep(*this, Value::object(list));
+        list->values() = setItems(asSet(v));
+        account(list->values().size() * sizeof(Value));
+        return frozenCopy(Value::object(list), depth);
+    }
     const ObjType type = v.as.obj->type;
     if (type != ObjType::List && type != ObjType::Map && type != ObjType::Set) return v;
     if (depth >= kMaxEqualsDepth) throw runtimeError(Thrown::IllegalArgumentException, "frozen(): the " + typeName(v) + " holds itself, or is nested too deeply to copy");
@@ -4402,7 +4435,7 @@ std::vector<Value> VM::setItems(const ObjSet* set) {
     for (size_t i = 0; i < from.entries().size(); i++) {
         const ValueMap::Entry& entry = from.entries()[i];
         if (!entry.live) continue;
-        out.push_back(set->entries ? makeEntry(entry.key, entry.value) : entry.key);
+        out.push_back(set->entries ? makeEntry(entry.key, entry.value) : set->values ? entry.value : entry.key);
     }
     return out;
 }
@@ -4456,7 +4489,7 @@ bool VM::iteratorNext(ObjIterator* it, Value& out) {
             while (it->index < entries.size()) {
                 const ValueMap::Entry& entry = entries[it->index++];
                 if (!entry.live) continue;
-                out = set->entries ? makeEntry(entry.key, entry.value) : entry.key;
+                out = set->entries ? makeEntry(entry.key, entry.value) : set->values ? entry.value : entry.key;
                 return true;
             }
             return false;
@@ -7673,18 +7706,20 @@ void VM::stringifyInto(std::string& out, Value v, bool quote, int depth) {
         }
 
         case ObjType::Set: {
+            // A map's values (G22) are written as a list is: they may repeat, and have an order.
+            const bool values = asSet(v)->values;
             if (depth > 16) {
-                out += "{...}";
+                out += values ? "[...]" : "{...}";
                 return;
             }
-            out += '{';
+            out += values ? '[' : '{';
             const std::vector<Value> items = setItems(asSet(v));
             TempVector keep(*this, const_cast<std::vector<Value>&>(items));
             for (size_t i = 0; i < items.size(); i++) {
                 if (i > 0) out += ", ";
                 stringifyInto(out, items[i], true, depth + 1);
             }
-            out += '}';
+            out += values ? ']' : '}';
             return;
         }
 

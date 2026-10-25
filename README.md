@@ -2348,8 +2348,11 @@ has `thenBy { }`, `thenByDescending { }`, `then(other)` and `reversed()`.
 
 ### Maps
 
-`size`, `keys`, `values` and `entries` are read without brackets. `keys` and `entries` are
-sets that show the map as it is, live, and cannot be changed through; `values` is a list.
+`size`, `keys`, `values` and `entries` are read without brackets. Each shows the map as it is,
+live, and cannot be changed through. `keys` and `entries` are sets; `values` is a `Values<V>`,
+the values in the order of their keys, which may repeat and have no positions: `for`, `size`,
+`contains`, `sum`, `filter`, `sortedBy` and the like work on it, and `toList()` gives a list of
+them as they are, to index or to keep.
 A `for` over a map gives its entries, each a `MapEntry` with a `key` and a `value`, which can be
 taken apart: `for (name, age) in ages { ... }`. Entries, `Pair`, `Triple` and `IndexedValue`
 are values, equal by what they hold.
@@ -3208,8 +3211,6 @@ opportunity, which is slow but useful for finding memory bugs when changing the 
   read but not checked.
 - Which characters are letters, digits or spaces, and what their upper and lower case are,
   is asked of Windows for characters outside ASCII. There are no regular expressions yet.
-- `keys`, `values` and `entries` of a map are lists made when they are asked for: changing
-  one does not change the map.
 - `orEmpty()` on a variable that may be null is the one of its type (`string?`, `List<T>?`,
   `Map<K, V>?`). On a value whose type does not say (`any?`, or `null` written as it is), null
   does not tell which of them is meant, and the call fails; write `text ?: ""` or `items ?: []`.

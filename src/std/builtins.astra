@@ -335,9 +335,9 @@ external val Map.size : int
 // The keys, in the order they were first put in: a live view (D77), a set that shows the map as
 // it is, and through which nothing is changed.
 external val <K, V> Map<K, V>.keys : Set<K>
-// The values, in the order of their keys, as a list of them as they are now; it does not change
-// with the map.
-external val <K, V> Map<K, V>.values : List<V>
+// The values, in the order of their keys: a live view (D77, G22), a Values that shows the map as it
+// is and through which nothing is changed. They have no positions: toList() for a list of them.
+external val <K, V> Map<K, V>.values : Values<V>
 // The entries, each a MapEntry with its `key` and `value`: a live view (D77), as `keys` is.
 external val <K, V> Map<K, V>.entries : Set<MapEntry<K, V>>
 // The type of key the map was made to hold, as a Type: `any` where that was not said.

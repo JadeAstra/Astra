@@ -1,0 +1,16 @@
+// A map's values are a Values (G22): a live view of them, read and never changed through, whose
+// values have no positions.
+
+fun look(prices : open Map<string, int>) {
+  val all = prices.values
+  print(all[0])                  // check: a map's values have no positions: they are looked at in turn; first(), last(), or toList()[i] for a list of them (G22)
+  all.add(5)                     // check: a map's values show the map and nothing is changed through them: change the map (map[key] = value, remove(key), removeAll { (k, v) -> ... }), or work on values.toOpenList(), a list of them (G22)
+  all.remove(3)                  // check: a map's values show the map and nothing is changed through them: change the map (map[key] = value, remove(key), removeAll { (k, v) -> ... }), or work on values.toOpenList(), a list of them (G22)
+  all.clear()                    // check: a map's values show the map and nothing is changed through them: change the map (map[key] = value, remove(key), removeAll { (k, v) -> ... }), or work on values.toOpenList(), a list of them (G22)
+  all.sortBy { it }              // check: a map's values show the map and nothing is changed through them: change the map (map[key] = value, remove(key), removeAll { (k, v) -> ... }), or work on values.toOpenList(), a list of them (G22)
+  val asList : List<int> = all   // check: 'asList' is a List<int>; it cannot start as a Values<int>
+  val byValues : open Map<Values<int>, int> = {:}
+  byValues[all] = 1              // check: a Values<int> shows a map, which can change, so it cannot be a key: a frozen list of them can, all.toList().frozen() (D26)
+  val right : List<int> = all.toList()
+  print(right[0], all.first(), all.sorted(), all.contains(3), 3 in all, all.size)
+}

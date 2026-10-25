@@ -2458,6 +2458,9 @@ private:
                 if (t.frozen) shape += 'Z';
                 shape += 'S';
                 return t.args.size() == 1 && shapeOf(t.args[0], shape, operands);
+            case RuntimeType::Values:
+                shape += 'V';
+                return t.args.size() == 1 && shapeOf(t.args[0], shape, operands);
             case RuntimeType::Map:
                 if (t.frozen) shape += 'Z';
                 shape += 'M';
@@ -2687,6 +2690,11 @@ private:
             emitWrittenType(t.args[0], shape);
             return;
         }
+        if (id == kTypeValues && t.args.size() == 1) {
+            shape += 'V';
+            emitWrittenType(t.args[0], shape);
+            return;
+        }
         if (id == kTypeMap && t.args.size() == 2) {
             shape += 'M';
             emitWrittenType(t.args[0], shape);
@@ -2695,7 +2703,7 @@ private:
         }
         // The others, and a list or map with nothing said of what it holds: of anything.
         static const char* const kShapes[] = {"", "i", "f", "n", "s", "b", "La", "Maa", "r", "F", "y", "t", "",
-                                              "c", "u", "h", "d", "H", "D", "g", "x", "Sa", "ZLa", "ZMaa", "ZSa"};
+                                              "c", "u", "h", "d", "H", "D", "g", "x", "Sa", "ZLa", "ZMaa", "ZSa", "Va"};
         static_assert(sizeof kShapes / sizeof kShapes[0] == kTypeCount_, "a shape for each type");
         if (isBuiltinTypeId(id)) {
             shape += kShapes[id];
@@ -3426,7 +3434,7 @@ private:
         else if (name == "char") type = BuiltinType::Char;
         else if (name == "byte") type = BuiltinType::Byte;
         else if (name == "Index") type = BuiltinType::Index;
-        else if (name == "Set") type = BuiltinType::Set;
+        else if (name == "Set" || name == "Values") type = BuiltinType::Set;  // a map's values: a view, as its keys are (G22)
         else return false;
         return true;
     }

@@ -40,6 +40,9 @@ task {
   val scores : Map<string, int> = {"a": 1}
   val tags : Set<string> = setOf("x")
   print(roundTrip(names)[1], roundTrip(scores)[1], roundTrip(tags)[0])   // expect: List<string> of 2 Map<string, int> {"x"}
+  // A map's values go as a list of them, as they are (G22).
+  val counts : Map<string, int> = {"a": 1, "b": 1, "c": 2}
+  print(roundTrip(counts.values))   // expect: [[1, 1, 2], "List<int> of 3"]
 
   // Objects of data classes, made again there by their constructors.
   val ada = Student("Ada", 9)

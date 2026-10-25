@@ -61,6 +61,7 @@ struct Type {
         Byte,       // 0 to 255 (D19)
         Index,      // a position: an int, or ^k from the end (D146)
         Set,        // Set [T] (M6.6 part 8)
+        Values,     // Values [V]: a map's values, a live view that is read and not changed (G22)
         Union,      // `int | string` (D40): the types it may be in args; `nullable` for null among them
         Bundle,     // `params(bold = true, size = 14)` (D143): its names in `fields`, their types in args
     };
@@ -432,6 +433,7 @@ struct Checker::Impl {
             case Type::TypeValue: s = "Type"; break;
             case Type::List: s = std::string(t.frozen ? "Frozen" : "") + "List<" + (t.args.empty() ? std::string("*") : argText(t.args[0])) + ">"; break;
             case Type::Set: s = std::string(t.frozen ? "Frozen" : "") + "Set<" + (t.args.empty() ? std::string("*") : argText(t.args[0])) + ">"; break;
+            case Type::Values: s = "Values<" + (t.args.empty() ? std::string("*") : argText(t.args[0])) + ">"; break;
             case Type::Map:
                 s = std::string(t.frozen ? "Frozen" : "") + "Map<" + (t.args.size() < 2 ? std::string("*") : argText(t.args[0])) + ", " +
                     (t.args.size() < 2 ? std::string("*") : argText(t.args[1])) + ">";
@@ -649,7 +651,7 @@ struct Checker::Impl {
             return item;
         }
         if (made.nullable) return unknownType();
-        if ((made.kind == Type::List || made.kind == Type::Set) && !made.args.empty()) return readType(made.args[0]);
+        if ((made.kind == Type::List || made.kind == Type::Set || made.kind == Type::Values) && !made.args.empty()) return readType(made.args[0]);
         if (made.kind == Type::Map) return mapEntryOf(made);
         if (made.kind == Type::Range) return Type::of(Type::Int);
         if (made.kind == Type::String) return Type::of(Type::Char);
@@ -734,6 +736,10 @@ struct Checker::Impl {
                 return from.kind == Type::Int || from.kind == Type::Float || from.kind == Type::Number || from.kind == Type::Byte;
             case Type::Index:
                 return from.kind == Type::Int || from.kind == Type::Index;  // an int is a position from the start (D146)
+            case Type::Values:
+                // Read and never changed through: a Values of an item that fits.
+                if (from.kind != Type::Values) return false;
+                return to.args.empty() || from.args.empty() || fits(from.args[0], to.args[0]);
             case Type::Set:
                 if (from.kind != Type::Set) return false;
                 if (to.frozen && !from.frozen) return false;  // what nobody may change (D26)
@@ -1409,6 +1415,9 @@ struct Checker::Impl {
                 t.kind = Type::List;
                 t.frozen = n == "FrozenList";
                 t.args.push_back(a.args.empty() ? unknownType() : resolve(a.args[0], u));
+            } else if (n == "Values") {
+                t.kind = Type::Values;
+                t.args.push_back(a.args.empty() ? unknownType() : resolve(a.args[0], u));
             } else if (n == "Set" || n == "FrozenSet") {
                 t.kind = Type::Set;
                 t.frozen = n == "FrozenSet";
@@ -2001,6 +2010,7 @@ struct Checker::Impl {
             case Type::Byte: return {"byte"};
             case Type::Index: return {"Index"};
             case Type::Set: return {"Set"};
+            case Type::Values: return {"Values"};
             default: return {};
         }
     }
@@ -2070,6 +2080,7 @@ struct Checker::Impl {
             case Type::Byte: keys.push_back("byte"); break;
             case Type::Index: keys.push_back("Index"); break;
             case Type::Set: keys.push_back("Set"); break;
+            case Type::Values: keys.push_back("Values"); break;
             case Type::Bool: keys.push_back("bool"); break;
             case Type::Function: keys.push_back("Function"); break;
             default: break;
@@ -2827,7 +2838,7 @@ struct Checker::Impl {
                     else if (over.kind == Type::String) item = Type::of(Type::Char);
                     else if (over.kind == Type::List && !over.args.empty()) item = readType(over.args[0]);
                     else if (over.kind == Type::Map) item = mapEntryOf(over);  // a map gives its entries (D64)
-                    else if (over.kind == Type::Set && !over.args.empty()) item = readType(over.args[0]);
+                    else if ((over.kind == Type::Set || over.kind == Type::Values) && !over.args.empty()) item = readType(over.args[0]);
                     else if (over.kind == Type::Class && over.cls != nullptr) item = iterationItem(over, f);
                 } else if (over.known() && over.kind != Type::Null) {
                     report(*f.iterable, "a for cannot go over " + describe(over) + ", which may be null");
@@ -6001,6 +6012,9 @@ struct Checker::Impl {
             case Type::Set:
                 report(i, "a set's items have no positions: first(), last(), or toList()[i] for a list of them");
                 return obj.args.empty() ? unknownType() : obj.args[0];
+            case Type::Values:
+                report(i, "a map's values have no positions: they are looked at in turn; first(), last(), or toList()[i] for a list of them (G22)");
+                return obj.args.empty() ? unknownType() : obj.args[0];
             case Type::Class: {
                 std::vector<Type> args{idx};
                 args.insert(args.end(), rest.begin(), rest.end());
@@ -7442,6 +7456,8 @@ struct Checker::Impl {
         Type plain = withNull(t, false);
         plain.open = false;  // a key changes or not whatever the name it is reached by
         switch (plain.kind) {
+            case Type::Values:
+                return describe(plain) + " shows a map, which can change, so it cannot be a key" + (place.empty() ? std::string() : ": a frozen list of them can, " + (place == "..." ? std::string("key") : place) + ".toList().frozen()");
             case Type::List:
             case Type::Map:
             case Type::Set:
@@ -7602,6 +7618,11 @@ struct Checker::Impl {
         std::vector<FuncInfo*> ext = findExtensions(plain, m.name);
         if (!ext.empty()) return callFunctions(ext, c, m.name, {}, &plain);
         for (const ExprPtr& a : c.args) expr(*a);
+        // A change asked of a map's values, which show the map and change with it alone (G22).
+        if (plain.kind == Type::Values && (listChangingName(m.name, c.args.size()) || m.name == "add" || m.name == "addAll" || m.name == "put")) {
+            report(m, "a map's values show the map and nothing is changed through them: change the map (map[key] = value, remove(key), removeAll { (k, v) -> ... }), or work on values.toOpenList(), a list of them (G22)");
+            return unknownType();
+        }
         // A character's tests asked of a string, which has Python's names for them (G21).
         if (plain.kind == Type::String) {
             static const std::unordered_map<std::string, std::string> renamed = {
@@ -7639,6 +7660,7 @@ struct Checker::Impl {
             case Type::Byte:
             case Type::Index:
             case Type::Set:
+            case Type::Values:
                 return !builtinMethods.empty();
             default:
                 return false;
@@ -9135,6 +9157,12 @@ RuntimeType runtimeTypeOf(const Type& t) {
         case Type::Char: r.kind = RuntimeType::Char; return r;
         case Type::Byte: r.kind = RuntimeType::Byte; return r;
         case Type::Index: r.kind = RuntimeType::Index; return r;
+        case Type::Values:
+            r.kind = RuntimeType::Values;
+            if (t.args.size() != 1) return RuntimeType{};
+            r.args.push_back(runtimeTypeOf(t.args[0]));
+            if (r.args.back().kind == RuntimeType::Unknown) return RuntimeType{};
+            return r;
         case Type::Set:
             r.kind = RuntimeType::Set;
             r.frozen = t.frozen;

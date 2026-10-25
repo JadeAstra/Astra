@@ -423,6 +423,7 @@ addButton(widgets)</pre></dd>
 <li><a href="#file-text-astra">text.astra</a></li>
 <li><a href="#file-thread-astra">thread.astra</a></li>
 <li><a href="#file-time-astra">time.astra</a></li>
+<li><a href="#file-values-astra">values.astra</a></li>
 <li><a href="#file-worker-astra">worker.astra</a></li>
 </ul>
 <h2 id="api-types">Types and what they have</h2>
@@ -532,6 +533,7 @@ addButton(widgets)</pre></dd>
 <li><a href="#Typeface"><code>Typeface</code></a> (28)</li>
 <li><a href="#UncheckedIOException"><code>UncheckedIOException</code></a> (1)</li>
 <li><a href="#UnsupportedOperationException"><code>UnsupportedOperationException</code></a> (1)</li>
+<li><a href="#Values.size"><code>Values</code></a> (50)</li>
 <li><a href="#Worker"><code>Worker</code></a> (8)</li>
 <li><a href="#WorkerParent"><code>WorkerParent</code></a> (4)</li>
 <li><a href="#Writer"><code>Writer</code></a> (10)</li>
@@ -935,8 +937,8 @@ Range(10, 0, -3).toList()  // [10, 7, 4, 1]
 <div class="entry" id="Map.keys"><code class="sig">val &lt;K, V&gt; Map&lt;K, V&gt;.keys : Set&lt;K&gt;</code><a class="anchor" href="#Map.keys">#</a>
 <p>The keys, in the order they were first put in: a live view, a set that shows the map as it is, and through which nothing is changed.</p>
 </div>
-<div class="entry" id="Map.values"><code class="sig">val &lt;K, V&gt; Map&lt;K, V&gt;.values : List&lt;V&gt;</code><a class="anchor" href="#Map.values">#</a>
-<p>The values, in the order of their keys, as a list of them as they are now; it does not change with the map.</p>
+<div class="entry" id="Map.values"><code class="sig">val &lt;K, V&gt; Map&lt;K, V&gt;.values : Values&lt;V&gt;</code><a class="anchor" href="#Map.values">#</a>
+<p>The values, in the order of their keys: a live view, a Values that shows the map as it is and through which nothing is changed. They have no positions: toList() for a list of them.</p>
 </div>
 <div class="entry" id="Map.entries"><code class="sig">val &lt;K, V&gt; Map&lt;K, V&gt;.entries : Set&lt;MapEntry&lt;K, V&gt;&gt;</code><a class="anchor" href="#Map.entries">#</a>
 <p>The entries, each a MapEntry with its <code>key</code> and <code>value</code>: a live view, as <code>keys</code> is.</p>
@@ -5064,6 +5066,166 @@ val frame = 1.seconds / 60          // 16.666666ms
 </div>
 <div class="entry" id="float.days"><code class="sig">val float.days : Duration</code><a class="anchor" href="#float.days">#</a>
 <p>This many days, rounded to the nearest nanosecond, as a Duration.</p>
+</div>
+</section>
+<section class="file" id="file-values-astra">
+<h2>values.astra</h2>
+<h3>A map's values</h3>
+<p>What <code>map.values</code> gives: the map's values, in the order of its keys, as the map holds them now. It is a live view: it keeps nothing of its own, and reading it reads the map, so it shows every change made to the map since. Nothing is changed through it, and its values have no positions: <code>values[i]</code> is <code>values.toList()[i]</code>, a list of them as they are. A value that two keys share is there twice.</p>
+<pre>val prices = {&quot;tea&quot;: 3, &quot;cake&quot;: 4}
+val all = prices.values           // [3, 4]
+prices[&quot;jam&quot;] = 2                 // all is [3, 4, 2] now
+all.sum()   all.sortedBy { -it }   for price in prices.values { ... }
+</pre>
+<div class="entry" id="Values.size"><code class="sig">val Values.size : int</code><a class="anchor" href="#Values.size">#</a>
+<p>The number of values, as the map's size.</p>
+</div>
+<div class="entry" id="Values.isEmpty"><code class="sig">fun &lt;T&gt; Values&lt;T&gt;.isEmpty() : bool</code><a class="anchor" href="#Values.isEmpty">#</a>
+<p>True if the map has no values.</p>
+</div>
+<div class="entry" id="Values.isNotEmpty"><code class="sig">fun &lt;T&gt; Values&lt;T&gt;.isNotEmpty() : bool</code><a class="anchor" href="#Values.isNotEmpty">#</a>
+<p>True if the map has any values.</p>
+</div>
+<div class="entry" id="Values.contains"><code class="sig">fun &lt;T&gt; Values&lt;T&gt;.contains(item : T) : bool</code><a class="anchor" href="#Values.contains">#</a>
+<p>True if <code>item</code> is one of the values (==); each is looked at in turn.</p>
+</div>
+<div class="entry" id="Values.toList"><code class="sig">fun &lt;T&gt; Values&lt;T&gt;.toList() : open List&lt;T&gt;</code><a class="anchor" href="#Values.toList">#</a>
+<p>The values, in order, as a new list, which does not change with the map.</p>
+</div>
+<div class="entry" id="Values.first"><code class="sig">fun &lt;T&gt; Values&lt;T&gt;.first() : T</code><a class="anchor" href="#Values.first">#</a>
+<p>The first value; a NoSuchElementException when the map is empty.</p>
+</div>
+<div class="entry" id="Values.last"><code class="sig">fun &lt;T&gt; Values&lt;T&gt;.last() : T</code><a class="anchor" href="#Values.last">#</a>
+<p>The last value; a NoSuchElementException when the map is empty.</p>
+</div>
+<div class="entry" id="Values.toOpenList"><code class="sig">fun &lt;T&gt; Values&lt;T&gt;.toOpenList() : open List&lt;T&gt;</code><a class="anchor" href="#Values.toOpenList">#</a>
+<p>The values, in order, as a new list; the same as toList().</p>
+</div>
+<div class="entry" id="Values.toSet"><code class="sig">fun &lt;T&gt; Values&lt;T&gt;.toSet() : open Set&lt;T&gt;</code><a class="anchor" href="#Values.toSet">#</a>
+<p>The values, each once, as a new set.</p>
+</div>
+<div class="entry" id="Values.firstOrNull"><code class="sig">fun &lt;T&gt; Values&lt;T&gt;.firstOrNull() : T?</code><a class="anchor" href="#Values.firstOrNull">#</a>
+<p>The first value, or null when the map is empty.</p>
+</div>
+<div class="entry" id="Values.lastOrNull"><code class="sig">fun &lt;T&gt; Values&lt;T&gt;.lastOrNull() : T?</code><a class="anchor" href="#Values.lastOrNull">#</a>
+<p>The last value, or null when the map is empty.</p>
+</div>
+<div class="entry" id="Values.firstOrNull-2"><code class="sig">inline fun &lt;T&gt; Values&lt;T&gt;.firstOrNull(predicate : (T) -&gt; bool) : T?</code><a class="anchor" href="#Values.firstOrNull-2">#</a>
+<p>The first value for which <code>predicate</code> is true, or null when there is none.</p>
+</div>
+<div class="entry" id="Values.first-2"><code class="sig">inline fun &lt;T&gt; Values&lt;T&gt;.first(predicate : (T) -&gt; bool) : T</code><a class="anchor" href="#Values.first-2">#</a>
+<p>The first value for which <code>predicate</code> is true; a NoSuchElementException when there is none.</p>
+</div>
+<div class="entry" id="Values.find"><code class="sig">inline fun &lt;T&gt; Values&lt;T&gt;.find(predicate : (T) -&gt; bool) : T?</code><a class="anchor" href="#Values.find">#</a>
+<p>The first value for which <code>predicate</code> is true, or null when there is none; as firstOrNull.</p>
+</div>
+<div class="entry" id="Values.forEach"><code class="sig">inline fun &lt;T&gt; Values&lt;T&gt;.forEach(action : (T) -&gt; unit)</code><a class="anchor" href="#Values.forEach">#</a>
+<p>Calls <code>action</code> with each value, in order.</p>
+</div>
+<div class="entry" id="Values.map"><code class="sig">inline fun &lt;T, R&gt; Values&lt;T&gt;.map(transform : (T) -&gt; R) : open List&lt;R&gt;</code><a class="anchor" href="#Values.map">#</a>
+<p>What <code>transform</code> gives for each value, in order, as a new list.</p>
+</div>
+<div class="entry" id="Values.mapNotNull"><code class="sig">inline fun &lt;T, R&gt; Values&lt;T&gt;.mapNotNull(transform : (T) -&gt; R?) : open List&lt;R&gt;</code><a class="anchor" href="#Values.mapNotNull">#</a>
+<p>What <code>transform</code> gives for each value where that is not null, in order, as a new list.</p>
+</div>
+<div class="entry" id="Values.flatMap"><code class="sig">inline fun &lt;T, R&gt; Values&lt;T&gt;.flatMap(transform : (T) -&gt; List&lt;R&gt;) : open List&lt;R&gt;</code><a class="anchor" href="#Values.flatMap">#</a>
+<p>The items of the lists <code>transform</code> gives for each value, one list after another, as a new list.</p>
+</div>
+<div class="entry" id="Values.filter"><code class="sig">inline fun &lt;T&gt; Values&lt;T&gt;.filter(predicate : (T) -&gt; bool) : open List&lt;T&gt;</code><a class="anchor" href="#Values.filter">#</a>
+<p>The values for which <code>predicate</code> is true, in their order, as a new list.</p>
+</div>
+<div class="entry" id="Values.filterNot"><code class="sig">inline fun &lt;T&gt; Values&lt;T&gt;.filterNot(predicate : (T) -&gt; bool) : open List&lt;T&gt;</code><a class="anchor" href="#Values.filterNot">#</a>
+<p>The values for which <code>predicate</code> is false, in their order, as a new list.</p>
+</div>
+<div class="entry" id="Values.any"><code class="sig">fun &lt;T&gt; Values&lt;T&gt;.any() : bool</code><a class="anchor" href="#Values.any">#</a>
+<p>True if the map has any values.</p>
+</div>
+<div class="entry" id="Values.any-2"><code class="sig">inline fun &lt;T&gt; Values&lt;T&gt;.any(predicate : (T) -&gt; bool) : bool</code><a class="anchor" href="#Values.any-2">#</a>
+<p>True if <code>predicate</code> is true for any value; it stops at the first for which it is.</p>
+</div>
+<div class="entry" id="Values.all"><code class="sig">inline fun &lt;T&gt; Values&lt;T&gt;.all(predicate : (T) -&gt; bool) : bool</code><a class="anchor" href="#Values.all">#</a>
+<p>True if <code>predicate</code> is true for every value, stopping at the first for which it is not; true for an empty map.</p>
+</div>
+<div class="entry" id="Values.none"><code class="sig">fun &lt;T&gt; Values&lt;T&gt;.none() : bool</code><a class="anchor" href="#Values.none">#</a>
+<p>True if the map is empty.</p>
+</div>
+<div class="entry" id="Values.none-2"><code class="sig">inline fun &lt;T&gt; Values&lt;T&gt;.none(predicate : (T) -&gt; bool) : bool</code><a class="anchor" href="#Values.none-2">#</a>
+<p>True if <code>predicate</code> is true for no value; true for an empty map.</p>
+</div>
+<div class="entry" id="Values.count"><code class="sig">fun &lt;T&gt; Values&lt;T&gt;.count() : int</code><a class="anchor" href="#Values.count">#</a>
+<p>The number of values, as <code>size</code>.</p>
+</div>
+<div class="entry" id="Values.count-2"><code class="sig">inline fun &lt;T&gt; Values&lt;T&gt;.count(predicate : (T) -&gt; bool) : int</code><a class="anchor" href="#Values.count-2">#</a>
+<p>The number of values for which <code>predicate</code> is true.</p>
+</div>
+<div class="entry" id="Values.fold"><code class="sig">inline fun &lt;T, R&gt; Values&lt;T&gt;.fold(initial : R, operation : (R, T) -&gt; R) : R</code><a class="anchor" href="#Values.fold">#</a>
+<p><code>initial</code> combined with each value in turn by <code>operation(soFar, value)</code>; <code>initial</code> for an empty map.</p>
+</div>
+<div class="entry" id="Values.sum"><code class="sig">fun &lt;T&gt; Values&lt;T&gt;.sum() : any?</code><a class="anchor" href="#Values.sum">#</a>
+<p>The sum of the values, which are numbers: an int for ints, a float for floats; 0 for an empty map.</p>
+</div>
+<div class="entry" id="Values.sumOf"><code class="sig">inline fun &lt;T, R : Number&gt; Values&lt;T&gt;.sumOf(selector : (T) -&gt; R) : R</code><a class="anchor" href="#Values.sumOf">#</a>
+<p>The sum of what <code>selector</code> gives for each value; 0 (or 0.0) for an empty map.</p>
+</div>
+<div class="entry" id="Values.average"><code class="sig">fun &lt;T&gt; Values&lt;T&gt;.average() : float</code><a class="anchor" href="#Values.average">#</a>
+<p>The mean of the values, which are numbers; NaN for an empty map.</p>
+</div>
+<div class="entry" id="Values.max"><code class="sig">fun &lt;T&gt; Values&lt;T&gt;.max() : T</code><a class="anchor" href="#Values.max">#</a>
+<p>The largest value; a NoSuchElementException when the map is empty.</p>
+</div>
+<div class="entry" id="Values.min"><code class="sig">fun &lt;T&gt; Values&lt;T&gt;.min() : T</code><a class="anchor" href="#Values.min">#</a>
+<p>The smallest value; a NoSuchElementException when the map is empty.</p>
+</div>
+<div class="entry" id="Values.maxOrNull"><code class="sig">fun &lt;T&gt; Values&lt;T&gt;.maxOrNull() : T?</code><a class="anchor" href="#Values.maxOrNull">#</a>
+<p>The largest value, or null when the map is empty.</p>
+</div>
+<div class="entry" id="Values.minOrNull"><code class="sig">fun &lt;T&gt; Values&lt;T&gt;.minOrNull() : T?</code><a class="anchor" href="#Values.minOrNull">#</a>
+<p>The smallest value, or null when the map is empty.</p>
+</div>
+<div class="entry" id="Values.maxOf"><code class="sig">inline fun &lt;T, R&gt; Values&lt;T&gt;.maxOf(selector : (T) -&gt; R) : R</code><a class="anchor" href="#Values.maxOf">#</a>
+<p>The largest of what <code>selector</code> gives for each value; a NoSuchElementException when the map is empty.</p>
+</div>
+<div class="entry" id="Values.minOf"><code class="sig">inline fun &lt;T, R&gt; Values&lt;T&gt;.minOf(selector : (T) -&gt; R) : R</code><a class="anchor" href="#Values.minOf">#</a>
+<p>The smallest of what <code>selector</code> gives for each value; a NoSuchElementException when the map is empty.</p>
+</div>
+<div class="entry" id="Values.maxByOrNull"><code class="sig">inline fun &lt;T&gt; Values&lt;T&gt;.maxByOrNull(selector : (T) -&gt; any?) : T?</code><a class="anchor" href="#Values.maxByOrNull">#</a>
+<p>The value for which <code>selector</code> gives the most, the first of those that tie; null when the map is empty.</p>
+</div>
+<div class="entry" id="Values.minByOrNull"><code class="sig">inline fun &lt;T&gt; Values&lt;T&gt;.minByOrNull(selector : (T) -&gt; any?) : T?</code><a class="anchor" href="#Values.minByOrNull">#</a>
+<p>The value for which <code>selector</code> gives the least, the first of those that tie; null when the map is empty.</p>
+</div>
+<div class="entry" id="Values.sorted"><code class="sig">fun &lt;T&gt; Values&lt;T&gt;.sorted() : open List&lt;T&gt;</code><a class="anchor" href="#Values.sorted">#</a>
+<p>The values in order, smallest first, as a new list.</p>
+</div>
+<div class="entry" id="Values.sortedDescending"><code class="sig">fun &lt;T&gt; Values&lt;T&gt;.sortedDescending() : open List&lt;T&gt;</code><a class="anchor" href="#Values.sortedDescending">#</a>
+<p>The values in order, largest first, as a new list.</p>
+</div>
+<div class="entry" id="Values.sortedBy"><code class="sig">fun &lt;T&gt; Values&lt;T&gt;.sortedBy(selector : (T) -&gt; any?) : open List&lt;T&gt;</code><a class="anchor" href="#Values.sortedBy">#</a>
+<p>The values ordered by what <code>selector</code> gives for each, smallest first, as a new list; those that tie keep their order.</p>
+</div>
+<div class="entry" id="Values.sortedByDescending"><code class="sig">fun &lt;T&gt; Values&lt;T&gt;.sortedByDescending(selector : (T) -&gt; any?) : open List&lt;T&gt;</code><a class="anchor" href="#Values.sortedByDescending">#</a>
+<p>The values ordered by what <code>selector</code> gives for each, largest first, as a new list; those that tie keep their order.</p>
+</div>
+<div class="entry" id="Values.sortedWith"><code class="sig">fun &lt;T&gt; Values&lt;T&gt;.sortedWith(comparator : (T, T) -&gt; int) : open List&lt;T&gt;</code><a class="anchor" href="#Values.sortedWith">#</a>
+<p>The values ordered by <code>comparator</code> (negative: the first comes first), as a new list.</p>
+</div>
+<div class="entry" id="Values.distinct"><code class="sig">fun &lt;T&gt; Values&lt;T&gt;.distinct() : open List&lt;T&gt;</code><a class="anchor" href="#Values.distinct">#</a>
+<p>The values, each once, in the order first seen, as a new list.</p>
+</div>
+<div class="entry" id="Values.groupBy"><code class="sig">inline fun &lt;T, K&gt; Values&lt;T&gt;.groupBy(keySelector : (T) -&gt; K) : open Map&lt;K, open List&lt;T&gt;&gt;</code><a class="anchor" href="#Values.groupBy">#</a>
+<p>The values grouped by what <code>keySelector</code> gives for each: a map from each key to a list of the values that gave it, in order.</p>
+</div>
+<div class="entry" id="Values.partition"><code class="sig">inline fun &lt;T&gt; Values&lt;T&gt;.partition(predicate : (T) -&gt; bool) : Pair&lt;List&lt;T&gt;, List&lt;T&gt;&gt;</code><a class="anchor" href="#Values.partition">#</a>
+<p>The values for which <code>predicate</code> is true, and those for which it is false, as two lists.</p>
+</div>
+<div class="entry" id="Values.join"><code class="sig">fun &lt;T&gt; Values&lt;T&gt;.join(separator : string = &quot;, &quot;, prefix : string = &quot;&quot;, postfix : string = &quot;&quot;, limit : int = -1, truncated : string = &quot;...&quot;, transform : ((T) -&gt; any?)? = null) : string</code><a class="anchor" href="#Values.join">#</a>
+<p>The values as text, each made text with <code>transform</code> (or as it is), between <code>separator</code>s.</p>
+</div>
+<div class="entry" id="Values.single"><code class="sig">fun &lt;T&gt; Values&lt;T&gt;.single() : T</code><a class="anchor" href="#Values.single">#</a>
+<p>The only value: a NoSuchElementException when the map is empty, an IllegalArgumentException when it has more than one.</p>
+</div>
+<div class="entry" id="Values.singleOrNull"><code class="sig">fun &lt;T&gt; Values&lt;T&gt;.singleOrNull() : T?</code><a class="anchor" href="#Values.singleOrNull">#</a>
+<p>The only value, or null when the map is empty or has more than one.</p>
 </div>
 </section>
 <section class="file" id="file-worker-astra">

@@ -13,7 +13,7 @@ struct Namespace;
 // A type as the compiler writes it into a program for when it runs (M6.6 part 1): what a list
 // or map literal is made to hold, and the like.
 struct RuntimeType {
-    enum Kind : uint8_t { Unknown, Any, Int, Float, Number, String, Bool, Bytes, Range, TypeValue, Function, List, Map, Class, TypeParam, Char, Byte, Index, Set };
+    enum Kind : uint8_t { Unknown, Any, Int, Float, Number, String, Bool, Bytes, Range, TypeValue, Function, List, Map, Class, TypeParam, Char, Byte, Index, Set, Values };
     Kind kind = Unknown;
     bool nullable = false;
     uint8_t storage = 0;  // Int or Float kept at a storage width (D148): kTypeInt16 and the rest

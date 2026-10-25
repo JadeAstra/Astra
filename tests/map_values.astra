@@ -1,0 +1,30 @@
+// A map's values (G22, D77): a Values, a live view of them in the order of their keys, read and
+// never changed through. It shows every change made to the map since it was taken.
+
+val prices : open Map<string, int> = {"tea": 3, "cake": 4}
+val all = prices.values
+print(all, all.size, all.sum(), all.contains(4), 4 in all, all.isEmpty())   // expect: [3, 4] 2 7 true true false
+prices["jam"] = 2
+prices["bun"] = 3
+print(all, all.size, all.sortedBy { -it }, all.distinct(), all.first(), all.last())   // expect: [3, 4, 2, 3] 4 [4, 3, 3, 2] [3, 4, 2] 3 3
+prices.remove("tea")
+print(all, all.count { it == 3 }, all.any { it > 3 }, all.filter { it < 4 }, all.map { it * 10 })   // expect: [4, 2, 3] 1 true [2, 3] [40, 20, 30]
+var total = 0
+for (p in prices.values) { total += p }
+print(total, all.join("-"), all.sumOf { it * 2 }, all.firstOrNull { it > 100 }, all.min(), all.average())   // expect: 9 4-2-3 18 null 2 3.0
+
+// A list of them is kept apart from the map; the view is not.
+val kept = all.toList()
+prices["egg"] = 9
+print(kept, all, all is Values<int>, all is List, all.itemType)   // expect: [4, 2, 3] [4, 2, 3, 9] true false int
+
+// Equal when they hold the same values in the same order, as lists are.
+print(prices.values == prices.values, {"x": 4, "y": 2, "z": 3, "w": 9}.values == all, {"x": 2, "y": 4}.values == {"a": 4, "b": 2}.values)   // expect: true true false
+
+// Given to a function that takes a map's values, and of maps of other values.
+fun cheapest(vs : Values<int>) : int => vs.min()
+data Item(val name : string, val weight : float)
+val shelf = {"a": Item("cup", 0.3), "b": Item("pot", 1.2)}
+print(cheapest(prices.values), shelf.values.maxByOrNull { it.weight }, shelf.values.map { it.name })   // expect: 2 Item(name="pot", weight=1.2) ["cup", "pot"]
+val empty : Map<string, int> = {:}
+print(empty.values, empty.values.firstOrNull(), empty.values.none(), {"a": 1}.values.single())   // expect: [] null true 1

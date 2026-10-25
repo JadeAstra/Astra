@@ -232,7 +232,7 @@ const OpInfo kOps[] = {
 
 const char* const kTypeNames[] = {"", "int", "float", "Number", "string", "bool", "List", "Map", "Range", "Function", "Bytes", "Type", "",
                                    "char", "byte", "int16", "int32", "uint16", "uint32", "float32", "Index", "Set",
-                                   "FrozenList", "FrozenMap", "FrozenSet"};
+                                   "FrozenList", "FrozenMap", "FrozenSet", "Values"};
 static_assert(sizeof(kTypeNames) / sizeof(kTypeNames[0]) == kTypeCount_, "kTypeNames must match TypeId");
 
 static_assert(sizeof(kOps) / sizeof(kOps[0]) == static_cast<size_t>(Op::Count_), "kOps must match the Op enum");
@@ -1292,7 +1292,7 @@ int shapeOperands(const std::string& shape) {
             at++;
         } else if (c == 'P') {
             operands++;
-        } else if (std::string_view("?aifnsbyrtFLMcuhdHDgxSZ").find(c) == std::string_view::npos) {
+        } else if (std::string_view("?aifnsbyrtFLMcuhdHDgxSZV").find(c) == std::string_view::npos) {
             return -1;
         }
     }

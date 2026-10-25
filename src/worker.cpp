@@ -102,6 +102,16 @@ Value outsideCopy(VM& vm, Value v, SharedBlock& block, int depth) {
             return Value::object(map);
         }
         case ObjType::Set: {
+            if (asSet(v)->values) {
+                // A map's values (G22): a list of them, as they are.
+                ObjList* list = new ObjList();
+                block.objects.push_back(list);
+                for (const Value& item : vm.setItems(asSet(v))) list->values().push_back(outsideCopy(vm, item, block, depth + 1));
+                list->frozen = 1;
+                list->outside = true;
+                list->immortal = true;
+                return Value::object(list);
+            }
             ObjSet* set = new ObjSet();
             block.objects.push_back(set);
             for (const Value& item : vm.setItems(asSet(v))) set->items.set(outsideCopy(vm, item, block, depth + 1), Value::null());
@@ -234,6 +244,12 @@ bool sharable(VM& vm, Value v, int depth) {
                 if (entry.live && (!sharable(vm, entry.key, depth + 1) || !sharable(vm, entry.value, depth + 1))) return false;
             return true;
         case ObjType::Set:
+            if (const ObjSet* set = asSet(v); set->view()) {
+                // A view of a map (D77, G22): what the map holds.
+                for (const ValueMap::Entry& entry : set->viewOf->map.entries())
+                    if (entry.live && (!sharable(vm, entry.key, depth + 1) || !sharable(vm, entry.value, depth + 1))) return false;
+                return true;
+            }
             for (const ValueMap::Entry& entry : asSet(v)->items.entries())
                 if (entry.live && !sharable(vm, entry.key, depth + 1)) return false;
             return true;
@@ -299,6 +315,14 @@ void encode(VM& vm, Value v, std::string& out, int depth) {
         const std::vector<Value> items = vm.listCopy(asList(v));
         out += kList;
         encodeType(vm, asList(v)->type, out, 0);
+        putSize(out, items.size());
+        for (const Value& item : items) encode(vm, item, out, depth + 1);
+    } else if (v.isObjType(ObjType::Set) && asSet(v)->values) {
+        // A map's values (G22): sent as a list of them, as they are.
+        const std::vector<Value> items = vm.setItems(asSet(v));
+        out += kList;
+        const ObjTypeInfo* type = asSet(v)->type;
+        encodeType(vm, type != nullptr && !type->args.empty() ? vm.typeOf(kTypeList, false, nullptr, {type->args[0]}) : nullptr, out, 0);
         putSize(out, items.size());
         for (const Value& item : items) encode(vm, item, out, depth + 1);
     } else if (v.isObjType(ObjType::Set)) {

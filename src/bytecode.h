@@ -406,6 +406,7 @@ enum TypeId : uint8_t {
     kTypeFrozenList,
     kTypeFrozenMap,
     kTypeFrozenSet,
+    kTypeValues,  // a map's values, a live view of them (G22)
     kTypeCount_,
 };
 

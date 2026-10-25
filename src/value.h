@@ -641,8 +641,11 @@ struct ObjSet final : Obj {
     ObjTypeInfo* type = nullptr; // `Set<string>`, as for a list
     ObjMap* viewOf = nullptr;    // a view: the map it shows
     bool entries = false;        // a view of the map's entries, as MapEntry values, not its keys
+    bool values = false;         // a view of the map's values (G22), a Values, which is no set
     ObjSet() : Obj(ObjType::Set) {}
     bool view() const { return viewOf != nullptr; }
+    // What the view gives for an entry of its map: its key, its value, or the entry (VM::makeEntry).
+    bool givesValues() const { return values; }
 };
 
 // Binary data: a fixed number of bytes, each a number from 0 to 255, that can be changed in place.

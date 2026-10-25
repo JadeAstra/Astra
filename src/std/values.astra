@@ -1,0 +1,151 @@
+// ---- A map's values ----
+
+// What `map.values` gives (G22, D77): the map's values, in the order of its keys, as the map
+// holds them now. It is a live view: it keeps nothing of its own, and reading it reads the map,
+// so it shows every change made to the map since. Nothing is changed through it, and its values
+// have no positions: `values[i]` is `values.toList()[i]`, a list of them as they are. A value
+// that two keys share is there twice.
+//
+//   val prices = {"tea": 3, "cake": 4}
+//   val all = prices.values           // [3, 4]
+//   prices["jam"] = 2                 // all is [3, 4, 2] now
+//   all.sum()   all.sortedBy { -it }   for price in prices.values { ... }
+
+// The number of values, as the map's size.
+external val Values.size : int
+// True if the map has no values.
+external fun <T> Values<T>.isEmpty() : bool
+// True if the map has any values.
+external fun <T> Values<T>.isNotEmpty() : bool
+// True if `item` is one of the values (==); each is looked at in turn.
+external fun <T> Values<T>.contains(item : T) : bool
+// The values, in order, as a new list, which does not change with the map.
+external fun <T> Values<T>.toList() : open List<T>
+// The first value; a NoSuchElementException when the map is empty.
+external fun <T> Values<T>.first() : T
+// The last value; a NoSuchElementException when the map is empty.
+external fun <T> Values<T>.last() : T
+
+// The values, in order, as a new list; the same as toList().
+fun <T> Values<T>.toOpenList() : open List<T> => this.toList()
+// The values, each once, as a new set.
+fun <T> Values<T>.toSet() : open Set<T> => Set(this.toList())
+// The first value, or null when the map is empty.
+fun <T> Values<T>.firstOrNull() : T? => this.isEmpty() ? null : this.first()
+// The last value, or null when the map is empty.
+fun <T> Values<T>.lastOrNull() : T? => this.isEmpty() ? null : this.last()
+// The first value for which `predicate` is true, or null when there is none.
+inline fun <T> Values<T>.firstOrNull(predicate : (T) -> bool) : T? {
+  for item in this {
+    if (predicate(item)) { return item }
+  }
+  return null
+}
+// The first value for which `predicate` is true; a NoSuchElementException when there is none.
+inline fun <T> Values<T>.first(predicate : (T) -> bool) : T => this.toList().first(predicate)
+// The first value for which `predicate` is true, or null when there is none; as firstOrNull.
+inline fun <T> Values<T>.find(predicate : (T) -> bool) : T? => this.firstOrNull(predicate)
+// Calls `action` with each value, in order.
+inline fun <T> Values<T>.forEach(action : (T) -> unit) {
+  for item in this { action(item) }
+}
+// What `transform` gives for each value, in order, as a new list.
+inline fun <T, R> Values<T>.map(transform : (T) -> R) : open List<R> => this.toList().map(transform)
+// What `transform` gives for each value where that is not null, in order, as a new list.
+inline fun <T, R> Values<T>.mapNotNull(transform : (T) -> R?) : open List<R> => this.toList().mapNotNull(transform)
+// The items of the lists `transform` gives for each value, one list after another, as a new list.
+inline fun <T, R> Values<T>.flatMap(transform : (T) -> List<R>) : open List<R> => this.toList().flatMap(transform)
+// The values for which `predicate` is true, in their order, as a new list.
+inline fun <T> Values<T>.filter(predicate : (T) -> bool) : open List<T> => this.toList().filter(predicate)
+// The values for which `predicate` is false, in their order, as a new list.
+inline fun <T> Values<T>.filterNot(predicate : (T) -> bool) : open List<T> => this.toList().filterNot(predicate)
+// True if the map has any values.
+fun <T> Values<T>.any() : bool => this.isNotEmpty()
+// True if `predicate` is true for any value; it stops at the first for which it is.
+inline fun <T> Values<T>.any(predicate : (T) -> bool) : bool {
+  for item in this {
+    if (predicate(item)) { return true }
+  }
+  return false
+}
+// True if `predicate` is true for every value, stopping at the first for which it is not; true
+// for an empty map.
+inline fun <T> Values<T>.all(predicate : (T) -> bool) : bool {
+  for item in this {
+    if (!predicate(item)) { return false }
+  }
+  return true
+}
+// True if the map is empty.
+fun <T> Values<T>.none() : bool => this.isEmpty()
+// True if `predicate` is true for no value; true for an empty map.
+inline fun <T> Values<T>.none(predicate : (T) -> bool) : bool => !this.any(predicate)
+// The number of values, as `size`.
+fun <T> Values<T>.count() : int => this.size
+// The number of values for which `predicate` is true.
+inline fun <T> Values<T>.count(predicate : (T) -> bool) : int {
+  var total = 0
+  for item in this {
+    if (predicate(item)) { total += 1 }
+  }
+  return total
+}
+// `initial` combined with each value in turn by `operation(soFar, value)`; `initial` for an
+// empty map.
+inline fun <T, R> Values<T>.fold(initial : R, operation : (R, T) -> R) : R => this.toList().fold(initial, operation)
+// The sum of the values, which are numbers: an int for ints, a float for floats; 0 for an
+// empty map.
+fun <T> Values<T>.sum() : any? => (this.toList() as List<Number>).sum()
+// The sum of what `selector` gives for each value; 0 (or 0.0) for an empty map.
+inline fun <T, R : Number> Values<T>.sumOf(selector : (T) -> R) : R => this.toList().sumOf(selector)
+// The mean of the values, which are numbers; NaN for an empty map.
+fun <T> Values<T>.average() : float => (this.toList() as List<Number>).average()
+// The largest value; a NoSuchElementException when the map is empty.
+fun <T> Values<T>.max() : T => this.toList().max()
+// The smallest value; a NoSuchElementException when the map is empty.
+fun <T> Values<T>.min() : T => this.toList().min()
+// The largest value, or null when the map is empty.
+fun <T> Values<T>.maxOrNull() : T? => this.toList().maxOrNull()
+// The smallest value, or null when the map is empty.
+fun <T> Values<T>.minOrNull() : T? => this.toList().minOrNull()
+// The largest of what `selector` gives for each value; a NoSuchElementException when the map is
+// empty.
+inline fun <T, R> Values<T>.maxOf(selector : (T) -> R) : R => this.toList().maxOf(selector)
+// The smallest of what `selector` gives for each value; a NoSuchElementException when the map
+// is empty.
+inline fun <T, R> Values<T>.minOf(selector : (T) -> R) : R => this.toList().minOf(selector)
+// The value for which `selector` gives the most, the first of those that tie; null when the
+// map is empty.
+inline fun <T> Values<T>.maxByOrNull(selector : (T) -> any?) : T? => this.toList().maxByOrNull(selector)
+// The value for which `selector` gives the least, the first of those that tie; null when the
+// map is empty.
+inline fun <T> Values<T>.minByOrNull(selector : (T) -> any?) : T? => this.toList().minByOrNull(selector)
+// The values in order, smallest first, as a new list.
+fun <T> Values<T>.sorted() : open List<T> => this.toList().sorted()
+// The values in order, largest first, as a new list.
+fun <T> Values<T>.sortedDescending() : open List<T> => this.toList().sortedDescending()
+// The values ordered by what `selector` gives for each, smallest first, as a new list; those
+// that tie keep their order.
+fun <T> Values<T>.sortedBy(selector : (T) -> any?) : open List<T> => this.toList().sortedBy(selector)
+// The values ordered by what `selector` gives for each, largest first, as a new list; those
+// that tie keep their order.
+fun <T> Values<T>.sortedByDescending(selector : (T) -> any?) : open List<T> => this.toList().sortedByDescending(selector)
+// The values ordered by `comparator` (negative: the first comes first), as a new list.
+fun <T> Values<T>.sortedWith(comparator : (T, T) -> int) : open List<T> => this.toList().sortedWith(comparator)
+// The values, each once, in the order first seen, as a new list.
+fun <T> Values<T>.distinct() : open List<T> => this.toList().distinct()
+// The values grouped by what `keySelector` gives for each: a map from each key to a list of the
+// values that gave it, in order.
+inline fun <T, K> Values<T>.groupBy(keySelector : (T) -> K) : open Map<K, open List<T>> => this.toList().groupBy(keySelector)
+// The values for which `predicate` is true, and those for which it is false, as two lists.
+inline fun <T> Values<T>.partition(predicate : (T) -> bool) : Pair<List<T>, List<T>> => this.toList().partition(predicate)
+// The values as text, each made text with `transform` (or as it is), between `separator`s.
+fun <T> Values<T>.join(separator : string = ", ", prefix : string = "", postfix : string = "", limit : int = -1,
+                       truncated : string = "...", transform : ((T) -> any?)? = null) : string {
+  return this.toList().join(separator, prefix, postfix, limit, truncated, transform)
+}
+// The only value: a NoSuchElementException when the map is empty, an IllegalArgumentException
+// when it has more than one.
+fun <T> Values<T>.single() : T => this.toList().single()
+// The only value, or null when the map is empty or has more than one.
+fun <T> Values<T>.singleOrNull() : T? => this.toList().singleOrNull()
