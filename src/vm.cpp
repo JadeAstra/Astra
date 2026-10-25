@@ -7212,15 +7212,29 @@ void VM::run(int baseFrame) {
                                 }
                                 continue;
                             }
-                            if (source->type == ObjType::List && !static_cast<const ObjList*>(source)->packed()) {
-                                const std::vector<Value>& items = static_cast<const ObjList*>(source)->values();
-                                if (it->index < items.size()) {
-                                    *sp++ = items[it->index++];
-                                    ip += 6;
-                                } else {
-                                    ip = code + FAST_I32(2);
+                            if (source->type == ObjType::List) {
+                                const ObjList* list = static_cast<const ObjList*>(source);
+                                if (!list->packed()) {
+                                    const std::vector<Value>& items = list->values();
+                                    if (it->index < items.size()) {
+                                        *sp++ = items[it->index++];
+                                        ip += 6;
+                                    } else {
+                                        ip = code + FAST_I32(2);
+                                    }
+                                    continue;
                                 }
-                                continue;
+                                // Packed ints, floats, bools or narrow items, null or not (G69): read from
+                                // the block, but where a parallel section's band says what may be read.
+                                if (list->pack->store != ListStore::Items && source != bandObject_) {
+                                    if (it->index < list->pack->count) {
+                                        *sp++ = packedPlain(*list->pack, it->index++);
+                                        ip += 6;
+                                    } else {
+                                        ip = code + FAST_I32(2);
+                                    }
+                                    continue;
+                                }
                             }
                         }
                         int slot = READ_U16();

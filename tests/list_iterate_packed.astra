@@ -1,0 +1,55 @@
+// A for over a packed list reads each item straight from the list's block (G69, 2026-10-24): ints,
+// floats, bools, the narrow kinds (bytes, chars, the storage widths) and the ones that may hold
+// null. Each loop gives what reading the items by position gives.
+
+fun <T> same(items : List<T>) : string {
+  val seen : open List<T> = []
+  for (item in items) { seen.add(item) }
+  var byIndex = true
+  for (i in items.indices) { byIndex = byIndex and seen[i] == items[i] }
+  return "${items.itemType} ${seen.size == items.size and byIndex}"
+}
+
+val ints : List<int> = [1, -2, 3000000000, 0]
+val floats : List<float> = [1.5, -0.25, 0.0]
+val bools : List<bool> = [true, false, true]
+val bytes : List<byte> = [1.toByte(), 255.toByte()]
+val chars : List<char> = ['a', 'é', '😀']
+val shorts : List<int16> = [1, -32768, 32767]
+val words : List<int32> = [7, -2147483648]
+val unsigned : List<uint16> = [0, 65535]
+val big : List<uint32> = [4294967295, 1]
+val singles : List<float32> = [1.5, -2.0]
+print(same(ints), same(floats), same(bools), same(bytes), same(chars))   // expect: int true float true bool true byte true char true
+print(same(shorts), same(words), same(unsigned), same(big), same(singles))   // expect: int16 true int32 true uint16 true uint32 true float32 true
+
+val maybeInts : List<int?> = [1, null, 3]
+val maybeFloats : List<float?> = [null, 2.5]
+val maybeBools : List<bool?> = [true, null]
+val maybeChars : List<char?> = [null, 'x', null]
+val maybeShorts : List<int16?> = [5, null]
+print(same(maybeInts), same(maybeFloats), same(maybeBools), same(maybeChars), same(maybeShorts))   // expect: int? true float? true bool? true char? true int16? true
+
+// The sums a loop gives, and nulls passed as they are.
+var total = 0
+for (n in ints) { total += n }
+var count = 0
+for (n in maybeInts) { if (n == null) { count += 1 } }
+var text = ""
+for (c in chars) { text += c }
+print(total, count, text)   // expect: 2999999999 1 aé😀
+
+// A list that grows or shrinks while a loop goes through it is read as it is at each step.
+val growing : open List<int> = [1, 2]
+var steps = 0
+for (n in growing) {
+  if (n < 4) { growing.add(n + 2) }
+  steps += 1
+}
+val shrinking : open List<int> = [1, 2, 3, 4]
+var seenShrinking = 0
+for (n in shrinking) {
+  if (shrinking.size > 2) { shrinking.removeLast() }
+  seenShrinking += 1
+}
+print(steps, growing, seenShrinking, shrinking)   // expect: 5 [1, 2, 3, 4, 5] 2 [1, 2]

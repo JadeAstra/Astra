@@ -606,6 +606,27 @@ struct PackedItems {
     std::vector<uint64_t> nulls;    // nullable: a bit per item, set where the item is null
 };
 
+// Item `i` of a packed list of ints, floats, bools or narrow items (anything but a value type's
+// Items), as VM::packedGet gives it: what a for over such a list is given each time (G69).
+inline Value packedPlain(const PackedItems& p, size_t i) {
+    if (p.nullable && (p.nulls[i / 64] >> (i % 64) & 1) != 0) return Value::null();
+    const uint8_t* at = p.block.data() + i * p.width;
+    switch (p.store) {
+        case ListStore::Ints: {
+            int64_t v;
+            std::memcpy(&v, at, sizeof v);
+            return Value::integer(v);
+        }
+        case ListStore::Floats: {
+            double v;
+            std::memcpy(&v, at, sizeof v);
+            return Value::number(v);
+        }
+        case ListStore::Bools: return Value::boolean(*at != 0);
+        default: return readNarrow(p.narrow, at);
+    }
+}
+
 struct ObjList final : Obj {
     // What the list was made to hold, `List<int>` (M6.6 part 1); null where that was not said,
     // as for a list made before types were kept, which takes anything.
