@@ -1,0 +1,33 @@
+// A field whose type the checker works out is kept as a written one of that type would be
+// (G18, 2026-10-24): a char or a byte as its narrow payload, with the same checks when the
+// program runs. A storage width is a way of keeping a number, not a type of its own (D148):
+// a field given an int16's value is an int.
+
+// A value whose type the checker does not see, for testing the checks made when running.
+val unknown = { value -> value }
+
+fun smallInt() : int16 => 300
+class Written {
+  var c : char = 'a'
+  var b : byte = 7.toByte()
+  var s : int16 = smallInt()
+}
+class Worked {
+  var c = 'a'
+  var b = 7.toByte()
+  var s = smallInt()
+}
+val w = Written()
+val k = Worked()
+print(w.c, w.b, w.s, k.c, k.b, k.s)   // expect: a 7 300 a 7 300
+w.c = 'z'
+k.c = 'z'
+w.b = 200.toByte()
+k.b = 200.toByte()
+k.s = 40000
+print(w.c, w.b, k.c, k.b, k.s)   // expect: z 200 z 200 40000
+try { w.b = unknown(1000) } catch (e : Exception) { print(e.message) }   // expect: cannot assign a value of type int to field 'b' of Written, which is declared as byte
+try { k.b = unknown(1000) } catch (e : Exception) { print(e.message) }   // expect: cannot assign a value of type int to field 'b' of Worked, which is declared as byte
+try { w.c = unknown("str") } catch (e : Exception) { print(e.message) }   // expect: cannot assign a value of type string to field 'c' of Written, which is declared as char
+try { k.c = unknown("str") } catch (e : Exception) { print(e.message) }   // expect: cannot assign a value of type string to field 'c' of Worked, which is declared as char
+try { w.s = unknown(40000) } catch (e : Exception) { print(e.message) }   // expect: 40000 does not fit in an int16, which holds -32768 to 32767; toInt16Wrapped() keeps the low 16 bits (field 's' of Written)

@@ -4585,11 +4585,17 @@ private:
                 emitTypeThunk(static_cast<const NameExpr&>(*static_cast<const CallExpr&>(*initialValue).callee).name, f);
                 flags = kTypeInstance;
             } else if (!type.typed() && initialValue != nullptr && session_.checker != nullptr) {
-                // `var total = 0`: an int, a float or a bool by what it is given, so that the
-                // objects keep it as a payload (M6.6 part 6).
+                // `var total = 0`: an int, a float, a bool, a char or a byte by what it is given, so
+                // that the objects keep it as a payload (M6.6 part 6, G18).
                 RuntimeType inferred;
                 if (session_.checker->inferredFieldType(f, inferred)) {
-                    flags = inferred.kind == RuntimeType::Int ? kTypeInt : inferred.kind == RuntimeType::Float ? kTypeFloat : kTypeBool;
+                    // A char, a byte or a storage width kept narrow, as when its type is written (G18).
+                    flags = inferred.storage != 0                  ? inferred.storage
+                            : inferred.kind == RuntimeType::Int   ? kTypeInt
+                            : inferred.kind == RuntimeType::Float ? kTypeFloat
+                            : inferred.kind == RuntimeType::Char  ? kTypeChar
+                            : inferred.kind == RuntimeType::Byte  ? kTypeByte
+                                                                  : kTypeBool;
                 } else if (session_.checker->inferredValueFieldType(f, inferred)) {
                     // `var bounds = other.bounds`: a value type's, as the checker works it out,
                     // so that the object can keep it inside itself (G16).

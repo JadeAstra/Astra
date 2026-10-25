@@ -1061,6 +1061,14 @@ struct Checker::Impl {
     }
 
     std::unordered_map<const VarStmt*, FieldInfo*> fieldByDecl;  // Checker::inferredFieldType
+    size_t fieldsByDecl = 0;  // how many of fieldStore it has taken in
+    // The field a declaration made, taking in those added since it was last asked: the standard
+    // library's, compiled from source first in the same session, and then the program's (G18).
+    std::unordered_map<const VarStmt*, FieldInfo*>::iterator fieldOfDecl(const VarStmt& field) {
+        for (; fieldsByDecl < fieldStore.size(); fieldsByDecl++)
+            if (fieldStore[fieldsByDecl]->decl != nullptr) fieldByDecl[fieldStore[fieldsByDecl]->decl] = fieldStore[fieldsByDecl].get();
+        return fieldByDecl.find(&field);
+    }
 
     FieldInfo* newField(const std::string& name, Unit* u, ClassInfo* owner) {
         fieldStore.push_back(std::make_unique<FieldInfo>());
@@ -9388,22 +9396,16 @@ int Checker::namedClassOf(const ClassOfExpr& e, RuntimeType& out) const {
 bool Checker::readsInPlace(const IndexExpr& index) const { return impl_->readsInPlace(index); }
 bool Checker::readsFieldInPlace(const Node& read) const { return impl_->readsFieldInPlace(read); }
 bool Checker::inferredFieldType(const VarStmt& field, RuntimeType& out) const {
-    if (impl_->fieldByDecl.empty())
-        for (const auto& f : impl_->fieldStore)
-            if (f->decl != nullptr) impl_->fieldByDecl[f->decl] = f.get();
-    auto found = impl_->fieldByDecl.find(&field);
+    auto found = impl_->fieldOfDecl(field);
     if (found == impl_->fieldByDecl.end() || found->second->typeWritten || found->second->state != 2) return false;
     const Type& t = found->second->type;
-    if (t.nullable || (t.kind != Type::Int && t.kind != Type::Float && t.kind != Type::Bool)) return false;
+    if (t.nullable || (t.kind != Type::Int && t.kind != Type::Float && t.kind != Type::Bool && t.kind != Type::Char && t.kind != Type::Byte)) return false;
     out = runtimeTypeOf(t);
     return true;
 }
 
 bool Checker::inferredValueFieldType(const VarStmt& field, RuntimeType& out) const {
-    if (impl_->fieldByDecl.empty())
-        for (const auto& f : impl_->fieldStore)
-            if (f->decl != nullptr) impl_->fieldByDecl[f->decl] = f.get();
-    auto found = impl_->fieldByDecl.find(&field);
+    auto found = impl_->fieldOfDecl(field);
     if (found == impl_->fieldByDecl.end() || found->second->typeWritten || found->second->state != 2) return false;
     const Type& t = found->second->type;
     if (t.kind != Type::Class || t.cls == nullptr || !t.cls->isValue || !t.args.empty()) return false;
