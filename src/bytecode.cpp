@@ -232,7 +232,7 @@ const OpInfo kOps[] = {
 
 const char* const kTypeNames[] = {"", "int", "float", "Number", "string", "bool", "List", "Map", "Range", "Function", "Bytes", "Type", "",
                                    "char", "byte", "int16", "int32", "uint16", "uint32", "float32", "Index", "Set",
-                                   "FrozenList", "FrozenMap", "FrozenSet", "Values"};
+                                   "FrozenList", "FrozenMap", "FrozenSet", "Values", "null"};
 static_assert(sizeof(kTypeNames) / sizeof(kTypeNames[0]) == kTypeCount_, "kTypeNames must match TypeId");
 
 static_assert(sizeof(kOps) / sizeof(kOps[0]) == static_cast<size_t>(Op::Count_), "kOps must match the Op enum");

@@ -407,6 +407,7 @@ enum TypeId : uint8_t {
     kTypeFrozenMap,
     kTypeFrozenSet,
     kTypeValues,  // a map's values, a live view of them (G22)
+    kTypeNull,    // null alone, the type null# stands for (D48, as Python's NoneType)
     kTypeCount_,
 };
 

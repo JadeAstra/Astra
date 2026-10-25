@@ -124,3 +124,12 @@ for (f in Record#.fields) {
 val save = Record#.method("save")!!
 print(save.annotations.size, save.parameters[0].annotation<JsonField>()!!.name)   // expect: 1 where
 print(Record#.constructors[0].parameters[0].annotation<JsonField>()!!.name)       // expect: id
+
+// Null has a class too, as Python's NoneType (D48, 2026-10-24): the built-in class null, of null
+// alone, with no fields or methods. So x# takes any value, and x#.name is "null" for null.
+val nothing : string? = null
+val word : string? = "hi"
+print(null#, nothing#.name, word#.name, null# == nothing#, null# == int#)   // expect: null null string true false
+print(null#.isInstance(null), null#.isInstance(0), int#.isInstance(null), null#.fields, null#.superclass)   // expect: true false false [] null
+val mixed : List<any?> = [1, null, "x"]
+print(mixed.map { it#.name })   // expect: ["int", "null", "string"]

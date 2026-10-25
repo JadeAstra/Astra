@@ -5677,10 +5677,7 @@ struct Checker::Impl {
             if (silent == 0) namedClasses[&c] = named;
         } else {
             if (!c.typeArgs.empty()) report(c, "type arguments go with the name of a class, as in Box<int>#; a value's class has its own");
-            const Type value = expr(*c.value);
-            if (value.nullable || value.kind == Type::Null)
-                report(c, placeText(*c.value) + " may be null, which is of no class: write " + placeText(*c.value) +
-                              "!!#, or test it first (D48)");
+            expr(*c.value);  // null's class too: null# is the built-in class null (D48)
         }
         return stdClassType("Class");
     }

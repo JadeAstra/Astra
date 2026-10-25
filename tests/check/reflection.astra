@@ -17,7 +17,7 @@ val label = "x" + clock()
 @TempDir fun u() { }                        // check: @TempDir goes on a test's parameter, a Path given a directory of its own (D153)
 
 fun classes(p : Plain?, q : Plain) {
-  print(p#)                                 // check: p may be null, which is of no class: write p!!#, or test it first (D48)
+  print(p#, null#)                          // null's class is the built-in class null, as Python's NoneType (D48)
   print(q#, Plain#, Plain<int>#)            // check: Plain takes 0 type arguments, not 1
   print(q.class)                            // check: Plain has no member 'class'; the class of an object is written x# (D48)
   print(Plain.className)                    // check: Plain.className is written Plain#.name: `#` gives a class (D48)

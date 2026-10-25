@@ -2703,7 +2703,7 @@ private:
         }
         // The others, and a list or map with nothing said of what it holds: of anything.
         static const char* const kShapes[] = {"", "i", "f", "n", "s", "b", "La", "Maa", "r", "F", "y", "t", "",
-                                              "c", "u", "h", "d", "H", "D", "g", "x", "Sa", "ZLa", "ZMaa", "ZSa", "Va"};
+                                              "c", "u", "h", "d", "H", "D", "g", "x", "Sa", "ZLa", "ZMaa", "ZSa", "Va", "a"};
         static_assert(sizeof kShapes / sizeof kShapes[0] == kTypeCount_, "a shape for each type");
         if (isBuiltinTypeId(id)) {
             shape += kShapes[id];

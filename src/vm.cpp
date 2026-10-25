@@ -168,7 +168,7 @@ ObjTypeInfo* VM::typeOfValue(const Value& v) {
     }
     auto plain = [&](uint8_t id) { return typeOf(id, false, nullptr, {}); };
     switch (v.kind) {
-        case ValueKind::Null: throw runtimeError(Thrown::NullPointerException, "null is of no class");
+        case ValueKind::Null: return plain(kTypeNull);  // null#, as Python's NoneType (D48)
         case ValueKind::Bool: return plain(kTypeBool);
         case ValueKind::Int: return plain(kTypeInt);
         case ValueKind::Char: return plain(kTypeChar);
@@ -545,8 +545,9 @@ bool VM::isSubtype(const ObjTypeInfo* a, const ObjTypeInfo* b) {
 }
 
 bool VM::fitsType(const Value& v, const ObjTypeInfo* type) {
-    if (v.isNull()) return type->nullable || type->id == 0;
+    if (v.isNull()) return type->nullable || type->id == 0 || type->id == kTypeNull;
     if (type->id == 0) return true;
+    if (type->id == kTypeNull) return false;  // null alone (D48)
     if (type->id == kTypeInstance) {
         const ObjClass* const cls = classOf(v);
         if (cls == nullptr || !cls->isSubclassOf(type->cls)) return false;
@@ -3989,9 +3990,10 @@ bool VM::compareSlow(Op op) {
 // ---- Declared variable types ----
 
 bool VM::matchesType(const Value& v, uint8_t type, const ObjClass* cls) const {
-    if (v.isNull()) return (type & kTypeNullable) != 0;
+    if (v.isNull()) return (type & kTypeNullable) != 0 || (type & kTypeMask) == kTypeNull;
 
     switch (type & kTypeMask) {
+        case kTypeNull: return false;  // anything but null
         case kTypeInt: return v.isInt();
         case kTypeFloat: return v.isFloat();
         case kTypeNumber: return v.isNumber();

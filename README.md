@@ -1835,7 +1835,8 @@ a class's fields only where reflection is used, and of its methods and construct
 `methods`, `method`, `constructors` or `call` is.
 
 `x.class`, `Image.class` and `Image.className` are gone, for `x#`, `Image#` and `Image#.name`;
-`class` may be a member's name (`token.class`), and `type(x)` is gone for `x#.name`. A type as the
+`class` may be a member's name (`token.class`), and `type(x)` is gone for `x#.name`. Null has a class
+as well, as Python's `NoneType`: `null#` is the built-in class `null`, so `x#.name` is `"null"` when `x` is. A type as the
 program runs is always a `Class`: `items.itemType`, `map.keyType` and `map.valueType` give one, as
 do `Box<int>#.typeArguments` and a field's `type`, so `items.itemType == int#` (D162).
 
