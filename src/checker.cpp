@@ -7386,6 +7386,60 @@ struct Checker::Impl {
 
     // Why an object of the class cannot be a key, as words after "cannot be a key:"; empty when
     // it can, or when only the program running can tell (an interface, which any class may be).
+    // What reading a function as part of a class's == or hashCode finds, following what it
+    // calls: why the class cannot be a key, or empty. For a function of a file whose bodies were
+    // not checked, its kept facts say (G26), as they said when it was last checked.
+    std::unordered_map<std::string, std::string> keyVerdicts;  // by function and how it is asked
+    std::string keyVerdict(FuncInfo* start, const std::string& startName, bool forValue) {
+        const std::string memo = std::to_string(reinterpret_cast<uintptr_t>(start)) + (forValue ? "v" : "o") + startName;
+        if (auto found = keyVerdicts.find(memo); found != keyVerdicts.end()) return found->second;
+        std::string why;
+        std::vector<std::pair<std::string, FuncInfo*>> todo{{startName, start}};
+        std::unordered_set<FuncInfo*> followed;
+        while (!todo.empty() && why.empty()) {
+            const auto [name, f] = todo.back();
+            todo.pop_back();
+            if (!followed.insert(f).second) continue;
+            if (f->decl == nullptr || f->isExternal || f->decl->isAbstract) {
+                why = "its == or hashCode calls '" + name + "', which the checker cannot follow";
+                break;
+            }
+            if (f->unit != nullptr && f->unit->skipBodies) {
+                why = keptKeyVerdict(f);
+                continue;
+            }
+            const KeyFacts& facts = keyFacts[f];
+            if (!facts.varRead.empty() && !forValue) {
+                why = "its == or hashCode reads the var '" + facts.varRead + "', which can change";
+                break;
+            }
+            for (const auto& [read, type] : facts.valReads)
+                if (!keyProblem(type, "").empty()) {
+                    why = "its == or hashCode reads '" + read + "', " + describe(withNull(type, false)) + ", which can change";
+                    break;
+                }
+            for (const auto& call : facts.calls) todo.push_back(call);
+            for (const auto& [read, property] : facts.properties)
+                if (property->getterFn != nullptr) todo.emplace_back(read, property->getterFn);
+        }
+        keyVerdicts[memo] = why;
+        return why;
+    }
+    // A method's line of facts ends with what it gives as part of an == or a hashCode (G26),
+    // after a separator no name or message holds; a function of no object has none.
+    static constexpr char kKeySeparator = '\x1e';
+    std::string keyFact(FuncInfo* f) {
+        if (f->owner == nullptr || f->isStatic) return {};
+        return std::string(1, kKeySeparator) + keyVerdict(f, f->name, f->owner->isValue);
+    }
+    std::string keptKeyVerdict(FuncInfo* f) {
+        keptFact(f, 0);  // reads the file's facts, if not yet
+        auto found = keptInPlace.find(f->decl);
+        if (found == keptInPlace.end()) return {};
+        const size_t at = found->second.find(kKeySeparator);
+        return at == std::string::npos ? std::string() : found->second.substr(at + 1);
+    }
+
     std::string keyTrouble(ClassInfo* k) {
         if (k == nullptr || k->isEnum || k->isObject || k->isInterface) return "";
         if (auto found = keyTroubles.find(k); found != keyTroubles.end()) return found->second;
@@ -7398,33 +7452,10 @@ struct Checker::Impl {
         }
         if (own != nullptr) {
             // ==, hashCode and what they call, followed as far as they go.
-            std::vector<std::pair<std::string, FuncInfo*>> todo;
             for (const char* name : {"==", "hashCode"})
                 if (auto found = own->methods.find(name); found != own->methods.end())
-                    for (FuncInfo* f : found->second) todo.emplace_back(name, f);
-            std::unordered_set<FuncInfo*> followed;
-            while (!todo.empty() && why.empty()) {
-                const auto [name, f] = todo.back();
-                todo.pop_back();
-                if (!followed.insert(f).second) continue;
-                if (f->decl == nullptr || f->isExternal || f->decl->isAbstract) {
-                    why = "its == or hashCode calls '" + name + "', which the checker cannot follow";
-                    break;
-                }
-                const KeyFacts& facts = keyFacts[f];
-                if (!facts.varRead.empty() && !k->isValue) {
-                    why = "its == or hashCode reads the var '" + facts.varRead + "', which can change";
-                    break;
-                }
-                for (const auto& [read, type] : facts.valReads)
-                    if (!keyProblem(type, "").empty()) {
-                        why = "its == or hashCode reads '" + read + "', " + describe(withNull(type, false)) + ", which can change";
-                        break;
-                    }
-                for (const auto& call : facts.calls) todo.push_back(call);
-                for (const auto& [read, property] : facts.properties)
-                    if (property->getterFn != nullptr) todo.emplace_back(read, property->getterFn);
-            }
+                    for (FuncInfo* f : found->second)
+                        if (why.empty()) why = keyVerdict(f, name, k->isValue);
         } else if ((k->isData || k->isValue) && k->decl != nullptr) {
             // A data class by its header; a value type by all it holds, which goes in a map as a copy.
             std::vector<std::string> names;
@@ -8257,8 +8288,9 @@ struct Checker::Impl {
         }
         auto found = keptInPlace.find(f->decl);
         if (found == keptInPlace.end()) return false;
-        const size_t end = found->second.find('!');
-        const std::string marks = found->second.substr(0, end);
+        const std::string line = found->second.substr(0, found->second.find(kKeySeparator));
+        const size_t end = line.find('!');
+        const std::string marks = line.substr(0, end);
         return static_cast<size_t>(param) < marks.size() && marks[static_cast<size_t>(param)] == '1';
     }
 
@@ -8269,9 +8301,10 @@ struct Checker::Impl {
         keptFact(f, 0);  // reads the file's facts, if not yet
         auto found = keptInPlace.find(f->decl);
         if (found == keptInPlace.end()) return list;
-        const size_t bang = found->second.find('!');
+        const std::string line = found->second.substr(0, found->second.find(kKeySeparator));
+        const size_t bang = line.find('!');
         if (bang == std::string::npos) return list;
-        std::istringstream items(found->second.substr(bang + 1));
+        std::istringstream items(line.substr(bang + 1));
         for (std::string item; std::getline(items, item, ';');)
             if (ClassInfo* k = classByKey(item)) list.push_back(k);
         return list;
@@ -8318,6 +8351,7 @@ struct Checker::Impl {
                 for (size_t p = 0; p < f->params.size(); p++)
                     line += f->params[p].kind != Type::Function ? '.' : inPlace(f, static_cast<int>(p)) ? '1' : '0';
                 line += throwsFact(f);
+                line += keyFact(f);
             }
             facts += line + "\n";
         });
@@ -9080,6 +9114,7 @@ void Checker::checkBodiesOf(const std::string& fileKey) {
     impl_->inPlaceKnown.clear();
     impl_->checkUnit(u);
     impl_->judgeWaits();
+    impl_->judgeKeys();  // keys it uses, as for the files checked at first (G26)
 }
 
 std::string Checker::inPlaceFacts(const std::string& fileKey) {
@@ -9106,6 +9141,7 @@ std::string Checker::summaryFacts(const std::string& fileKey) {
         for (size_t p = 0; p < f->params.size(); p++)
             facts += f->params[p].kind != Type::Function ? '.' : c.inPlace(f, static_cast<int>(p)) ? '1' : '0';
         facts += c.throwsFact(f);
+        facts += c.keyFact(f);
         facts += "\n";
     });
     return facts;

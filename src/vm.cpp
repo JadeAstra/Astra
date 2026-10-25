@@ -4306,7 +4306,9 @@ void VM::refuseKey(const Value& key) {
         throw runtimeError(Thrown::IllegalArgumentException, "bytes can change, so they cannot be a key: a frozen list of them can, key.toList().frozen()");
     if (key.isObjType(ObjType::List) || key.isObjType(ObjType::Map) || key.isObjType(ObjType::Set))
         throw runtimeError(Thrown::IllegalArgumentException, "a " + typeName(key) + " can change, so it cannot be a key: a frozen copy can, key.frozen()");
-    throw runtimeError(Thrown::IllegalArgumentException, "a " + typeName(key) + " can change in what its == looks at, so it cannot be a key");
+    const std::string name = typeName(key);
+    const bool vowel = !name.empty() && std::string("AEIOUaeiou").find(name[0]) != std::string::npos;
+    throw runtimeError(Thrown::IllegalArgumentException, (vowel ? "an " : "a ") + name + " can change in what its == looks at, so it cannot be a key");
 }
 
 Value VM::frozenCopy(Value v, int depth) {

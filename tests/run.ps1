@@ -345,6 +345,19 @@ $scenarios = @(
         @{ Files = @{ 'parts\a.astra' = 'fun a() : int => 1'; 'main.astra' = "import parts.*`nprint(a())" }; Out = '1' },
         @{ Files = @{ 'parts\b.astra' = 'fun b() : int => 2'; 'main.astra' = "import parts.*`nprint(a() + b())" }; Out = '3' },
         @{ Files = @{ 'parts\b.astra' = 'fun b() : int => 20' }; Out = '21' }) },
+    # G26: whether a class may be a key comes with its file from the cache, and a change to a body
+    # its == reads through (in another file) makes the files that use it be checked again.
+    @{ Name = 'G26: a key class from an unchanged file'; Steps = @(
+        @{ Files = @{ 'bank\account.astra' = "class Account(var balance : int, val id : int) {`n  op ==(other : any?) : bool => other is Account and other.balance == balance`n  fun hashCode() : int => id`n}"
+                      'main.astra' = "import bank.*`nprint(Account(1, 2).id)" }; Out = '2' },
+        @{ Files = @{ 'main.astra' = "import bank.*`nval byAccount : open Map<Account, string> = {:}`nbyAccount[Account(5, 1)] = `"first`"" }
+           Error = "main.astra:3:18: error: an Account cannot be a key: its == or hashCode reads the var 'balance', which can change (D26)" }) },
+    @{ Name = 'G26: a body an == reads through changes'; Steps = @(
+        @{ Files = @{ 'bank\account.astra' = "class Account(var balance : int, val id : int) {`n  op ==(other : any?) : bool => other is Account and Helpers.same(this, other)`n  fun hashCode() : int => id`n}"
+                      'bank\helpers.astra' = "object Helpers {`n  fun same(a : Account, b : Account) : bool => a.id == b.id`n}"
+                      'main.astra' = "import bank.*`nval byAccount : open Map<Account, string> = {:}`nbyAccount[Account(5, 1)] = `"first`"`nprint(byAccount.size)" }; Out = '1' },
+        @{ Files = @{ 'bank\helpers.astra' = "object Helpers {`n  fun same(a : Account, b : Account) : bool => a.balance == b.balance`n}" }
+           Error = "main.astra:3:18: error: an Account cannot be a key: its == or hashCode reads the var 'balance', which can change (D26)" }) },
     @{ Name = 'a constant changes in an imported file'; Steps = @(
         @{ Files = @{ 'lib.astra' = 'const limit = 10'; 'main.astra' = "import lib.*`nfun twice() : int => limit * 2`nprint(twice())" }; Out = '20' },
         @{ Files = @{ 'lib.astra' = 'const limit = 11' }; Out = '22' }) }
