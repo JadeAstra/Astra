@@ -48,3 +48,9 @@ class Ring(val items : List<int>) {
 }
 val ring = Ring([5, 6, 7])
 print(ring[^1], ring[0], ring[1..])   // expect: 7 5 [6, 7]
+
+// A slice that leaves out both ends is the whole, a copy (G23), as Python's items[:].
+val whole : open List<int> = [1, 2, 3]
+val copied = whole[..]
+copied.add(4)
+print(copied, whole, whole[..] == whole, whole[..] === whole, "hello"[..], "abc".toBytes()[..], whole[..<^1])   // expect: [1, 2, 3, 4] [1, 2, 3] true false hello Bytes[97, 98, 99] [1, 2]

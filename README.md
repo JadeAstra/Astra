@@ -484,12 +484,12 @@ val radius = (shape as? Circle)?.radius ?: 0
 
 **Positions and slices.** A position counts from 0; `^k` counts from the end, `^1` being the
 last item. A range of positions takes a slice, a new list (or string, or bytes) of those
-items; either end may be left out:
+items; either end may be left out, or both for a copy of the whole:
 
 ```astra
 items[0]          items[^1]          items[^2]        // the first, the last, the one before it
 items[1..<3]      items[2..]         items[..^2]      // 1 and 2; from 2 on; all but the last
-text[^3..]                                           // a string's last three characters
+text[^3..]        items[..]                          // a string's last three characters; a copy of all
 val last = ^1                                        // a position is a value, of type Index
 ```
 

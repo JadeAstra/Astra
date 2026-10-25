@@ -62,3 +62,9 @@ for (y in 0..<300) {
   for (x in 0..<64) { if (big[x, y] != x + y) { wrong += 1 } }
 }
 print(wrong)   // expect: 0
+
+// Either end of either range may be left out, or both (G23): `..` is every column, or every row.
+val parts = Grid<int>(4, 3, fill = 0)
+for (y in 0..<3) { for (x in 0..<4) { parts[x, y] = x + 10 * y } }
+print(parts[.., 1..1].toList(), parts[1..2, ..].toList(), parts[.., ..].toList() == parts.toList())   // expect: [10, 11, 12, 13] [1, 2, 11, 12, 21, 22] true
+print(parts[2.., ..^1].toList(), parts[..^2, 1..].toList())   // expect: [2, 3, 12, 13, 22, 23] [10, 11, 12, 20, 21, 22]

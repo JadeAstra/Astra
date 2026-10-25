@@ -2297,6 +2297,21 @@ void Parser::checkInfix(const FunctionDecl& fn, bool, const Token& at) {
     if (fn.paramDefaults[0]) throw error(at, "the parameter of infix " + fn.name + " cannot have a default: value " + fn.name + " other always gives it (D72)");
 }
 
+// One index of `items[...]`: an expression, or a slice that leaves out its start, `..^2` from the
+// start (D147), or both its ends, `..`, the whole (G23).
+ExprPtr Parser::indexPart() {
+    if (!check(TokenType::DotDot) && !check(TokenType::DotDotLt)) return expression();
+    const Token& op = advance();
+    auto range = node<RangeExpr>(op);
+    range->inclusive = op.type == TokenType::DotDot;
+    if (check(TokenType::RBracket) || check(TokenType::Comma)) {
+        if (!range->inclusive) throw error(op, "a slice of the whole is written .., with nothing after it");
+    } else {
+        range->end = bitOr();
+    }
+    return range;
+}
+
 ExprPtr Parser::range() {
     ExprPtr left = bitOr();
     // a..b runs from a to b; a..<b stops before b. Kotlin's `a until b` is refused in favour
@@ -2308,8 +2323,8 @@ ExprPtr Parser::range() {
         auto e = node<RangeExpr>(op);
         e->inclusive = op.type == TokenType::DotDot;
         e->start = std::move(left);
-        if (inIndex_ > 0 && check(TokenType::RBracket)) {
-            // `items[1..]`: from 1 to the end (D147).
+        if (inIndex_ > 0 && (check(TokenType::RBracket) || check(TokenType::Comma))) {
+            // `items[1..]`: from 1 to the end (D147); `bitmap[1.., 0..3]` in the first of two.
             if (!e->inclusive) throw error(op, "a slice to the end is written a.., with nothing after it");
         } else {
             e->end = bitOr();
@@ -2558,20 +2573,11 @@ ExprPtr Parser::postfix(ExprPtr start) {
             auto index = node<IndexExpr>(t);
             HeaderGuard inside(*this, false);
             inIndex_++;
-            if (check(TokenType::DotDot) || check(TokenType::DotDotLt)) {
-                // `items[..^2]`: from the start (D147).
-                const Token& op = advance();
-                auto range = node<RangeExpr>(op);
-                range->inclusive = op.type == TokenType::DotDot;
-                range->end = bitOr();
-                index->index = std::move(range);
-            } else {
-                index->index = expression();
-            }
-            // `grid[x, y]`: more indexes, for a class's op [](x, y) (D133).
+            index->index = indexPart();
+            // `grid[x, y]`: more indexes, for a class's op [](x, y) (D133), each read as the first is.
             while (check(TokenType::Comma) && !(peekNext().type == TokenType::Identifier && peekNext().text == "default")) {
                 advance();
-                index->more.push_back(expression());
+                index->more.push_back(indexPart());
             }
             inIndex_--;
             // `counts[word, default = 0]`: a start value for a key that is not there (L118).

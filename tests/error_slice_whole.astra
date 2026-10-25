@@ -1,0 +1,4 @@
+// The whole is written .., with nothing after it: `..<` there would stop before nothing.
+val items = [1, 2, 3]
+print(items[..<])
+// expect compile error: error_slice_whole.astra:3:13: error: a slice of the whole is written .., with nothing after it
