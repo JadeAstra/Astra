@@ -9456,6 +9456,17 @@ bool Checker::inferredValueFieldType(const VarStmt& field, RuntimeType& out) con
     return out.kind == RuntimeType::Class;
 }
 
+bool Checker::varargListType(const FunctionDecl& fn, RuntimeType& out) const {
+    auto found = impl_->funcOf.find(&fn);
+    if (found == impl_->funcOf.end() || found->second->vararg < 0) return false;
+    const Type& item = found->second->varargItem;
+    if (!item.known() || item.kind == Type::Any) return false;
+    Type list = Type::of(Type::List);
+    list.args.push_back(item);
+    out = runtimeTypeOf(list);
+    return out.kind == RuntimeType::List;
+}
+
 bool Checker::returnsValue(const FunctionDecl& fn) const {
     if (impl_->valueLambdas.count(&fn) != 0) return true;
     auto found = impl_->funcOf.find(&fn);

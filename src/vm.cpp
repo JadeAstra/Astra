@@ -5655,6 +5655,24 @@ void VM::run(int baseFrame) {
                             LOAD_FRAME();
                             break;
                         }
+                        if (obj.isObjType(ObjType::List) && index.isInt()) {
+                            // A list's item by its position, in range, read at once where nothing
+                            // stands in the way: as getIndex reads it (G25).
+                            const ObjList* list = asList(obj);
+                            const uint64_t i = static_cast<uint64_t>(index.as.i);
+                            if (i < list->size() && obj.as.obj != bandObject_ && (obj.as.obj->core == coreId_ || obj.as.obj->core == 0)) {
+                                if (!list->packed()) {
+                                    sp_[-2] = list->values()[i];
+                                    sp_--;
+                                    break;
+                                }
+                                if (list->pack->store != ListStore::Items) {
+                                    sp_[-2] = packedPlain(*list->pack, i);
+                                    sp_--;
+                                    break;
+                                }
+                            }
+                        }
                         if (obj.isObjType(ObjType::List) && asList(obj)->store() == ListStore::Items && index.isInt()) {
                             // An item of a list of values (M6.6 part 3): read with one of its fields
                             // at once, `pts[i].x`, the field is read where it is; otherwise a copy.
@@ -5679,6 +5697,24 @@ void VM::run(int baseFrame) {
                     }
                     case Op::SetIndex: {
                         Value value = sp_[-1], index = sp_[-2], obj = sp_[-3];
+                        if (obj.isObjType(ObjType::List) && index.isInt() && obj.as.obj->core == coreId_ && obj.as.obj->frozen == 0 &&
+                            static_cast<uint64_t>(index.as.i) < asList(obj)->size()) {
+                            // An int, a float or a bool put into a packed list of its kind (G25): written
+                            // into the block, its null bit cleared; anything else as setIndex does it.
+                            ObjList* list = asList(obj);
+                            const size_t i = static_cast<size_t>(index.as.i);
+                            PackedItems* pack = list->pack.get();
+                            if (pack != nullptr && ((pack->store == ListStore::Ints && value.isInt()) || (pack->store == ListStore::Floats && value.isFloat()) ||
+                                                    (pack->store == ListStore::Bools && value.isBool()))) {
+                                uint8_t* at = pack->block.data() + i * pack->width;
+                                if (pack->store == ListStore::Bools) *at = value.as.b ? 1 : 0;
+                                else std::memcpy(at, &value.as.i, 8);
+                                if (pack->nullable) pack->nulls[i / 64] &= ~(uint64_t{1} << (i % 64));
+                                sp_[-3] = value;
+                                sp_ -= 2;
+                                break;
+                            }
+                        }
                         if (classOf(obj) != nullptr) {
                             SAVE_IP();
                             invokeOperator(obj, names.opIndexSet, 2);

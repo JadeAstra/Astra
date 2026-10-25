@@ -1,0 +1,32 @@
+// What generic code makes knows what it holds (G25, G67, 2026-10-24): the list a vararg gathers,
+// a set made from a list or a set, and what map, filter and the other inline functions make,
+// of any type the call says. Such a list is packed where its items can be, and refuses what it
+// was not made to hold.
+
+value Point(val x : int, val y : int)
+val ints = [1, 2, 3]
+
+// A vararg's list: listOf and setOf, and a function of the program's own.
+fun <T> gather(vararg items : T) : List<T> => items
+fun names(vararg parts : string) : List<string> => parts
+print(listOf(1, 2).itemType, setOf("a").itemType, gather(1.5, 2.5).itemType, gather(Point(1, 2)).itemType, names("a", "b").itemType)
+// expect: int string float Point string
+print(listOf<int>().itemType, gather<string>().itemType, mutableListOf(1).itemType)   // expect: int string int
+
+// A set from a list or a set.
+print(ints.toSet().itemType, Set(ints).itemType, setOf(1, 2).toSet().itemType, {"a": 1}.values.toSet().itemType)   // expect: int int int int
+
+// What inline functions make, whatever the items.
+print(ints.map { it * 2 }.itemType, ints.map { "$it" }.itemType, ints.filter { it > 1 }.itemType, ints.mapNotNull { it }.itemType)
+// expect: int string int int
+val words : List<string> = ints.map { "$it" }
+print(words.itemType, ints.map { "$it" } is List<string>, ints.map { "$it" } is List<int>)   // expect: string true false
+
+// A typed list refuses what it was not made to hold, where an untyped one took anything.
+val made = listOf(1, 2) as open List<any>
+try { made.add("three") } catch (e : Exception) { print(e.message) }   // expect: cannot put a value of type string in a List<int>, which keeps only what it was made to hold
+print(made)   // expect: [1, 2]
+
+// What a function of the program's makes from its own type parameter is typed by the call's (G3).
+fun <T> twice(x : T) : List<T> => [x, x]
+print(twice(5).itemType, twice("x").itemType)   // expect: int string

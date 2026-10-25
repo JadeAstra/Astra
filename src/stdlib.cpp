@@ -1062,7 +1062,13 @@ void registerSetMethods(VM& vm) {
     vm.defineMethod(T, "frozen", 0, 0, [](VM& vm, Value self, int, Value*) -> Value { return vm.frozenCopy(self); });
     // Set(), or Set(from): the items of a list, a range, another set, a string or a map.
     vm.defineNative("Set", 0, 1, [](VM& vm, int argc, Value* args) -> Value {
-        ObjSet* set = vm.newSet(nullptr);
+        // Made from a list, a set or a map's values that know what they hold, it holds the same (G25).
+        ObjTypeInfo* item = nullptr;
+        if (argc > 0 && args[0].isObjType(ObjType::List) && asList(args[0])->type != nullptr && !asList(args[0])->type->args.empty())
+            item = asList(args[0])->type->args[0];
+        else if (argc > 0 && args[0].isObjType(ObjType::Set) && asSet(args[0])->type != nullptr && !asSet(args[0])->type->args.empty() && !asSet(args[0])->entries)
+            item = asSet(args[0])->type->args[0];
+        ObjSet* set = vm.newSet(item != nullptr ? vm.typeOf(kTypeSet, false, nullptr, {item}) : nullptr);
         TempRoot keep(vm, Value::object(set));
         if (argc > 0 && !args[0].isNull())
             for (const Value& item : vm.itemsOf(args[0], "Set()")) vm.setAdd(set, item);

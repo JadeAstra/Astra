@@ -2734,12 +2734,10 @@ private:
             if (!givenInFrame(a)) return false;
         return t.kind != RuntimeType::Unknown;
     }
-    // A list of a value type, which keeps its items packed rather than a box for each. Only such a
-    // list is given its type where nothing asked for it: typing `List(n) { 0 }` in an inline body
-    // that way made bench/jade_layout 8% slower (2026-10-24).
-    static bool packs(const RuntimeType& t) {
-        return t.kind == RuntimeType::List && t.args.size() == 1 && t.args[0].kind == RuntimeType::Class && t.args[0].value;
-    }
+    // A list an inline body makes with the type the call gives it (G15, G25): of a value type, kept
+    // packed, and of any other the call says (`map { "$it" }` a List<string>). Lists of ints were
+    // left untyped until a for over a packed one was as quick as over a list of boxes (G69).
+    static bool packs(const RuntimeType& t) { return t.kind == RuntimeType::List && t.args.size() == 1; }
     static bool concrete(const RuntimeType& t) {
         if (t.kind == RuntimeType::TypeParam || t.kind == RuntimeType::Unknown) return false;
         for (const RuntimeType& a : t.args)
@@ -4945,6 +4943,13 @@ private:
         // takes a copy first (M6.6 part 4).
         if (session_.checker != nullptr) {
             for (int param : session_.checker->paramsOwned(decl)) emit(Op::OwnLocal, param + 1);
+            // The list a `vararg` gathers, of the type its parameter is declared with (G25):
+            // `listOf(1, 2)` is a List<int>, kept packed.
+            if (RuntimeType gathered; decl.varargIndex >= 0 && session_.checker->varargListType(decl, gathered)) {
+                emit(Op::GetLocal, decl.varargIndex + 1);
+                if (emitTag(gathered, decl)) emit(Op::Pop);
+                else emit(Op::Pop);
+            }
             if (session_.checker->ownsThis(decl)) emit(Op::OwnLocal, 0);
         }
 

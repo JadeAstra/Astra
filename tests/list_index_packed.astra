@@ -1,0 +1,32 @@
+// Reading and writing a packed list's items by position, the quick way where it applies (G25,
+// 2026-10-24) and the general one otherwise: each gives what the general way gives.
+
+// A value whose type the checker does not see, for testing the checks made when running.
+val unknown = { value -> value }
+
+val ints : open List<int> = [1, 2, 3]
+val floats : open List<float> = [1.5, 2.5]
+val flags : open List<bool> = [true, false]
+val maybe : open List<int?> = [1, null, 3]
+val bytes : open List<byte> = [1.toByte(), 2.toByte()]
+val chars : open List<char> = ['a', 'b']
+ints[1] = 20
+floats[0] = -0.5
+flags[1] = true
+maybe[1] = 2
+maybe[0] = null
+bytes[0] = 9.toByte()
+chars[1] = 'z'
+print(ints, floats, flags, maybe, bytes, chars, ints[2] + ints[0], maybe[0], maybe[1])   // expect: [1, 20, 3] [-0.5, 2.5] [true, true] [null, 2, 3] [9, 2] ['a', 'z'] 4 null 2
+ints[0] += 5
+floats[1] *= 2.0
+print(ints[0], floats[1])   // expect: 6 5.0
+
+// What is wrong is said as before.
+try { ints[3] = 1 } catch (e : IndexOutOfBoundsException) { print(e.message) }   // expect: list index 3 is out of range (size 3)
+try { print(ints[unknown(-1) as int]) } catch (e : IndexOutOfBoundsException) { print(e.message) }   // expect: list index -1 is out of range (size 3): a negative number is no position; the last is [^1]
+try { ints[0] = unknown("text") } catch (e : Exception) { print(e.message) }   // expect: cannot put a value of type string in a List<int>, which keeps only what it was made to hold
+try { floats[0] = unknown(1) } catch (e : Exception) { print(e.message) }   // expect: cannot put a value of type int in a List<float>, which keeps only what it was made to hold
+val fixed = ints.frozen() as open List<int>
+try { fixed[0] = 1 } catch (e : Exception) { print(e#.name) }   // expect: UnsupportedOperationException
+print(ints, ints[^1])   // expect: [6, 20, 3] 3

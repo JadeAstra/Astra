@@ -268,6 +268,8 @@ public:
     // A field with no type written whose value is an int, a float, a bool, a char or a byte, a
     // storage width's in `out.storage` (G18).
     bool inferredFieldType(const VarStmt& field, RuntimeType& out) const;
+    // The list a function's `vararg` parameter gathers, `List<T>` for `vararg items : T` (G25).
+    bool varargListType(const FunctionDecl& fn, RuntimeType& out) const;
     // A field with no type written whose value is of a value type, null or not (G16).
     bool inferredValueFieldType(const VarStmt& field, RuntimeType& out) const;
     bool loopsInPlace(const ForInStmt& loop) const;
