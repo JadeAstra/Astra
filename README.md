@@ -2387,7 +2387,7 @@ something that can: a data class with a `var`, or a class whose `==` or `hashCod
 can tell, and the program when it runs otherwise. A class with its own `==` has its own
 `hashCode` too, and the other way round.
 
-### Sets and deques
+### Sets and decks
 
 A **`Set`** holds each value once, in the order the values were first added, and tells values
 apart as a map tells keys apart.
@@ -2408,11 +2408,11 @@ giving a list where a list's gives one; `toOpenSet()` and `frozen()`. A `for` lo
 set as it is: an item added while it runs is reached, and one removed is not. A set prints as
 `{1, 2, 3}`.
 
-A **`Deque`** is a queue open at both ends. Adding and removing are quick at the front as
+A **`Deck`** is a queue open at both ends. Adding and removing are quick at the front as
 well as the back, where a list is quick only at the back.
 
 ```astra
-val queue = Deque()                  // or Deque(items)
+val queue = Deck()                   // or Deck(items)
 queue.addLast(job)
 val next = queue.removeFirst()       // removeFirstOrNull() when it may be empty
 queue.addFirst(urgent)        queue.removeLast()        queue.first()        queue.last()

@@ -447,7 +447,7 @@ addButton(widgets)</pre></dd>
 <li><a href="#ConcurrentModificationException"><code>ConcurrentModificationException</code></a> (1)</li>
 <li><a href="#Constructor"><code>Constructor</code></a> (6)</li>
 <li><a href="#Countdown"><code>Countdown</code></a> (4)</li>
-<li><a href="#Deque"><code>Deque</code></a> (47)</li>
+<li><a href="#Deck"><code>Deck</code></a> (47)</li>
 <li><a href="#Drawable"><code>Drawable</code></a> (3)</li>
 <li><a href="#Duration"><code>Duration</code></a> (25)</li>
 <li><a href="#Error"><code>Error</code></a> (1)</li>
@@ -3925,7 +3925,7 @@ print(squares.filter { it % 3 == 0 }.take(5).toList())     // [9, 36, 81, 144, 2
 </section>
 <section class="file" id="file-set-astra">
 <h2>set.astra</h2>
-<h3>Sets and deques</h3>
+<h3>Sets and decks</h3>
 <p>A set holds each value once, in the order the values were first added; two values are the same one if a map would take them as one key. It is built in (Set(), add, remove, contains, addAll, removeAll, retainAll, clear, toList, first, last, <code>set + x</code> and <code>set - x</code>); what it does besides is here, each reading its items in order, and those that make a collection making a list, as a list's do. A map's keys and entries are sets too, live views of it.</p>
 <pre>val seen = Set&lt;string&gt;()        setOf(1, 2, 3)        [1, 2, 2].toSet()
 </pre>
@@ -4109,147 +4109,147 @@ print(squares.filter { it % 3 == 0 }.take(5).toList())     // [9, 36, 81, 144, 2
 <pre>setOf(1, 2, 3).join(limit = 2)   // &quot;1, 2, ...&quot;
 </pre>
 </div>
-<div class="entry" id="Deque"><code class="sig">class Deque&lt;T&gt;</code><a class="anchor" href="#Deque">#</a>
+<div class="entry" id="Deck"><code class="sig">class Deck&lt;T&gt;</code><a class="anchor" href="#Deck">#</a>
 <p>A queue open at both ends: adding and removing are quick at the front as well as the back, where a list is quick only at the back.</p>
-<pre>val queue = Deque&lt;Job&gt;()        queue.addLast(job)        val next = queue.removeFirst()
+<pre>val queue = Deck&lt;Job&gt;()        queue.addLast(job)        val next = queue.removeFirst()
 </pre>
 </div>
-<div class="entry member" id="Deque.size"><code class="sig">val size : int</code><a class="anchor" href="#Deque.size">#</a>
+<div class="entry member" id="Deck.size"><code class="sig">val size : int</code><a class="anchor" href="#Deck.size">#</a>
 <p>The number of items.</p>
 </div>
-<div class="entry member" id="Deque.lastIndex"><code class="sig">val lastIndex : int</code><a class="anchor" href="#Deque.lastIndex">#</a>
-<p>The index of the back item, <code>size - 1</code>; -1 when the deque is empty.</p>
+<div class="entry member" id="Deck.lastIndex"><code class="sig">val lastIndex : int</code><a class="anchor" href="#Deck.lastIndex">#</a>
+<p>The index of the back item, <code>size - 1</code>; -1 when the deck is empty.</p>
 </div>
-<div class="entry member" id="Deque.indices"><code class="sig">val indices : Range</code><a class="anchor" href="#Deque.indices">#</a>
+<div class="entry member" id="Deck.indices"><code class="sig">val indices : Range</code><a class="anchor" href="#Deck.indices">#</a>
 <p>The range of the indexes, <code>0 ..&lt; size</code>.</p>
 </div>
-<div class="entry member" id="Deque.isEmpty"><code class="sig">fun isEmpty() : bool</code><a class="anchor" href="#Deque.isEmpty">#</a>
-<p>True if the deque has no items.</p>
+<div class="entry member" id="Deck.isEmpty"><code class="sig">fun isEmpty() : bool</code><a class="anchor" href="#Deck.isEmpty">#</a>
+<p>True if the deck has no items.</p>
 </div>
-<div class="entry member" id="Deque.isNotEmpty"><code class="sig">fun isNotEmpty() : bool</code><a class="anchor" href="#Deque.isNotEmpty">#</a>
-<p>True if the deque has any items.</p>
+<div class="entry member" id="Deck.isNotEmpty"><code class="sig">fun isNotEmpty() : bool</code><a class="anchor" href="#Deck.isNotEmpty">#</a>
+<p>True if the deck has any items.</p>
 </div>
-<div class="entry member" id="Deque.addLast"><code class="sig">fun addLast(item : T)</code><a class="anchor" href="#Deque.addLast">#</a>
+<div class="entry member" id="Deck.addLast"><code class="sig">fun addLast(item : T)</code><a class="anchor" href="#Deck.addLast">#</a>
 <p>Adds <code>item</code> at the back.</p>
 </div>
-<div class="entry member" id="Deque.add"><code class="sig">fun add(item : T) : bool</code><a class="anchor" href="#Deque.add">#</a>
+<div class="entry member" id="Deck.add"><code class="sig">fun add(item : T) : bool</code><a class="anchor" href="#Deck.add">#</a>
 <p>Adds <code>item</code> at the back, as <code>addLast</code>; always true.</p>
 </div>
-<div class="entry member" id="Deque.addAll"><code class="sig">fun addAll(from : any) : bool</code><a class="anchor" href="#Deque.addAll">#</a>
+<div class="entry member" id="Deck.addAll"><code class="sig">fun addAll(from : any) : bool</code><a class="anchor" href="#Deck.addAll">#</a>
 <p>Adds the items of <code>from</code> (a list, a set or another collection) at the back, in their order; true if there were any.</p>
 </div>
-<div class="entry member" id="Deque.addFirst"><code class="sig">fun addFirst(item : T)</code><a class="anchor" href="#Deque.addFirst">#</a>
-<p>Adds <code>item</code> at the front, so that it is <code>deque[0]</code>.</p>
+<div class="entry member" id="Deck.addFirst"><code class="sig">fun addFirst(item : T)</code><a class="anchor" href="#Deck.addFirst">#</a>
+<p>Adds <code>item</code> at the front, so that it is <code>deck[0]</code>.</p>
 </div>
-<div class="entry member" id="Deque.removeFirst"><code class="sig">fun removeFirst() : T</code><a class="anchor" href="#Deque.removeFirst">#</a>
-<p>Takes out the front item and gives it; a NoSuchElementException when the deque is empty.</p>
+<div class="entry member" id="Deck.removeFirst"><code class="sig">fun removeFirst() : T</code><a class="anchor" href="#Deck.removeFirst">#</a>
+<p>Takes out the front item and gives it; a NoSuchElementException when the deck is empty.</p>
 </div>
-<div class="entry member" id="Deque.removeLast"><code class="sig">fun removeLast() : T</code><a class="anchor" href="#Deque.removeLast">#</a>
-<p>Takes out the back item and gives it; a NoSuchElementException when the deque is empty.</p>
+<div class="entry member" id="Deck.removeLast"><code class="sig">fun removeLast() : T</code><a class="anchor" href="#Deck.removeLast">#</a>
+<p>Takes out the back item and gives it; a NoSuchElementException when the deck is empty.</p>
 </div>
-<div class="entry member" id="Deque.removeFirstOrNull"><code class="sig">fun removeFirstOrNull() : T?</code><a class="anchor" href="#Deque.removeFirstOrNull">#</a>
-<p>Takes out the front item and gives it, or gives null when the deque is empty.</p>
+<div class="entry member" id="Deck.removeFirstOrNull"><code class="sig">fun removeFirstOrNull() : T?</code><a class="anchor" href="#Deck.removeFirstOrNull">#</a>
+<p>Takes out the front item and gives it, or gives null when the deck is empty.</p>
 </div>
-<div class="entry member" id="Deque.removeLastOrNull"><code class="sig">fun removeLastOrNull() : T?</code><a class="anchor" href="#Deque.removeLastOrNull">#</a>
-<p>Takes out the back item and gives it, or gives null when the deque is empty.</p>
+<div class="entry member" id="Deck.removeLastOrNull"><code class="sig">fun removeLastOrNull() : T?</code><a class="anchor" href="#Deck.removeLastOrNull">#</a>
+<p>Takes out the back item and gives it, or gives null when the deck is empty.</p>
 </div>
-<div class="entry member" id="Deque.first"><code class="sig">fun first() : T</code><a class="anchor" href="#Deque.first">#</a>
-<p>The front item, left in; a NoSuchElementException when the deque is empty.</p>
+<div class="entry member" id="Deck.first"><code class="sig">fun first() : T</code><a class="anchor" href="#Deck.first">#</a>
+<p>The front item, left in; a NoSuchElementException when the deck is empty.</p>
 </div>
-<div class="entry member" id="Deque.last"><code class="sig">fun last() : T</code><a class="anchor" href="#Deque.last">#</a>
-<p>The back item, left in; a NoSuchElementException when the deque is empty.</p>
+<div class="entry member" id="Deck.last"><code class="sig">fun last() : T</code><a class="anchor" href="#Deck.last">#</a>
+<p>The back item, left in; a NoSuchElementException when the deck is empty.</p>
 </div>
-<div class="entry member" id="Deque.firstOrNull"><code class="sig">fun firstOrNull() : T?</code><a class="anchor" href="#Deque.firstOrNull">#</a>
-<p>The front item, or null when the deque is empty.</p>
+<div class="entry member" id="Deck.firstOrNull"><code class="sig">fun firstOrNull() : T?</code><a class="anchor" href="#Deck.firstOrNull">#</a>
+<p>The front item, or null when the deck is empty.</p>
 </div>
-<div class="entry member" id="Deque.lastOrNull"><code class="sig">fun lastOrNull() : T?</code><a class="anchor" href="#Deque.lastOrNull">#</a>
-<p>The back item, or null when the deque is empty.</p>
+<div class="entry member" id="Deck.lastOrNull"><code class="sig">fun lastOrNull() : T?</code><a class="anchor" href="#Deck.lastOrNull">#</a>
+<p>The back item, or null when the deck is empty.</p>
 </div>
-<div class="entry member" id="Deque.get"><code class="sig">fun get(index : int) : T</code><a class="anchor" href="#Deque.get">#</a>
-<p>deque[0] is the front.</p>
+<div class="entry member" id="Deck.get"><code class="sig">fun get(index : int) : T</code><a class="anchor" href="#Deck.get">#</a>
+<p>deck[0] is the front.</p>
 </div>
-<div class="entry member" id="Deque.getOrNull"><code class="sig">fun getOrNull(index : int) : T?</code><a class="anchor" href="#Deque.getOrNull">#</a>
+<div class="entry member" id="Deck.getOrNull"><code class="sig">fun getOrNull(index : int) : T?</code><a class="anchor" href="#Deck.getOrNull">#</a>
 <p>The item at <code>index</code> from the front, or null when there is none there.</p>
 </div>
-<div class="entry member" id="Deque.set"><code class="sig">fun set(index : int, item : T)</code><a class="anchor" href="#Deque.set">#</a>
+<div class="entry member" id="Deck.set"><code class="sig">fun set(index : int, item : T)</code><a class="anchor" href="#Deck.set">#</a>
 <p>Puts <code>item</code> at <code>index</code> from the front, in place of the one there; an IndexOutOfBoundsException when there is none there.</p>
 </div>
-<div class="entry member" id="Deque.[]"><code class="sig">op [](index : int) : T</code><a class="anchor" href="#Deque.[]">#</a>
-<p><code>deque[index]</code>: the item at <code>index</code> from the front, as <code>get</code>.</p>
+<div class="entry member" id="Deck.[]"><code class="sig">op [](index : int) : T</code><a class="anchor" href="#Deck.[]">#</a>
+<p><code>deck[index]</code>: the item at <code>index</code> from the front, as <code>get</code>.</p>
 </div>
-<div class="entry member" id="Deque.[]="><code class="sig">op []=(index : int, item : T)</code><a class="anchor" href="#Deque.[]=">#</a>
-<p><code>deque[index] = item</code>: puts <code>item</code> at <code>index</code> from the front, as <code>set</code>.</p>
+<div class="entry member" id="Deck.[]="><code class="sig">op []=(index : int, item : T)</code><a class="anchor" href="#Deck.[]=">#</a>
+<p><code>deck[index] = item</code>: puts <code>item</code> at <code>index</code> from the front, as <code>set</code>.</p>
 </div>
-<div class="entry member" id="Deque.indexOf"><code class="sig">fun indexOf(item : T) : int</code><a class="anchor" href="#Deque.indexOf">#</a>
+<div class="entry member" id="Deck.indexOf"><code class="sig">fun indexOf(item : T) : int</code><a class="anchor" href="#Deck.indexOf">#</a>
 <p>The index from the front of the first item equal to <code>item</code>, or -1 when there is none.</p>
 </div>
-<div class="entry member" id="Deque.contains"><code class="sig">fun contains(item : T) : bool</code><a class="anchor" href="#Deque.contains">#</a>
+<div class="entry member" id="Deck.contains"><code class="sig">fun contains(item : T) : bool</code><a class="anchor" href="#Deck.contains">#</a>
 <p>True if an item is equal to <code>item</code>.</p>
 </div>
-<div class="entry member" id="Deque.remove"><code class="sig">fun remove(item : T) : bool</code><a class="anchor" href="#Deque.remove">#</a>
+<div class="entry member" id="Deck.remove"><code class="sig">fun remove(item : T) : bool</code><a class="anchor" href="#Deck.remove">#</a>
 <p>Takes out the first item equal to this one. True if there was one.</p>
 </div>
-<div class="entry member" id="Deque.removeAt"><code class="sig">fun removeAt(index : int) : T</code><a class="anchor" href="#Deque.removeAt">#</a>
+<div class="entry member" id="Deck.removeAt"><code class="sig">fun removeAt(index : int) : T</code><a class="anchor" href="#Deck.removeAt">#</a>
 <p>Takes out the item at <code>index</code> from the front and gives it; an IndexOutOfBoundsException when there is none there.</p>
 </div>
-<div class="entry member" id="Deque.clear"><code class="sig">fun clear()</code><a class="anchor" href="#Deque.clear">#</a>
+<div class="entry member" id="Deck.clear"><code class="sig">fun clear()</code><a class="anchor" href="#Deck.clear">#</a>
 <p>Takes out all the items.</p>
 </div>
-<div class="entry member" id="Deque.iterator"><code class="sig">fun iterator() : List&lt;T&gt;</code><a class="anchor" href="#Deque.iterator">#</a>
+<div class="entry member" id="Deck.iterator"><code class="sig">fun iterator() : List&lt;T&gt;</code><a class="anchor" href="#Deck.iterator">#</a>
 <p>A for loop goes through the items as they were when it began, front to back.</p>
 </div>
-<div class="entry member" id="Deque.toList"><code class="sig">fun toList() : open List&lt;T&gt;</code><a class="anchor" href="#Deque.toList">#</a>
+<div class="entry member" id="Deck.toList"><code class="sig">fun toList() : open List&lt;T&gt;</code><a class="anchor" href="#Deck.toList">#</a>
 <p>A list of T made of them: the items are kept as T? (what is before <code>head</code> is null), and a List&lt;T?&gt; is no List&lt;T&gt;.</p>
 </div>
-<div class="entry member" id="Deque.toOpenList"><code class="sig">fun toOpenList() : open List&lt;T&gt;</code><a class="anchor" href="#Deque.toOpenList">#</a>
+<div class="entry member" id="Deck.toOpenList"><code class="sig">fun toOpenList() : open List&lt;T&gt;</code><a class="anchor" href="#Deck.toOpenList">#</a>
 <p>The items front to back as a new list, which can be changed; the same as <code>toList()</code>.</p>
 </div>
-<div class="entry member" id="Deque.forEach"><code class="sig">fun forEach(action : (T) -&gt; unit)</code><a class="anchor" href="#Deque.forEach">#</a>
+<div class="entry member" id="Deck.forEach"><code class="sig">fun forEach(action : (T) -&gt; unit)</code><a class="anchor" href="#Deck.forEach">#</a>
 <p>Calls <code>action</code> with each item, front to back, the items being those there when it began.</p>
 </div>
-<div class="entry member" id="Deque.map"><code class="sig">fun &lt;R&gt; map(transform : (T) -&gt; R) : open List&lt;R&gt;</code><a class="anchor" href="#Deque.map">#</a>
+<div class="entry member" id="Deck.map"><code class="sig">fun &lt;R&gt; map(transform : (T) -&gt; R) : open List&lt;R&gt;</code><a class="anchor" href="#Deck.map">#</a>
 <p>What <code>transform</code> gives for each item, front to back, as a new list.</p>
 </div>
-<div class="entry member" id="Deque.filter"><code class="sig">fun filter(predicate : (T) -&gt; bool) : open List&lt;T&gt;</code><a class="anchor" href="#Deque.filter">#</a>
+<div class="entry member" id="Deck.filter"><code class="sig">fun filter(predicate : (T) -&gt; bool) : open List&lt;T&gt;</code><a class="anchor" href="#Deck.filter">#</a>
 <p>The items for which <code>predicate</code> is true, front to back, as a new list.</p>
 </div>
-<div class="entry member" id="Deque.any"><code class="sig">fun any() : bool</code><a class="anchor" href="#Deque.any">#</a>
-<p>True if the deque has any items.</p>
+<div class="entry member" id="Deck.any"><code class="sig">fun any() : bool</code><a class="anchor" href="#Deck.any">#</a>
+<p>True if the deck has any items.</p>
 </div>
-<div class="entry member" id="Deque.any-2"><code class="sig">fun any(predicate : (T) -&gt; bool) : bool</code><a class="anchor" href="#Deque.any-2">#</a>
+<div class="entry member" id="Deck.any-2"><code class="sig">fun any(predicate : (T) -&gt; bool) : bool</code><a class="anchor" href="#Deck.any-2">#</a>
 <p>True if <code>predicate</code> is true for any item.</p>
 </div>
-<div class="entry member" id="Deque.all"><code class="sig">fun all(predicate : (T) -&gt; bool) : bool</code><a class="anchor" href="#Deque.all">#</a>
-<p>True if <code>predicate</code> is true for every item; true for an empty deque.</p>
+<div class="entry member" id="Deck.all"><code class="sig">fun all(predicate : (T) -&gt; bool) : bool</code><a class="anchor" href="#Deck.all">#</a>
+<p>True if <code>predicate</code> is true for every item; true for an empty deck.</p>
 </div>
-<div class="entry member" id="Deque.none"><code class="sig">fun none() : bool</code><a class="anchor" href="#Deque.none">#</a>
-<p>True if the deque is empty.</p>
+<div class="entry member" id="Deck.none"><code class="sig">fun none() : bool</code><a class="anchor" href="#Deck.none">#</a>
+<p>True if the deck is empty.</p>
 </div>
-<div class="entry member" id="Deque.none-2"><code class="sig">fun none(predicate : (T) -&gt; bool) : bool</code><a class="anchor" href="#Deque.none-2">#</a>
-<p>True if <code>predicate</code> is true for no item; true for an empty deque.</p>
+<div class="entry member" id="Deck.none-2"><code class="sig">fun none(predicate : (T) -&gt; bool) : bool</code><a class="anchor" href="#Deck.none-2">#</a>
+<p>True if <code>predicate</code> is true for no item; true for an empty deck.</p>
 </div>
-<div class="entry member" id="Deque.count"><code class="sig">fun count() : int</code><a class="anchor" href="#Deque.count">#</a>
+<div class="entry member" id="Deck.count"><code class="sig">fun count() : int</code><a class="anchor" href="#Deck.count">#</a>
 <p>The number of items, as <code>size</code>.</p>
 </div>
-<div class="entry member" id="Deque.count-2"><code class="sig">fun count(predicate : (T) -&gt; bool) : int</code><a class="anchor" href="#Deque.count-2">#</a>
+<div class="entry member" id="Deck.count-2"><code class="sig">fun count(predicate : (T) -&gt; bool) : int</code><a class="anchor" href="#Deck.count-2">#</a>
 <p>The number of items for which <code>predicate</code> is true.</p>
 </div>
-<div class="entry member" id="Deque.find"><code class="sig">fun find(predicate : (T) -&gt; bool) : T?</code><a class="anchor" href="#Deque.find">#</a>
+<div class="entry member" id="Deck.find"><code class="sig">fun find(predicate : (T) -&gt; bool) : T?</code><a class="anchor" href="#Deck.find">#</a>
 <p>The first item from the front for which <code>predicate</code> is true, or null when there is none.</p>
 </div>
-<div class="entry member" id="Deque.reversed"><code class="sig">fun reversed() : open List&lt;T&gt;</code><a class="anchor" href="#Deque.reversed">#</a>
+<div class="entry member" id="Deck.reversed"><code class="sig">fun reversed() : open List&lt;T&gt;</code><a class="anchor" href="#Deck.reversed">#</a>
 <p>The items back to front, as a new list.</p>
 </div>
-<div class="entry member" id="Deque.join"><code class="sig">fun join(separator : string = &quot;, &quot;, prefix : string = &quot;&quot;, postfix : string = &quot;&quot;, limit : int = -1, truncated : string = &quot;...&quot;, transform : ((T) -&gt; any?)? = null) : string</code><a class="anchor" href="#Deque.join">#</a>
+<div class="entry member" id="Deck.join"><code class="sig">fun join(separator : string = &quot;, &quot;, prefix : string = &quot;&quot;, postfix : string = &quot;&quot;, limit : int = -1, truncated : string = &quot;...&quot;, transform : ((T) -&gt; any?)? = null) : string</code><a class="anchor" href="#Deck.join">#</a>
 <p>The items front to back as text, as a list's <code>join</code> makes it: <code>separator</code> between them, <code>prefix</code> and <code>postfix</code> around, at most <code>limit</code> of them when that is 0 or more, then <code>truncated</code> where there were more.</p>
 </div>
-<div class="entry member" id="Deque.=="><code class="sig">op ==(other : any?) : bool</code><a class="anchor" href="#Deque.==">#</a>
-<p>True if <code>other</code> is a deque with equal items in the same order; a list is never equal to a deque.</p>
+<div class="entry member" id="Deck.=="><code class="sig">op ==(other : any?) : bool</code><a class="anchor" href="#Deck.==">#</a>
+<p>True if <code>other</code> is a deck with equal items in the same order; a list is never equal to a deck.</p>
 </div>
-<div class="entry member" id="Deque.hashCode"><code class="sig">fun hashCode() : int</code><a class="anchor" href="#Deque.hashCode">#</a>
-<p>A hash of the items in order, the same as a list of them gives, so equal deques give equal ones.</p>
+<div class="entry member" id="Deck.hashCode"><code class="sig">fun hashCode() : int</code><a class="anchor" href="#Deck.hashCode">#</a>
+<p>A hash of the items in order, the same as a list of them gives, so equal decks give equal ones.</p>
 </div>
-<div class="entry member" id="Deque.toString"><code class="sig">fun toString() : string</code><a class="anchor" href="#Deque.toString">#</a>
+<div class="entry member" id="Deck.toString"><code class="sig">fun toString() : string</code><a class="anchor" href="#Deck.toString">#</a>
 <p>As a list shows itself: [1, 2, 3]</p>
 </div>
 </section>

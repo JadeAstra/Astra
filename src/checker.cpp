@@ -2168,6 +2168,8 @@ struct Checker::Impl {
             {"ReentrantLock", "a ReentrantLock is a Lock() in Astra, used with useKey { } (D86)"},
             {"startCoroutine", "startCoroutine is task { ... } in Astra, which gives a Job of what the block returns (D81)"},
             {"bytes", "'bytes' is now written 'Bytes', as its type is (type names are Title case)"},
+            {"Deque", "a Deque is now written Deck: a queue open at both ends, with addFirst, addLast, removeFirst and removeLast (D183)"},
+            {"ArrayDeque", "an ArrayDeque is a Deck in Astra: a queue open at both ends, with addFirst, addLast, removeFirst and removeLast (D183)"},
             {"range", "'range' is now written 'Range', as its type is (type names are Title case)"},
             {"suspendCoroutine", "suspendCoroutine is suspendTask { resume -> ... } in Astra: resume(value) takes the task up again, resume.fail(e) throws e there (D81)"},
             {"Continuation", "a Continuation is suspendTask's resume in Astra, a plain function: resume(value), resume.fail(e) (D81)"},

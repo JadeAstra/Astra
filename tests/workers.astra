@@ -7,7 +7,7 @@ val arrived = {:}          // worker -> the messages that have come and not been
 val awaited = {:}          // worker -> the resume of a task that is waiting for one
 
 fun listenTo(worker : Worker) {
-  arrived[worker] = Deque()
+  arrived[worker] = Deck()
   worker.onMessage = { message ->
     val waiting = awaited.remove(worker)
     if (waiting == null) { arrived[worker].addLast(message) } else { waiting(message) }

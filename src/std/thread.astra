@@ -421,7 +421,7 @@ suspend fun waitUntil(timeout : Duration? = null, condition : () -> bool) : bool
 // capacity, Channel<T>(2), or with none, Channel<T>.unbounded().
 class Channel<T> {
   private val lock = Lock()
-  private val items : Deque<T> = Deque()
+  private val items : Deck<T> = Deck()
   private val capacity : int        // int.maxValue: any number
   private var closed = false
   private var sent = 0              // capacity 0: the sends made, and how many of them were taken
@@ -582,7 +582,7 @@ class ThreadPool : AutoCloseable {
   }
 
   private val lock = Lock()
-  private val queue : Deque<__PoolJob> = Deque()
+  private val queue : Deck<__PoolJob> = Deck()
   private val workers : open List<Thread> = []
   private val timed : open List<__PoolJob> = []        // jobs waiting for their time, with `due`
   private var keeper : Thread? = null                   // the thread that hands them over at their time

@@ -1,5 +1,5 @@
 // The standard library at work on some text: strings counted in characters, lists and maps
-// with Kotlin's names, a set, a deque, format, StringBuilder, and a file written and read back.
+// with Kotlin's names, a set, a deck, format, StringBuilder, and a file written and read back.
 
 val text = """
     The café was naïve about its coffee. The coffee was good; the café was full.
@@ -44,8 +44,8 @@ for (a, b) in words.zipWithNext() {
 }
 print("pairs of words that come up twice:", repeated.sorted())
 
-// A deque is quick at both ends: here a window of the last three words.
-val recent = Deque()
+// A deck is quick at both ends: here a window of the last three words.
+val recent = Deck()
 var widest = ""
 for word in words {
   recent.addLast(word)

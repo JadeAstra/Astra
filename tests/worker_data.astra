@@ -3,7 +3,7 @@
 // value type is made again on the other side, by its constructor, from its header fields.
 import workers.records.*
 
-val arrived = Deque()
+val arrived = Deck()
 var awaited : ((any?) -> unit)? = null
 val worker = Worker("workers/records_echo.astra")
 worker.onMessage = { message ->

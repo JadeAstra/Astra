@@ -1,0 +1,8 @@
+// The queue open at both ends is a Deck (D183): Deque, and Kotlin's ArrayDeque, say so.
+
+val old = Deque<int>()                 // check: a Deque is now written Deck: a queue open at both ends, with addFirst, addLast, removeFirst and removeLast (D183)
+val kotlin = ArrayDeque<string>()      // check: an ArrayDeque is a Deck in Astra: a queue open at both ends, with addFirst, addLast, removeFirst and removeLast (D183)
+fun take(queue : Deque<int>) => queue  // check: a Deque is now written Deck: a queue open at both ends, with addFirst, addLast, removeFirst and removeLast (D183)
+val right = Deck<int>()
+right.addFirst(1)
+print(right.removeLast())
