@@ -21,7 +21,7 @@ print(mixed.reversed(), emoji.reversed(), "${latin}-${greek}-${emoji}-${1}")   /
 // Ordered by the characters' numbers, whatever their widths.
 print("b" < "é", "é" < "α", "α" < "😀", "abc".compareTo("abd"), "αβ".compareTo("αa"), ["😀", "b", "α", "é"].sorted())
 // expect: true true true -1 1 ["b", "é", "α", "😀"]
-print(mixed.split("γ"), "a,é,😀".split(","), "é".code, latin.upper(), greek.upper())   // expect: ["caféαβ", "a😀b"] ["a", "é", "😀"] 233 CAFÉ ΑΒΓ
+print(mixed.split("γ"), "a,é,😀".split(","), 'é'.code, latin.upper(), greek.upper())   // expect: ["caféαβ", "a😀b"] ["a", "é", "😀"] 233 CAFÉ ΑΒΓ
 
 // $$""": $$name and $${...} are read; a lone $ is text. Three in front allow two in a row.
 val total = 12

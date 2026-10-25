@@ -19,7 +19,7 @@ print("prefix-body".removePrefix("prefix-"), "body.txt".removeSuffix(".txt"), "(
 print(s.first(), s.last(), s.get(4), s.getOrNull(99), s.getOrNull(-1), "".firstOrNull(), "".lastOrNull(), accented.last())   // expect: H d o null null null null é
 print(s.first { it.isLowerCase() }, s.last { it.isUpperCase() }, s.firstOrNull { it.isDigit() })   // expect: e W null
 try { "".first() } catch (e) { print(e.message) }            // expect: first() of an empty string
-print(s.lastIndex, s.indices, s.size, "é".code, "A".code, 233.char, 97.char)   // expect: 11 0..<12 12 233 65 é a
+print(s.lastIndex, s.indices, s.size, 'é'.code, 'A'.code, 233.char, 97.char)   // expect: 11 0..<12 12 233 65 é a
 
 // Finding. ignoreCase and startIndex go by name or by position.
 print(s.indexOf("o"), s.indexOf("o", 5), s.indexOf("o", startIndex = 9), s.lastIndexOf("o"), s.lastIndexOf("o", 7), s.indexOf("z"))   // expect: 4 8 -1 8 4 -1
@@ -47,9 +47,13 @@ print("".ifEmpty { "none" }, "x".ifEmpty { "none" }, "  ".ifBlank { "blank" }, m
 print("one\ntwo\r\nthree".lines(), "".lines(), "a\n".lines())   // expect: ["one", "two", "three"] [""] ["a", ""]
 
 // Characters.
-print("a".isLetter(), "1".isLetter(), "é".isLetter(), "abc".isLetter(), "a1".isLetter(), "".isLetter())   // expect: true false true true false false
-print("7".isDigit(), "x".isDigit(), "a1".isLetterOrDigit(), "_".isLetterOrDigit(), " ".isWhitespace(), "\t".isWhitespace(), "x".isWhitespace())   // expect: true false true false true true false
-print("A".isUpperCase(), "a".isUpperCase(), "a".isLowerCase(), "É".isUpperCase(), "é".isLowerCase(), "1".isUpperCase())   // expect: true false true true true false
+// What a text is made of, with Python's names (G21); a character's own tests are isLetter() and the like.
+print("a".isAlpha(), "1".isAlpha(), "é".isAlpha(), "abc".isAlpha(), "a1".isAlpha(), "".isAlpha())   // expect: true false true true false false
+print("7".isDigit(), "x".isDigit(), "a1".isAlnum(), "_".isAlnum(), " ".isSpace(), "\t".isSpace(), "x".isSpace())   // expect: true false true false true true false
+print("A".isUpper(), "a".isUpper(), "a".isLower(), "É".isUpper(), "é".isLower(), "1".isUpper())   // expect: true false true true true false
+// As Python's isupper() and islower(): the letters that have a case decide, and there has to be one.
+print("A1".isUpper(), "HELLO WORLD".isUpper(), "Hello".isUpper(), "123".isUpper(), "".isUpper(), "ÉCOLE 2".isUpper())   // expect: true true false false false true
+print("a1".isLower(), "hello world".isLower(), "Hello".isLower(), " ".isLower(), "école!".isLower(), 'A'.isUpperCase())   // expect: true true false false true true
 print('a'.upper(), 'Q'.lower(), '7'.digitToInt(), 'x'.digitToIntOrNull(), '7'.digitToInt() + 1, 'f'.digitToInt(16))   // expect: A q 7 null 8 15
 print(s.count { it == "l" }, s.count(), s.any { it.isDigit() }, s.all { it.code < 128 }, s.none { it == "z" }, "".any(), "".none())   // expect: 3 12 false true true false true
 print("abc".map { it.code }, "a1b2".filter { it.isDigit() }, "a1b2".filterNot { it.isDigit() }, "héé".toList(), "aab".toSet())   // expect: [97, 98, 99] 12 ab ['h', 'é', 'é'] {'a', 'b'}

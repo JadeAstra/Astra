@@ -1,0 +1,13 @@
+// A string's tests of what it is made of have Python's names (G21): isAlpha, isDigit, isAlnum,
+// isSpace, isUpper, isLower. A character's keep theirs, and a string has no code of its own.
+
+fun asked(word : string, c : char) {
+  print(word.isLetter())        // check: isLetter() is a character's test; a string's is isAlpha(), as in Python (G21)
+  print(word.isLetterOrDigit()) // check: isLetterOrDigit() is a character's test; a string's is isAlnum(), as in Python (G21)
+  print(word.isWhitespace())    // check: isWhitespace() is a character's test; a string's is isSpace(), as in Python (G21)
+  print(word.isUpperCase())     // check: isUpperCase() is a character's test; a string's is isUpper(), as in Python (G21)
+  print(word.isLowerCase())     // check: isLowerCase() is a character's test; a string's is isLower(), as in Python (G21)
+  print(word.code)              // check: a string has no code: the code of its first character is s[0].code, and a character's 'A'.code (G21)
+  print(word.isAlpha(), word.isDigit(), word.isAlnum(), word.isSpace(), word.isUpper(), word.isLower(), word[0].code)
+  print(c.isLetter(), c.isLetterOrDigit(), c.isWhitespace(), c.isUpperCase(), c.isLowerCase(), c.isDigit(), c.code)
+}

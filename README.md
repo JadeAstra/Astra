@@ -2283,7 +2283,7 @@ of `filter { }`, `map { }` and the rest are passed.
 | Finding | `contains(s)`, `startsWith(s)`, `endsWith(s)`, `indexOf(s, startIndex?)`, `lastIndexOf(s)`, `indexOfFirst { }`, `indexOfLast { }`, `equals(s)`, `compareTo(s)`; all of these but the two with lambdas take `ignoreCase = true` |
 | Changing | `upper()`, `lower()`, `trim()`, `trimStart()`, `trimEnd()`, `trimIndent()`, `trimMargin()`, `replace(old, new, ignoreCase?)`, `replaceFirst(old, new)`, `replaceFirstChar { }`, `padStart(n, char?)`, `padEnd(n, char?)`, `repeat(n)`, `reversed()` |
 | Asking | `isEmpty()`, `isNotEmpty()`, `isBlank()`, `isNotBlank()`, `isNullOrEmpty()`, `isNullOrBlank()`, `ifEmpty { }`, `ifBlank { }`, `orEmpty()` |
-| Characters | `first()`, `last()`, `firstOrNull()`, `lastOrNull()`, `get(i)`, `getOrNull(i)`, `forEach { }`, `map { }`, `filter { }`, `any { }`, `all { }`, `none { }`, `count { }`, `toList()`; a string's `isLetter()`, `isDigit()`, `isLetterOrDigit()`, `isWhitespace()`, `isUpperCase()`, `isLowerCase()` ask it of every character |
+| Characters | `first()`, `last()`, `firstOrNull()`, `lastOrNull()`, `get(i)`, `getOrNull(i)`, `forEach { }`, `map { }`, `filter { }`, `any { }`, `all { }`, `none { }`, `count { }`, `toList()`; a string's `isAlpha()`, `isDigit()`, `isAlnum()`, `isSpace()` ask it of every character, and `isUpper()`, `isLower()` of every letter that has a case, as Python's do (`"A1".isUpper()` is true) |
 | A char | `code`, `isLetter()`, `isDigit()`, `isLetterOrDigit()`, `isWhitespace()`, `isUpperCase()`, `isLowerCase()`, `upper()`, `lower()`, `digitToInt(radix?)`, `digitToIntOrNull(radix?)` |
 | Converting | `toInt(radix?)`, `toIntOrNull(radix?)`, `toFloat()`, `toFloatOrNull()`, `toBoolean()`, `toBytes()`, `format(...)` |
 

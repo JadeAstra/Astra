@@ -5,7 +5,7 @@
 fun names() : List<string> {
   val words = ["b", "a"]
   words.sort()
-  print(words.size, "x".isLetter(), 5.coerceIn(1..3), 7.coerceIn(0.5, 9.5))
+  print(words.size, "x".isAlpha(), 5.coerceIn(1..3), 7.coerceIn(0.5, 9.5))
   print("x".shout())          // check: a string has no method 'shout'
   print(words.nope())         // check: an open List<string> has no method 'nope'
   print("x".repeat("2"))      // check: repeat(...) takes an int for 'times', not a string

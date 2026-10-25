@@ -540,7 +540,7 @@ addButton(widgets)</pre></dd>
 <li><a href="#char.code"><code>char</code></a> (11)</li>
 <li><a href="#float.coerceIn"><code>float</code></a> (16)</li>
 <li><a href="#int.char"><code>int</code></a> (31)</li>
-<li><a href="#string.size"><code>string</code></a> (103)</li>
+<li><a href="#string.size"><code>string</code></a> (102)</li>
 </ul>
 <section class="file" id="file-builtins-astra">
 <h2>builtins.astra</h2>
@@ -608,9 +608,6 @@ Range(10, 0, -3).toList()  // [10, 7, 4, 1]
 </div>
 <div class="entry" id="string.indices"><code class="sig">val string.indices : Range</code><a class="anchor" href="#string.indices">#</a>
 <p>The positions of the characters, <code>0..&lt;size</code>.</p>
-</div>
-<div class="entry" id="string.code"><code class="sig">val string.code : int</code><a class="anchor" href="#string.code">#</a>
-<p>The number of the first character, its Unicode code point: &quot;A&quot;.code is 65. An UnsupportedOperationException for &quot;&quot;.</p>
 </div>
 <div class="entry" id="string.upper"><code class="sig">fun string.upper() : string</code><a class="anchor" href="#string.upper">#</a>
 <p>The text with every letter in upper case, not only the ASCII ones.</p>
@@ -709,23 +706,23 @@ Range(10, 0, -3).toList()  // [10, 7, 4, 1]
 <div class="entry" id="string.isNotBlank"><code class="sig">fun string.isNotBlank() : bool</code><a class="anchor" href="#string.isNotBlank">#</a>
 <p>True when the text has something besides spaces, tabs and line ends.</p>
 </div>
-<div class="entry" id="string.isLetter"><code class="sig">fun string.isLetter() : bool</code><a class="anchor" href="#string.isLetter">#</a>
-<p>True when every character is a letter; false for &quot;&quot;.</p>
+<div class="entry" id="string.isAlpha"><code class="sig">fun string.isAlpha() : bool</code><a class="anchor" href="#string.isAlpha">#</a>
+<p>What the text is made of, as Python's str asks it; a character's own are isLetter() and the like. True when every character is a letter; false for &quot;&quot;.</p>
 </div>
 <div class="entry" id="string.isDigit"><code class="sig">fun string.isDigit() : bool</code><a class="anchor" href="#string.isDigit">#</a>
 <p>True when every character is a digit; false for &quot;&quot;.</p>
 </div>
-<div class="entry" id="string.isLetterOrDigit"><code class="sig">fun string.isLetterOrDigit() : bool</code><a class="anchor" href="#string.isLetterOrDigit">#</a>
+<div class="entry" id="string.isAlnum"><code class="sig">fun string.isAlnum() : bool</code><a class="anchor" href="#string.isAlnum">#</a>
 <p>True when every character is a letter or a digit; false for &quot;&quot;.</p>
 </div>
-<div class="entry" id="string.isWhitespace"><code class="sig">fun string.isWhitespace() : bool</code><a class="anchor" href="#string.isWhitespace">#</a>
+<div class="entry" id="string.isSpace"><code class="sig">fun string.isSpace() : bool</code><a class="anchor" href="#string.isSpace">#</a>
 <p>True when every character is whitespace: a space, a tab, a line end; false for &quot;&quot;.</p>
 </div>
-<div class="entry" id="string.isUpperCase"><code class="sig">fun string.isUpperCase() : bool</code><a class="anchor" href="#string.isUpperCase">#</a>
-<p>True when every character is an upper-case letter; false for &quot;&quot;, and for &quot;A1&quot;.</p>
+<div class="entry" id="string.isUpper"><code class="sig">fun string.isUpper() : bool</code><a class="anchor" href="#string.isUpper">#</a>
+<p>True when the text has a letter that has a case and every such letter is upper case, as in Python: &quot;A1&quot; and &quot;HELLO WORLD&quot; are, &quot;Hello&quot;, &quot;123&quot; and &quot;&quot; are not.</p>
 </div>
-<div class="entry" id="string.isLowerCase"><code class="sig">fun string.isLowerCase() : bool</code><a class="anchor" href="#string.isLowerCase">#</a>
-<p>True when every character is a lower-case letter; false for &quot;&quot;.</p>
+<div class="entry" id="string.isLower"><code class="sig">fun string.isLower() : bool</code><a class="anchor" href="#string.isLower">#</a>
+<p>True when the text has a letter that has a case and every such letter is lower case, as in Python: &quot;a1&quot; and &quot;hello world&quot; are, &quot;Hello&quot;, &quot;123&quot; and &quot;&quot; are not.</p>
 </div>
 <div class="entry" id="string.padStart"><code class="sig">fun string.padStart(size : int, padChar : char = ' ') : string</code><a class="anchor" href="#string.padStart">#</a>
 <p>The text made <code>size</code> characters long with <code>padChar</code> put before it; the text as it is when it is that long already.</p>

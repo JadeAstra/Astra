@@ -5909,6 +5909,8 @@ struct Checker::Impl {
         } else if (!builtinProperty(obj, name, result) && !extensionProperty(plain, name, at, result)) {
             if (name == "length" && builtinDeclared(plain))
                 report(at, goneAdvice(name));
+            else if (name == "code" && plain.kind == Type::String)
+                report(at, "a string has no code: the code of its first character is s[0].code, and a character's 'A'.code (G21)");
             else if ((obj.kind == Type::List || obj.kind == Type::String || obj.kind == Type::Map || obj.kind == Type::Bytes) &&
                      (name == "size" || name == "lastIndex"))
                 result = Type::of(Type::Int);
@@ -7598,6 +7600,15 @@ struct Checker::Impl {
         std::vector<FuncInfo*> ext = findExtensions(plain, m.name);
         if (!ext.empty()) return callFunctions(ext, c, m.name, {}, &plain);
         for (const ExprPtr& a : c.args) expr(*a);
+        // A character's tests asked of a string, which has Python's names for them (G21).
+        if (plain.kind == Type::String) {
+            static const std::unordered_map<std::string, std::string> renamed = {
+                {"isLetter", "isAlpha"}, {"isLetterOrDigit", "isAlnum"}, {"isWhitespace", "isSpace"}, {"isUpperCase", "isUpper"}, {"isLowerCase", "isLower"}};
+            if (auto r = renamed.find(m.name); r != renamed.end()) {
+                report(m, m.name + "() is a character's test; a string's is " + r->second + "(), as in Python (G21)");
+                return unknownType();
+            }
+        }
         if (builtinDeclared(plain) && !anyExtension(m.name) && !builtinMember(m.name)) {
             Type property;
             const std::string advice = m.name == "len" || m.name == "str" || m.name == "int" || m.name == "float" ? "" : goneAdvice(m.name);

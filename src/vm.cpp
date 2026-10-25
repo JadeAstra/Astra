@@ -896,7 +896,6 @@ bool VM::hasMember(Value candidate, const ObjString* name) const {
     if (name == names.indices || name == names.lastIndex) return type == ObjType::String || type == ObjType::List;
     if (name == names.itemType) return type == ObjType::List;
     if (name == names.keyType || name == names.valueType) return type == ObjType::Map;
-    if (name == names.code) return type == ObjType::String;
     return type == ObjType::Range && (name == names.start || name == names.end || name == names.step);
 }
 
@@ -2328,11 +2327,6 @@ Value VM::getProperty(Value obj, ObjString* name) {
                 if (name == names.indices)
                     return Value::object(alloc<ObjRange>(int64_t{0}, static_cast<int64_t>(asString(obj)->length), int64_t{1}, false));
                 if (name == names.lastIndex) return Value::integer(static_cast<int64_t>(asString(obj)->length) - 1);
-                if (name == names.code && asString(obj)->length > 0) {
-                    // The code point of a character (the first, if there are more).
-                    const uint32_t cp = asString(obj)->at(0);
-                    return Value::integer(cp);
-                }
                 break;
             case ObjType::List:
                 if (name == names.size) return Value::integer(static_cast<int64_t>(asList(obj)->size()));

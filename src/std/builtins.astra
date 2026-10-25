@@ -70,9 +70,6 @@ external val string.size : int
 external val string.lastIndex : int
 // The positions of the characters, `0..<size`.
 external val string.indices : Range
-// The number of the first character, its Unicode code point: "A".code is 65. An
-// UnsupportedOperationException for "".
-external val string.code : int
 // The text with every letter in upper case, not only the ASCII ones.
 external fun string.upper() : string
 // The text with every letter in lower case, not only the ASCII ones.
@@ -149,18 +146,21 @@ external fun string.isNotEmpty() : bool
 external fun string.isBlank() : bool
 // True when the text has something besides spaces, tabs and line ends.
 external fun string.isNotBlank() : bool
-// True when every character is a letter; false for "".
-external fun string.isLetter() : bool
+// What the text is made of, as Python's str asks it (G21); a character's own are isLetter() and
+// the like. True when every character is a letter; false for "".
+external fun string.isAlpha() : bool
 // True when every character is a digit; false for "".
 external fun string.isDigit() : bool
 // True when every character is a letter or a digit; false for "".
-external fun string.isLetterOrDigit() : bool
+external fun string.isAlnum() : bool
 // True when every character is whitespace: a space, a tab, a line end; false for "".
-external fun string.isWhitespace() : bool
-// True when every character is an upper-case letter; false for "", and for "A1".
-external fun string.isUpperCase() : bool
-// True when every character is a lower-case letter; false for "".
-external fun string.isLowerCase() : bool
+external fun string.isSpace() : bool
+// True when the text has a letter that has a case and every such letter is upper case, as in
+// Python: "A1" and "HELLO WORLD" are, "Hello", "123" and "" are not.
+external fun string.isUpper() : bool
+// True when the text has a letter that has a case and every such letter is lower case, as in
+// Python: "a1" and "hello world" are, "Hello", "123" and "" are not.
+external fun string.isLower() : bool
 // The text made `size` characters long with `padChar` put before it; the text as it is when it
 // is that long already.
 //   "7".padStart(3, '0')   // "007"

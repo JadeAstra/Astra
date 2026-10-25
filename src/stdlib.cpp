@@ -160,6 +160,37 @@ bool charactersAre(const std::string& s, CharacterClass which) {
 #endif
 }
 
+// Python's isupper() and islower() (G21): whether `s` has a letter that has a case, and every such
+// letter is upper case (`upper`) or lower case; digits, spaces and letters with no case do not count.
+bool casedAre(const std::string& s, bool upper) {
+    bool seen = false;
+    bool ascii = true;
+    for (unsigned char c : s) ascii = ascii && c < 0x80;
+    if (ascii) {
+        for (unsigned char c : s) {
+            const bool isUpper = c >= 'A' && c <= 'Z', isLower = c >= 'a' && c <= 'z';
+            if (upper ? isLower : isUpper) return false;
+            seen = seen || (upper ? isUpper : isLower);
+        }
+        return seen;
+    }
+#ifdef _WIN32
+    const int length = MultiByteToWideChar(CP_UTF8, 0, s.data(), static_cast<int>(s.size()), nullptr, 0);
+    std::wstring wide(static_cast<size_t>(length), L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, s.data(), static_cast<int>(s.size()), wide.data(), length);
+    std::vector<WORD> kinds(static_cast<size_t>(length));
+    if (!GetStringTypeW(CT_CTYPE1, wide.data(), length, kinds.data())) return false;
+    for (WORD kind : kinds) {
+        const bool isUpper = (kind & C1_UPPER) != 0, isLower = (kind & C1_LOWER) != 0;
+        if (upper ? isLower : isUpper) return false;
+        seen = seen || (upper ? isUpper : isLower);
+    }
+    return seen;
+#else
+    return false;
+#endif
+}
+
 // Thousands separators for the digits of a whole number: 1234567 -> 1,234,567.
 std::string grouped(const std::string& digits) {
     std::string out;
@@ -554,13 +585,13 @@ void registerStringMethods(VM& vm) {
     vm.defineMethod(T, NAME, 0, 0, [](VM&, Value self, int, Value*) -> Value {          \
         return Value::boolean(charactersAre(asString(self)->utf8(), CharacterClass::WHICH)); \
     })
-    ASTRA_CHARACTER_TEST("isLetter", Letter);
+    ASTRA_CHARACTER_TEST("isAlpha", Letter);
     ASTRA_CHARACTER_TEST("isDigit", Digit);
-    ASTRA_CHARACTER_TEST("isLetterOrDigit", LetterOrDigit);
-    ASTRA_CHARACTER_TEST("isWhitespace", Whitespace);
-    ASTRA_CHARACTER_TEST("isUpperCase", Upper);
-    ASTRA_CHARACTER_TEST("isLowerCase", Lower);
+    ASTRA_CHARACTER_TEST("isAlnum", LetterOrDigit);
+    ASTRA_CHARACTER_TEST("isSpace", Whitespace);
 #undef ASTRA_CHARACTER_TEST
+    vm.defineMethod(T, "isUpper", 0, 0, [](VM&, Value self, int, Value*) -> Value { return Value::boolean(casedAre(asString(self)->utf8(), true)); });
+    vm.defineMethod(T, "isLower", 0, 0, [](VM&, Value self, int, Value*) -> Value { return Value::boolean(casedAre(asString(self)->utf8(), false)); });
 }
 
 // ---- Numbers ----
