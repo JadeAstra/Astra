@@ -84,7 +84,7 @@ td.when { min-width: 9em; }
 <h2>Contents</h2>
 <ul>
 <li><a href="#choices">Choices to confirm</a> (nineteen from the first half; seven from part 8, group 1; twelve from group 2; eleven from group 3; eleven from group 4; eleven from group 5; eleven from group 6; thirteen from group 7; eleven from group 8; twelve from group 9)</li>
-<li><a href="#gaps">Gaps left</a> (thirty-eight; those for M6.7 are in <a href="M6.7-gaps.html">M6.7-gaps.html</a>)</li>
+<li><a href="#gaps">Gaps left</a> (thirty-seven; those for M6.7 are in <a href="M6.7-gaps.html">M6.7-gaps.html</a>)</li>
 </ul>
 </nav>
 
@@ -868,7 +868,6 @@ td.when { min-width: 9em; }
 <div class="table"><table>
 <thead><tr><th>No.</th><th>Part</th><th>Gap</th><th>When</th></tr></thead>
 <tbody>
-<tr><td class="part" id="g27">G27</td><td class="part">8.2</td><td><code>frozen()</code> does not go into values: a frozen list of a value type whose field is a list leaves that list changeable (such a value type is no key, so keys are safe).</td><td class="when">Not placed yet</td></tr>
 <tr><td class="part" id="g28">G28</td><td class="part">8.2</td><td>While a class's own <code>==</code> or <code>hashCode</code> runs for a map or a set, nothing is collected and no other thread is given the lock, since the C++ around it holds objects nothing roots (a map being built). One that makes much garbage, or waits, holds things up; the checker already refuses waiting in either.</td><td class="when">If it shows; roots for the map code</td></tr>
 <tr><td class="part" id="g29">G29</td><td class="part">8.2</td><td>Through a read-only name, a standard-library function that changes its receiver gives D32's message only for names the checker knows to change a collection (<code>add</code>, <code>remove</code>, <code>sort</code>, <code>addFirst</code> and the like); for another it says no form of the function is for a read-only list.</td><td class="when">Not placed yet</td></tr>
 <tr><td class="part" id="g30">G30</td><td class="part">8.3</td><td><code>extend</code> of a built-in type (<code>string</code>, <code>List</code>): a value of one has no class to carry the interface when the program runs.</td><td class="when">Not placed yet</td></tr>

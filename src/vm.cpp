@@ -4311,8 +4311,40 @@ void VM::refuseKey(const Value& key) {
     throw runtimeError(Thrown::IllegalArgumentException, (vowel ? "an " : "a ") + name + " can change in what its == looks at, so it cannot be a key");
 }
 
+// A frozen collection's values hold frozen copies of the lists, maps and sets they hold, as the
+// collection itself does (G27): what it holds shares nothing with what it was made from. Objects
+// of classes are left as they are, by identity (D26).
+void VM::freezeInside(uint8_t* at, const ValueLayout& layout, int depth) {
+    for (uint32_t offset : layout.objects) {
+        Obj* held;
+        std::memcpy(&held, at + offset, sizeof held);
+        if (held == nullptr || (held->type != ObjType::List && held->type != ObjType::Map && held->type != ObjType::Set && held->type != ObjType::Value)) continue;
+        const Value made = frozenCopy(Value::object(held), depth + 1);
+        std::memcpy(at + offset, &made.as.obj, sizeof made.as.obj);
+    }
+    for (uint32_t offset : layout.values) {
+        Value held;
+        std::memcpy(&held, at + offset, sizeof held);
+        if (!held.isObj()) continue;
+        const Value made = frozenCopy(held, depth + 1);
+        std::memcpy(at + offset, &made, sizeof made);
+    }
+}
+
 Value VM::frozenCopy(Value v, int depth) {
     if (!v.isObj() || v.as.obj->frozen != 0) return v;
+    if (v.isObjType(ObjType::Value)) {
+        // A value in a box of its own: a copy of it, what it holds frozen (G27).
+        const ObjValue* box = asValue(v);
+        const ValueLayout& layout = layoutOf(box->cls);
+        if (layout.objects.empty() && layout.values.empty()) return v;
+        if (depth >= kMaxEqualsDepth) throw runtimeError(Thrown::IllegalArgumentException, "frozen(): the " + typeName(v) + " holds itself, or is nested too deeply to copy");
+        ObjValue* made = newValue(box->cls);
+        TempRoot keep(*this, Value::object(made));
+        std::memcpy(made->data(), box->data(), layout.size);
+        freezeInside(made->data(), layout, depth);
+        return keep.get();
+    }
     if (v.isObjType(ObjType::Set) && asSet(v)->values) {
         // A map's values (G22), frozen: a list of them as they are.
         ObjList* list = newList(*this);
@@ -4338,7 +4370,13 @@ Value VM::frozenCopy(Value v, int depth) {
         TempRoot keep(*this, Value::object(made));
         if (list->packed()) {
             listCopyRange(made, list, 0, list->size());
-            if (list->store() == ListStore::Items && list->pack->itemClass->unstableKey) stable = false;
+            if (list->store() == ListStore::Items) {
+                if (list->pack->itemClass->unstableKey) stable = false;
+                // Each item's lists, maps and sets frozen too (G27), the items as they were copied.
+                const ValueLayout& layout = layoutOf(list->pack->itemClass);
+                if (!layout.objects.empty() || !layout.values.empty())
+                    for (size_t i = 0; i < made->size(); i++) freezeInside(itemAt(made, i), layout, depth);
+            }
         } else {
             for (size_t i = 0; i < list->size(); i++) {
                 const Value item = inner(list->values()[i]);

@@ -1,0 +1,42 @@
+// frozen() goes into values (G27, 2026-10-24): a frozen collection's values hold frozen copies of
+// the lists, maps and sets they hold, as the collection itself does, so what it holds shares
+// nothing with what it was made from and cannot be changed through its parts. Objects of
+// classes are left as they are, by identity (D26).
+
+value Bag(val label : string, val items : open List<int>)
+value Shelf(val name : string, val bag : Bag)
+value Lookup(val byName : open Map<string, int>, val seen : open Set<string>)
+class Account(var balance : int) {
+  fun deposit(n : int) { balance += n }
+}
+fun attempt(block : () -> any?) : string {
+  try { block(); return "changed" } catch (e : Exception) { return e#.name }
+}
+
+// A list of values, kept packed.
+val bags : List<Bag> = [Bag("a", [1]), Bag("b", [2, 3])]
+val frozenBags = bags.frozen()
+print(attempt { frozenBags[0].items.add(9) }, frozenBags[0].items, bags[0].items)   // expect: UnsupportedOperationException [1] [1]
+bags[1].items.add(4)
+print(frozenBags[1].items, bags[1].items)   // expect: [2, 3] [2, 3, 4]
+
+// A value inside a value, a value with a map and a set, and values in a list of anything.
+val shelves : List<Shelf> = [Shelf("top", Bag("c", [5]))]
+val frozenShelves = shelves.frozen()
+print(attempt { frozenShelves[0].bag.items.add(6) }, shelves[0].bag.items.add(7), frozenShelves[0].bag.items)   // expect: UnsupportedOperationException true [5]
+val indexes : List<Lookup> = [Lookup({"x": 1}, setOf("x"))]
+val frozenIndexes = indexes.frozen()
+print(attempt { frozenIndexes[0].byName["y"] = 2 }, attempt { frozenIndexes[0].seen.add("y") }, frozenIndexes[0])   // expect: UnsupportedOperationException UnsupportedOperationException Lookup(byName={"x": 1}, seen={"x"})
+val mixed : List<any> = [Bag("d", [8]), 1]
+val frozenMixed = mixed.frozen()
+print(attempt { (frozenMixed[0] as Bag).items.add(9) }, frozenMixed)   // expect: UnsupportedOperationException [Bag(label="d", items=[8]), 1]
+
+// A map's values.
+val byKey : Map<string, Bag> = {"k": Bag("e", [10])}
+val frozenByKey = byKey.frozen()
+print(attempt { frozenByKey["k"]!!.items.add(11) }, byKey["k"]!!.items.add(12), frozenByKey["k"]!!.items)   // expect: UnsupportedOperationException true [10]
+
+// Objects are by identity: a frozen list of them holds the same objects, which can change.
+val accounts = [Account(5)].frozen()
+accounts[0].deposit(10)
+print(accounts[0].balance, attempt { (accounts as open List<Account>).add(Account(1)) })   // expect: 15 UnsupportedOperationException

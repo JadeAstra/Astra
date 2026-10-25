@@ -719,6 +719,8 @@ public:
     // A frozen copy of a list, a map or a set (D26), which nobody may change; the lists, maps
     // and sets inside it are frozen copies too. One already frozen is itself.
     Value frozenCopy(Value v, int depth = 0);
+    // In a value's bytes laid out as `layout`, each list, map or set held given a frozen copy (G27).
+    void freezeInside(uint8_t* at, const ValueLayout& layout, int depth);
     // A lazy field's, static's or global's value (D37), worked out on this first read and given
     // to `store` for its place; `what` names it for the errors.
     Value forceLazy(Value marker, const std::function<void(Value)>& store, const std::string& what);
