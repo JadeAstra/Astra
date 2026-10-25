@@ -7,6 +7,7 @@
 #include <cstring>
 #include <cmath>
 #include <cstdlib>
+#include <filesystem>
 #include <iostream>
 #include <new>
 #include <stdexcept>
@@ -700,7 +701,17 @@ void VM::load(Program& program) {
     loaded_.resize(program.modules.size(), false);
 }
 
+std::string VM::mainFileName() const {
+    std::string file;
+    if (program_ != nullptr && mainModule_ >= 0 && static_cast<size_t>(mainModule_) < program_->modules.size() &&
+        program_->modules[static_cast<size_t>(mainModule_)] != nullptr)
+        file = program_->modules[static_cast<size_t>(mainModule_)]->source;
+    const std::string stem = std::filesystem::path(file).stem().string();
+    return stem.empty() ? std::string("program") : stem;
+}
+
 Value VM::runModule(int index) {
+    if (index != 0 && mainModule_ < 0) mainModule_ = index;  // the first a program runs: its own file
     if (!loaded_[0]) {
         // The standard library defines the classes runtime errors are instances of (D35).
         loaded_[0] = true;
@@ -6750,6 +6761,12 @@ void VM::run(int baseFrame) {
                         if (!sp_[-1].isObjType(ObjType::Class)) throw runtimeError(Thrown::InternalError, "invalid class declaration");
                         asClass(sp_[-1])->isAbstract = true;
                         break;
+                    case Op::ClassOrigin: {
+                        ObjString* origin = asString(consts[READ_U16()]);
+                        if (!sp_[-1].isObjType(ObjType::Class)) throw runtimeError(Thrown::InternalError, "invalid class declaration");
+                        asClass(sp_[-1])->origin = origin;
+                        break;
+                    }
                     case Op::MarkValue: {
                         const bool fromHeader = READ_U8() != 0;
                         if (!sp_[-1].isObjType(ObjType::Class)) throw runtimeError(Thrown::InternalError, "invalid class declaration");
@@ -8144,6 +8161,7 @@ void VM::blacken(Obj* obj) {
             ObjClass* cls = static_cast<ObjClass*>(obj);
             liveBytes_ += sizeof(ObjClass);
             markObject(cls->name);
+            if (cls->origin != nullptr) markObject(cls->origin);
             markObject(cls->super);
             markObject(cls->init);
             for (ObjClosure* maker : cls->supertypeMakers) markObject(maker);

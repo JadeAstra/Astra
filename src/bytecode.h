@@ -374,6 +374,9 @@ enum class Op : uint8_t {
     // (the high bit of argc); otherwise on, the stack as it was, to the call and the insert or the
     // add, which say what is wrong.
     InsertNew,          // u8 argc|0x80, i32 target        list position class args... -> [null or true, at target]
+    // Where a class comes from (Class.origin): set where a library's class, or the standard
+    // library's, is made; the program's own have none, and give Program.name.
+    ClassOrigin,        // u16 name                        class -> class
 
     Count_,
 };
@@ -419,6 +422,10 @@ inline uint8_t unfrozenTypeId(uint8_t id) {
 inline uint8_t frozenTypeId(uint8_t id) {
     return id == kTypeList ? kTypeFrozenList : id == kTypeMap ? kTypeFrozenMap : id == kTypeSet ? kTypeFrozenSet : 0;
 }
+
+// A type written `astra.Range` (the built-in Range, where the program has its own class of that
+// name): the built-in name, Range; any other name as it is.
+std::string builtinSpelling(const std::string& name);
 
 // Whether `id` names one of the types above other than a class's.
 inline bool isBuiltinTypeId(uint8_t id) { return id >= kTypeInt && id < kTypeCount_ && id != kTypeInstance; }

@@ -442,7 +442,7 @@ addButton(widgets)</pre></dd>
 <li><a href="#Canvas"><code>Canvas</code></a> (38)</li>
 <li><a href="#Channel"><code>Channel</code></a> (10)</li>
 <li><a href="#Charset"><code>Charset</code></a> (1)</li>
-<li><a href="#Class"><code>Class</code></a> (18)</li>
+<li><a href="#Class"><code>Class</code></a> (19)</li>
 <li><a href="#ClassCastException"><code>ClassCastException</code></a> (1)</li>
 <li><a href="#Color"><code>Color</code></a> (24)</li>
 <li><a href="#ConcurrentModificationException"><code>ConcurrentModificationException</code></a> (1)</li>
@@ -500,6 +500,7 @@ addButton(widgets)</pre></dd>
 <li><a href="#Point"><code>Point</code></a> (4)</li>
 <li><a href="#Process"><code>Process</code></a> (13)</li>
 <li><a href="#ProcessResult"><code>ProcessResult</code></a> (1)</li>
+<li><a href="#Program"><code>Program</code></a> (3)</li>
 <li><a href="#Range.size"><code>Range</code></a> (37)</li>
 <li><a href="#Reader"><code>Reader</code></a> (12)</li>
 <li><a href="#Rect"><code>Rect</code></a> (24)</li>
@@ -565,9 +566,6 @@ Range(10, 0, -3).toList()  // [10, 7, 4, 1]
 </div>
 <div class="entry" id="Bytes"><code class="sig">fun Bytes(source : any) : Bytes</code><a class="anchor" href="#Bytes">#</a>
 <p>New bytes: <code>Bytes(16)</code> is sixteen zeros, <code>Bytes([1, 2, 255])</code> the numbers of a list, and <code>Bytes(other)</code> a copy of other bytes. An IllegalArgumentException for a negative size, a number outside 0 to 255, or anything else; text becomes bytes with <code>toBytes()</code>.</p>
-</div>
-<div class="entry" id="args"><code class="sig">fun args() : open List&lt;string&gt;</code><a class="anchor" href="#args">#</a>
-<p>The arguments the program was started with, those after the script's name, as a new list.</p>
 </div>
 <div class="entry" id="assert"><code class="sig">fun assert(condition : bool, message : string = &quot;assertion failed&quot;)</code><a class="anchor" href="#assert">#</a>
 <p>Nothing when <code>condition</code> is true; otherwise an AssertionError with <code>message</code>.</p>
@@ -1388,6 +1386,18 @@ Range(10, 0, -3).toList()  // [10, 7, 4, 1]
 </div>
 <div class="entry" id="checkNotNull"><code class="sig">fun &lt;T&gt; checkNotNull(value : T?, lazyMessage : (() -&gt; any?)? = null) : T</code><a class="anchor" href="#checkNotNull">#</a>
 <p><code>value</code>, now known not to be null; an IllegalStateException when it is null, its message what <code>lazyMessage</code> gives or &quot;Required value was null.&quot;.</p>
+</div>
+<div class="entry" id="Program"><code class="sig">object Program</code><a class="anchor" href="#Program">#</a>
+<p>The program as it runs: what it was started with, and its name.</p>
+<pre>if (Program.arguments.contains(&quot;--verbose&quot;)) { ... }
+Program.name = &quot;bank&quot;            // at the start: what the program's own classes say they come from
+</pre>
+</div>
+<div class="entry member" id="Program.arguments"><code class="sig">val arguments : List&lt;string&gt;</code><a class="anchor" href="#Program.arguments">#</a>
+<p>What it was started with after its file's name, in order: [&quot;--fast&quot;, &quot;in.txt&quot;] for <code>astra bank.astra --fast in.txt</code>.</p>
+</div>
+<div class="entry member" id="Program.name"><code class="sig">var name : string</code><a class="anchor" href="#Program.name">#</a>
+<p>Its name: its own file's, without .astra (&quot;bank&quot; for bank.astra), unless set otherwise. It is the origin of the classes the program declares (Class.origin); set it before it is used.</p>
 </div>
 <div class="entry" id="error"><code class="sig">fun error(message : any?) : nothing</code><a class="anchor" href="#error">#</a>
 <p>Throws an IllegalStateException with <code>message</code> as its text: error(&quot;no such user $name&quot;).</p>
@@ -3604,6 +3614,9 @@ pages.parallelStream().forEach { page -&gt; for (link in page.links) { seen.add(
 </div>
 <div class="entry member" id="Class.name"><code class="sig">val name : string</code><a class="anchor" href="#Class.name">#</a>
 <p>The class's name, or a built-in type's: &quot;Circle&quot;, &quot;int&quot;, &quot;List&quot;.</p>
+</div>
+<div class="entry member" id="Class.origin"><code class="sig">val origin : string</code><a class="anchor" href="#Class.origin">#</a>
+<p>Where it comes from: &quot;astra&quot; for a built-in type and the standard library's classes, a library's name for its classes (&quot;Jade&quot;), and the program's name (Program.name) for the program's own.</p>
 </div>
 <div class="entry member" id="Class.superclass"><code class="sig">val superclass : Class?</code><a class="anchor" href="#Class.superclass">#</a>
 <p>The class it extends, with the type arguments it gives it; null where it extends none.</p>

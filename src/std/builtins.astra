@@ -29,8 +29,8 @@ external fun Range(first : int, end : int = 0, step : int = 1) : Range
 // `Bytes(other)` a copy of other bytes. An IllegalArgumentException for a negative size, a number
 // outside 0 to 255, or anything else; text becomes bytes with `toBytes()`.
 external fun Bytes(source : any) : Bytes
-// The arguments the program was started with, those after the script's name, as a new list.
-external fun args() : open List<string>
+external fun __arguments() : open List<string>
+external fun __programName() : string
 // Nothing when `condition` is true; otherwise an AssertionError with `message`.
 external fun assert(condition : bool, message : string = "assertion failed")
 // The hash of several values together, wrapping at 32 bits inside, as Java's Objects.hash (D148).

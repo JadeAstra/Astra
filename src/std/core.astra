@@ -57,6 +57,20 @@ fun <T> checkNotNull(value : T?, lazyMessage : (() -> any?)? = null) : T {
   return value
 }
 
+// The program as it runs (D184): what it was started with, and its name.
+//
+//   if (Program.arguments.contains("--verbose")) { ... }
+//   Program.name = "bank"            // at the start: what the program's own classes say they come from
+object Program {
+  // What it was started with after its file's name, in order: ["--fast", "in.txt"] for
+  // `astra bank.astra --fast in.txt`.
+  val arguments : List<string>
+    get() => __arguments()
+  // Its name: its own file's, without .astra ("bank" for bank.astra), unless set otherwise. It
+  // is the origin of the classes the program declares (Class.origin); set it before it is used.
+  var name : string = __programName()
+}
+
 // Throws an IllegalStateException with `message` as its text: error("no such user $name").
 fun error(message : any?) : nothing {
   throw IllegalStateException("$message")

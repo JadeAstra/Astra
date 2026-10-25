@@ -1,0 +1,35 @@
+// A class of the program's own may have a built-in type's name (Index, Range, Values, Bytes):
+// where it is in reach, the name means it, in types as in calls, as a file's own names come
+// first (2026-10-24). The built-in types are still there by their uses.
+
+value Index(val byName : open Map<string, int>)
+class Range(val low : int, val high : int) {
+  fun width() : int => high - low
+}
+data Values(val items : List<int>)
+
+val indexes : List<Index> = [Index({"x": 1})]
+fun widest(ranges : List<Range>) : Range => ranges.maxByOrNull { it.width() }!!
+fun Range.middle() : int => (low + high) / 2
+val r : Range = Range(2, 10)
+val v : Values = Values([1, 2])
+print(indexes[0], widest([Range(0, 1), r]).width(), r.middle(), v, r is Range, v is Values)   // expect: Index(byName={"x": 1}) 8 6 Values(items=[1, 2]) true true
+print(indexes.itemType, r#.name, (r as any) is Range)   // expect: Index Range true
+
+// The built-in types, by what makes them: positions, ranges of ints, a map's values.
+val last = ^1
+val ints = 0..<3
+val shown = {"a": 1}.values
+print([5, 6, 7][last], ints.toList(), shown, ints is Range, shown is Values)   // expect: 7 [0, 1, 2] [1] false false
+
+// The built-in type by its full name, astra.Range, where the program has its own Range.
+val builtIn : astra.Range = 0..<4
+fun count(r : astra.Range) : int => r.count()
+print(builtIn.toList(), count(1..3), builtIn is astra.Range, r is astra.Range)   // expect: [0, 1, 2, 3] 3 true false
+
+// Where a class comes from (D184): "astra" for the built-in types and the standard library's
+// classes, and the program's name, its file's unless set, for its own.
+print(List#.origin, int#.origin, Deck#.origin, null#.origin, (0..<1)#.origin)   // expect: astra astra astra astra astra
+print(Program.name, r#.origin, Index#.origin)   // expect: own_class_names own_class_names own_class_names
+Program.name = "shelves"
+print(r#.origin, v#.origin, List#.origin, Program.arguments)   // expect: shelves shelves astra []

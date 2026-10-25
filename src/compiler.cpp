@@ -2339,7 +2339,8 @@ private:
         // `any` takes every value; `unit` is what a function that returns nothing is declared as.
         if (!s.present() || s.typeParam || s.name == "any" || s.name == "unit" || s.name == "nothing") return type;
 
-        uint8_t id = builtinTypeId(s.name);
+        uint8_t id = builtinTypeId(builtinSpelling(s.name));
+        if (id != 0 && session_.checker != nullptr && session_.checker->namesOwnClass(s)) id = 0;  // the program's own class
         if (const std::string* kind = kindName(s)) {
             type.className = *kind;  // `is Click` for an Event (D39)
             type.flags = static_cast<uint8_t>(kTypeInstance | (s.nullable ? kTypeNullable : 0));
@@ -2629,7 +2630,7 @@ private:
     }
 
     // After a call of a function of the C++'s (`external`), on the value it gave: a list or
-    // map is given the type the checker worked out where the C++ gave it none (`args()` a
+    // map is given the type the checker worked out where the C++ gave it none (`__arguments()` a
     // List<string>), and with ASTRA_CHECK_NATIVE_RESULTS the value is checked against the
     // declaration, so that the suite proves the declarations say what the C++ does.
     void emitExternalResult(const CallExpr& call) {
@@ -2675,7 +2676,8 @@ private:
             shape += 'F';
             return;
         }
-        uint8_t id = builtinTypeId(t.name);
+        uint8_t id = builtinTypeId(builtinSpelling(t.name));
+        if (id != 0 && session_.checker != nullptr && session_.checker->namesOwnClass(t)) id = 0;  // the program's own class
         if (unfrozenTypeId(id) != id) {
             shape += 'Z';  // FrozenList<T>: as List<T>, frozen (D26)
             id = unfrozenTypeId(id);
@@ -3400,7 +3402,8 @@ private:
         uint8_t type = 0;
         // `fun <T> T.describe()`: a type parameter as the receiver is for every value, as `any` is.
         if (s.receiver != "any" && !s.receiverType.typeParam) {
-            type = unfrozenTypeId(builtinTypeId(s.receiver));  // a FrozenList's are a List's
+            type = unfrozenTypeId(builtinTypeId(builtinSpelling(s.receiver)));  // a FrozenList's are a List's
+            if (type != 0 && session_.checker != nullptr && session_.checker->namesOwnClass(s.receiverType)) type = 0;  // the program's own class
             if (type == 0) {
                 type = kTypeInstance;
                 emitTypeName(s.receiver, s);
@@ -3939,6 +3942,15 @@ private:
             emitGet(storage, s);
             emit(Op::MarkValue);
             emitByte(headerAlone ? 1 : 0);
+            emit(Op::Pop);
+        }
+        // A library's class says which library (Class.origin): the standard library's "astra", another's
+        // its folder's name. The program's own say none.
+        if (ns_->library != "<program>") {
+            const std::string origin = ns_->library == "<builtin>" ? std::string("astra") : std::filesystem::path(ns_->library).filename().string();
+            emitGet(storage, s);
+            emit(Op::ClassOrigin);
+            emitU16(stringConstant(origin));
             emit(Op::Pop);
         }
         if (s.hasSuper) {

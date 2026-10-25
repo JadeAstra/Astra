@@ -116,7 +116,7 @@ A built program runs as its own process, named after its file: `Todo.exe` is lis
 `Todo.exe` in Task Manager, never as `astra.exe`, so two Astra apps running side by side are
 told apart by name. Rename the file and the process name follows.
 
-- Every command-line argument goes to the script and shows up in `args()`; a built program has
+- Every command-line argument goes to the script and shows up in `Program.arguments`; a built program has
   no `build`, `dis` or other astra commands.
 - `--windowed` is for GUI apps: starting the program opens no console window. `print` output
   then goes nowhere unless it is redirected, and an uncaught error is shown in a message box
@@ -301,6 +301,11 @@ Type names: `int`, `float`, `Number`, `string`, `char`, `byte`, `bool`, `List`, 
 `Range`, `Index`, `Function`, `Bytes`, `FrozenList`, `FrozenMap`, `FrozenSet`, `any`, or the name
 of a class, interface or enum (`Event.Click` for one declared inside another class). Without `?`, a typed variable must be initialized and can
 never be null.
+
+A class of the program's own may have a built-in type's name (`Range`, `Index`, `Values`,
+`Bytes`): where it is in reach, the name means the program's class, in types as in calls, as
+a file's own names come first. The built-in type is still there by its uses (`0..<3`, `^1`,
+`map.values`) and by its full name, `astra.Range` (D184).
 
 **Storage widths.** `int16`, `int32`, `uint16`, `uint32` and `float32` keep a number in less
 room where it is kept: in a list (`List<int16>`, 2 bytes an item), in a value type's field
@@ -1840,6 +1845,11 @@ as well, as Python's `NoneType`: `null#` is the built-in class `null`, so `x#.na
 program runs is always a `Class`: `items.itemType`, `map.keyType` and `map.valueType` give one, as
 do `Box<int>#.typeArguments` and a field's `type`, so `items.itemType == int#` (D162).
 
+**Where a class comes from** is its `origin` (D184): `"astra"` for the built-in types and the
+standard library's classes (`List#.origin`, `Deck#.origin`), a library's name for its classes
+(`Button#.origin` is `"Jade"`), and the program's name, `Program.name`, for the program's own.
+So a program's `Range` and the built-in one, both named `"Range"`, are told apart by it.
+
 ### Annotations
 
 An annotation is declared like a class, with the values it holds in its header, and written
@@ -2231,8 +2241,13 @@ of the library is built into the runtime and the rest is written in Astra itself
 
 **Functions:** `print(...)`, `write(...)` (no newline), `input(prompt?)`,
 `Range(end)` / `Range(start, end, step?)`,
-`assert(cond, message?)`, `clock()`, `args()`, `exit(code?)`, `hash(a, b, ...)`,
+`assert(cond, message?)`, `clock()`, `exit(code?)`, `hash(a, b, ...)`,
 `Bytes(size | list)`, `with(object, lambda)`, `repeat(times) { index -> }`, `flush()`
+
+**The program:** `Program.arguments` is what it was started with, after its file's name
+(`["--fast", "in.txt"]` for `astra bank.astra --fast in.txt`). `Program.name` is its name: its
+file's, without `.astra` (`"bank"`), unless the program sets it (`Program.name = "Bank"` at
+the start). `args()` is now `Program.arguments` (D184).
 
 **Checks:** `require(condition) { message }`, `check(condition) { message }`,
 `requireNotNull(value)`, `checkNotNull(value)` and `error(message)` throw an

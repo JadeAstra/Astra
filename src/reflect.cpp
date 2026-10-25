@@ -168,6 +168,14 @@ void registerReflection(VM& vm) {
         return vm.callWithTypes(Value::object(t->cls), t->args, static_cast<int>(values.size()), values.data());
     });
 
+    // The library a type comes from: "astra" for a built-in type, a library's class its library's
+    // name; null for a class of the program's own, whose origin is the program's name (D184).
+    vm.defineNative("__typeOrigin", 1, 1, [](VM& vm, int, Value* args) -> Value {
+        const ObjTypeInfo* t = typeGiven(vm, args[0]);
+        if (t->id != kTypeInstance) return vm.str("astra");
+        return t->cls->origin != nullptr ? Value::object(t->cls->origin) : Value::null();
+    });
+
     // A class's name, or a built-in type's without what it holds: "Circle", "List".
     vm.defineNative("__typeName", 1, 1, [](VM& vm, int, Value* args) -> Value {
         const ObjTypeInfo* t = typeGiven(vm, args[0]);

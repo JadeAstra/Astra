@@ -16,7 +16,7 @@ val log = here.resolve("results.txt")
 
 var seconds = 180
 var mask = ""
-val given = args()
+val given = Program.arguments
 var i = 0
 while (i < given.size) {
   when (given[i]) {

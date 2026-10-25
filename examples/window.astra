@@ -104,7 +104,7 @@ fun note(text : string) {
   while (events.size > 11) { events.removeFirst() }
 }
 
-val arguments = args()
+val arguments = Program.arguments
 if (arguments.contains("picture")) {
   // The same picture with nothing on the screen: drawn on a surface and read back.
   note("PointerDown(x=120, y=96, button=left, mods=Modifiers(), clicks=1)")

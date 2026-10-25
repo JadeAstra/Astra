@@ -10,7 +10,7 @@
 // A scale (1.5, 2) draws the page as a dense screen would show it: every font that many times
 // the size, which is what a font at that scale is.
 
-val scale = args().size > 0 ? args()[0].toFloat() : 1
+val scale = Program.arguments.size > 0 ? Program.arguments[0].toFloat() : 1
 val ink = Color(0x1B1F23)
 val faint = Color(0x8A9199)
 val rule = Color(0x2F81F7)

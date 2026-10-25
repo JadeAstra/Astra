@@ -11,6 +11,7 @@
 // IllegalArgumentException of its own.
 
 external fun __typeName(type : Type) : string
+external fun __typeOrigin(type : Type) : string?
 external fun __typeSuper(type : Type) : Type?
 external fun __typeInterfaces(type : Type) : List<Type>
 external fun __typeArguments(type : Type) : List<Type>
@@ -37,6 +38,12 @@ class Class(internal val type : Type, private val asker : any? = null) {
   // The class's name, or a built-in type's: "Circle", "int", "List".
   val name : string
     get() => __typeName(type)
+
+  // Where it comes from (D184): "astra" for a built-in type and the standard library's classes, a
+  // library's name for its classes ("Jade"), and the program's name (Program.name) for the
+  // program's own.
+  val origin : string
+    get() => __typeOrigin(type) ?: Program.name
 
   // The class it extends, with the type arguments it gives it; null where it extends none.
   val superclass : Class?

@@ -243,6 +243,7 @@ VM::VM(VM& root, uint8_t coreId)
     for (size_t i = 0; i < static_cast<size_t>(Op::Count_); i++) opNames_[i] = root.opNames_[i];
     for (size_t i = 0; i < static_cast<size_t>(BuiltinType::Count_); i++) methods_[i] = root.methods_[i];
     scriptArgs = root.scriptArgs;
+    mainModule_ = root.mainModule_;
     nextGC_ = static_cast<size_t>(-1);
     extensionEpoch_ = static_cast<uint64_t>(-1);
 }

@@ -1,0 +1,3 @@
+// What the program was started with is Program.arguments (D184).
+print(args())                         // check: args() is written Program.arguments: what the program was started with (D184)
+print(Program.arguments, Program.name.size > 0)

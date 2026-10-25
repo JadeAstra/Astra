@@ -4,7 +4,7 @@
 //
 // Run with no argument. (With "work" the program plays the part of the one that is started.)
 
-if (args().contains("work")) {
+if (Program.arguments.contains("work")) {
   // The other program: five steps, a little apart.
   for step in 1..5 {
     Thread.sleep(120.milliseconds)

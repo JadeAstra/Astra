@@ -274,7 +274,12 @@ void registerGlobals(VM& vm) {
         throw vm.runtimeError(Thrown::AssertionError, argc > 1 ? vm.stringify(args[1]) : "assertion failed");
     });
 
-    vm.defineNative("args", 0, 0, [](VM& vm, int, Value*) -> Value {
+    // The program's name, by default: its own file's, without .astra (Program.name, D184).
+    vm.defineNative("__programName", 0, 0, [](VM& vm, int, Value*) -> Value {
+        return vm.str(vm.mainFileName());
+    });
+
+    vm.defineNative("__arguments", 0, 0, [](VM& vm, int, Value*) -> Value {
         std::vector<Value> items;
         for (const std::string& arg : vm.scriptArgs) items.push_back(vm.str(arg));
         return Value::object(newList(vm, std::move(items)));

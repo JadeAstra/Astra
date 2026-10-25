@@ -228,6 +228,7 @@ const OpInfo kOps[] = {
     {"MERGE_BUNDLE", Operand::None},
     {"FRAME_TYPES", Operand::None},
     {"INSERT_NEW", Operand::U8I32},
+    {"CLASS_ORIGIN", Operand::U16},
 };
 
 const char* const kTypeNames[] = {"", "int", "float", "Number", "string", "bool", "List", "Map", "Range", "Function", "Bytes", "Type", "",
@@ -294,6 +295,14 @@ void decodeOperands(const std::vector<uint8_t>& code, size_t ip, Operand operand
 }
 
 }  // namespace
+
+std::string builtinSpelling(const std::string& name) {
+    if (name.rfind("astra.", 0) != 0) return name;
+    const std::string rest = name.substr(6);
+    for (uint8_t id = kTypeInt; id < kTypeCount_; id++)
+        if (id != kTypeInstance && rest == kTypeNames[id]) return rest;
+    return rest == "Unit" || rest == "Nothing" ? rest : name;
+}
 
 uint8_t builtinTypeId(const std::string& name) {
     for (uint8_t id = kTypeInt; id < kTypeCount_; id++)
@@ -808,6 +817,10 @@ static int analyzeStack(FunctionProto& f, const Program& program, bool partial) 
                 case Op::MarkValue:
                     pops = pushes = 1;
                     break;
+                case Op::ClassOrigin:
+                    requireName(a);
+                    pops = pushes = 1;
+                    break;
                 case Op::CheckOverride:
                     requireName(a);
                     pops = pushes = 1;
@@ -1152,6 +1165,7 @@ void disassembleFunction(const FunctionProto& f, const Program& program, std::os
             case Op::DefineGlobal:
                 out << " " << a << "  ; " << (static_cast<size_t>(a) < program.globalNames.size() ? program.globalNames[a] : std::string("?"));
                 break;
+            case Op::ClassOrigin:
             case Op::GetProp:
             case Op::SetProp:
             case Op::GetOwn:

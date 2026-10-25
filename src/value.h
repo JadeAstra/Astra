@@ -849,6 +849,7 @@ extern std::atomic<ObjClass*> smallClasses[kMaxSmallClasses];
 
 struct ObjClass final : Obj {
     ObjString* const name;
+    ObjString* origin = nullptr;  // the library it comes from ("astra", "Jade"); null for the program's own
 
     // The layout of the class's fields, as a number: an object made now has its fields where
     // `declared` says, and is marked with this. A place in the code that has found a field

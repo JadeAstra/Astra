@@ -1245,6 +1245,16 @@ struct Checker::Impl {
         return nullptr;
     }
 
+    // A class of the program's own whose name is also a built-in type's, in reach here: what that
+    // name means in a type written here. Only Title-case names may be both.
+    std::unordered_set<const TypeAnnotation*> ownClassAnnotations;
+    ClassInfo* ownClassNamed(Unit& u, const std::string& n) {
+        if (n.empty() || n[0] < 'A' || n[0] > 'Z') return nullptr;
+        if (builtinTypeId(n) == 0 && n != "Unit" && n != "Nothing" && n != "MutableList" && n != "MutableMap" && n != "MutableSet") return nullptr;
+        ClassInfo* k = findClass(u, n, classAround());
+        return k != nullptr && k->unit != nullptr && !k->unit->prelude ? k : nullptr;
+    }
+
     // What to say of a bare name nothing in reach declares: where it is, if somewhere it cannot be
     // reached from here.
     std::string unknownNameMessage(const std::string& name) {
@@ -1388,8 +1398,17 @@ struct Checker::Impl {
             for (const TypeAnnotation& m : a.unionOf) members.push_back(resolve(m, u));
             return makeUnion(members, a.nullable);
         } else {
-            const std::string& n = a.name;
-            if (n == "int") t.kind = Type::Int;
+            // `astra.Range`: the built-in type, even where the program has a class of that name.
+            const std::string n = builtinSpelling(a.name);
+            const bool astraName = n != a.name;
+            if (ClassInfo* own = u.prelude || astraName ? nullptr : ownClassNamed(u, n)) {
+                // A class of the program's own named as a built-in type is (Index, Range, Values):
+                // where it is in reach, the name means it, as a file's own names come first.
+                t.kind = Type::Class;
+                t.cls = own;
+                for (size_t i = 0; i < own->typeParams.size(); i++) t.args.push_back(i < a.args.size() ? resolve(a.args[i], u) : unknownType());
+                ownClassAnnotations.insert(&a);  // what the name means here, whichever pass finds it first
+            } else if (n == "int") t.kind = Type::Int;
             else if (n == "float") t.kind = Type::Float;
             else if (n == "char") t.kind = Type::Char;
             else if (n == "byte") t.kind = Type::Byte;
@@ -2183,6 +2202,7 @@ struct Checker::Impl {
             {"ReentrantLock", "a ReentrantLock is a Lock() in Astra, used with useKey { } (D86)"},
             {"startCoroutine", "startCoroutine is task { ... } in Astra, which gives a Job of what the block returns (D81)"},
             {"bytes", "'bytes' is now written 'Bytes', as its type is (type names are Title case)"},
+            {"args", "args() is written Program.arguments: what the program was started with (D184)"},
             {"type", "type(x) is written x#.name, the name of x's class; x# is the class itself (D74, G24)"},
             {"Deque", "a Deque is now written Deck: a queue open at both ends, with addFirst, addLast, removeFirst and removeLast (D183)"},
             {"ArrayDeque", "an ArrayDeque is a Deck in Astra: a queue open at both ends, with addFirst, addLast, removeFirst and removeLast (D183)"},
@@ -9502,6 +9522,8 @@ bool Checker::varargListType(const FunctionDecl& fn, RuntimeType& out) const {
     out = runtimeTypeOf(list);
     return out.kind == RuntimeType::List;
 }
+
+bool Checker::namesOwnClass(const TypeAnnotation& written) const { return impl_->ownClassAnnotations.count(&written) != 0; }
 
 bool Checker::returnsValue(const FunctionDecl& fn) const {
     if (impl_->valueLambdas.count(&fn) != 0) return true;

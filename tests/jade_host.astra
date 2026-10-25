@@ -373,4 +373,8 @@ window.close()
 print(window.isShowing, host.native.isOpen)   // expect: false false
 host.frame()                                  // no harm
 Jade.requestRepaint()
+
+// A library's classes say it is where they come from (D184); the program's own say its name.
+print(Window#.origin, Button#.origin, Recorder#.origin)   // expect: Jade Jade jade_host
+
 print("done")   // expect: done

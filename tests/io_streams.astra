@@ -2,7 +2,7 @@
 // itself to have something known to talk to: with an argument it plays the part of the
 // other program.
 
-if (args().contains("echo")) {
+if (Program.arguments.contains("echo")) {
   // Answers each line it reads, until it is told to stop.
   print("ready")
   while (true) {
@@ -12,7 +12,7 @@ if (args().contains("echo")) {
   }
   exit(7)
 }
-if (args().contains("slow")) {
+if (Program.arguments.contains("slow")) {
   // Says something, then nothing for a while, then something more.
   print("first")
   flush()

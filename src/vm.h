@@ -620,6 +620,9 @@ public:
     std::ostream* output;
     std::istream* input;
     std::vector<std::string> scriptArgs;
+    int mainModule_ = -1;  // the program's own file's module (Program.name)
+    // That file's name without its folder and .astra: "bank" for bank.astra; "program" if none.
+    std::string mainFileName() const;
     std::mt19937_64 rng;
     Names names{};
 
